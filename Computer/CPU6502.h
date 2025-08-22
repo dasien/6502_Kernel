@@ -280,6 +280,10 @@ private:
     void handlePhp();
     void handlePla();
     void handlePlp();
+    void handlePhx();
+    void handlePlx();
+    void handlePhy();
+    void handlePly();
 
     // Register Transfers (A/X/Y/Stack).
     void handleTax();

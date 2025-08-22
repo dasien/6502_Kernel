@@ -14,13 +14,8 @@ MainWindow::MainWindow(QWidget* parent)
     , display_widget_(nullptr)
     , status_sidebar_(nullptr)
     , sidebar_layout_(nullptr)
-    , power_on_button_(nullptr)
     , reset_button_(nullptr)
-    , run_button_(nullptr)
-    , stop_button_(nullptr)
-    , single_step_button_(nullptr)
     , status_label_(nullptr)
-    , cycles_label_(nullptr)
     , cpu_header_label_(nullptr)
     , current_byte_label_(nullptr)
     , reg_a_label_(nullptr)
@@ -40,6 +35,13 @@ MainWindow::MainWindow(QWidget* parent)
     setupMenus();
     connectSignals();
     
+    // Auto-start system powered on and running
+    computer_->power_on();
+    display_widget_->startRefresh();
+    display_widget_->setFocus();
+    is_running_ = true;
+    execution_timer_->start(1); // 1ms intervals for 1MHz operation
+    
     // Initialize status
     updateStatus();
     
@@ -52,83 +54,22 @@ MainWindow::~MainWindow()
     delete computer_;
 }
 
-void MainWindow::onPowerOnClicked()
-{
-    computer_->power_on();
-    display_widget_->startRefresh();
-    
-    power_on_button_->setEnabled(false);
-    reset_button_->setEnabled(true);
-    run_button_->setEnabled(true);
-    single_step_button_->setEnabled(true);
-    
-    // Set focus to display widget when system is powered on
-    display_widget_->setFocus();
-    
-    status_label_->setText("System powered on - Ready");
-}
 
 void MainWindow::onResetClicked()
 {
-    if (is_running_)
-    {
-        onStopClicked();
-    }
-    
     computer_->reset();
     execution_cycle_count_ = 0;
     
-    status_label_->setText("System reset - Ready");
+    status_label_->setText("System reset - Running");
 }
 
-void MainWindow::onRunClicked()
-{
-    if (!is_running_)
-    {
-        is_running_ = true;
-        execution_timer_->start(1); // 1ms intervals for 1MHz operation
-        
-        run_button_->setEnabled(false);
-        stop_button_->setEnabled(true);
-        
-        status_label_->setText("Running...");
-    }
-}
 
-void MainWindow::onStopClicked()
-{
-    if (is_running_)
-    {
-        is_running_ = false;
-        execution_timer_->stop();
-        
-        run_button_->setEnabled(true);
-        stop_button_->setEnabled(false);
-        
-        status_label_->setText("Stopped");
-    }
-}
 
-void MainWindow::onSingleStepClicked()
-{
-    if (computer_)
-    {
-        // Execute a single instruction
-        computer_->run(1);
-        execution_cycle_count_++;
-        
-        // Update display immediately
-        display_widget_->update();
-        
-        status_label_->setText("Single step executed");
-    }
-}
 
 void MainWindow::updateStatus()
 {
     if (computer_)
     {
-        cycles_label_->setText(QString("Cycles: %1").arg(execution_cycle_count_));
         updateCpuStatusSidebar();
     }
 }
@@ -219,42 +160,34 @@ void MainWindow::setupUI()
     
     sidebar_layout_->addStretch();
     
-    // Add sidebar to horizontal layout (display_widget already added above)
-    display_layout_->addWidget(status_sidebar_);
+    // Create a container for sidebar + reset button
+    QWidget* sidebar_container = new QWidget(this);
+    QVBoxLayout* sidebar_container_layout = new QVBoxLayout(sidebar_container);
+    sidebar_container_layout->setContentsMargins(0, 0, 0, 0);
+    sidebar_container_layout->setSpacing(5);
+    
+    // Add the status sidebar to the container
+    sidebar_container_layout->addWidget(status_sidebar_);
+    
+    // Create control buttons
+    reset_button_ = new QPushButton("Reset", this);
+    
+    // Add reset button centered below the sidebar
+    QHBoxLayout* reset_layout = new QHBoxLayout();
+    reset_layout->addStretch();
+    reset_layout->addWidget(reset_button_);
+    reset_layout->addStretch();
+    
+    sidebar_container_layout->addLayout(reset_layout);
+    
+    // Add sidebar container to horizontal layout (display_widget already added above)
+    display_layout_->addWidget(sidebar_container);
     
     // Add display layout to main layout
     main_layout_->addLayout(display_layout_);
     
-    // Add some spacing between display and controls
-    main_layout_->addSpacing(10);
-    
-    // Create control layout
-    control_layout_ = new QHBoxLayout();
-    
-    // Create control buttons
-    power_on_button_ = new QPushButton("Power On", this);
-    reset_button_ = new QPushButton("Reset", this);
-    run_button_ = new QPushButton("Run", this);
-    stop_button_ = new QPushButton("Stop", this);
-    single_step_button_ = new QPushButton("Single", this);
-    
-    // Initially disable some buttons
-    reset_button_->setEnabled(false);
-    run_button_->setEnabled(false);
-    stop_button_->setEnabled(false);
-    single_step_button_->setEnabled(false);
-    
-    // Add buttons to control layout with proper spacing
-    control_layout_->addStretch();
-    control_layout_->addWidget(power_on_button_);
-    control_layout_->addWidget(reset_button_);
-    control_layout_->addWidget(run_button_);
-    control_layout_->addWidget(stop_button_);
-    control_layout_->addWidget(single_step_button_);
-    control_layout_->addStretch();
-    
-    // Add control layout to main layout
-    main_layout_->addLayout(control_layout_);
+    // Add spacing before status bar
+    main_layout_->addSpacing(40);
     
     // Set window properties
     setWindowTitle("6502 Computer Emulator");
@@ -263,12 +196,10 @@ void MainWindow::setupUI()
     resize(sizeHint());
     setMinimumSize(sizeHint());
     
-    // Set up status bar with permanent widgets
-    status_label_ = new QLabel("System off", this);
-    cycles_label_ = new QLabel("Cycles: 0", this);
+    // Set up status bar
+    status_label_ = new QLabel("System running", this);
     
     statusBar()->addWidget(status_label_);
-    statusBar()->addPermanentWidget(cycles_label_);
 }
 
 void MainWindow::setupMenus()
@@ -295,11 +226,7 @@ void MainWindow::setupMenus()
 
 void MainWindow::connectSignals()
 {
-    connect(power_on_button_, &QPushButton::clicked, this, &MainWindow::onPowerOnClicked);
     connect(reset_button_, &QPushButton::clicked, this, &MainWindow::onResetClicked);
-    connect(run_button_, &QPushButton::clicked, this, &MainWindow::onRunClicked);
-    connect(stop_button_, &QPushButton::clicked, this, &MainWindow::onStopClicked);
-    connect(single_step_button_, &QPushButton::clicked, this, &MainWindow::onSingleStepClicked);
     
     connect(status_timer_, &QTimer::timeout, this, &MainWindow::updateStatus);
     

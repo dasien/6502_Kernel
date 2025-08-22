@@ -1,5 +1,11 @@
 #include "PIA.h"
+#include "Memory.h"
 #include <cstdio>
+#include <string>
+#include <QFileDialog>
+#include <QCoreApplication>
+#include <fstream>
+#include <vector>
 
 namespace Computer {
 
@@ -13,8 +19,14 @@ PIA::PIA()
     , port_b_data_(0x00)
     , port_b_ddr_(0x00)
     , port_b_control_(0x00)
+    , file_command_(kFileIdle)
+    , file_status_(kFileIdle)
+    , file_address_(0x0000)
+    , file_end_address_(0x0000)
+    , memory_(nullptr)
 {
     clearKeyboardBuffer();
+    filename_.fill(0);
 }
 
 bool PIA::isPiaAddress(uint16_t address) const
@@ -52,8 +64,31 @@ void PIA::writePia(uint16_t address, uint8_t value)
         case kPortBControl:
             port_b_control_ = value;
             break;
+        case kFileCommand:
+            printf("PIA: Received file command: 0x%02X\n", value);
+            file_command_ = value;
+            if (value == kFileLoadCommand || value == kFileSaveCommand) {
+                printf("PIA: Setting file status to IN_PROGRESS\n");
+                file_status_ = kFileInProgress;
+            }
+            break;
+        case kFileAddrLo:
+            file_address_ = (file_address_ & 0xFF00) | value;
+            break;
+        case kFileAddrHi:
+            file_address_ = (file_address_ & 0x00FF) | (value << 8);
+            break;
+        case kFileEndAddrLo:
+            file_end_address_ = (file_end_address_ & 0xFF00) | value;
+            break;
+        case kFileEndAddrHi:
+            file_end_address_ = (file_end_address_ & 0x00FF) | (value << 8);
+            break;
         default:
-            // Reserved registers - ignore writes
+            // Handle filename buffer writes ($DC14-$DC1F)
+            if (offset >= kFilenameStart && offset < kFilenameStart + 12) {
+                filename_[offset - kFilenameStart] = static_cast<char>(value);
+            }
             break;
     }
 }
@@ -98,6 +133,9 @@ uint8_t PIA::readPia(uint16_t address)
             
         case kPortBControl:
             return port_b_control_;
+            
+        case kFileStatus:
+            return file_status_;
             
         default:
             return 0x00;
@@ -206,6 +244,150 @@ void PIA::incrementBufferHead()
 void PIA::incrementBufferTail()
 {
     buffer_tail_ = (buffer_tail_ + 1) % kKeyboardBufferSize;
+}
+
+// File I/O implementation
+void PIA::setMemoryInterface(Memory* memory)
+{
+    memory_ = memory;
+}
+
+bool PIA::hasFileOperation() const
+{
+    return (file_command_ == kFileLoadCommand || file_command_ == kFileSaveCommand) && file_status_ == kFileInProgress;
+}
+
+void PIA::processFileOperations()
+{
+    if (!hasFileOperation() || !memory_) {
+        return;
+    }
+    
+    if (file_command_ == kFileLoadCommand) {
+        printf("PIA: File load request - Address: $%04X\n", file_address_);
+        
+        // Open file dialog to let user select file
+        QString filename = QFileDialog::getOpenFileName(
+            nullptr,
+            "Load Binary File",
+            QString(),
+            "Binary Files (*.bin *.rom *.prg);;All Files (*.*)"
+        );
+        
+        if (filename.isEmpty()) {
+            printf("PIA: File load cancelled by user\n");
+            file_status_ = kFileError;
+            return;
+        }
+        
+        printf("PIA: User selected file: '%s'\n", filename.toStdString().c_str());
+        
+        // Load file using C++ streams for better error handling
+        std::ifstream file(filename.toStdString(), std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            printf("PIA: File load error - Could not open file: %s\n", filename.toStdString().c_str());
+            file_status_ = kFileError;
+            return;
+        }
+        
+        // Get file size
+        std::streamsize file_size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        
+        if (file_size <= 0 || file_size > 65536) {
+            printf("PIA: File load error - Invalid file size: %ld bytes\n", static_cast<long>(file_size));
+            file_status_ = kFileError;
+            return;
+        }
+        
+        // Read file into buffer
+        std::vector<uint8_t> buffer(static_cast<size_t>(file_size));
+        if (!file.read(reinterpret_cast<char*>(buffer.data()), file_size)) {
+            printf("PIA: File load error - Failed to read file data\n");
+            file_status_ = kFileError;
+            return;
+        }
+        
+        // Load file data into emulated memory
+        uint16_t current_address = file_address_;
+        size_t bytes_loaded = 0;
+        
+        for (uint8_t byte : buffer) {
+            if (current_address > 0xFFFF) break;
+            memory_->write(current_address++, byte);
+            bytes_loaded++;
+        }
+        
+        printf("PIA: File loaded successfully - %zu bytes loaded at $%04X\n", 
+               bytes_loaded, file_address_);
+        
+        // Clear the file operation
+        file_command_ = kFileIdle;
+        file_status_ = kFileSuccess;
+    }
+    else if (file_command_ == kFileSaveCommand) {
+        printf("PIA: File save request - Range: $%04X-$%04X\n", file_address_, file_end_address_);
+        
+        // Validate address range
+        if (file_end_address_ < file_address_) {
+            printf("PIA: File save error - Invalid address range (end < start)\n");
+            file_status_ = kFileError;
+            return;
+        }
+        
+        // Calculate number of bytes to save
+        size_t bytes_to_save = file_end_address_ - file_address_ + 1;
+        if (bytes_to_save > 65536) {
+            printf("PIA: File save error - Range too large: %zu bytes\n", bytes_to_save);
+            file_status_ = kFileError;
+            return;
+        }
+        
+        // Open file dialog to let user select save location
+        QString filename = QFileDialog::getSaveFileName(
+            nullptr,
+            "Save Binary File",
+            QString(),
+            "Binary Files (*.bin);;All Files (*.*)"
+        );
+        
+        if (filename.isEmpty()) {
+            printf("PIA: File save cancelled by user\n");
+            file_status_ = kFileError;
+            return;
+        }
+        
+        printf("PIA: User selected save file: '%s'\n", filename.toStdString().c_str());
+        
+        // Read memory range and save to file
+        std::ofstream file(filename.toStdString(), std::ios::binary);
+        if (!file.is_open()) {
+            printf("PIA: File save error - Could not create file: %s\n", filename.toStdString().c_str());
+            file_status_ = kFileError;
+            return;
+        }
+        
+        // Read memory and write to file
+        std::vector<uint8_t> buffer;
+        buffer.reserve(bytes_to_save);
+        
+        for (uint16_t addr = file_address_; addr <= file_end_address_; ++addr) {
+            buffer.push_back(memory_->read(addr));
+        }
+        
+        if (!file.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()))) {
+            printf("PIA: File save error - Failed to write file data\n");
+            file_status_ = kFileError;
+            return;
+        }
+        
+        printf("PIA: File saved successfully - %zu bytes saved from $%04X-$%04X\n", 
+               buffer.size(), file_address_, file_end_address_);
+        
+        // Clear the file operation
+        file_command_ = kFileIdle;
+        file_status_ = kFileSuccess;
+    }
 }
 
 } // namespace Computer

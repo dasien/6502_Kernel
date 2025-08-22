@@ -1,0 +1,30 @@
+Modules list:
+-------------
+kernel.o:
+    CODE              Offs=000000  Size=000B04  Align=00001  Fill=0000
+    JUMPS             Offs=000000  Size=000015  Align=00001  Fill=0000
+    VECS              Offs=000000  Size=000006  Align=00001  Fill=0000
+
+
+Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+CODE                  00F000  00FB03  000B04  00001
+JUMPS                 00FF00  00FF14  000015  00001
+VECS                  00FFFA  00FFFF  000006  00001
+
+
+Exports list by name:
+---------------------
+
+
+
+Exports list by value:
+----------------------
+
+
+
+Imports list:
+-------------
+

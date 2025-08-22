@@ -54,6 +54,7 @@ set(SOURCES
     Computer/Computer6502.cpp
     Computer/VIC.cpp
     Computer/PIA.cpp
+    Computer/MapFileParser.cpp
 )
 
 if(QT_FOUND)
@@ -95,45 +96,25 @@ find_program(LD65_FOUND ld65)
 if(CA65_FOUND AND LD65_FOUND)
     message(STATUS "Found cc65 toolchain - will build kernel ROM automatically")
     
-    # Custom command to assemble kernel.asm to kernel.o
-    add_custom_command(
-        OUTPUT ${CMAKE_SOURCE_DIR}/Kernel/kernel.o
+    # Create a target that always builds the kernel ROM
+    add_custom_target(kernel_rom ALL
         COMMAND ca65 ${CMAKE_SOURCE_DIR}/Kernel/kernel.asm -o ${CMAKE_SOURCE_DIR}/Kernel/kernel.o
-        DEPENDS ${CMAKE_SOURCE_DIR}/Kernel/kernel.asm
-        COMMENT "Assembling kernel.asm"
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    )
-    
-    # Custom command to link kernel.o to kernel.rom
-    add_custom_command(
-        OUTPUT ${CMAKE_SOURCE_DIR}/Kernel/kernel.rom
-        COMMAND ld65 -C ${CMAKE_SOURCE_DIR}/Kernel/memory.cfg ${CMAKE_SOURCE_DIR}/Kernel/kernel.o -o ${CMAKE_SOURCE_DIR}/Kernel/kernel.rom
-        DEPENDS ${CMAKE_SOURCE_DIR}/Kernel/kernel.o ${CMAKE_SOURCE_DIR}/Kernel/memory.cfg
-        COMMENT "Linking kernel ROM"
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    )
-    
-    # Custom command to copy kernel.rom to build directory
-    add_custom_command(
-        OUTPUT ${CMAKE_BINARY_DIR}/kernel.rom
+        COMMAND ld65 -C ${CMAKE_SOURCE_DIR}/Kernel/memory.cfg ${CMAKE_SOURCE_DIR}/Kernel/kernel.o -o ${CMAKE_SOURCE_DIR}/Kernel/kernel.rom -m ${CMAKE_SOURCE_DIR}/Kernel/kernel.map
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/Kernel/kernel.rom ${CMAKE_BINARY_DIR}/kernel.rom
-        DEPENDS ${CMAKE_SOURCE_DIR}/Kernel/kernel.rom
-        COMMENT "Copying kernel ROM to build directory"
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/Kernel/kernel.map ${CMAKE_BINARY_DIR}/kernel.map
+        COMMENT "Building kernel ROM (always)"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        VERBATIM
     )
     
-    # Create a target that depends on the ROM being built
-    add_custom_target(kernel_rom ALL 
-        DEPENDS ${CMAKE_BINARY_DIR}/kernel.rom
-        COMMENT "Building kernel ROM"
-    )
     
-    # Make the main executable depend on the ROM
+    # Make the main executable depend on kernel ROM
     add_dependencies(6502_Kernel kernel_rom)
     
 else()
     message(WARNING "cc65 toolchain not found. Please install ca65 and ld65 to build kernel ROM automatically.")
-    message(STATUS "You can manually build the ROM with:")
-    message(STATUS "  ca65 kernel.asm -o kernel.o")
-    message(STATUS "  ld65 -C memory.cfg kernel.o -o kernel.rom")
-    message(STATUS "  cp kernel.rom cmake-build-debug/")
+    message(STATUS "You can manually build the kernel ROM with:")
+    message(STATUS "  ca65 Kernel/kernel.asm -o Kernel/kernel.o")
+    message(STATUS "  ld65 -C Kernel/memory.cfg Kernel/kernel.o -o Kernel/kernel.rom")
+    message(STATUS "  cp Kernel/kernel.rom build/")
 endif()

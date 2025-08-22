@@ -735,6 +735,36 @@ void CPU6502::handlePlp()
     cycles_ += 3;
 }
 
+void CPU6502::handlePhx()
+{
+    // Push X Register onto stack
+    pushByte(reg.X);
+    cycles_ += 3;
+}
+
+void CPU6502::handlePlx()
+{
+    // Pull X Register from stack
+    reg.X = pullByte();
+    updateZeroNegativeFlags(reg.X);
+    cycles_ += 4;
+}
+
+void CPU6502::handlePhy()
+{
+    // Push Y Register onto stack
+    pushByte(reg.Y);
+    cycles_ += 3;
+}
+
+void CPU6502::handlePly()
+{
+    // Pull Y Register from stack
+    reg.Y = pullByte();
+    updateZeroNegativeFlags(reg.Y);
+    cycles_ += 4;
+}
+
 // Transfer instruction handlers
 void CPU6502::handleTax()
 {
@@ -1894,6 +1924,10 @@ void CPU6502::initializeInstructionHandlers()
     handlers_[0x08] = [this]() { handlePhp(); };
     handlers_[0x68] = [this]() { handlePla(); };
     handlers_[0x28] = [this]() { handlePlp(); };
+    handlers_[0xDA] = [this]() { handlePhx(); };
+    handlers_[0xFA] = [this]() { handlePlx(); };
+    handlers_[0x5A] = [this]() { handlePhy(); };
+    handlers_[0x7A] = [this]() { handlePly(); };
     
     // Transfer instructions
     handlers_[0xAA] = [this]() { handleTax(); };

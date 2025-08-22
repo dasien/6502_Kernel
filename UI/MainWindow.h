@@ -19,11 +19,7 @@ public:
     ~MainWindow();
 
 private slots:
-    void onPowerOnClicked();
     void onResetClicked();
-    void onRunClicked();
-    void onStopClicked();
-    void onSingleStepClicked();
     void updateStatus();
     void onDisplayKeyPressed(uint8_t ascii_code);
 
@@ -43,14 +39,9 @@ private:
     QWidget* status_sidebar_;
     QVBoxLayout* sidebar_layout_;
     
-    QPushButton* power_on_button_;
     QPushButton* reset_button_;
-    QPushButton* run_button_;
-    QPushButton* stop_button_;
-    QPushButton* single_step_button_;
     
     QLabel* status_label_;
-    QLabel* cycles_label_;
     
     // Status sidebar labels
     QLabel* cpu_header_label_;

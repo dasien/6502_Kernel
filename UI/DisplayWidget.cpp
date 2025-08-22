@@ -33,9 +33,9 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, QWidget* parent)
     connect(refresh_timer_, &QTimer::timeout, this, &DisplayWidget::refreshDisplay);
     setRefreshRate(refresh_rate_hz_);
     
-    // Setup cursor blink timer
+    // Setup cursor blink timer (disabled)
     connect(cursor_timer_, &QTimer::timeout, this, &DisplayWidget::blinkCursor);
-    cursor_timer_->start(500); // Blink every 500ms
+    // cursor_timer_->start(500); // Cursor disabled - comment out to remove blinking
     
     // Widget properties
     setAutoFillBackground(true);
@@ -241,7 +241,7 @@ void DisplayWidget::keyPressEvent(QKeyEvent* event)
 void DisplayWidget::focusInEvent(QFocusEvent* event)
 {
     has_focus_ = true;
-    show_cursor_ = true;
+    show_cursor_ = false; // Keep cursor disabled even on focus
     update();
     QWidget::focusInEvent(event);
 }

@@ -1,16 +1,38 @@
 #include "Computer6502.h"
+#include "MapFileParser.h"
 #include <vector>
 #include <fstream>
+#include <cstdlib>
+
+#ifdef QT_GUI
+#include <QMessageBox>
+#include <QApplication>
+#endif
 
 namespace Computer {
 
-Computer6502::Computer6502() : video_chip(), pia(), memory(&video_chip, &pia), cpu(memory), reset_circuit(cpu), timing_circuit() {}
+// Helper function to show fatal error and exit
+void showFatalError(const std::string& message) {
+#ifdef QT_GUI
+    QMessageBox::critical(nullptr, "6502 Computer System - Fatal Error", 
+                         QString::fromStdString(message));
+#else
+    fprintf(stderr, "FATAL ERROR: %s\n", message.c_str());
+#endif
+    fprintf(stderr, "FATAL ERROR: %s\n", message.c_str());
+    fflush(stderr);
+    std::exit(1);
+}
+
+Computer6502::Computer6502() : video_chip(), pia(), memory(&video_chip, &pia), cpu(memory), reset_circuit(cpu), timing_circuit() {
+    // Connect PIA to memory for file operations
+    pia.setMemoryInterface(&memory);
+}
 
 void Computer6502::power_on() {
     // 6502 Computer System Starting
     
-    // Set up reset vector to point to kernel ROM at $F000
-    memory.writeWord(0xFFFC, 0xF000);  // Reset vector points to $F000
+    // Reset vector will be loaded from VECS segment
     
     // Load kernel ROM from file
     std::vector<uint8_t> kernel_rom;
@@ -18,8 +40,9 @@ void Computer6502::power_on() {
     // Try to load kernel.rom from the current directory
     std::ifstream rom_file("kernel.rom", std::ios::binary | std::ios::ate);
     if (!rom_file.is_open()) {
-        // Error: Could not open kernel.rom file
-        return;
+        showFatalError("Could not open kernel.rom file.\n\n"
+                      "Make sure the kernel.rom file exists in the build directory.\n"
+                      "This file should be automatically generated during the build process.");
     }
     
     // Get file size and read the entire ROM
@@ -29,21 +52,68 @@ void Computer6502::power_on() {
     kernel_rom.resize(size);
     if (!rom_file.read(reinterpret_cast<char*>(kernel_rom.data()), size))
     {
-        // Error: Failed to read kernel.rom file
-        return;
+        showFatalError("Failed to read kernel.rom file.\n\n"
+                      "The file may be corrupted or there may be insufficient memory.");
     }
     
     rom_file.close();
     
     // Loaded kernel ROM
     
-    // Load kernel ROM at $F000
-    memory.loadProgram(kernel_rom, 0xF000);
+    // Parse map file to get segment layout
     
+    MapFileParser parser;
+    auto segments = parser.parseMapFile("kernel.map");
+    
+    if (segments.empty()) {
+        showFatalError("Could not parse kernel.map file.\n\n"
+                      "Make sure the kernel.map file exists in the build directory.\n"
+                      "This file should be automatically generated during the build process.");
+    }
+    
+    // Find each segment
+    SegmentInfo* codeSegment = parser.findSegment(segments, "CODE");
+    SegmentInfo* jumpsSegment = parser.findSegment(segments, "JUMPS");
+    SegmentInfo* vecsSegment = parser.findSegment(segments, "VECS");
+    
+    if (!codeSegment || !jumpsSegment || !vecsSegment) {
+        std::string missingSegments = "Missing required segments in kernel.map file:\n\n";
+        if (!codeSegment) missingSegments += "• CODE segment (main kernel code)\n";
+        if (!jumpsSegment) missingSegments += "• JUMPS segment (kernel API functions)\n";
+        if (!vecsSegment) missingSegments += "• VECS segment (interrupt vectors)\n";
+        missingSegments += "\nThe kernel ROM may be corrupted or built incorrectly.";
+        showFatalError(missingSegments);
+    }
+    
+    // Load segments using correct file offsets
+    // The segments are stored sequentially in ROM file: CODE, then JUMPS, then VECS
+    size_t codeOffset = 0;
+    size_t jumpsOffset = codeSegment->size;
+    size_t vecsOffset = codeSegment->size + jumpsSegment->size;
+    
+    // Load CODE segment
+    memory.loadProgram(
+        std::vector<uint8_t>(kernel_rom.begin() + codeOffset, 
+                           kernel_rom.begin() + codeOffset + codeSegment->size),
+        codeSegment->start
+    );
+    
+    // Load JUMPS segment  
+    memory.loadProgram(
+        std::vector<uint8_t>(kernel_rom.begin() + jumpsOffset,
+                           kernel_rom.begin() + jumpsOffset + jumpsSegment->size),
+        jumpsSegment->start
+    );
+    
+    // Load VECS segment
+    memory.loadProgram(
+        std::vector<uint8_t>(kernel_rom.begin() + vecsOffset,
+                           kernel_rom.begin() + vecsOffset + vecsSegment->size),
+        vecsSegment->start
+    );
+
     // Power-on reset
     reset_circuit.powerOnReset();
-    
-    // Initial CPU state setup complete
 }
 
 void Computer6502::run(int max_cycles) {
@@ -54,6 +124,9 @@ void Computer6502::run(int max_cycles) {
             // Execution stopped due to unknown instruction
             break;
         }
+        
+        // Process any pending file operations
+        pia.processFileOperations();
         
         // Status updates handled by UI
     }
