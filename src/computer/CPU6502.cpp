@@ -21,7 +21,7 @@ void CPU6502::reset()
     cycles_ = 0;
 }
 
-void CPU6502::setFlag(StatusFlags flag, bool value)
+void CPU6502::setFlag(const StatusFlags flag, const bool value)
 {
     if (value)
     {
@@ -32,12 +32,12 @@ void CPU6502::setFlag(StatusFlags flag, bool value)
     }
 }
 
-bool CPU6502::getFlag(StatusFlags flag) const
+bool CPU6502::getFlag(const StatusFlags flag) const
 {
     return (reg.P & flag) != 0;
 }
 
-void CPU6502::updateZeroNegativeFlags(uint8_t value)
+void CPU6502::updateZeroNegativeFlags(const uint8_t value)
 {
     setFlag(kZero, value == 0);
     setFlag(kNegative, (value & 0x80) != 0);
@@ -51,13 +51,13 @@ uint8_t CPU6502::readByte()
 
 uint16_t CPU6502::readWord()
 {
-    uint16_t word = mem_.readWord(reg.PC);
+    const uint16_t word = mem_.readWord(reg.PC);
     reg.PC += 2;
     cycles_ += 2;
     return word;
 }
 
-void CPU6502::pushByte(uint8_t value)
+void CPU6502::pushByte(const uint8_t value)
 {
     mem_.write(0x0100 + reg.SP, value);
     reg.SP--;
@@ -73,9 +73,9 @@ uint8_t CPU6502::pullByte()
 
 bool CPU6502::executeSingleInstruction()
 {
-    uint8_t opcode = readByte();
-    
-    auto it = handlers_.find(opcode);
+    const uint8_t opcode = readByte();
+
+    const auto it = handlers_.find(opcode);
     if (it != handlers_.end()) {
         it->second();
         return true;
@@ -102,7 +102,7 @@ uint8_t CPU6502::getCurrentByte() const
 }
 
 // Addressing calculation functions
-std::pair<uint16_t, bool> CPU6502::calculateAddress(bool use_one_byte, uint8_t offset)
+std::pair<uint16_t, bool> CPU6502::calculateAddress(const bool use_one_byte, const uint8_t offset)
 {
     uint16_t address = 0;
     bool page_crossed = false;
@@ -114,7 +114,7 @@ std::pair<uint16_t, bool> CPU6502::calculateAddress(bool use_one_byte, uint8_t o
     } else
     {
         // Absolute addressing
-        uint16_t base_address = mem_.readWord(reg.PC);
+        const uint16_t base_address = mem_.readWord(reg.PC);
         address = base_address + offset;
 
         // Check for page boundary crossing
@@ -130,20 +130,20 @@ std::pair<uint16_t, bool> CPU6502::calculateAddress(bool use_one_byte, uint8_t o
     return std::make_pair(address, page_crossed);
 }
 
-uint16_t CPU6502::calculateAddressSimple(bool use_one_byte, uint8_t offset)
+uint16_t CPU6502::calculateAddressSimple(const bool use_one_byte, const uint8_t offset)
 {
     // Wrapper for backward compatibility - returns just the address
     auto [address, page_crossed] = calculateAddress(use_one_byte, offset);
     return address;
 }
 
-std::pair<uint16_t, bool> CPU6502::calculateRelativeAddress(uint8_t offset)
+std::pair<uint16_t, bool> CPU6502::calculateRelativeAddress(const uint8_t offset)
 {
     // Calculate the new PC after the branch
-    uint16_t current_pc = reg.PC; // PC already points to instruction after branch
+    const uint16_t current_pc = reg.PC; // PC already points to instruction after branch
 
     // Convert signed offset (if > 127, it's negative)
-    int8_t signed_offset = (offset < 0x80) ? offset : offset - 0x100;
+    const int8_t signed_offset = (offset < 0x80) ? offset : offset - 0x100;
 
     // Calculate target address
     uint16_t target_pc = current_pc + signed_offset;
@@ -154,15 +154,15 @@ std::pair<uint16_t, bool> CPU6502::calculateRelativeAddress(uint8_t offset)
     return std::make_pair(target_pc, page_crossed);
 }
 
-std::pair<uint16_t, uint8_t> CPU6502::calculateIndexedAddress(uint8_t offset)
+std::pair<uint16_t, uint8_t> CPU6502::calculateIndexedAddress(const uint8_t offset)
 {
     // This is for indexed indirect addressing (zp,X)
     // No additional cycles for page boundary crossing in this mode
     uint8_t addcycle = 0;
 
     // Get the zero page address from PC and add offset
-    uint8_t zp_addr = mem_.read(reg.PC);
-    uint8_t zp_final = (zp_addr + offset) & 0xFF;
+    const uint8_t zp_addr = mem_.read(reg.PC);
+    const uint8_t zp_final = (zp_addr + offset) & 0xFF;
 
     // Read the 16-bit address from (zp+X) and (zp+X+1)
     uint16_t address = mem_.read(zp_final) | (mem_.read((zp_final + 1) & 0xFF) << 8);
@@ -173,16 +173,16 @@ std::pair<uint16_t, uint8_t> CPU6502::calculateIndexedAddress(uint8_t offset)
     return std::make_pair(address, addcycle);
 }
 
-std::pair<uint16_t, uint8_t> CPU6502::calculateIndirectAddress(uint8_t offset)
+std::pair<uint16_t, uint8_t> CPU6502::calculateIndirectAddress(const uint8_t offset)
 {
     // This holds any additional cycle timing due to page boundary crossing
     uint8_t addcycle = 0;
 
     // Get the zero page address from PC
-    uint8_t zp_addr = mem_.read(reg.PC) & 0xFF;
+    const uint8_t zp_addr = mem_.read(reg.PC) & 0xFF;
 
     // Read the 16-bit base address from (zp) and (zp+1)
-    uint16_t base_address = mem_.read(zp_addr) | (mem_.read((zp_addr + 1) & 0xFF) << 8);
+    const uint16_t base_address = mem_.read(zp_addr) | (mem_.read((zp_addr + 1) & 0xFF) << 8);
 
     // Calculate final address by adding offset
     uint16_t address = base_address + offset;
@@ -199,13 +199,13 @@ std::pair<uint16_t, uint8_t> CPU6502::calculateIndirectAddress(uint8_t offset)
     return std::make_pair(address, addcycle);
 }
 
-bool CPU6502::checkPageBoundaryCrossed(uint16_t base_addr, uint16_t final_addr)
+bool CPU6502::checkPageBoundaryCrossed(const uint16_t base_addr, const uint16_t final_addr)
 {
     // Check if addresses are on different pages (different high bytes)
     return (base_addr & 0xFF00) != (final_addr & 0xFF00);
 }
 
-bool CPU6502::validateAddress(uint16_t address)
+bool CPU6502::validateAddress(const uint16_t address)
 {
     if (address > 0xFFFF)
     {
@@ -216,7 +216,7 @@ bool CPU6502::validateAddress(uint16_t address)
 }
 
 // ALU helper functions
-uint8_t CPU6502::addValues(uint8_t val1, uint8_t val2)
+uint8_t CPU6502::addValues(const uint8_t val1, const uint8_t val2)
 {
     // Do the math A+M+C
     uint16_t result = val1 + val2 + (getFlag(kCarry) ? 1 : 0);
@@ -240,7 +240,7 @@ uint8_t CPU6502::addValues(uint8_t val1, uint8_t val2)
     return result & 0xFF;
 }
 
-uint8_t CPU6502::subtractValues(uint8_t val1, uint8_t val2)
+uint8_t CPU6502::subtractValues(const uint8_t val1, const uint8_t val2)
 {
     // Do the math A-M-(1-C)
     int16_t result = val1 - val2 - (getFlag(kCarry) ? 0 : 1);
@@ -264,7 +264,7 @@ uint8_t CPU6502::subtractValues(uint8_t val1, uint8_t val2)
     return result & 0xFF;
 }
 
-void CPU6502::compareValues(uint8_t val1, uint8_t val2)
+void CPU6502::compareValues(const uint8_t val1, const uint8_t val2)
 {
     // Set flags
     setFlag(kCarry, (val1 >= val2));
@@ -292,11 +292,11 @@ uint8_t CPU6502::convertToBcd(uint8_t value)
 }
 
 // Stack helper functions
-void CPU6502::pushStack16(uint16_t value)
+void CPU6502::pushStack16(const uint16_t value)
 {
     // Push the high byte first (6502 pushes MSB first)
     pushByte((value >> 8) & 0xFF);
-    
+
     // Push the low byte second
     pushByte(value & 0xFF);
 }
@@ -304,11 +304,11 @@ void CPU6502::pushStack16(uint16_t value)
 uint16_t CPU6502::popStack16()
 {
     // Pull low byte first (6502 pulls LSB first)
-    uint8_t low_byte = pullByte();
-    
+    const uint8_t low_byte = pullByte();
+
     // Pull high byte second
-    uint8_t high_byte = pullByte();
-    
+    const uint8_t high_byte = pullByte();
+
     return (high_byte << 8) | low_byte;
 }
 
@@ -320,33 +320,33 @@ void CPU6502::handleAdcImmediate()
 
 void CPU6502::handleAdcZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleAdcBase(address, 1, 3);
 }
 
 void CPU6502::handleAdcZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleAdcBase(address, 1, 4);
 }
 
 void CPU6502::handleAdcAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleAdcBase(address, 2, 4);
 }
 
 void CPU6502::handleAdcAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleAdcBase(address, 2, cycles);
 }
 
 void CPU6502::handleAdcAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleAdcBase(address, 2, cycles);
 }
 
@@ -359,13 +359,13 @@ void CPU6502::handleAdcIndexedIndirect()
 void CPU6502::handleAdcIndirectIndexed()
 {
     auto [address, cycle] = calculateIndirectAddress(reg.Y);
-    uint8_t cycles = 5 + cycle;
+    const uint8_t cycles = 5 + cycle;
     handleAdcBase(address, 1, cycles);
 }
 
-void CPU6502::handleAdcBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleAdcBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.A = addValues(reg.A, val);
     updateZeroNegativeFlags(reg.A);
     reg.PC += pc_offset;
@@ -380,33 +380,33 @@ void CPU6502::handleAndImmediate()
 
 void CPU6502::handleAndZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleAndBase(address, 1, 3);
 }
 
 void CPU6502::handleAndZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleAndBase(address, 1, 4);
 }
 
 void CPU6502::handleAndAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleAndBase(address, 2, 4);
 }
 
 void CPU6502::handleAndAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleAndBase(address, 2, cycles);
 }
 
 void CPU6502::handleAndAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleAndBase(address, 2, cycles);
 }
 
@@ -419,13 +419,13 @@ void CPU6502::handleAndIndexedIndirect()
 void CPU6502::handleAndIndirectIndexed()
 {
     auto [address, cycle] = calculateIndirectAddress(reg.Y);
-    uint8_t cycles = 5 + cycle;
+    const uint8_t cycles = 5 + cycle;
     handleAndBase(address, 1, cycles);
 }
 
-void CPU6502::handleAndBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleAndBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.A &= val;
     updateZeroNegativeFlags(reg.A);
     reg.PC += pc_offset;
@@ -437,32 +437,32 @@ void CPU6502::handleAslAccumulator()
 {
     // Take the high bit of accumulator and set it to Carry flag
     setFlag(kCarry, (reg.A & 0x80) != 0);
-    
+
     // Rotate the value to the left << one place. Bit 0 is set to 0
     reg.A = (reg.A << 1) & 0xFE;
-    
+
     // Update flags
     updateZeroNegativeFlags(reg.A);
-    
+
     // Update cycle counter
     cycles_ += 2;
 }
 
 void CPU6502::handleAslZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleAslBase(address, 1, 5);
 }
 
 void CPU6502::handleAslZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleAslBase(address, 1, 6);
 }
 
 void CPU6502::handleAslAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleAslBase(address, 2, 6);
 }
 
@@ -472,22 +472,22 @@ void CPU6502::handleAslAbsoluteX()
     handleAslBase(address, 2, 7);
 }
 
-void CPU6502::handleAslBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleAslBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     uint8_t val = mem_.read(address);
-    
+
     // Take the high bit of value and set it to Carry flag
     setFlag(kCarry, (val & 0x80) != 0);
-    
+
     // Rotate the value to the left << one place. Bit 0 is set to 0
     val = (val << 1) & 0xFE;
-    
+
     // Write the value back to memory
     mem_.write(address, val);
-    
+
     // Update flags
     updateZeroNegativeFlags(val);
-    
+
     // Update program and cycle counters
     reg.PC += pc_offset;
     cycles_ += cycles;
@@ -497,8 +497,8 @@ void CPU6502::handleAslBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 void CPU6502::handleBcc()
 {
     // Branch if Carry Clear
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (!getFlag(kCarry))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -514,8 +514,8 @@ void CPU6502::handleBcc()
 void CPU6502::handleBcs()
 {
     // Branch if Carry Set
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (getFlag(kCarry))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -531,8 +531,8 @@ void CPU6502::handleBcs()
 void CPU6502::handleBeq()
 {
     // Branch if Equal (Zero Set)
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (getFlag(kZero))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -548,8 +548,8 @@ void CPU6502::handleBeq()
 void CPU6502::handleBmi()
 {
     // Branch if Minus (Negative Set)
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (getFlag(kNegative))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -565,8 +565,8 @@ void CPU6502::handleBmi()
 void CPU6502::handleBne()
 {
     // Branch if Not Equal (Zero Clear)
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (!getFlag(kZero))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -582,8 +582,8 @@ void CPU6502::handleBne()
 void CPU6502::handleBpl()
 {
     // Branch if Plus (Negative Clear)
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (!getFlag(kNegative))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -599,8 +599,8 @@ void CPU6502::handleBpl()
 void CPU6502::handleBvc()
 {
     // Branch if Overflow Clear
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (!getFlag(kOverflow))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -616,8 +616,8 @@ void CPU6502::handleBvc()
 void CPU6502::handleBvs()
 {
     // Branch if Overflow Set
-    uint8_t offset = readByte();
-    
+    const uint8_t offset = readByte();
+
     if (getFlag(kOverflow))
     {
         auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
@@ -634,22 +634,22 @@ void CPU6502::handleBrk()
 {
     // Increment program counter by 2
     reg.PC += 2;
-    
+
     // Set break flag
     setFlag(kBreak, true);
-    
+
     // Store the pc on the stack
     pushStack16(reg.PC);
-    
+
     // Store the processor flags on the stack
     pushByte(reg.P);
-    
+
     // Set the interrupt flag
     setFlag(kInterrupt, true);
-    
+
     // Load the pc with the interrupt vector contents at $FFFE/$FFFF
     reg.PC = mem_.readWord(0xFFFE);
-    
+
     // BRK takes 7 cycles
     cycles_ += 7;
 }
@@ -818,7 +818,7 @@ void CPU6502::handleNop()
     cycles_ += 2;
 }
 
-// LDA instruction family handlers  
+// LDA instruction family handlers
 void CPU6502::handleLdaImmediate()
 {
     handleLdaBase(reg.PC, 1, 2);
@@ -826,33 +826,33 @@ void CPU6502::handleLdaImmediate()
 
 void CPU6502::handleLdaZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleLdaBase(address, 1, 3);
 }
 
 void CPU6502::handleLdaZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleLdaBase(address, 1, 4);
 }
 
 void CPU6502::handleLdaAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleLdaBase(address, 2, 4);
 }
 
 void CPU6502::handleLdaAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleLdaBase(address, 2, cycles);
 }
 
 void CPU6502::handleLdaAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleLdaBase(address, 2, cycles);
 }
 
@@ -865,13 +865,13 @@ void CPU6502::handleLdaIndexedIndirect()
 void CPU6502::handleLdaIndirectIndexed()
 {
     auto [address, cycle] = calculateIndirectAddress(reg.Y);
-    uint8_t cycles = 5 + cycle;
+    const uint8_t cycles = 5 + cycle;
     handleLdaBase(address, 1, cycles);
 }
 
-void CPU6502::handleLdaBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleLdaBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.A = val;
     updateZeroNegativeFlags(reg.A);
     reg.PC += pc_offset;
@@ -881,17 +881,17 @@ void CPU6502::handleLdaBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // JMP instruction handlers
 void CPU6502::handleJmpAbsolute()
 {
-    handleJmpBase(readWord(), 0, 3);
+    handleJmpBase(readWord(), 3);
 }
 
 void CPU6502::handleJmpIndirect()
 {
-    uint16_t indirect_addr = readWord();
-    uint16_t target_addr = mem_.readWord(indirect_addr);
-    handleJmpBase(target_addr, 0, 5);
+    const uint16_t indirect_addr = readWord();
+    const uint16_t target_addr = mem_.readWord(indirect_addr);
+    handleJmpBase(target_addr, 5);
 }
 
-void CPU6502::handleJmpBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleJmpBase(const uint16_t address, const uint8_t cycles)
 {
     reg.PC = address;
     cycles_ += cycles;
@@ -900,19 +900,19 @@ void CPU6502::handleJmpBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // STA instruction family handlers
 void CPU6502::handleStaZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleStaBase(address, 1, 3);
 }
 
 void CPU6502::handleStaZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleStaBase(address, 1, 4);
 }
 
 void CPU6502::handleStaAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleStaBase(address, 2, 4);
 }
 
@@ -940,7 +940,7 @@ void CPU6502::handleStaIndirectIndexed()
     handleStaBase(address, 1, 6); // STA always takes 6 cycles for this mode
 }
 
-void CPU6502::handleStaBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleStaBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     mem_.write(address, reg.A);
     reg.PC += pc_offset;
@@ -951,25 +951,25 @@ void CPU6502::handleStaBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 void CPU6502::handleJsr()
 {
     // Calculate return address before reading target (PC currently points to low byte of target)
-    uint16_t return_address = reg.PC + 1; // Address of last byte of JSR instruction
-    
+    const uint16_t return_address = reg.PC + 1; // Address of last byte of JSR instruction
+
     // Read target address (this advances PC by 2)
-    uint16_t target_address = readWord();
-    
+    const uint16_t target_address = readWord();
+
     // Push return address onto stack (6502 pushes PC+2 from start of JSR)
     pushStack16(return_address);
-    
+
     // Jump to target address
     reg.PC = target_address;
     cycles_ += 6;
 }
 
-// RTS instruction handler  
+// RTS instruction handler
 void CPU6502::handleRts()
 {
     // Pull return address from stack
-    uint16_t return_address = popStack16();
-    
+    const uint16_t return_address = popStack16();
+
     // Set PC to return address + 1
     reg.PC = return_address + 1;
     cycles_ += 6;
@@ -981,10 +981,10 @@ void CPU6502::handleRti()
     // Pull processor status from stack
     reg.P = pullByte() & ~(kBreak | kUnused); // Clear break and unused flags when pulled
     reg.P |= kUnused; // Unused flag is always set
-    
+
     // Pull return address from stack
     reg.PC = popStack16();
-    
+
     cycles_ += 6;
 }
 
@@ -996,32 +996,32 @@ void CPU6502::handleLdxImmediate()
 
 void CPU6502::handleLdxZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleLdxBase(address, 1, 3);
 }
 
 void CPU6502::handleLdxZeroPageY()
 {
-    uint16_t address = calculateAddressSimple(true, reg.Y);
+    const uint16_t address = calculateAddressSimple(true, reg.Y);
     handleLdxBase(address, 1, 4);
 }
 
 void CPU6502::handleLdxAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleLdxBase(address, 2, 4);
 }
 
 void CPU6502::handleLdxAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleLdxBase(address, 2, cycles);
 }
 
-void CPU6502::handleLdxBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleLdxBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.X = val;
     updateZeroNegativeFlags(reg.X);
     reg.PC += pc_offset;
@@ -1036,32 +1036,32 @@ void CPU6502::handleLdyImmediate()
 
 void CPU6502::handleLdyZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleLdyBase(address, 1, 3);
 }
 
 void CPU6502::handleLdyZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleLdyBase(address, 1, 4);
 }
 
 void CPU6502::handleLdyAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleLdyBase(address, 2, 4);
 }
 
 void CPU6502::handleLdyAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleLdyBase(address, 2, cycles);
 }
 
-void CPU6502::handleLdyBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleLdyBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.Y = val;
     updateZeroNegativeFlags(reg.Y);
     reg.PC += pc_offset;
@@ -1071,23 +1071,23 @@ void CPU6502::handleLdyBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // STX instruction family handlers
 void CPU6502::handleStxZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleStxBase(address, 1, 3);
 }
 
 void CPU6502::handleStxZeroPageY()
 {
-    uint16_t address = calculateAddressSimple(true, reg.Y);
+    const uint16_t address = calculateAddressSimple(true, reg.Y);
     handleStxBase(address, 1, 4);
 }
 
 void CPU6502::handleStxAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleStxBase(address, 2, 4);
 }
 
-void CPU6502::handleStxBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleStxBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     mem_.write(address, reg.X);
     reg.PC += pc_offset;
@@ -1097,23 +1097,23 @@ void CPU6502::handleStxBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // STY instruction family handlers
 void CPU6502::handleStyZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleStyBase(address, 1, 3);
 }
 
 void CPU6502::handleStyZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleStyBase(address, 1, 4);
 }
 
 void CPU6502::handleStyAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleStyBase(address, 2, 4);
 }
 
-void CPU6502::handleStyBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleStyBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     mem_.write(address, reg.Y);
     reg.PC += pc_offset;
@@ -1128,33 +1128,33 @@ void CPU6502::handleCmpImmediate()
 
 void CPU6502::handleCmpZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleCmpBase(address, 1, 3);
 }
 
 void CPU6502::handleCmpZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleCmpBase(address, 1, 4);
 }
 
 void CPU6502::handleCmpAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleCmpBase(address, 2, 4);
 }
 
 void CPU6502::handleCmpAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleCmpBase(address, 2, cycles);
 }
 
 void CPU6502::handleCmpAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleCmpBase(address, 2, cycles);
 }
 
@@ -1167,13 +1167,13 @@ void CPU6502::handleCmpIndexedIndirect()
 void CPU6502::handleCmpIndirectIndexed()
 {
     auto [address, cycle] = calculateIndirectAddress(reg.Y);
-    uint8_t cycles = 5 + cycle;
+    const uint8_t cycles = 5 + cycle;
     handleCmpBase(address, 1, cycles);
 }
 
-void CPU6502::handleCmpBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleCmpBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     compareValues(reg.A, val);
     reg.PC += pc_offset;
     cycles_ += cycles;
@@ -1187,19 +1187,19 @@ void CPU6502::handleCpxImmediate()
 
 void CPU6502::handleCpxZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleCpxBase(address, 1, 3);
 }
 
 void CPU6502::handleCpxAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleCpxBase(address, 2, 4);
 }
 
-void CPU6502::handleCpxBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleCpxBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     compareValues(reg.X, val);
     reg.PC += pc_offset;
     cycles_ += cycles;
@@ -1213,19 +1213,19 @@ void CPU6502::handleCpyImmediate()
 
 void CPU6502::handleCpyZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleCpyBase(address, 1, 3);
 }
 
 void CPU6502::handleCpyAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleCpyBase(address, 2, 4);
 }
 
-void CPU6502::handleCpyBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleCpyBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     compareValues(reg.Y, val);
     reg.PC += pc_offset;
     cycles_ += cycles;
@@ -1239,33 +1239,33 @@ void CPU6502::handleSbcImmediate()
 
 void CPU6502::handleSbcZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleSbcBase(address, 1, 3);
 }
 
 void CPU6502::handleSbcZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleSbcBase(address, 1, 4);
 }
 
 void CPU6502::handleSbcAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleSbcBase(address, 2, 4);
 }
 
 void CPU6502::handleSbcAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleSbcBase(address, 2, cycles);
 }
 
 void CPU6502::handleSbcAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleSbcBase(address, 2, cycles);
 }
 
@@ -1278,13 +1278,13 @@ void CPU6502::handleSbcIndexedIndirect()
 void CPU6502::handleSbcIndirectIndexed()
 {
     auto [address, cycle] = calculateIndirectAddress(reg.Y);
-    uint8_t cycles = 5 + cycle;
+    const uint8_t cycles = 5 + cycle;
     handleSbcBase(address, 1, cycles);
 }
 
-void CPU6502::handleSbcBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleSbcBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.A = subtractValues(reg.A, val);
     updateZeroNegativeFlags(reg.A);
     reg.PC += pc_offset;
@@ -1299,33 +1299,33 @@ void CPU6502::handleEorImmediate()
 
 void CPU6502::handleEorZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleEorBase(address, 1, 3);
 }
 
 void CPU6502::handleEorZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleEorBase(address, 1, 4);
 }
 
 void CPU6502::handleEorAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleEorBase(address, 2, 4);
 }
 
 void CPU6502::handleEorAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleEorBase(address, 2, cycles);
 }
 
 void CPU6502::handleEorAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleEorBase(address, 2, cycles);
 }
 
@@ -1338,13 +1338,13 @@ void CPU6502::handleEorIndexedIndirect()
 void CPU6502::handleEorIndirectIndexed()
 {
     auto [address, cycle] = calculateIndirectAddress(reg.Y);
-    uint8_t cycles = 5 + cycle;
+    const uint8_t cycles = 5 + cycle;
     handleEorBase(address, 1, cycles);
 }
 
-void CPU6502::handleEorBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleEorBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.A ^= val;  // Exclusive OR operation
     updateZeroNegativeFlags(reg.A);
     reg.PC += pc_offset;
@@ -1359,33 +1359,33 @@ void CPU6502::handleOraImmediate()
 
 void CPU6502::handleOraZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleOraBase(address, 1, 3);
 }
 
 void CPU6502::handleOraZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleOraBase(address, 1, 4);
 }
 
 void CPU6502::handleOraAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleOraBase(address, 2, 4);
 }
 
 void CPU6502::handleOraAbsoluteX()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.X);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleOraBase(address, 2, cycles);
 }
 
 void CPU6502::handleOraAbsoluteY()
 {
     auto [address, page_crossed] = calculateAddress(false, reg.Y);
-    uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
     handleOraBase(address, 2, cycles);
 }
 
@@ -1398,13 +1398,13 @@ void CPU6502::handleOraIndexedIndirect()
 void CPU6502::handleOraIndirectIndexed()
 {
     auto [address, cycle] = calculateIndirectAddress(reg.Y);
-    uint8_t cycles = 5 + cycle;
+    const uint8_t cycles = 5 + cycle;
     handleOraBase(address, 1, cycles);
 }
 
-void CPU6502::handleOraBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleOraBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
+    const uint8_t val = mem_.read(address);
     reg.A |= val;  // Logical OR operation
     updateZeroNegativeFlags(reg.A);
     reg.PC += pc_offset;
@@ -1414,30 +1414,30 @@ void CPU6502::handleOraBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // BIT instruction family handlers
 void CPU6502::handleBitZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleBitBase(address, 1, 3);
 }
 
 void CPU6502::handleBitAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleBitBase(address, 2, 4);
 }
 
-void CPU6502::handleBitBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleBitBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
-    uint8_t val = mem_.read(address);
-    uint8_t result = reg.A & val;
-    
+    const uint8_t val = mem_.read(address);
+    const uint8_t result = reg.A & val;
+
     // Set zero flag based on AND result
     setFlag(kZero, result == 0);
-    
+
     // Transfer bit 7 of memory to negative flag
     setFlag(kNegative, (val & 0x80) != 0);
-    
+
     // Transfer bit 6 of memory to overflow flag
     setFlag(kOverflow, (val & 0x40) != 0);
-    
+
     reg.PC += pc_offset;
     cycles_ += cycles;
 }
@@ -1447,31 +1447,31 @@ void CPU6502::handleLsrAccumulator()
 {
     // Set carry flag to bit 0 of accumulator
     setFlag(kCarry, (reg.A & 0x01) != 0);
-    
+
     // Shift right by one bit
     reg.A = reg.A >> 1;
-    
+
     // Update flags
     updateZeroNegativeFlags(reg.A);
-    
+
     cycles_ += 2;
 }
 
 void CPU6502::handleLsrZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleLsrBase(address, 1, 5);
 }
 
 void CPU6502::handleLsrZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleLsrBase(address, 1, 6);
 }
 
 void CPU6502::handleLsrAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleLsrBase(address, 2, 6);
 }
 
@@ -1481,22 +1481,22 @@ void CPU6502::handleLsrAbsoluteX()
     handleLsrBase(address, 2, 7);
 }
 
-void CPU6502::handleLsrBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleLsrBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     uint8_t val = mem_.read(address);
-    
+
     // Set carry flag to bit 0 of value
     setFlag(kCarry, (val & 0x01) != 0);
-    
+
     // Shift right by one bit
     val = val >> 1;
-    
+
     // Write back to memory
     mem_.write(address, val);
-    
+
     // Update flags
     updateZeroNegativeFlags(val);
-    
+
     reg.PC += pc_offset;
     cycles_ += cycles;
 }
@@ -1504,35 +1504,35 @@ void CPU6502::handleLsrBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // ROL instruction family handlers
 void CPU6502::handleRolAccumulator()
 {
-    bool old_carry = getFlag(kCarry);
-    
+    const bool old_carry = getFlag(kCarry);
+
     // Set carry flag to bit 7 of accumulator
     setFlag(kCarry, (reg.A & 0x80) != 0);
-    
+
     // Rotate left, with old carry becoming bit 0
     reg.A = (reg.A << 1) | (old_carry ? 1 : 0);
-    
+
     // Update flags
     updateZeroNegativeFlags(reg.A);
-    
+
     cycles_ += 2;
 }
 
 void CPU6502::handleRolZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleRolBase(address, 1, 5);
 }
 
 void CPU6502::handleRolZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleRolBase(address, 1, 6);
 }
 
 void CPU6502::handleRolAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleRolBase(address, 2, 6);
 }
 
@@ -1542,23 +1542,23 @@ void CPU6502::handleRolAbsoluteX()
     handleRolBase(address, 2, 7);
 }
 
-void CPU6502::handleRolBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleRolBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     uint8_t val = mem_.read(address);
-    bool old_carry = getFlag(kCarry);
-    
+    const bool old_carry = getFlag(kCarry);
+
     // Set carry flag to bit 7 of value
     setFlag(kCarry, (val & 0x80) != 0);
-    
+
     // Rotate left, with old carry becoming bit 0
     val = (val << 1) | (old_carry ? 1 : 0);
-    
+
     // Write back to memory
     mem_.write(address, val);
-    
+
     // Update flags
     updateZeroNegativeFlags(val);
-    
+
     reg.PC += pc_offset;
     cycles_ += cycles;
 }
@@ -1566,35 +1566,35 @@ void CPU6502::handleRolBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // ROR instruction family handlers
 void CPU6502::handleRorAccumulator()
 {
-    bool old_carry = getFlag(kCarry);
-    
+    const bool old_carry = getFlag(kCarry);
+
     // Set carry flag to bit 0 of accumulator
     setFlag(kCarry, (reg.A & 0x01) != 0);
-    
+
     // Rotate right, with old carry becoming bit 7
     reg.A = (reg.A >> 1) | (old_carry ? 0x80 : 0);
-    
+
     // Update flags
     updateZeroNegativeFlags(reg.A);
-    
+
     cycles_ += 2;
 }
 
 void CPU6502::handleRorZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleRorBase(address, 1, 5);
 }
 
 void CPU6502::handleRorZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleRorBase(address, 1, 6);
 }
 
 void CPU6502::handleRorAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleRorBase(address, 2, 6);
 }
 
@@ -1604,23 +1604,23 @@ void CPU6502::handleRorAbsoluteX()
     handleRorBase(address, 2, 7);
 }
 
-void CPU6502::handleRorBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleRorBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     uint8_t val = mem_.read(address);
-    bool old_carry = getFlag(kCarry);
-    
+    const bool old_carry = getFlag(kCarry);
+
     // Set carry flag to bit 0 of value
     setFlag(kCarry, (val & 0x01) != 0);
-    
+
     // Rotate right, with old carry becoming bit 7
     val = (val >> 1) | (old_carry ? 0x80 : 0);
-    
+
     // Write back to memory
     mem_.write(address, val);
-    
+
     // Update flags
     updateZeroNegativeFlags(val);
-    
+
     reg.PC += pc_offset;
     cycles_ += cycles;
 }
@@ -1628,19 +1628,19 @@ void CPU6502::handleRorBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // INC instruction family handlers
 void CPU6502::handleIncZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleIncBase(address, 1, 5);
 }
 
 void CPU6502::handleIncZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleIncBase(address, 1, 6);
 }
 
 void CPU6502::handleIncAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleIncBase(address, 2, 6);
 }
 
@@ -1650,7 +1650,7 @@ void CPU6502::handleIncAbsoluteX()
     handleIncBase(address, 2, 7);
 }
 
-void CPU6502::handleIncBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleIncBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     uint8_t val = mem_.read(address);
     val++;
@@ -1663,19 +1663,19 @@ void CPU6502::handleIncBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
 // DEC instruction family handlers
 void CPU6502::handleDecZeroPage()
 {
-    uint16_t address = calculateAddressSimple(true, 0);
+    const uint16_t address = calculateAddressSimple(true, 0);
     handleDecBase(address, 1, 5);
 }
 
 void CPU6502::handleDecZeroPageX()
 {
-    uint16_t address = calculateAddressSimple(true, reg.X);
+    const uint16_t address = calculateAddressSimple(true, reg.X);
     handleDecBase(address, 1, 6);
 }
 
 void CPU6502::handleDecAbsolute()
 {
-    uint16_t address = calculateAddressSimple(false, 0);
+    const uint16_t address = calculateAddressSimple(false, 0);
     handleDecBase(address, 2, 6);
 }
 
@@ -1685,7 +1685,7 @@ void CPU6502::handleDecAbsoluteX()
     handleDecBase(address, 2, 7);
 }
 
-void CPU6502::handleDecBase(uint16_t address, uint8_t pc_offset, uint8_t cycles)
+void CPU6502::handleDecBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     uint8_t val = mem_.read(address);
     val--;

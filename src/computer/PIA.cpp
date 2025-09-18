@@ -31,21 +31,19 @@ PIA::PIA()
     filename_.fill(0);
 }
 
-bool PIA::isPiaAddress(uint16_t address) const
+bool PIA::isPiaAddress(const uint16_t address) const
 {
     return address >= kPiaMemoryStart && address <= kPiaMemoryEnd;
 }
 
-void PIA::writePia(uint16_t address, uint8_t value)
+void PIA::writePia(const uint16_t address, const uint8_t value)
 {
     if (!isPiaAddress(address))
     {
         return;
     }
-    
-    uint8_t offset = addressToOffset(address);
-    
-    switch (offset)
+
+    switch (const uint8_t offset = addressToOffset(address))
     {
         case kPortAData:
             port_a_data_ = value;
@@ -95,22 +93,20 @@ void PIA::writePia(uint16_t address, uint8_t value)
     }
 }
 
-uint8_t PIA::readPia(uint16_t address)
+uint8_t PIA::readPia(const uint16_t address)
 {
     if (!isPiaAddress(address))
     {
         return 0x00;
     }
-    
-    uint8_t offset = addressToOffset(address);
-    
-    switch (offset)
+
+    switch (addressToOffset(address))
     {
         case kPortAData:
             // Reading keyboard data - return next character from buffer
             if (hasKeypress())
             {
-                uint8_t key = getKeypress();
+                const uint8_t key = getKeypress();
                 printf("PIA: 6502 reading data register: '%c' (0x%02X), remaining count=%d\n", 
                        (key >= 32 && key <= 126) ? key : '?', key, buffer_count_);
                 updateControlFlags();
@@ -144,7 +140,7 @@ uint8_t PIA::readPia(uint16_t address)
     }
 }
 
-void PIA::addKeypress(uint8_t ascii_code)
+void PIA::addKeypress(const uint8_t ascii_code)
 {
     if (isBufferFull())
     {
@@ -171,8 +167,8 @@ uint8_t PIA::getKeypress()
     {
         return 0x00;
     }
-    
-    uint8_t key = keyboard_buffer_[buffer_tail_];
+
+    const uint8_t key = keyboard_buffer_[buffer_tail_];
     incrementBufferTail();
     buffer_count_--;
     
@@ -205,7 +201,7 @@ uint8_t PIA::getBufferCount() const
     return buffer_count_;
 }
 
-uint8_t PIA::addressToOffset(uint16_t address) const
+uint8_t PIA::addressToOffset(const uint16_t address) const
 {
     return address - kPiaMemoryStart;
 }

@@ -1,3 +1,9 @@
+/**
+ * @file CPU6502.h
+ * @brief MOS 6502 Microprocessor Emulator
+ * @author 6502 Kernel Project
+ */
+
 #ifndef CPU6502_H
 #define CPU6502_H
 
@@ -9,57 +15,152 @@
 
 namespace Computer {
 
+/**
+ * @class CPU6502
+ * @brief Complete MOS 6502 microprocessor emulator
+ *
+ * This class implements a cycle-accurate emulation of the MOS 6502 microprocessor,
+ * the heart of many classic computers including the Commodore 64, Apple II, and
+ * Nintendo Entertainment System.
+ *
+ * Features:
+ * - Complete 6502 instruction set with all addressing modes
+ * - Accurate status flag handling and arithmetic operations
+ * - Proper stack operations and interrupt handling
+ * - Binary Coded Decimal (BCD) arithmetic support
+ * - Cycle counting for timing accuracy
+ * - Memory-mapped I/O integration
+ *
+ * The CPU operates on the classic 6502 architecture with:
+ * - 8-bit accumulator and index registers
+ * - 16-bit program counter and address bus
+ * - 8-bit stack pointer (page 1: $0100-$01FF)
+ * - 8-bit processor status register with 6 flags
+ *
+ * @see Memory, Computer6502
+ */
 class CPU6502
 {
 public:
+    /**
+     * @brief Construct a new CPU6502 instance
+     * @param memory Reference to the system memory interface
+     */
     explicit CPU6502(Memory &memory);
 
+    /**
+     * @struct Registers
+     * @brief CPU register set following MOS 6502 specification
+     */
     struct Registers
     {
-        uint8_t A = 0x00; // Accumulator
-        uint8_t X = 0x00; // X Index Register
-        uint8_t Y = 0x00; // Y Index Register
-        uint16_t PC = 0x0000; // Program Counter
-        uint8_t SP = 0xFF; // Stack Pointer
-        uint8_t P = 0x20; // Processor Status (bit 5 always 1)
+        uint8_t A = 0x00;        ///< Accumulator register
+        uint8_t X = 0x00;        ///< X index register
+        uint8_t Y = 0x00;        ///< Y index register
+        uint16_t PC = 0x0000;    ///< Program Counter (16-bit)
+        uint8_t SP = 0xFF;       ///< Stack Pointer (points to page 1: $01xx)
+        uint8_t P = 0x20;        ///< Processor Status register (bit 5 always set)
     } reg;
 
-    // Status flags
+    /**
+     * @enum StatusFlags
+     * @brief Processor status register flag bits (P register)
+     *
+     * The 6502 status register contains 8 bits representing various CPU states.
+     * Each flag affects instruction behavior and can be set/cleared by operations.
+     */
     enum StatusFlags
     {
-        kCarry = 0x01,
-        kZero = 0x02,
-        kInterrupt = 0x04,
-        kDecimal = 0x08,
-        kBreak = 0x10,
-        kUnused = 0x20,
-        kOverflow = 0x40,
-        kNegative = 0x80
+        kCarry = 0x01,        ///< Carry flag (bit 0) - Set on arithmetic carry/borrow
+        kZero = 0x02,         ///< Zero flag (bit 1) - Set when result equals zero
+        kInterrupt = 0x04,    ///< Interrupt disable flag (bit 2) - Blocks IRQ when set
+        kDecimal = 0x08,      ///< Decimal mode flag (bit 3) - Enables BCD arithmetic
+        kBreak = 0x10,        ///< Break flag (bit 4) - Set by BRK instruction
+        kUnused = 0x20,       ///< Unused flag (bit 5) - Always set to 1
+        kOverflow = 0x40,     ///< Overflow flag (bit 6) - Set on signed arithmetic overflow
+        kNegative = 0x80      ///< Negative flag (bit 7) - Set when bit 7 of result is 1
     };
 
+    /**
+     * @brief Reset the CPU to initial power-on state
+     *
+     * Sets all registers to their default values and loads the program counter
+     * from the reset vector at memory locations $FFFC-$FFFD.
+     */
     void reset();
 
+    /**
+     * @brief Set or clear a processor status flag
+     * @param flag The status flag to modify
+     * @param value true to set the flag, false to clear it
+     */
     void setFlag(StatusFlags flag, bool value);
 
-    bool getFlag(StatusFlags flag) const;
+    /**
+     * @brief Get the current state of a processor status flag
+     * @param flag The status flag to check
+     * @return bool true if flag is set, false if clear
+     */
+    [[nodiscard]] bool getFlag(StatusFlags flag) const;
 
+    /**
+     * @brief Update Zero and Negative flags based on a result value
+     * @param value The 8-bit result value to test
+     * @note Sets Zero flag if value == 0, Negative flag if bit 7 is set
+     */
     void updateZeroNegativeFlags(uint8_t value);
 
-    uint8_t readByte();
-
-    uint16_t readWord();
-
-    void pushByte(uint8_t value);
-
-    uint8_t pullByte();
-
+    /**
+     * @brief Execute one CPU instruction cycle
+     * @return bool true if instruction executed successfully, false if unknown opcode
+     * @note Fetches opcode from memory at PC, executes instruction, updates cycle count
+     */
     bool executeSingleInstruction();
 
+    /**
+     * @brief Read next byte from memory and increment program counter
+     * @return uint8_t The byte value at current PC location
+     */
+    uint8_t readByte();
+
+    /**
+     * @brief Read next 16-bit word from memory (little-endian) and increment PC
+     * @return uint16_t The 16-bit word value in little-endian format
+     */
+    uint16_t readWord();
+
+    /**
+     * @brief Get the current byte at PC without incrementing the program counter
+     * @return uint8_t The byte value at current PC location
+     */
+    [[nodiscard]] uint8_t getCurrentByte() const;
+
+    /**
+     * @brief Push a byte value onto the system stack
+     * @param value The 8-bit value to push onto stack
+     * @note Stack grows downward from $01FF, decrements stack pointer
+     */
+    void pushByte(uint8_t value);
+
+    /**
+     * @brief Pull a byte value from the system stack
+     * @return uint8_t The 8-bit value pulled from stack
+     * @note Increments stack pointer, stack grows downward from $01FF
+     */
+    uint8_t pullByte();
+
+    /**
+     * @brief Print current CPU register and status information to console
+     * @note Used for debugging and development purposes
+     */
     void printStatus() const;
 
-    uint64_t getCycles() const;
-    
-    uint8_t getCurrentByte() const;
+    /**
+     * @brief Get the total number of CPU cycles executed since power-on
+     * @return uint64_t Total cycle count
+     * @note Used for timing analysis and performance measurement
+     */
+    [[nodiscard]] uint64_t getCycles() const;
 
 private:
     Memory &mem_;
@@ -87,10 +188,6 @@ private:
     // Stack helper functions
     void pushStack16(uint16_t value);
     uint16_t popStack16();
-
-    /**********************************
-    ** Assembly Instruction Handlers **
-    **********************************/
 
     // Math instructions (Add/Subtract).
     void handleAdcImmediate();
@@ -229,7 +326,7 @@ private:
     // Jump & Return operations.
     void handleJmpAbsolute();
     void handleJmpIndirect();
-    void handleJmpBase(uint16_t address, uint8_t pc_offset, uint8_t cycles);
+    void handleJmpBase(uint16_t address, uint8_t cycles);
     void handleJsr();
     void handleRti();
     void handleRts();

@@ -24,8 +24,8 @@ public:
 
     // Refresh control
     void setRefreshRate(int hz);
-    void startRefresh();
-    void stopRefresh();
+    void startRefresh() const;
+    void stopRefresh() const;
 
 signals:
     void keyPressed(uint8_t ascii_code);

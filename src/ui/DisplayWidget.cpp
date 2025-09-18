@@ -23,10 +23,6 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, QWidget* parent)
     setupFont();
     calculateCharacterSize();
     
-    // Set widget size based on character dimensions
-    int widget_width = Computer::VIC::kScreenWidth * char_width_;
-    int widget_height = Computer::VIC::kScreenHeight * char_height_;
-    //setFixedSize(widget_width, widget_height);
     setFixedSize(440, 400);
 
     // Setup refresh timer
@@ -48,13 +44,13 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, QWidget* parent)
     setAttribute(Qt::WA_KeyCompression, false);
 }
 
-void DisplayWidget::setCharacterSize(int width, int height)
+void DisplayWidget::setCharacterSize(const int width, const int height)
 {
     char_width_ = width;
     char_height_ = height;
-    
-    int widget_width = Computer::VIC::kScreenWidth * char_width_;
-    int widget_height = Computer::VIC::kScreenHeight * char_height_;
+
+    const int widget_width = Computer::VIC::kScreenWidth * char_width_;
+    const int widget_height = Computer::VIC::kScreenHeight * char_height_;
     setFixedSize(widget_width, widget_height);
     
     needs_full_redraw_ = true;
@@ -86,7 +82,7 @@ void DisplayWidget::setFont(const QFont& font)
     update();
 }
 
-void DisplayWidget::setRefreshRate(int hz)
+void DisplayWidget::setRefreshRate(const int hz)
 {
     refresh_rate_hz_ = hz;
     if (refresh_timer_->isActive())
@@ -95,12 +91,12 @@ void DisplayWidget::setRefreshRate(int hz)
     }
 }
 
-void DisplayWidget::startRefresh()
+void DisplayWidget::startRefresh() const
 {
     refresh_timer_->start(1000 / refresh_rate_hz_);
 }
 
-void DisplayWidget::stopRefresh()
+void DisplayWidget::stopRefresh() const
 {
     refresh_timer_->stop();
 }
@@ -121,14 +117,11 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
     painter.setFont(character_font_);
     painter.setPen(foreground_color_);
     
-    // Draw all characters
-    const auto& screen_buffer = video_chip_->getScreenBuffer();
-    
     for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
     {
         for (int x = 0; x < Computer::VIC::kScreenWidth; ++x)
         {
-            uint8_t character = video_chip_->getCharacterAt(x, y);
+            const uint8_t character = video_chip_->getCharacterAt(x, y);
             if (character != 0x00) // Don't draw null characters
             {
                 drawCharacterAt(painter, x, y, character);
@@ -179,7 +172,7 @@ void DisplayWidget::calculateCharacterSize()
     // This creates a true square pixel grid for that classic retro computer look
 }
 
-QChar DisplayWidget::asciiToChar(uint8_t ascii_code) const
+QChar DisplayWidget::asciiToChar(const uint8_t ascii_code) const
 {
     // Handle standard ASCII printable characters
     if (ascii_code >= 0x20 && ascii_code <= 0x7E)
@@ -197,12 +190,12 @@ QChar DisplayWidget::asciiToChar(uint8_t ascii_code) const
     }
 }
 
-void DisplayWidget::drawCharacterAt(QPainter& painter, int x, int y, uint8_t character)
+void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y, const uint8_t character)
 {
-    QChar ch = asciiToChar(character);
-    
-    int pixel_x = x * char_width_;
-    int pixel_y = y * char_height_ + char_height_ - 2; // Adjust for font baseline
+    const QChar ch = asciiToChar(character);
+
+    const int pixel_x = x * char_width_;
+    const int pixel_y = y * char_height_ + char_height_ - 2; // Adjust for font baseline
     
     painter.drawText(pixel_x, pixel_y, QString(ch));
 }
@@ -211,11 +204,11 @@ void DisplayWidget::drawCursor(QPainter& painter)
 {
     // Simple cursor at bottom-right of display (where input would appear)
     // In a real implementation, cursor position would be tracked by the 6502 system
-    int cursor_x = 0; // Column 0 for now
-    int cursor_y = 24; // Bottom row
-    
-    int pixel_x = cursor_x * char_width_;
-    int pixel_y = (cursor_y + 1) * char_height_ - 2;
+    const int cursor_x = 0; // Column 0 for now
+    const int cursor_y = 24; // Bottom row
+
+    const int pixel_x = cursor_x * char_width_;
+    const int pixel_y = (cursor_y + 1) * char_height_ - 2;
     
     // Draw a simple underscore cursor
     painter.setPen(foreground_color_);
@@ -228,8 +221,8 @@ void DisplayWidget::keyPressEvent(QKeyEvent* event)
     {
         return;
     }
-    
-    uint8_t ascii_code = qtKeyToAscii(event);
+
+    const uint8_t ascii_code = qtKeyToAscii(event);
     if (ascii_code != 0)
     {
         emit keyPressed(ascii_code);
@@ -265,9 +258,9 @@ void DisplayWidget::blinkCursor()
 
 uint8_t DisplayWidget::qtKeyToAscii(QKeyEvent* event) const
 {
-    int key = event->key();
-    Qt::KeyboardModifiers modifiers = event->modifiers();
-    QString text = event->text();
+    const int key = event->key();
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    const QString text = event->text();
     
     // Filter out modifier keys that should be ignored
     switch (key)
@@ -328,7 +321,7 @@ uint8_t DisplayWidget::qtKeyToAscii(QKeyEvent* event) const
     // Fallback for keys that don't produce text but should be handled
     if (key >= Qt::Key_A && key <= Qt::Key_Z)
     {
-        uint8_t ascii = static_cast<uint8_t>(key);
+        auto ascii = static_cast<uint8_t>(key);
         if (!(modifiers & Qt::ShiftModifier))
         {
             ascii += 32; // Convert to lowercase

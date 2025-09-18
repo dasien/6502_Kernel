@@ -2,18 +2,19 @@
 #include <QApplication>
 #include "MainWindow.h"
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     QApplication app(argc, argv);
-    
+
     // Set application properties
     app.setApplicationName("6502 Computer Emulator");
     app.setApplicationVersion("1.0");
     app.setOrganizationName("6502 Development");
-    
+
     // Create and show main window
     MainWindow window;
     window.show();
-    
+
     return app.exec();
 }
 #else
