@@ -31,3 +31,9 @@ Thumbs.db
 # Backup files
 *.bak
 *.tmp
+
+# Kernel build artifacts (should be in cmake-build-*/ instead)
+kernel/
+kernel.map
+kernel.rom
+kernel.o
