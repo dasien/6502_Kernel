@@ -10,10 +10,9 @@ This is not a c64 emulator and does not use PETSCII.
 
 ## Build System
 
-The project uses CMake as the build system:
+The project uses CMake and ninja as the build system:
 
 ```bash
-# Or using ninja (if available)
 cmake -G Ninja ..
 ninja
 ```
@@ -64,23 +63,32 @@ The monitor uses system RAM starting at $0200 for variables and buffers:
 - **$0252-$0258**: Monitor state variables (mode, addresses)
 - **$0259-$025E**: Parser variables and temporary storage
 - **$0260-$0261**: Message pointer for optimized string printing
+- **$0262-$027E**: Extended monitor variables for F:, M:, X: commands
 
 ### Monitor Commands
 
-The monitor supports 4 primary modes plus utility commands:
+The monitor provides a comprehensive set of commands for memory operations, program execution, and system debugging:
 
-#### Core Modes
-- **W:xxxx [data]** - Write mode: Write bytes to memory at address xxxx
-- **R:xxxx[-yyyy]** - Read mode: Read and display memory contents
+#### Memory Operations
+- **R:xxxx[-yyyy]** - Read and display memory contents (range optional)
+- **W:xxxx [data]** - Write mode: Write hex bytes to memory at address xxxx
+- **F:xxxx-yyyy,zz** - Fill memory range with specified byte value
+- **M:xxxx-yyyy,zzzz,b** - Move/Copy memory (b=0:copy, b=1:move with source clear)
+- **X:xxxx-yyyy,pattern** - Search memory range for hex byte pattern (up to 16 bytes)
+
+#### Program Execution
 - **G:xxxx** - Go/Run mode: Execute program starting at address xxxx
-- **X:** - Exit current mode and return to command mode
+- **L:xxxx** - Load program from file at specified address
+- **S:xxxx-yyyy** - Save memory range to file
 
-#### Utility Commands
-- **K:** - Clear screen (Klear)
-- **S:** - Display stack memory ($0100-$01FF)
-- **Z:** - Display zero page memory ($0000-$00FF)
-- **T:** - Show target address and current byte value
+#### System Information
+- **C:** - Clear screen  
+- **T:** - Display stack memory ($0100-$01FF) with paging
+- **Z:** - Display zero page memory ($0000-$00FF) with paging
 - **H:** - Display help with all available commands
+
+#### Navigation
+- **ESC** - Exit current mode and return to command prompt
 
 ### Monitor Features
 
@@ -128,6 +136,70 @@ PRINT_HELP_HEADER:
 
 This optimization achieves ~80-88% code size reduction compared to individual character loading.
 
+## Enhanced Monitor Commands (F:, M:, X:)
+
+The kernel includes three powerful new commands for advanced memory operations:
+
+### F: Fill Memory Command
+
+**Syntax**: `F:start-end,value`
+
+Fills a memory range with a specified byte value.
+
+**Examples**:
+- `F:8000-8FFF,00` - Fill $8000-$8FFF with zeros
+- `F:C000-C0FF,A9` - Fill $C000-$C0FF with $A9 (LDA immediate opcode)
+
+**Features**:
+- Supports full 64KB address range
+- Efficient forward-fill algorithm
+- Progress indication for large ranges
+- Comprehensive error checking
+
+### M: Move/Copy Memory Command  
+
+**Syntax**: `M:start-end,dest,mode`
+
+Copies or moves a block of memory from source to destination.
+
+**Parameters**:
+- `start-end`: Source memory range
+- `dest`: Destination start address  
+- `mode`: `0` = Copy (preserve source), `1` = Move (clear source after copy)
+
+**Examples**:
+- `M:8000-8FFF,9000,0` - Copy $8000-$8FFF to $9000-$9FFF 
+- `M:E000-EFFF,2000,1` - Move ROM to RAM, clear original location
+- `M:1000-10FF,1001,0` - Shift memory block up by one byte
+
+**Features**:
+- Handles overlapping memory regions correctly
+- Forward/backward copy direction optimization
+- Source memory clearing for move operations
+- Byte count reporting (`COPIED XXXX BYTES` / `MOVED XXXX BYTES`)
+
+### X: Memory Search Command
+
+**Syntax**: `X:start-end,pattern`
+
+Searches memory for a specific byte pattern.
+
+**Parameters**:
+- `start-end`: Memory range to search
+- `pattern`: 1-16 hex bytes separated by spaces
+
+**Examples**:
+- `X:8000-FFFF,4C` - Search for JMP absolute opcode
+- `X:8000-8FFF,A9 20 4C` - Search for "LDA #$20 / JMP" sequence
+- `X:C000-CFFF,00 00 00` - Find blocks of three zero bytes
+
+**Features**:
+- Multi-byte pattern matching (up to 16 bytes)
+- Paged output with ESC abort capability
+- Respects exact range boundaries  
+- Preserves current address pointer
+- Address-only output format for efficiency
+
 ### Key Assembly Patterns
 
 The kernel code follows these patterns:
@@ -148,7 +220,7 @@ The kernel code follows these patterns:
 
 ### Memory Banking Considerations
 - The processor port at $00/$01 controls memory banking
-- Default configuration ($37 at $01) enables BASIC ROM, Kernal ROM, and I/O
+- Default configuration ($37 at $01) enables ROM, Kernal ROM, and I/O
 - Banking changes affect what appears in $A000-$FFFF range
 - Always restore banking state after temporary changes
 
@@ -167,9 +239,12 @@ The kernel code follows these patterns:
 - Always use the null-terminated string system for new messages
 - Allocate monitor variables in the $0200-$03FF range per the memory map
 - Implement proper hex parsing for addresses and data input
-- Provide clear error messages and syntax validation
+- Provide clear error messages and syntax validation (`?ERROR`, `?RANGE`, `?VALUE`)
 - Follow the 8-byte function pattern for message printing optimization
 - Use the existing PRINT_CHAR, PRINT_HEX_BYTE, and I/O routines
+- Implement paging support for commands that generate multiple output lines
+- Preserve `MON_CURR_ADDR` during parsing operations to maintain prompt consistency
+- Use dedicated zero page variables to avoid conflicts with system operations
 - Test all monitor commands thoroughly in both emulation and hardware
 
 ## Critical Memory Locations

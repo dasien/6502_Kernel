@@ -15,18 +15,18 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM Size (Reserved): ($F000-$FFFF) - 4096 bytes
-; ROM Size (Used): 2225 bytes total
-;   CODE segment:   ($F000-$F898) - 2201 bytes
-;   JUMPS segment:  ($FF00-$FF11) - 18 bytes  
+; ROM Size (Used): 3413 bytes
+;   CODE segment:   ($F000-$FD3D) - 3389 bytes
+;   JUMPS segment:  ($FF00-$FF11) - 18 bytes
 ;   VECS segment:   ($FFFA-$FFFF) - 6 bytes
 ;
-; Zero Page:    $00-$13 (20 bytes used)
-;   System:     $00-$01 (processor port)
-;   Monitor:    $02-$11 (16 bytes)
-;   Scroll:     $0A-$0E (5 bytes, overlapped)
-;   Paging:     $0F-$10 (2 bytes, overlapped)
+; Zero Page:    $00-$10 (17 bytes used)
+;   Monitor:    $00-$0F (16 bytes)
+;   Scroll:     $08-$0C (5 bytes, overlapped)
+;   Paging:     $0D-$0E (2 bytes, overlapped)
+;   RNG:        $0F-$10 (2 bytes, overlapped)
 ;
-; RAM Usage:    $0200-$025F (96 bytes)
+; RAM Usage:    $0200-$0284 (133 bytes)
 ;   Cmd Buffer: $0200-$024F (80 bytes)
 ;   Variables:  $0250-$025F (16 bytes)
 ;
@@ -45,7 +45,7 @@
 ; - Kernel API at $FF00 for user programs
 ;
 ; Commands:     R:(read) W:(write) G:(go) L:(load) C:(clear)
-;               T:(stack) Z:(zero page) H:(help)
+;               T:(stack) Z:(zero page) H:(help) F:(fill)
 ;
 ; ================================================================
 ; BUILD INFORMATION
@@ -54,8 +54,8 @@
 ; Vectors:      NMI ($FFFA), RESET ($FFFC), IRQ ($FFFE)
 ; API Entry:    $FF00 (jump table)
 ;
-; Assembly:     [command line used to assemble]
-; Checksum:     [optional ROM checksum]
+; Assembly:     ca65 kernel.asm -o kernel.o && ld65 -C memory.cfg kernel.o -o kernel.rom
+; Checksum:     50f82437174779e391d3ac3b5b445357882251a5 (SHA-1)
 ;
 ; ================================================================
 ; REVISION HISTORY
@@ -64,181 +64,140 @@
 ;
 ; ================================================================
 
-; ca65 processor directive to enable 65C02 instructions.
-.PC02
+.PC02                               ; ca65 directive to enable 65C02 instructions.
 
-; ROM start address.
-.org $F000
+.org $F000                          ; ROM start address.
 
 ; ================================================================
 ; SYSTEM CONSTANTS SECTION
 ; ================================================================
-STACK_TOP       = $FF           ; Top of stack page
-RAM_START       = $0200         ; Start of general purpose RAM
-RAM_END         = $7FFF         ; End of available RAM
+STACK_TOP          = $FF           ; Top of stack page
 
 ; ================================================================
-; ZERO PAGE VALUES
+; ZERO PAGE VARIABLES
 ; ================================================================
-PROC_DDR          = $00           ; Data direction register for processor port
-PROC_PORT         = $01           ; Processor port for memory banking
-MON_CURRADDR_LO   = $02           ; Current address low byte (MUST be zero page)
-MON_CURRADDR_HI   = $03           ; Current address high byte (MUST be zero page)
-MON_MSG_PTR_LO    = $04           ; Message pointer low byte (MUST be zero page)
-MON_MSG_PTR_HI    = $05           ; Message pointer high byte (MUST be zero page)
-JUMP_VECTOR       = $06           ; Indirect jump vector (2 bytes: $06-$07)
-SCREEN_PTR_LO     = $08           ; Current screen memory pointer (low byte)
-SCREEN_PTR_HI     = $09           ; Current screen memory pointer (high byte)
-SCRL_SRC_ADDR_LO  = $0A           ; Scroll source address low byte
-SCRL_SRC_ADDR_HI  = $0B           ; Scroll source address high byte
-SCRL_DEST_ADDR_LO = $0C           ; Scroll destination address low byte
-SCRL_DEST_ADDR_HI = $0D           ; Scroll destination address high byte
-SCRL_BYTE_CNT     = $0E           ; Scroll byte counter
-CMD_LINE_COUNT    = $0F           ; Lines printed by current command
-PAGE_ABORT_FLAG   = $10           ; Set to 1 if user pressed ESC
-RNG_SEED          = $11           ; Random number generator seed
-RNG_MAX           = $12           ; Maximum value for random number (1-255)
-HEX_LOOKUP_TABLE = $F0            ; Hex lookup table location
+MON_CURRADDR_LO    = $00           ; Current address low byte (MUST be zero page)
+MON_CURRADDR_HI    = $01           ; Current address high byte (MUST be zero page)
+MON_MSG_PTR_LO     = $02           ; Message pointer low byte (MUST be zero page)
+MON_MSG_PTR_HI     = $03           ; Message pointer high byte (MUST be zero page)
+JUMP_VECTOR        = $04           ; Indirect jump vector (2 bytes: $04-$05)
+SCREEN_PTR_LO      = $06           ; Current screen memory pointer (low byte)
+SCREEN_PTR_HI      = $07           ; Current screen memory pointer (high byte)
+SCRL_SRC_ADDR_LO   = $08           ; Scroll source address low byte
+SCRL_SRC_ADDR_HI   = $09           ; Scroll source address high byte
+SCRL_DEST_ADDR_LO  = $0A           ; Scroll destination address low byte
+SCRL_DEST_ADDR_HI  = $0B           ; Scroll destination address high byte
+SCRL_BYTE_CNT      = $0C           ; Scroll byte counter
+CMD_LINE_COUNT     = $0D           ; Lines printed by current command
+PAGE_ABORT_FLAG    = $0E           ; Set to 1 if user pressed ESC
+RNG_SEED           = $0F           ; Random number generator seed
+RNG_MAX            = $10           ; Maximum value for random number (1-255)
+HEX_LOOKUP_TABLE   = $F0           ; Hex lookup table location (16 bytes: $F0-$FF)
 
 ; ================================================================
 ; MONITOR VARIABLES
 ; ================================================================
 
 ; Monitor Command Buffer and State Variables
-MON_CMDBUF      = $0200         ; Command input buffer (80 bytes: $0200-$024F)
-MON_CMDBUF_LEN  = 80            ; Maximum command buffer length
-MON_CMDPTR      = $0250         ; Pointer to current position in command buffer
-MON_CMDLEN      = $0251         ; Current length of command in buffer
-MON_MODE        = $0252         ; Current monitor mode (0=Command, 1=Write, 2=Read, 3=Run)
-MON_STARTADDR_LO = $0253        ; Start address for range operations (low)
-MON_STARTADDR_HI = $0254        ; Start address for range operations (high)
-MON_ENDADDR_LO  = $0255         ; End address for range operations (low)
-MON_ENDADDR_HI  = $0256         ; End address for range operations (high)
-
-; Monitor Parser Variables
-MON_PARSE_PTR   = $0257         ; Parser position pointer
-MON_PARSE_LEN   = $0258         ; Remaining characters to parse
-MON_HEX_TEMP    = $0259         ; Temporary storage for hex conversion
-MON_BYTE_COUNT  = $025A         ; Count of bytes for write operations
-MON_LINE_COUNT  = $025B         ; Line counter for display formatting
-MON_ERROR_FLAG  = $025C         ; Error flag for invalid operations
-CURSOR_X        = $025D         ; Current cursor X position (0-39)
-CURSOR_Y        = $025E         ; Current cursor Y position (0-24)
-MON_MSG_TMP_POS = $025F         ; Temp pointer to current position in message
+MON_CMDBUF         = $0200         ; Command input buffer (80 bytes: $0200-$024F)
+MON_CMDBUF_LEN     = 80            ; Maximum command buffer length
+MON_CMDPTR         = $0250         ; Pointer to current position in command buffer
+MON_CMDLEN         = $0251         ; Current length of command in buffer
+MON_MODE           = $0252         ; Current monitor mode (0=Command, 1=Write, 2=Read, 3=Run)
+MON_STARTADDR_LO   = $0253         ; Start address for range operations (low)
+MON_STARTADDR_HI   = $0254         ; Start address for range operations (high)
+MON_ENDADDR_LO     = $0255         ; End address for range operations (low)
+MON_ENDADDR_HI     = $0256         ; End address for range operations (high)
+MON_PARSE_PTR      = $0257         ; Parser position pointer
+MON_PARSE_LEN      = $0258         ; Remaining characters to parse
+MON_HEX_TEMP       = $0259         ; Temporary storage for hex conversion
+MON_BYTE_COUNT     = $025A         ; Count of bytes for write operations
+MON_LINE_COUNT     = $025B         ; Line counter for display formatting
+MON_ERROR_FLAG     = $025C         ; Error flag for invalid operations
+CURSOR_X           = $025D         ; Current cursor X position (0-39)
+CURSOR_Y           = $025E         ; Current cursor Y position (0-24)
+MON_MSG_TMP_POS    = $025F         ; Temp pointer to current position in message
+MON_FILL_VALUE     = $0284         ; Fill command byte value
+MON_DEST_ADDR_LO   = $0285         ; Move/Copy destination address low byte
+MON_DEST_ADDR_HI   = $0286         ; Move/Copy destination address high byte
+MON_COPY_MODE      = $0287         ; Move/Copy mode (0=copy, 1=move)
+MON_SEARCH_PATTERN = $0288         ; Search pattern buffer (16 bytes: $0288-$0297)
+MON_PATTERN_LEN    = $0298         ; Search pattern length (1-16 bytes)
+MON_LAST_CMD_BUF   = $0299         ; Last command buffer (80 bytes: $0299-$02E8)
+MON_LAST_CMD_LEN   = $02E9         ; Last command length (1 byte)
 
 ; Monitor Mode Constants
-MON_MODE_CMD    = 0             ; Command mode
-MON_MODE_WRITE  = 1             ; Write mode
-MON_MODE_READ   = 2             ; Read mode
-MON_MODE_RUN    = 3             ; Run mode
-MON_MODE_LOAD   = 4             ; Load binary file mode
-MON_MODE_SAVE   = 5             ; Save binary file mode
+MON_MODE_CMD       = 0             ; Command mode
+MON_MODE_WRITE     = 1             ; Write mode
 
 ; Monitor Display Constants
-MON_BYTES_PER_LINE = 8          ; Number of bytes displayed per line
-MON_HEX_DIGITS  = 2             ; Hex digits per byte
+MON_BYTES_PER_LINE = 8             ; Number of bytes displayed per line
+MON_HEX_DIGITS     = 2             ; Hex digits per byte
 
 ; Screen and I/O Constants for Monitor
-SCREEN_START    = $0400         ; Screen memory start
-SCREEN_WIDTH    = 40            ; Characters per line
-SCREEN_HEIGHT   = 25            ; Lines on screen
-LINES_PER_PAGE  = 24            ; Full screen height
-CURSOR_CHAR     = $5F           ; Underscore cursor character
+SCREEN_START       = $0400         ; Screen memory start
+SCREEN_WIDTH       = 40            ; Characters per line
+SCREEN_HEIGHT      = 25            ; Lines on screen
+LINES_PER_PAGE     = 24            ; Full screen height
+CURSOR_CHAR        = $5F           ; Underscore cursor character
 
 ; ASCII Character Constants
-ASCII_0         = $30           ; ASCII '0'
-ASCII_9         = $39           ; ASCII '9'
-ASCII_A         = $41           ; ASCII 'A'
-ASCII_F         = $46           ; ASCII 'F'
-ASCII_CR        = $0D           ; Carriage return
-ASCII_LF        = $0A           ; Line feed
-ASCII_SPACE     = $20           ; Space
-ASCII_COLON     = $3A           ; Colon ':'
-ASCII_DASH      = $2D           ; Dash '-'
-ASCII_BACKSPACE = $08           ; Backspace character
-ASCII_DELETE    = $7F           ; Delete character
-ASCII_ESC       = $1B           ; Escape character
-
-; Monitor Command Characters
-CMD_WRITE       = $57           ; 'W' - Write mode
-CMD_READ        = $52           ; 'R' - Read mode
-CMD_GO          = $47           ; 'G' - Go/Run mode
-CMD_LOAD        = $4C           ; 'L' - Load binary file mode
-CMD_CLEAR       = $43           ; 'C' - Clear screen
-CMD_STACK       = $54           ; 'T' - Stack dump
-CMD_ZERO        = $5A           ; 'Z' - Zero page dump
-CMD_HELP        = $48           ; 'H' - Help
-CMD_EXIT        = $58           ; 'X' - Exit mode
+ASCII_0            = $30           ; ASCII '0'
+ASCII_9            = $39           ; ASCII '9'
+ASCII_A            = $41           ; ASCII 'A'
+ASCII_F            = $46           ; ASCII 'F'
+ASCII_CR           = $0D           ; Carriage return
+ASCII_LF           = $0A           ; Line feed
+ASCII_SPACE        = $20           ; Space
+ASCII_COLON        = $3A           ; Colon ':'
+ASCII_DASH         = $2D           ; Dash '-'
+ASCII_BACKSPACE    = $08           ; Backspace character
+ASCII_DELETE       = $7F           ; Delete character
+ASCII_ESC          = $1B           ; Escape character
+ASCII_DOT          = $2E           ; Dot '.' character
 
 ; Hardware I/O addresses for keyboard input
-PIA_DATA        = $DC00         ; PIA data register for keyboard
-PIA_CONTROL     = $DC02         ; PIA control register for keyboard
-PIA_DATA_AVAIL  = $01           ; Bit mask for data available flag
+PIA_DATA           = $DC00         ; PIA data register for keyboard
+PIA_CONTROL        = $DC02         ; PIA control register for keyboard
+PIA_DATA_AVAIL     = $01           ; Bit mask for data available flag
 
 ; File I/O interface addresses
-FILE_COMMAND    = $DC10         ; File operation command
-FILE_STATUS     = $DC11         ; File operation status
-FILE_ADDR_LO    = $DC12         ; Target address low byte
-FILE_ADDR_HI    = $DC13         ; Target address high byte
-FILE_NAME_BUF   = $DC14         ; Filename buffer start ($DC14-$DC1F)
+FILE_COMMAND       = $DC10         ; File operation command
+FILE_STATUS        = $DC11         ; File operation status
+FILE_ADDR_LO       = $DC12         ; Target address low byte
+FILE_ADDR_HI       = $DC13         ; Target address high byte
+FILE_NAME_BUF      = $DC14         ; Filename buffer start ($DC14-$DC1F)
 
 ; Additional file I/O registers for save operations
-FILE_END_ADDR_LO = $DC20        ; End address low byte for save range
-FILE_END_ADDR_HI = $DC21        ; End address high byte for save range
+FILE_END_ADDR_LO   = $DC20         ; End address low byte for save range
+FILE_END_ADDR_HI   = $DC21         ; End address high byte for save range
 
 ; File command codes
-FILE_LOAD_CMD   = $01           ; Load file command
-FILE_SAVE_CMD   = $02           ; Save file command
+FILE_LOAD_CMD      = $01           ; Load file command
+FILE_SAVE_CMD      = $02           ; Save file command
 
 ; File status codes
-FILE_IDLE       = $00           ; No operation
-FILE_IN_PROGRESS = $01          ; Operation in progress
-FILE_SUCCESS    = $02           ; Operation completed successfully
-FILE_ERROR      = $FF           ; Operation failed
-
-; BASIC I/O Vector addresses (relocated to $0300+ to avoid monitor RAM conflict)
-VEC_IN          = $0305         ; Input vector (2 bytes)
-VEC_OUT         = $0307         ; Output vector (2 bytes)
-VEC_LD          = $0309         ; Load vector (2 bytes)
-VEC_SV          = $030B         ; Save vector (2 bytes)
+FILE_IDLE          = $00           ; No operation
+FILE_IN_PROGRESS   = $01           ; Operation in progress
+FILE_SUCCESS       = $02           ; Operation completed successfully
+FILE_ERROR         = $FF           ; Operation failed
 
 ; ================================================================
 ; KERNEL PROGRAM START
 ; ================================================================
 
-; Reset vector entry point - this is where the 6502 jumps on reset
+; Reset vector entry point.
 RESET:
-    ; === PROCESSOR INITIALIZATION ===
-
-    ; Clear decimal mode - 6502 powers on in undefined state
-    ; This is critical as some operations behave differently in decimal mode
     CLD                         ; Clear decimal mode flag
-
-    ; Disable interrupts during initialization
-    ; We don't want to be interrupted while setting up the system
     SEI                         ; Set interrupt disable flag
-
-    ; Initialize stack pointer to top of stack page
-    ; Stack grows downward from $01FF to $0100
-    LDX #STACK_TOP              ; Load stack pointer with $FF
+    LDX #STACK_TOP              ; Initialize stack pointer to top of stack page
     TXS                         ; Transfer X to stack pointer
-
-    ; Set up processor port for memory banking control
-    ; This controls what appears in the $A000-$FFFF range
-    LDA #$3F                    ; Set bits 0-5 as outputs
-    STA PROC_DDR                ; Configure processor port direction
-
-    ; Set default memory configuration
-    ; Bit pattern xx111xxx = BASIC ROM, Kernal ROM, I/O visible
-    LDA #$37                    ; Default banking configuration
-    STA PROC_PORT               ; Set memory banking
 
 ; ================================================================
 ; ZERO PAGE INITIALIZATION
 ; ================================================================
 
-    ; Clear critical zero page locations used by kernel
-    LDX #$06                    ; Start after processor port registers and critical pointers
+    LDX #$00                    ; Start at beginning of zero page
     LDA #$00                    ; Load zero
 
 ZP_CLEAR_LOOP:
@@ -279,8 +238,7 @@ STORE_HEX_CHAR:
 ; RAM INITIALIZATION
 ; ================================================================
 
-    ; Clear screen memory (typically at $0400-$07FF)
-    JSR CLEAR_SCREEN
+    JSR CLEAR_SCREEN            ; Clear screen memory ($0400-$07FF)
 
 ; ================================================================
 ; MONITOR INITIALIZATION
@@ -310,11 +268,12 @@ STORE_HEX_CHAR:
     STA MON_MSG_PTR_LO          ; Clear message pointer low byte
     STA MON_MSG_PTR_HI          ; Clear message pointer high byte
     STA MON_MSG_TMP_POS         ; Clear temp message pointer
+    STA MON_LAST_CMD_LEN        ; Clear last command length
 
     ; Initialize cursor position to top-left of screen
     STA CURSOR_X                ; Set cursor X to 0
     STA CURSOR_Y                ; Set cursor Y to 0
-    
+
     ; Initialize screen pointer to start of screen memory
     LDA #<SCREEN_START          ; Load low byte of screen start ($00)
     STA SCREEN_PTR_LO           ; Store in screen pointer
@@ -338,38 +297,7 @@ CLEAR_LOOP:
 CLEAR_DONE:
     STX MON_CMDLEN              ; X is now 0
 
-    ; Enable interrupts now that system is initialized
-    CLI
-
-; ================================================================
-; BASIC I/O VECTOR INITIALIZATION  
-; ================================================================
-    ; Initialize BASIC I/O vectors to point to kernel API functions
-    ; This allows BASIC to use the monitor's I/O routines
-    
-    ; Input vector - points to GET_KEYSTROKE
-    LDA #<K_GET_KEYSTROKE
-    STA VEC_IN
-    LDA #>K_GET_KEYSTROKE
-    STA VEC_IN+1
-    
-    ; Output vector - points to PRINT_CHAR
-    LDA #<K_PRINT_CHAR
-    STA VEC_OUT
-    LDA #>K_PRINT_CHAR
-    STA VEC_OUT+1
-    
-    ; Load vector - points to K_PRINT_NEWLINE (placeholder)
-    LDA #<K_PRINT_NEWLINE
-    STA VEC_LD
-    LDA #>K_PRINT_NEWLINE
-    STA VEC_LD+1
-    
-    ; Save vector - points to K_PRINT_NEWLINE (placeholder)
-    LDA #<K_PRINT_NEWLINE
-    STA VEC_SV
-    LDA #>K_PRINT_NEWLINE
-    STA VEC_SV+1
+    CLI                         ; Enable interrupts
 
 ; ================================================================
 ; MONITOR START/WELCOME MESSAAGE
@@ -699,29 +627,29 @@ PRINT_CHAR:
     ; Handle special characters
     CMP #ASCII_CR               ; Is it carriage return?
     BEQ PRINT_CHAR_NEWLINE      ; Handle newline
-    
+
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ PRINT_CHAR_BACKSPACE    ; Handle backspace
-    
+
     ; Save Y register to memory variable (preserves A with character)
     STY MON_MSG_TMP_POS         ; Save Y register to memory
-    
+
     ; Store character directly to screen memory
     LDY #$00                    ; Y=0 for indirect addressing
     STA (SCREEN_PTR_LO),Y       ; Store character (A still has the character!)
-    
+
     ; Restore Y register
     LDY MON_MSG_TMP_POS         ; Restore Y from memory
-    
+
     ; Advance screen pointer
     INC SCREEN_PTR_LO           ; Increment low byte
     BNE PRINT_CHAR_NO_CARRY     ; If no carry, continue
     INC SCREEN_PTR_HI           ; Increment high byte if carry
-    
+
 PRINT_CHAR_NO_CARRY:
     ; Advance cursor X position
     INC CURSOR_X
-    
+
     ; Check for line wrap (X >= 40)
     PHA                         ; Save character
     LDA CURSOR_X
@@ -759,12 +687,12 @@ PRINT_CHAR_NEWLINE:
     ; Handle carriage return - move to next line
     TYA                         ; Transfer Y to A
     PHA                         ; Push Y register onto stack
-    
+
     ; Calculate remaining characters to next line
     LDA #SCREEN_WIDTH           ; Load screen width (40)
     SEC
     SBC CURSOR_X                ; Subtract current X position
-    
+
     ; Advance screen pointer by remaining characters
     CLC
     ADC SCREEN_PTR_LO           ; Add to low byte
@@ -772,12 +700,12 @@ PRINT_CHAR_NEWLINE:
     LDA #$00                    ; Clear A
     ADC SCREEN_PTR_HI           ; Add any carry to high byte
     STA SCREEN_PTR_HI           ; Store result
-    
+
     ; Update cursor position
     LDA #$00                    ; Reset X to beginning of line
     STA CURSOR_X
     INC CURSOR_Y                ; Move to next line
-    
+
     ; Check if we need to scroll screen
     LDA CURSOR_Y
     CMP #SCREEN_HEIGHT          ; Have we gone past line 24?
@@ -806,10 +734,10 @@ PRINT_CHAR_BACKSPACE:
     ; Check if we're at beginning of line
     LDA CURSOR_X
     BEQ PRINT_CHAR_DONE         ; If X=0, can't go back further
-    
+
     ; Move cursor back one position
     DEC CURSOR_X                ; Decrement cursor X position
-    
+
     ; Decrement screen pointer
     LDA SCREEN_PTR_LO           ; Get current screen pointer low
     BNE PRINT_BACKSPACE_NO_BORROW ; If not zero, no borrow needed
@@ -817,18 +745,18 @@ PRINT_CHAR_BACKSPACE:
 
 PRINT_BACKSPACE_NO_BORROW:
     DEC SCREEN_PTR_LO           ; Decrement low byte
-    
+
     ; Save Y register to memory variable (like normal character printing)
     STY MON_MSG_TMP_POS         ; Save Y register to memory
-    
+
     ; Clear the character at new position by writing space
     LDY #$00                    ; Y=0 for indirect addressing
     LDA #ASCII_SPACE            ; Load space character
     STA (SCREEN_PTR_LO),Y       ; Store space at previous position
-    
+
     ; Restore Y register
     LDY MON_MSG_TMP_POS         ; Restore Y from memory
-    
+
     RTS                         ; Done with backspace
 
 ; Print a newline (carriage return)
@@ -957,7 +885,7 @@ READ_CMD_LOOP:
 
     ; Check for special keys
     CMP #ASCII_CR               ; Is it Enter/Return?
-    BEQ READ_CMD_DONE_CR        ; If so, command is complete
+    BEQ READ_CMD_DONE_CR_JMP    ; If so, command is complete (use local jump)
 
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ READ_CMD_BACKSPACE      ; Handle backspace
@@ -968,6 +896,27 @@ READ_CMD_LOOP:
     CMP #ASCII_ESC              ; Is it escape?
     BEQ READ_CMD_ESCAPE         ; Handle escape (cancel command)
 
+    ; Check for dot command (instant recall of last command)
+    CMP #ASCII_DOT              ; Is it a dot?
+    BNE CHECK_BUFFER_FULL       ; If not, continue normal processing
+
+    ; Only process dot if it's the first character AND we're in command mode
+    CPX #$00                    ; Is buffer empty?
+    BNE CHECK_BUFFER_FULL       ; If not, treat as normal character
+
+    ; Check if we're in command mode - only recall in command mode
+    LDA MON_MODE                ; Load current mode
+    BNE CHECK_BUFFER_FULL       ; If not command mode (0), treat dot as normal character
+
+    ; It's a dot as first character in command mode - recall last command
+    JSR RECALL_LAST_COMMAND     ; Recall and display last command
+    JMP READ_CMD_LOOP           ; Continue normal input processing
+
+; Local jump helper for CR done (within branch range)
+READ_CMD_DONE_CR_JMP:
+    JMP READ_CMD_DONE_CR        ; Jump to actual CR handler
+
+CHECK_BUFFER_FULL:
     ; Check if buffer is full
     CPX #MON_CMDBUF_LEN-1       ; Check if at max length (leave room for null)
     BCS READ_CMD_LOOP           ; If full, ignore additional characters
@@ -978,7 +927,7 @@ READ_CMD_LOOP:
     CMP #$7F                    ; Is it greater than tilde?
     BCS READ_CMD_LOOP           ; If so, ignore it
 
-    ; Convert to uppercase if it's a lowercase letter  
+    ; Convert to uppercase if it's a lowercase letter
     CMP #$61                    ; Compare with 'a' ($61)
     BCC NOT_LOWERCASE_INPUT     ; If less than 'a', not lowercase
     CMP #$7B                    ; Compare with '{' (one after 'z')
@@ -1047,6 +996,80 @@ READ_CMD_DONE_CR:
     JSR PRINT_NEWLINE           ; Move to next line on screen
     RTS
 
+; ================================================================
+; DOT COMMAND (LAST COMMAND RECALL) IMPLEMENTATION
+; ================================================================
+
+; Recall last command and display it in the current command buffer
+; Called when '.' is entered as first character in command line
+; Modifies: A, X, Y
+RECALL_LAST_COMMAND:
+    ; Check if we have a last command to recall
+    LDA MON_LAST_CMD_LEN        ; Load last command length
+    BEQ RECALL_NOTHING          ; If zero, nothing to recall
+
+    ; Clear current command buffer first
+    LDX #$00
+    LDA #$00
+RECALL_CLEAR_LOOP:
+    STA MON_CMDBUF,X            ; Clear buffer position
+    INX
+    CPX #MON_CMDBUF_LEN         ; Check if we've cleared enough
+    BNE RECALL_CLEAR_LOOP
+
+    ; Copy last command to current command buffer
+    LDX #$00                    ; Initialize copy index
+RECALL_COPY_LOOP:
+    CPX MON_LAST_CMD_LEN        ; Have we copied all characters?
+    BCS RECALL_COPY_DONE        ; If so, we're done copying
+
+    LDA MON_LAST_CMD_BUF,X      ; Load character from last command buffer
+    STA MON_CMDBUF,X            ; Store in current command buffer
+    JSR PRINT_CHAR              ; Echo character to screen
+    INX                         ; Move to next character
+    JMP RECALL_COPY_LOOP        ; Continue copying
+
+RECALL_COPY_DONE:
+    ; Update current command length
+    STX MON_CMDLEN              ; Set current command length
+    ; X now contains the number of characters copied
+    RTS
+
+RECALL_NOTHING:
+    ; No previous command to recall - just continue input normally
+    RTS
+
+; Save current command to last command buffer
+; Should be called after successful command parsing (not during data entry)
+; Modifies: A, X, Y
+SAVE_COMMAND:
+    ; Check if command is empty or too long
+    LDA MON_CMDLEN              ; Load current command length
+    BEQ SAVE_CMD_SKIP           ; If empty, don't save
+    CMP #MON_CMDBUF_LEN         ; Check if too long
+    BCS SAVE_CMD_SKIP           ; If too long, don't save
+
+    ; Copy current command to last command buffer
+    LDX #$00                    ; Initialize copy index
+SAVE_CMD_COPY_LOOP:
+    CPX MON_CMDLEN              ; Have we copied all characters?
+    BCS SAVE_CMD_COPY_DONE      ; If so, we're done copying
+
+    LDA MON_CMDBUF,X            ; Load character from current command buffer
+    STA MON_LAST_CMD_BUF,X      ; Store in last command buffer
+    INX                         ; Move to next character
+    JMP SAVE_CMD_COPY_LOOP      ; Continue copying
+
+SAVE_CMD_COPY_DONE:
+    ; Update last command length
+    LDA MON_CMDLEN              ; Get current command length
+    STA MON_LAST_CMD_LEN        ; Store as last command length
+    RTS
+
+SAVE_CMD_SKIP:
+    ; Don't save this command
+    RTS
+
 ; Print the monitor prompt based on current mode
 ; Print current address from MON_CURRADDR_HI/LO as 4 hex digits
 ; Modifies: A, X
@@ -1078,12 +1101,12 @@ PRINT_MONITOR_PROMPT:
     TAX                         ; Use as index
     LDA MODE_PREFIX_TABLE,X     ; Get prefix character
     BEQ PRINT_ADDRESS_ONLY      ; If null, skip prefix
-    
+
     ; Print mode prefix and colon
     JSR PRINT_CHAR              ; Print mode character
     LDA #ASCII_COLON            ; ':' character
     JSR PRINT_CHAR
-    
+
 PRINT_ADDRESS_ONLY:
     JSR PRINT_CURRENT_ADDRESS   ; Print current address
     LDA #$3E                    ; '>' character
@@ -1119,9 +1142,9 @@ PARSE_CMD_START:
 
     ; Quick range check - is it between 'C' and 'Z'?
     CMP #$43                    ; 'C'
-    BCC PARSE_CMD_ERROR         ; Less than 'C'
+    BCC PARSE_CMD_ERROR_JMP     ; Less than 'C' - jump to local error handler
     CMP #$5B                    ; 'Z'+1
-    BCS PARSE_CMD_ERROR         ; Greater than 'Z'
+    BCS PARSE_CMD_ERROR_JMP     ; Greater than 'Z' - jump to local error handler
 
     ; Get index from mapping table
     SEC
@@ -1129,7 +1152,7 @@ PARSE_CMD_START:
     TAX
     LDA CMD_INDEX_MAP,X         ; Get command index
     CMP #$FF                    ; Is it invalid?
-    BEQ PARSE_CMD_ERROR
+    BEQ PARSE_CMD_ERROR_JMP
 
     ; Valid command - use compact jump table
     TAX
@@ -1138,6 +1161,10 @@ PARSE_CMD_START:
     LDA CMD_JUMP_COMPACT_HI,X
     STA JUMP_VECTOR+1
     JMP (JUMP_VECTOR)
+
+; Local error handler for range check jumps (within branch range)
+PARSE_CMD_ERROR_JMP:
+    JMP PARSE_CMD_ERROR         ; Jump to main error handler
 
 ; Single character commands (no parameters)
 PARSE_CMD_CLEAR:
@@ -1183,13 +1210,41 @@ PARSE_CMD_GO_CHECK:
 PARSE_CMD_LOAD_CHECK:
     JSR PARSE_COLON_COMMAND     ; Parse L:xxxx format
     BCS PARSE_CMD_ERROR         ; If error, show error message
+    JSR PARSE_FILENAME          ; Parse comma and filename
+    BCS PARSE_CMD_ERROR         ; If error, show error message
     JSR CMD_LOAD_MODE           ; Execute load mode command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_SAVE_CHECK:
     JSR PARSE_COLON_COMMAND     ; Parse S:xxxx-yyyy format
     BCS PARSE_CMD_ERROR         ; If error, show error message
+    JSR PARSE_FILENAME          ; Parse comma and filename
+    BCS PARSE_CMD_ERROR         ; If error, show error message
     JSR CMD_SAVE_MODE           ; Execute save mode command
+    JMP PARSE_CMD_DONE
+
+PARSE_CMD_FILL_CHECK:
+    JSR PARSE_COLON_COMMAND     ; Parse F:xxxx-yyyy format
+    BCS PARSE_CMD_RANGE_ERROR   ; If address parsing error, show range error
+    JSR PARSE_FILL_VALUE        ; Parse comma and fill value
+    BCS PARSE_CMD_VALUE_ERROR   ; If value parsing error, show value error
+    JSR CMD_FILL_MODE           ; Execute fill mode command
+    JMP PARSE_CMD_DONE
+
+PARSE_CMD_MOVE_CHECK:
+    JSR PARSE_COLON_COMMAND     ; Parse M:xxxx-yyyy format
+    BCS PARSE_CMD_ERROR         ; If error, show error message
+    JSR PARSE_MOVE_PARAMS       ; Parse comma, destination, and mode
+    BCS PARSE_CMD_ERROR         ; If error, show error message
+    JSR CMD_MOVE_MODE           ; Execute move/copy mode command
+    JMP PARSE_CMD_DONE
+
+PARSE_CMD_SEARCH_CHECK:
+    JSR PARSE_COLON_COMMAND     ; Parse X:xxxx-yyyy format
+    BCS PARSE_CMD_ERROR         ; If error, show error message
+    JSR PARSE_SEARCH_PARAMS     ; Parse comma and hex pattern
+    BCS PARSE_CMD_ERROR         ; If error, show error message
+    JSR CMD_SEARCH_MODE         ; Execute memory search command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_ERROR:
@@ -1197,6 +1252,20 @@ PARSE_CMD_ERROR:
     LDA #$01                    ; Set error flag
     STA MON_ERROR_FLAG
     JSR PRINT_ERROR_MSG         ; Print error message
+    JMP PARSE_CMD_DONE
+
+PARSE_CMD_VALUE_ERROR:
+    ; Display value error message for invalid hex values
+    LDA #$01                    ; Set error flag
+    STA MON_ERROR_FLAG
+    JSR PRINT_VALUE_ERROR       ; Print value error message
+    JMP PARSE_CMD_DONE
+
+PARSE_CMD_RANGE_ERROR:
+    ; Display range error message for invalid address ranges
+    LDA #$01                    ; Set error flag
+    STA MON_ERROR_FLAG
+    JSR PRINT_RANGE_ERROR       ; Print range error message
     ; Fall through to done
 
 PARSE_CMD_DONE:
@@ -1276,6 +1345,312 @@ PARSE_COLON_ERROR:
     SEC                         ; Set carry for error
     RTS
 
+; Parse fill value parameter (expects comma followed by 2-digit hex byte)
+; Input: Command buffer positioned after address range
+; Output: Fill value in MON_FILL_VALUE, Carry clear if success
+; Modifies: A, X, Y
+PARSE_FILL_VALUE:
+    ; X register already contains correct position from PARSE_COLON_COMMAND
+    ; Skip any spaces
+PARSE_FILL_SKIP_SPACES:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_FILL_ERROR        ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_FILL_CHECK_COMMA  ; If not space, check for comma
+    INX                         ; Skip space
+    JMP PARSE_FILL_SKIP_SPACES
+
+PARSE_FILL_CHECK_COMMA:
+    CMP #$2C                    ; Is it a comma?
+    BNE PARSE_FILL_ERROR        ; If not comma, error
+    INX                         ; Skip comma
+
+    ; Skip any spaces after comma
+PARSE_FILL_SKIP_SPACES2:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_FILL_ERROR        ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_FILL_GET_VALUE    ; If not space, get value
+    INX                         ; Skip space
+    JMP PARSE_FILL_SKIP_SPACES2
+
+PARSE_FILL_GET_VALUE:
+    ; Parse 2-digit hex value
+    JSR HEX_PAIR_TO_BYTE        ; Convert 2 hex digits to byte
+    BCS PARSE_FILL_ERROR        ; If error, exit
+    STA MON_FILL_VALUE          ; Store fill value
+    CLC                         ; Clear carry for success
+    RTS
+
+PARSE_FILL_ERROR:
+    SEC                         ; Set carry for error
+    RTS
+
+; Parse move/copy parameters (expects comma, destination address, and mode)
+; Input: Command buffer positioned after address range
+; Output: Destination address in MON_DEST_ADDR_HI/LO, mode in MON_COPY_MODE, Carry clear if success
+; Modifies: A, X, Y
+PARSE_MOVE_PARAMS:
+    ; X register already contains correct position from PARSE_COLON_COMMAND
+    ; Skip any spaces
+PARSE_MOVE_SKIP_SPACES:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_MOVE_CHECK_COMMA  ; If not space, check for comma
+    INX                         ; Skip space
+    JMP PARSE_MOVE_SKIP_SPACES
+
+PARSE_MOVE_CHECK_COMMA:
+    CMP #$2C                    ; Is it a comma?
+    BNE PARSE_MOVE_ERROR_JMP    ; If not comma, error
+    INX                         ; Skip comma
+
+    ; Skip any spaces after comma
+PARSE_MOVE_SKIP_SPACES2:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_MOVE_GET_DEST     ; If not space, get destination
+    INX                         ; Skip space
+    JMP PARSE_MOVE_SKIP_SPACES2
+
+PARSE_MOVE_GET_DEST:
+    ; Parse 4-digit hex destination address
+    ; Save current address variables
+    LDA MON_CURRADDR_LO
+    PHA
+    LDA MON_CURRADDR_HI
+    PHA
+
+    JSR HEX_QUAD_TO_ADDR        ; Convert 4 hex digits to address (into MON_CURRADDR)
+    BCS PARSE_MOVE_RESTORE_ERROR ; If error, restore and exit
+
+    ; Copy result to destination address
+    LDA MON_CURRADDR_LO         ; Get parsed destination
+    STA MON_DEST_ADDR_LO        ; Store destination address
+    LDA MON_CURRADDR_HI
+    STA MON_DEST_ADDR_HI
+
+    ; Restore current address variables
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+
+    ; Skip any spaces before comma
+PARSE_MOVE_SKIP_SPACES3:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_MOVE_CHECK_COMMA2 ; If not space, check for comma
+    INX                         ; Skip space
+    JMP PARSE_MOVE_SKIP_SPACES3
+
+PARSE_MOVE_CHECK_COMMA2:
+    CMP #$2C                    ; Is it a comma?
+    BNE PARSE_MOVE_ERROR_JMP    ; If not comma, error
+    INX                         ; Skip comma
+
+    ; Skip any spaces after second comma
+PARSE_MOVE_SKIP_SPACES4:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_MOVE_GET_MODE     ; If not space, get mode
+    INX                         ; Skip space
+    JMP PARSE_MOVE_SKIP_SPACES4
+
+PARSE_MOVE_GET_MODE:
+    ; Parse 1-digit mode (0=copy, 1=move)
+    LDA MON_CMDBUF,X            ; Load mode character
+    CMP #'0'                    ; Is it '0'?
+    BEQ PARSE_MOVE_MODE_COPY    ; Yes, copy mode
+    CMP #'1'                    ; Is it '1'?
+    BEQ PARSE_MOVE_MODE_MOVE    ; Yes, move mode
+    JMP PARSE_MOVE_ERROR_JMP    ; Neither, error
+
+PARSE_MOVE_MODE_COPY:
+    LDA #$00                    ; Copy mode
+    STA MON_COPY_MODE
+    CLC                         ; Clear carry for success
+    RTS
+
+PARSE_MOVE_MODE_MOVE:
+    LDA #$01                    ; Move mode
+    STA MON_COPY_MODE
+    CLC                         ; Clear carry for success
+    RTS
+
+; Local error handler for branch range jumps (within branch range)
+PARSE_MOVE_ERROR_JMP:
+    JMP PARSE_MOVE_ERROR        ; Jump to main error handler
+
+PARSE_MOVE_RESTORE_ERROR:
+    ; Restore address variables after error
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+    ; Fall through to error
+
+PARSE_MOVE_ERROR:
+    SEC                         ; Set carry for error
+    RTS
+
+; Parse search parameters (expects comma followed by 1-16 hex bytes)
+; Input: Command buffer positioned after address range
+; Output: Pattern in MON_SEARCH_PATTERN, length in MON_PATTERN_LEN, Carry clear if success
+; Modifies: A, X, Y
+PARSE_SEARCH_PARAMS:
+    ; X register already contains correct position from PARSE_COLON_COMMAND
+    ; Skip any spaces
+PARSE_SEARCH_SKIP_SPACES:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_SEARCH_ERROR      ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_SEARCH_CHECK_COMMA ; If not space, check for comma
+    INX                         ; Skip space
+    JMP PARSE_SEARCH_SKIP_SPACES
+
+PARSE_SEARCH_CHECK_COMMA:
+    CMP #$2C                    ; Is it a comma?
+    BNE PARSE_SEARCH_ERROR      ; If not comma, error
+    INX                         ; Skip comma
+
+    ; Skip any spaces after comma
+PARSE_SEARCH_SKIP_SPACES2:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_SEARCH_ERROR      ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_SEARCH_GET_PATTERN ; If not space, get pattern
+    INX                         ; Skip space
+    JMP PARSE_SEARCH_SKIP_SPACES2
+
+PARSE_SEARCH_GET_PATTERN:
+    ; Parse hex pattern bytes (1-16 bytes)
+    LDA #$00                    ; Initialize pattern length
+    STA MON_PATTERN_LEN
+    LDY #$00                    ; Pattern buffer index
+
+PARSE_SEARCH_PATTERN_LOOP:
+    ; Check if we're at end of command
+    CPX MON_CMDLEN              ; At end of command?
+    BCS PARSE_SEARCH_PATTERN_DONE ; If so, we're done with pattern
+
+    ; Check if we've reached maximum pattern length
+    LDA MON_PATTERN_LEN
+    CMP #$10                    ; 16 bytes maximum
+    BCS PARSE_SEARCH_PATTERN_DONE ; If at max, we're done
+
+    ; Parse two-character hex byte
+    JSR HEX_PAIR_TO_BYTE        ; Parse hex pair (X points to first char)
+    BCS PARSE_SEARCH_ERROR      ; If error, exit
+
+    ; Store byte in pattern buffer
+    STA MON_SEARCH_PATTERN,Y    ; Store pattern byte
+    INC MON_PATTERN_LEN         ; Increment pattern length
+    INY                         ; Move to next pattern position
+
+    ; Skip any spaces before next hex pair
+PARSE_SEARCH_SKIP_SPACES3:
+    CPX MON_CMDLEN              ; At end of command?
+    BCS PARSE_SEARCH_PATTERN_DONE ; If so, we're done
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_SEARCH_PATTERN_LOOP ; If not space, try next hex pair
+    INX                         ; Skip space
+    JMP PARSE_SEARCH_SKIP_SPACES3
+
+PARSE_SEARCH_PATTERN_DONE:
+    ; Check if we have at least one pattern byte
+    LDA MON_PATTERN_LEN
+    BEQ PARSE_SEARCH_ERROR      ; If no pattern bytes, error
+    CLC                         ; Clear carry for success
+    RTS
+
+PARSE_SEARCH_ERROR:
+    SEC                         ; Set carry for error
+    RTS
+
+; Parse filename parameter (expects comma followed by filename)
+; Input: Command buffer positioned after address
+; Output: Filename copied to FILE_NAME_BUF, Carry clear if success
+; Modifies: A, X, Y
+PARSE_FILENAME:
+    ; X register already contains correct position from PARSE_COLON_COMMAND
+    ; Skip any spaces
+PARSE_FILENAME_SKIP_SPACES:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_FILENAME_ERROR    ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_FILENAME_CHECK_COMMA ; If not space, check for comma
+    INX                         ; Skip space
+    JMP PARSE_FILENAME_SKIP_SPACES
+
+PARSE_FILENAME_CHECK_COMMA:
+    CMP #$2C                    ; Is it a comma?
+    BNE PARSE_FILENAME_ERROR    ; If not comma, error
+    INX                         ; Skip comma
+
+    ; Skip any spaces after comma
+PARSE_FILENAME_SKIP_SPACES2:
+    CPX MON_CMDLEN              ; Check if we're at end of command
+    BCS PARSE_FILENAME_ERROR    ; If at or past end, error
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BNE PARSE_FILENAME_GET_NAME ; If not space, get filename
+    INX                         ; Skip space
+    JMP PARSE_FILENAME_SKIP_SPACES2
+
+PARSE_FILENAME_GET_NAME:
+    ; Copy filename from command buffer to file interface (max 12 chars)
+    LDY #$00                    ; Destination index (file name buffer)
+
+PARSE_FILENAME_COPY_LOOP:
+    CPX MON_CMDLEN              ; Check if we've reached end of command
+    BCS PARSE_FILENAME_COPIED   ; If so, we're done
+    CPY #$0C                    ; Check if file buffer is full (12 bytes max)
+    BCS PARSE_FILENAME_COPIED   ; If so, we're done
+
+    LDA MON_CMDBUF,X            ; Load character from command buffer
+    ; Check for valid filename characters (no spaces allowed)
+    CMP #$20                    ; Is it a space?
+    BEQ PARSE_FILENAME_COPIED   ; If space, end of filename
+
+    STA FILE_NAME_BUF,Y         ; Store in file name buffer
+    INX                         ; Move to next source character
+    INY                         ; Move to next destination character
+    JMP PARSE_FILENAME_COPY_LOOP ; Continue copying
+
+PARSE_FILENAME_COPIED:
+    ; Check if we have at least one character
+    CPY #$00                    ; Check if we copied any characters
+    BEQ PARSE_FILENAME_ERROR    ; If no characters, error
+
+    ; Null-terminate filename if there's room
+    CPY #$0C                    ; Check if buffer is full
+    BCS PARSE_FILENAME_FULL     ; If full, skip null termination
+    LDA #$00                    ; Load null terminator
+    STA FILE_NAME_BUF,Y         ; Store null terminator
+
+PARSE_FILENAME_FULL:
+    CLC                         ; Clear carry for success
+    RTS
+
+PARSE_FILENAME_ERROR:
+    SEC                         ; Set carry for error
+    RTS
+
 ; Print error message for invalid commands
 ; Modifies: A, X, Y
 PRINT_ERROR_MSG:
@@ -1288,78 +1663,71 @@ PRINT_ERROR_MSG:
     JSR PRINT_NEWLINE
     RTS
 
+; Print value error message for invalid hex values
+; Modifies: A, X, Y
+PRINT_VALUE_ERROR:
+    ; Print value error message
+    LDA #<MSG_VALUE_ERROR       ; Load low byte of message address
+    STA MON_MSG_PTR_LO          ; Store in message pointer
+    LDA #>MSG_VALUE_ERROR       ; Load high byte of message address
+    STA MON_MSG_PTR_HI          ; Store in message pointer high
+    JSR PRINT_MESSAGE           ; Print the message
+    JSR PRINT_NEWLINE
+    RTS
+
+; Print range error message for invalid address ranges
+; Modifies: A, X, Y
+PRINT_RANGE_ERROR:
+    ; Print range error message
+    LDA #<MSG_RANGE_ERROR       ; Load low byte of message address
+    STA MON_MSG_PTR_LO          ; Store in message pointer
+    LDA #>MSG_RANGE_ERROR       ; Load high byte of message address
+    STA MON_MSG_PTR_HI          ; Store in message pointer high
+    JSR PRINT_MESSAGE           ; Print the message
+    JSR PRINT_NEWLINE
+    RTS
+
+; Validate address range (start <= end)
+; Input: MON_CURRADDR_HI/LO (start address), MON_ENDADDR_HI/LO (end address)
+; Output: Carry clear if valid range, set if invalid
+; Modifies: A
+VALIDATE_ADDRESS_RANGE:
+    ; Compare high bytes first
+    LDA MON_CURRADDR_HI         ; Load start address high byte
+    CMP MON_ENDADDR_HI          ; Compare with end address high byte
+    BCC RANGE_VALID             ; start < end (high), valid
+    BNE RANGE_INVALID           ; start > end (high), invalid
+
+    ; High bytes equal, compare low bytes
+    LDA MON_CURRADDR_LO         ; Load start address low byte
+    CMP MON_ENDADDR_LO          ; Compare with end address low byte
+    BCC RANGE_VALID             ; start < end (low), valid
+    BEQ RANGE_VALID             ; start = end (low), valid (single byte)
+
+RANGE_INVALID:
+    SEC                         ; Set carry for invalid range
+    RTS
+
+RANGE_VALID:
+    CLC                         ; Clear carry for valid range
+    RTS
+
 ; ================================================================
 ; MONITOR COMMAND IMPLEMENTATIONS
 ; ================================================================
 
-; Entry point for starting the basic interpreter
-CMD_BASIC_MODE:
-    ; Print message
-    LDA #<MSG_ENTERING_BASIC
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_ENTERING_BASIC
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
-    JSR PRINT_NEWLINE
 
-    ; Ensure BASIC I/O vectors are set up correctly
-    ; Input vector - points to GET_KEYSTROKE
-    LDA #<K_GET_KEYSTROKE
-    STA VEC_IN
-    LDA #>K_GET_KEYSTROKE
-    STA VEC_IN+1
-    
-    ; Output vector - points to PRINT_CHAR
-    LDA #<K_PRINT_CHAR
-    STA VEC_OUT
-    LDA #>K_PRINT_CHAR
-    STA VEC_OUT+1
 
-    ; Jump to BASIC cold start
-    JMP $C000
-    
-    ; DEBUG: This should NEVER execute if JMP works correctly
-    LDA #<MSG_DEBUG_AFTER_JMP
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_DEBUG_AFTER_JMP
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
-    JSR PRINT_NEWLINE
-
-; Entry point for returning from BASIC to monitor
-; Reinitializes kernel state after BASIC has used zero page
-RETURN_FROM_BASIC:
-    ; Reinitialize hex lookup table (BASIC used $F0-$FF)
-    JSR     INIT_HEX_LOOKUP
-
-    ; Clear BASIC's zero page usage to prevent confusion
-    LDX     #$00
-    LDA     #$00
-CLEAR_BASIC_ZP:
-    STA     $48,X               ; Clear $48-$4F (BASIC variables)
-    INX
-    CPX     #$08
-    BNE     CLEAR_BASIC_ZP
-
-    ; Reset monitor state
-    LDA     #$00
-    STA     MON_MODE            ; Set to command mode
-    STA     MON_CMDLEN          ; Clear command length
-    STA     MON_ERROR_FLAG      ; Clear error flag
-
-    ; Jump to monitor main loop
-    JMP     MONITOR_MAIN
-
-; Clear screen command (K:)
+; Clear screen command (C:)
 ; Modifies: A, X
 CMD_CLEAR_SCREEN:
     JSR CLEAR_SCREEN            ; Call the unrolled clear screen routine
-    
+
     ; Reset cursor position to top-left
     LDA #$00
     STA CURSOR_X                ; Reset cursor X to 0
     STA CURSOR_Y                ; Reset cursor Y to 0
-    
+
     ; Reset screen pointer to start of screen memory
     LDA #<SCREEN_START          ; Load low byte of screen start ($00)
     STA SCREEN_PTR_LO           ; Store in screen pointer
@@ -1442,7 +1810,7 @@ HELP_LOOP:
     JSR PRINT_MESSAGE
     JSR PRINT_NEWLINE
     INX
-    CPX #16                 ; 8 messages * 2 bytes each
+    CPX #24                 ; 12 messages * 2 bytes each
     BNE HELP_LOOP
     RTS
 
@@ -1467,7 +1835,7 @@ CMD_WRITE_MODE:
     JSR WRITE_MODE_LOOP         ; Handle sequential byte input
     RTS
 
-; Read mode command (R:xxxx or R:xxxx-yyyy) - Enter read mode and display memory
+; Read mode command (R:xxxx or R:xxxx-yyyy) - Display memory (one-shot)
 ; Input: Address(es) in MON_CURRADDR_HI/LO and optionally MON_ENDADDR_HI/LO
 ; Modifies: A, X, Y
 CMD_READ_MODE:
@@ -1476,113 +1844,145 @@ CMD_READ_MODE:
     STA CMD_LINE_COUNT          ; Reset command line counter
     STA PAGE_ABORT_FLAG         ; Reset abort flag
 
-    LDA #MON_MODE_READ          ; Set to read mode
-    STA MON_MODE                ; Update mode
-
     ; Check if we have end address (range operation)
     LDA MON_ENDADDR_HI          ; Check if end address is set
     ORA MON_ENDADDR_LO          ; (non-zero means range)
     BEQ CMD_READ_SINGLE         ; If zero, single address
 
-    ; Range operation - dump memory range with 8-byte formatting
+    ; Range operation - validate range first
+    JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
+    BCS CMD_READ_RANGE_ERROR    ; If invalid range, show error
+
+CMD_READ_RANGE_VALID:
+    ; Display memory range with 8-byte formatting
     JSR READ_MEMORY_RANGE       ; Display the range with read-specific formatting
-    JMP CMD_READ_DONE
+    RTS
+
+CMD_READ_RANGE_ERROR:
+    JSR PRINT_RANGE_ERROR       ; Print ?RANGE message
+    RTS
 
 CMD_READ_SINGLE:
     ; Single address - show single byte in format "xxxx: bb"
     JSR SHOW_READ_ADDRESS       ; Use read-specific display routine
-
-CMD_READ_DONE:
-    ; After read operation, remain in read mode for continued interaction
-    JSR READ_MODE_LOOP          ; Enter interactive read mode
     RTS
 
 ; Go/Run mode command (G:xxxx) - Execute program at specified address
 ; Input: Address in MON_CURRADDR_HI/LO
 ; Modifies: A
 CMD_GO_MODE:
-    LDA #MON_MODE_RUN           ; Set to run mode
-    STA MON_MODE                ; Update mode
-
-    ; Display message indicating program execution
-    JSR PRINT_RUN_MESSAGE       ; Print "RUNNING AT XXXX"
-
     ; Call user program (this pushes return address)
     JSR RUN_USER_PROGRAM
 
     ; User program returns here
-    LDA #MON_MODE_CMD           ; Reset to command mode
-    STA MON_MODE
     RTS
 
 RUN_USER_PROGRAM:
     JMP (MON_CURRADDR_LO)       ; Jump to user program
 
-; Load mode command (L:xxxx) - Enter load mode at specified address
-; Input: Address in MON_CURRADDR_HI/LO
+; Load command (L:xxxx,filename) - Load file at specified address (one-shot)
+; Input: Address in MON_CURRADDR_HI/LO, filename in FILE_NAME_BUF
 ; Modifies: A, X, Y
 CMD_LOAD_MODE:
-    LDA #MON_MODE_LOAD          ; Set to load mode
-    STA MON_MODE                ; Update mode
+    ; Set up file I/O communication with C++ host
+    ; Store target address in file I/O interface
+    LDA MON_CURRADDR_LO         ; Get load address low byte
+    STA FILE_ADDR_LO            ; Store in file interface
+    LDA MON_CURRADDR_HI         ; Get load address high byte
+    STA FILE_ADDR_HI            ; Store in file interface
 
-    ; Display current address for loading
-    JSR SHOW_LOAD_ADDRESS       ; Show "LOAD AT XXXX:" format
+    ; Filename is already in FILE_NAME_BUF from PARSE_FILENAME
 
-    ; Enter load mode loop for filename input
-    JSR LOAD_MODE_LOOP          ; Handle filename input and loading
+    ; Issue load command to C++ host
+    LDA #FILE_LOAD_CMD          ; Load command code
+    STA FILE_COMMAND            ; Store in command register
+
+    ; Wait for operation to complete
+LOAD_WAIT_COMPLETE:
+    LDA FILE_STATUS             ; Read status register
+    CMP #FILE_IN_PROGRESS       ; Still in progress?
+    BEQ LOAD_WAIT_COMPLETE      ; If so, keep waiting
+
+    ; Check if operation was successful
+    CMP #FILE_SUCCESS           ; Was it successful?
+    BEQ LOAD_CMD_SUCCESS        ; If so, show success message
+
+    ; Operation failed - show error
+    JSR PRINT_ERROR_MSG         ; Print error message
     RTS
 
-; Save mode command (S:xxxx-yyyy) - Save memory range to file
+LOAD_CMD_SUCCESS:
+    ; Show success message
+    LDA #<MSG_SUCCESS           ; Use OK message
+    STA MON_MSG_PTR_LO          ; Store in message pointer
+    LDA #>MSG_SUCCESS           ; Load high byte of message address
+    STA MON_MSG_PTR_HI          ; Store in message pointer high
+    JSR PRINT_MESSAGE           ; Print the message
+    JSR PRINT_NEWLINE           ; Add newline
+    RTS
+
+; Save mode command (S:xxxx-yyyy,filename) - Save memory range to file
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
+;        Filename already parsed in MON_PARSE_FILENAME buffer
 ; Modifies: A, X, Y
 CMD_SAVE_MODE:
     ; Check if we have a valid address range (end address must be non-zero)
     LDA MON_ENDADDR_LO          ; Check end address low byte
     ORA MON_ENDADDR_HI          ; OR with high byte
-    BNE SAVE_MODE_VALID_RANGE   ; If non-zero, we have a valid range
-    
-    ; Invalid range - show error and exit
-    JSR PRINT_ERROR_MSG         ; Print error message
+    BEQ SAVE_RANGE_ERROR        ; If zero, no range specified
+
+    ; Validate that start <= end
+    JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
+    BCC SAVE_MODE_VALID_RANGE   ; If valid range, continue
+
+SAVE_RANGE_ERROR:
+    JSR PRINT_RANGE_ERROR       ; Print range error message
     RTS
 
 SAVE_MODE_VALID_RANGE:
-    LDA #MON_MODE_SAVE          ; Set to save mode
-    STA MON_MODE                ; Update mode
+    ; Set up file I/O communication with C++ host
+    ; Store start address in file I/O interface
+    LDA MON_STARTADDR_LO        ; Get start address low byte
+    STA FILE_ADDR_LO            ; Store in file interface
+    LDA MON_STARTADDR_HI        ; Get start address high byte
+    STA FILE_ADDR_HI            ; Store in file interface
 
-    ; Display memory range for saving
-    JSR SHOW_SAVE_RANGE         ; Show "SAVE xxxx-yyyy:" format
+    ; Store end address in additional PIA registers
+    LDA MON_ENDADDR_LO          ; Get end address low byte
+    STA FILE_END_ADDR_LO        ; Store in file end address low
+    LDA MON_ENDADDR_HI          ; Get end address high byte
+    STA FILE_END_ADDR_HI        ; Store in file end address high
 
-    ; Enter save mode loop for filename input
-    JSR SAVE_MODE_LOOP          ; Handle filename input and saving
+    ; Filename is already in FILE_NAME_BUF from PARSE_FILENAME
+
+    ; Issue save command to C++ host
+    LDA #FILE_SAVE_CMD          ; Save command code
+    STA FILE_COMMAND            ; Store in command register
+
+    ; Wait for operation to complete
+SAVE_WAIT_COMPLETE:
+    LDA FILE_STATUS             ; Read status register
+    CMP #FILE_IN_PROGRESS       ; Still in progress?
+    BEQ SAVE_WAIT_COMPLETE      ; If so, keep waiting
+
+    ; Check if operation was successful
+    CMP #FILE_SUCCESS           ; Was it successful?
+    BEQ SAVE_CMD_SUCCESS        ; If so, show success message
+
+    ; Operation failed - show error
+    JSR PRINT_ERROR_MSG         ; Print error message
     RTS
 
-; Print run message showing execution address
-; Modifies: A, X, Y
-PRINT_RUN_MESSAGE:
-    ; Print "RUNNING AT "
-    LDA #<MSG_RUN_AT            ; Load low byte of message address
+SAVE_CMD_SUCCESS:
+    ; Show success message
+    LDA #<MSG_SUCCESS           ; Use OK message
     STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_RUN_AT            ; Load high byte of message address
+    LDA #>MSG_SUCCESS           ; Load high byte of message address
     STA MON_MSG_PTR_HI          ; Store in message pointer high
     JSR PRINT_MESSAGE           ; Print the message
-
-    ; Print the execution address
-    LDX #$00                    ; Start at beginning of buffer
-    JSR ADDR_TO_HEX_QUAD        ; Convert address to hex string
-
-    ; Print the address
-    LDX #$00                    ; Start at beginning of buffer
-    LDY #$04                    ; Print 4 characters
-
-PRINT_RUN_ADDR_LOOP:
-    LDA MON_CMDBUF,X            ; Load character
-    JSR PRINT_CHAR              ; Print it
-    INX                         ; Move to next character
-    DEY                         ; Decrement count
-    BNE PRINT_RUN_ADDR_LOOP     ; Continue until done
-
-    JSR PRINT_NEWLINE           ; End with newline
+    JSR PRINT_NEWLINE           ; Add newline
     RTS
+
 
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
 ; Modifies: A, X, Y
@@ -1844,8 +2244,8 @@ WRITE_MODE_SHOW_RESULT:
     JMP WRITE_MODE_INPUT
 
 WRITE_MODE_ERROR:
-    ; Display error message for invalid hex input
-    JSR PRINT_ERROR_MSG         ; Print error
+    ; Display value error message for invalid hex input
+    JSR PRINT_VALUE_ERROR       ; Print value error
     JMP WRITE_MODE_INPUT        ; Continue input
 
 WRITE_MODE_DONE:
@@ -1875,366 +2275,414 @@ READ_MEMORY_RANGE:
     JSR DUMP_MEMORY_RANGE       ; Use common memory dump with 8-byte formatting
     RTS
 
-; Read mode interactive loop - allows continued read operations
+
+
+
+
+; Fill memory command - Fill memory range with specified byte value
+; Input: MON_CURRADDR_HI/LO (start), MON_ENDADDR_HI/LO (end), MON_FILL_VALUE (fill byte)
 ; Modifies: A, X, Y
-READ_MODE_LOOP:
-    ; Stay in read mode and accept additional commands
-READ_MODE_INPUT:
-    JSR PRINT_MONITOR_PROMPT
-    JSR READ_COMMAND_LINE
+CMD_FILL_MODE:
+    ; Validate address range (start <= end)
+    JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
+    BCS FILL_RANGE_ERROR        ; If invalid range, show error
+    JMP FILL_RANGE_VALID        ; Continue with valid range
 
-    ; Check if it's just ESC
-    LDA MON_CMDLEN
-    CMP #$01
-    BNE READ_MODE_CHECK_EMPTY
-    LDA MON_CMDBUF
-    CMP #ASCII_ESC
-    BEQ READ_MODE_DONE
-
-READ_MODE_CHECK_EMPTY:
-    ; Check if empty (just continue)
-    LDA MON_CMDLEN
-    BEQ READ_MODE_INPUT
-
-READ_MODE_PARSE_CMD:
-    JSR PRINT_ERROR_MSG         ; Print error
-    JMP READ_MODE_INPUT         ; Continue input
-
-READ_MODE_ERROR:
-    ; Display error message for invalid commands
-    JSR PRINT_ERROR_MSG         ; Print error
-    JMP READ_MODE_INPUT         ; Continue input
-
-READ_MODE_DONE:
-    ; Exit read mode and return to command mode
-    LDA #MON_MODE_CMD           ; Set to command mode
-    STA MON_MODE                ; Update mode
+FILL_RANGE_ERROR:
+    JSR PRINT_RANGE_ERROR       ; Print range error message
     RTS
 
-; ================================================================
-; MONITOR LOAD MODE IMPLEMENTATION
-; ================================================================
+FILL_RANGE_VALID:
+    ; Perform fill operation
+    LDY #$00                    ; Initialize Y index
+    LDA MON_FILL_VALUE          ; Load fill value
 
-; Display current address for load mode
-; Input: Address in MON_CURRADDR_HI/LO
-; Modifies: A, X, Y
-SHOW_LOAD_ADDRESS:
-    ; Display current address in "LOAD AT XXXX:" format
-    LDA #<MSG_LOAD_AT           ; Load low byte of message address
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_LOAD_AT           ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+FILL_LOOP:
+    ; Fill byte at current address
+    STA (MON_CURRADDR_LO),Y     ; Store fill value at current address
 
-    ; Print the address
-    LDX #$00                    ; Start at beginning of buffer
-    JSR ADDR_TO_HEX_QUAD        ; Convert address to hex string
+    ; Check if we've reached end address
+    LDA MON_CURRADDR_HI
+    CMP MON_ENDADDR_HI
+    BCC FILL_CONTINUE           ; Current < end (high), continue
+    BNE FILL_DONE              ; Current > end (high), done
+    LDA MON_CURRADDR_LO
+    CMP MON_ENDADDR_LO
+    BCS FILL_DONE              ; Current >= end (low), done
 
-    ; Print the address
-    LDX #$00                    ; Start at beginning of buffer
-    LDY #$04                    ; Print 4 characters
-SHOW_LOAD_ADDR_LOOP:
-    LDA MON_CMDBUF,X            ; Load character
-    JSR PRINT_CHAR              ; Print it
-    INX                         ; Move to next character
-    DEY                         ; Decrement count
-    BNE SHOW_LOAD_ADDR_LOOP     ; Continue until done
+FILL_CONTINUE:
+    ; Increment current address
+    INC MON_CURRADDR_LO
+    BNE FILL_NO_CARRY          ; No carry, continue
+    INC MON_CURRADDR_HI        ; Handle carry
 
-    ; Print colon
-    LDA #ASCII_COLON            ; Print colon
-    JSR PRINT_CHAR
-    JSR PRINT_NEWLINE           ; End with newline
-    RTS
+FILL_NO_CARRY:
+    LDA MON_FILL_VALUE         ; Reload fill value
+    JMP FILL_LOOP              ; Continue filling
 
-; Load mode main loop - handles filename input and loading
-; Modifies: A, X, Y
-LOAD_MODE_LOOP:
-    ; Initialize for load operation
-    LDA #$00                    ; Clear accumulator
-    STA MON_ERROR_FLAG          ; Clear error flag
-
-LOAD_MODE_INPUT:
-    ; Prompt for filename
-    LDA #<MSG_FILENAME_PROMPT
+FILL_DONE:
+    ; Print success message
+    LDA #<MSG_SUCCESS
     STA MON_MSG_PTR_LO
-    LDA #>MSG_FILENAME_PROMPT
+    LDA #>MSG_SUCCESS
     STA MON_MSG_PTR_HI
     JSR PRINT_MESSAGE
-
-    ; Read filename from user
-    JSR READ_COMMAND_LINE
-
-    ; Check if it's just ESC
-    LDA MON_CMDLEN
-    CMP #$01
-    BNE LOAD_MODE_CHECK_EMPTY
-    LDA MON_CMDBUF
-    CMP #ASCII_ESC
-    BEQ LOAD_MODE_DONE
-
-LOAD_MODE_CHECK_EMPTY:
-    ; Check for empty input
-    LDA MON_CMDLEN
-    BEQ LOAD_MODE_DONE
-
-LOAD_MODE_PROCESS_FILE:
-    ; Validate filename (basic check for non-empty)
-    LDA MON_CMDLEN              ; Check command length
-    BEQ LOAD_MODE_ERROR         ; If empty, error
-
-    ; Set up file I/O communication with C++ host
-    ; Store target address in file I/O interface
-    LDA MON_CURRADDR_LO         ; Get load address low byte
-    STA FILE_ADDR_LO            ; Store in file interface
-    LDA MON_CURRADDR_HI         ; Get load address high byte
-    STA FILE_ADDR_HI            ; Store in file interface
-
-    ; Copy filename from command buffer to file interface (max 12 chars)
-    LDX #$00                    ; Source index (command buffer)
-    LDY #$00                    ; Destination index (file name buffer)
-
-COPY_FILENAME_LOOP:
-    CPX MON_CMDLEN              ; Check if we've reached end of command
-    BCS FILENAME_COPIED         ; If so, we're done
-    CPY #$0C                    ; Check if file buffer is full (12 bytes max)
-    BCS FILENAME_COPIED         ; If so, we're done
-    
-    LDA MON_CMDBUF,X            ; Load character from command buffer
-    STA FILE_NAME_BUF,Y         ; Store in file name buffer
-    INX                         ; Move to next source character
-    INY                         ; Move to next destination character
-    JMP COPY_FILENAME_LOOP      ; Continue copying
-
-FILENAME_COPIED:
-    ; Null-terminate filename if there's room
-    CPY #$0C                    ; Check if buffer is full
-    BCS FILENAME_FULL           ; If full, skip null termination
-    LDA #$00                    ; Load null terminator
-    STA FILE_NAME_BUF,Y         ; Store null terminator
-
-FILENAME_FULL:
-    ; Issue load command to C++ host
-    LDA #FILE_LOAD_CMD          ; Load command code
-    STA FILE_COMMAND            ; Store in command register
-
-    ; Wait for operation to complete
-WAIT_FOR_LOAD:
-    LDA FILE_STATUS             ; Read status register
-    CMP #FILE_IN_PROGRESS       ; Still in progress?
-    BEQ WAIT_FOR_LOAD           ; If so, keep waiting
-    
-    ; Check if operation was successful
-    CMP #FILE_SUCCESS           ; Was it successful?
-    BEQ LOAD_SUCCESS            ; If so, show success message
-    
-    ; Operation failed - show error
-    LDA #<MSG_SYNTAX_ERROR      ; Use error message
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_SYNTAX_ERROR      ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the error message
-    JSR PRINT_NEWLINE           ; Add newline
-    JMP LOAD_MODE_DONE          ; Exit load mode
-
-LOAD_SUCCESS:
-    ; Show success message
-    LDA #<MSG_LOAD_SUCCESS      ; Load success message
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_LOAD_SUCCESS      ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE           ; Add newline
-
-    ; Exit load mode after successful operation
-    JMP LOAD_MODE_DONE
-
-LOAD_MODE_ERROR:
-    ; Display error message for invalid filename
-    JSR PRINT_ERROR_MSG         ; Print error
-    JMP LOAD_MODE_INPUT         ; Continue input
-
-LOAD_MODE_DONE:
-    ; Exit load mode and return to command mode
-    LDA #MON_MODE_CMD           ; Set to command mode
-    STA MON_MODE                ; Update mode
+    JSR PRINT_NEWLINE
     RTS
 
-; ================================================================
-; MONITOR SAVE MODE IMPLEMENTATION
-; ================================================================
-
-; Display memory range for save mode
-; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
+; Move/Copy memory command - Copy or move memory block with optional source clearing
+; Input: MON_CURRADDR_HI/LO (start), MON_ENDADDR_HI/LO (end), MON_DEST_ADDR_HI/LO (destination), MON_COPY_MODE (0=copy, 1=move)
 ; Modifies: A, X, Y
-SHOW_SAVE_RANGE:
-    ; Display message "SAVE "
-    LDA #<MSG_SAVE_RANGE        ; Load low byte of message address
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_SAVE_RANGE        ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+CMD_MOVE_MODE:
+    ; Validate address range (start <= end)
+    JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
+    BCS MOVE_RANGE_ERROR        ; If invalid range, show error
 
-    ; Print start address (MON_STARTADDR_HI/LO)
-    LDA MON_STARTADDR_HI        ; Load start address high byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
-    PHA                         ; Save second character
-    LDA MON_HEX_TEMP            ; Get first hex character
-    JSR PRINT_CHAR              ; Print it
-    PLA                         ; Restore second character
-    JSR PRINT_CHAR              ; Print it
-
-    LDA MON_STARTADDR_LO        ; Load start address low byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
-    PHA                         ; Save second character
-    LDA MON_HEX_TEMP            ; Get first hex character
-    JSR PRINT_CHAR              ; Print it
-    PLA                         ; Restore second character
-    JSR PRINT_CHAR              ; Print it
-
-    ; Print dash separator
-    LDA #ASCII_DASH             ; Print dash
-    JSR PRINT_CHAR
-
-    ; Print end address (MON_ENDADDR_HI/LO)
-    LDA MON_ENDADDR_HI          ; Load end address high byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
-    PHA                         ; Save second character
-    LDA MON_HEX_TEMP            ; Get first hex character
-    JSR PRINT_CHAR              ; Print it
-    PLA                         ; Restore second character
-    JSR PRINT_CHAR              ; Print it
-
-    LDA MON_ENDADDR_LO          ; Load end address low byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
-    PHA                         ; Save second character
-    LDA MON_HEX_TEMP            ; Get first hex character
-    JSR PRINT_CHAR              ; Print it
-    PLA                         ; Restore second character
-    JSR PRINT_CHAR              ; Print it
-
-    ; Print colon
-    LDA #ASCII_COLON            ; Print colon
-    JSR PRINT_CHAR
-    JSR PRINT_NEWLINE           ; End with newline
+MOVE_RANGE_ERROR:
+    JSR PRINT_RANGE_ERROR       ; Print range error message
     RTS
 
-; Save mode main loop - handles filename input and saving
-; Modifies: A, X, Y
-SAVE_MODE_LOOP:
-    ; Initialize for save operation
-    LDA #$00                    ; Clear accumulator
-    STA MON_ERROR_FLAG          ; Clear error flag
+MOVE_RANGE_VALID:
+    ; Save all original address variables on stack to preserve them for next command
+    LDA MON_CURRADDR_LO
+    PHA
+    LDA MON_CURRADDR_HI
+    PHA
+    LDA MON_ENDADDR_LO
+    PHA
+    LDA MON_ENDADDR_HI
+    PHA
+    LDA MON_DEST_ADDR_LO
+    PHA
+    LDA MON_DEST_ADDR_HI
+    PHA
 
-SAVE_MODE_INPUT:
-    ; Prompt for filename
-    LDA #<MSG_FILENAME_PROMPT
+    ; Store start and end addresses for later use within this function
+    LDA MON_CURRADDR_LO
+    STA MON_STARTADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_STARTADDR_HI
+
+    ; Check for overlapping memory regions
+    ; If destination is between source start and end, we need backward copy
+    LDA MON_DEST_ADDR_HI        ; Compare dest with source start
+    CMP MON_CURRADDR_HI
+    BCC MOVE_FORWARD            ; dest < start, safe for forward copy
+    BNE MOVE_CHECK_OVERLAP      ; dest > start, check if overlaps
+    LDA MON_DEST_ADDR_LO
+    CMP MON_CURRADDR_LO
+    BCC MOVE_FORWARD            ; dest < start, safe for forward copy
+
+MOVE_CHECK_OVERLAP:
+    ; Check if destination is within source range
+    LDA MON_DEST_ADDR_HI        ; Compare dest with source end
+    CMP MON_ENDADDR_HI
+    BCC MOVE_BACKWARD           ; dest < end, overlaps, need backward copy
+    BNE MOVE_FORWARD            ; dest > end, no overlap
+    LDA MON_DEST_ADDR_LO
+    CMP MON_ENDADDR_LO
+    BCC MOVE_BACKWARD           ; dest <= end, overlaps, need backward copy
+
+MOVE_FORWARD:
+    ; Forward copy: copy from start to end
+    LDY #$00                    ; Initialize Y index
+
+MOVE_FORWARD_LOOP:
+    ; Copy byte from source to destination
+    LDA (MON_CURRADDR_LO),Y     ; Load byte from source
+    ; We need to use zero page addressing since MON_DEST_ADDR is not in zero page
+    ; Use JUMP_VECTOR ($06/$07) as temporary zero page pointer
+    PHA                         ; Save the byte to copy
+    LDA MON_DEST_ADDR_LO        ; Load dest address low
+    STA JUMP_VECTOR             ; Store in zero page temp location
+    LDA MON_DEST_ADDR_HI        ; Load dest address high
+    STA JUMP_VECTOR+1           ; Store in zero page temp location+1
+    PLA                         ; Restore the byte to copy
+    STA (JUMP_VECTOR),Y         ; Store using zero page indirect
+
+    ; Check if this was the last byte to copy (current == end)
+    LDA MON_CURRADDR_HI
+    CMP MON_ENDADDR_HI
+    BNE MOVE_FORWARD_CONTINUE   ; Not equal, continue or check
+    LDA MON_CURRADDR_LO
+    CMP MON_ENDADDR_LO
+    BEQ MOVE_FORWARD_DONE       ; Equal, we just copied the last byte, done
+
+MOVE_FORWARD_CONTINUE:
+    ; Not the last byte yet, increment addresses and continue
+    INC MON_CURRADDR_LO
+    BNE MOVE_FORWARD_NO_SRC_CARRY
+    INC MON_CURRADDR_HI
+
+MOVE_FORWARD_NO_SRC_CARRY:
+    INC MON_DEST_ADDR_LO
+    BNE MOVE_FORWARD_NO_DEST_CARRY
+    INC MON_DEST_ADDR_HI
+
+MOVE_FORWARD_NO_DEST_CARRY:
+    JMP MOVE_FORWARD_LOOP       ; Continue copying
+
+MOVE_FORWARD_DONE:
+    JMP MOVE_CLEAR_CHECK        ; Check if we need to clear source
+
+MOVE_BACKWARD:
+    ; Backward copy: start from end and work backwards
+    ; Set current address to end address
+    LDA MON_ENDADDR_LO
+    STA MON_CURRADDR_LO
+    LDA MON_ENDADDR_HI
+    STA MON_CURRADDR_HI
+
+    ; Calculate destination end address
+    ; dest_end = dest + (source_end - source_start)
+    ; First calculate the offset (end - start)
+    LDA MON_ENDADDR_LO
+    SEC
+    SBC MON_STARTADDR_LO        ; offset_lo = end_lo - start_lo
+    TAX                         ; Save offset low
+    LDA MON_ENDADDR_HI
+    SBC MON_STARTADDR_HI        ; offset_hi = end_hi - start_hi with borrow
+
+    ; Add offset to destination to get destination end
+    STX MON_HEX_TEMP            ; Use temp storage for offset_lo
+    CLC
+    LDA MON_DEST_ADDR_LO
+    ADC MON_HEX_TEMP            ; dest_end_lo = dest_lo + offset_lo
+    STA MON_DEST_ADDR_LO
+    LDA MON_DEST_ADDR_HI
+    ADC $00                     ; dest_end_hi = dest_hi + offset_hi + carry
+    STA MON_DEST_ADDR_HI
+
+    LDY #$00                    ; Initialize Y index
+
+MOVE_BACKWARD_LOOP:
+    ; Copy byte from source to destination (both at end positions)
+    LDA (MON_CURRADDR_LO),Y     ; Load byte from source
+    ; We need to use zero page addressing since MON_DEST_ADDR is not in zero page
+    ; Use JUMP_VECTOR ($06/$07) as temporary zero page pointer
+    PHA                         ; Save the byte to copy
+    LDA MON_DEST_ADDR_LO        ; Load dest address low
+    STA JUMP_VECTOR             ; Store in zero page temp location
+    LDA MON_DEST_ADDR_HI        ; Load dest address high
+    STA JUMP_VECTOR+1           ; Store in zero page temp location+1
+    PLA                         ; Restore the byte to copy
+    STA (JUMP_VECTOR),Y         ; Store using zero page indirect
+
+    ; Check if we've reached start address (going backwards)
+    LDA MON_CURRADDR_HI
+    CMP MON_STARTADDR_HI
+    BCC MOVE_BACKWARD_DONE      ; Current < start (high), done
+    BNE MOVE_BACKWARD_CONTINUE  ; Current > start (high), continue
+    LDA MON_CURRADDR_LO
+    CMP MON_STARTADDR_LO
+    BCC MOVE_BACKWARD_DONE      ; Current < start (low), done
+    BEQ MOVE_BACKWARD_DONE      ; Current = start (low), done after this copy
+
+MOVE_BACKWARD_CONTINUE:
+    ; Decrement both source and destination addresses
+    LDA MON_CURRADDR_LO
+    BNE MOVE_BACKWARD_NO_SRC_BORROW
+    DEC MON_CURRADDR_HI
+
+MOVE_BACKWARD_NO_SRC_BORROW:
+    DEC MON_CURRADDR_LO
+
+    LDA MON_DEST_ADDR_LO
+    BNE MOVE_BACKWARD_NO_DEST_BORROW
+    DEC MON_DEST_ADDR_HI
+
+MOVE_BACKWARD_NO_DEST_BORROW:
+    DEC MON_DEST_ADDR_LO
+    JMP MOVE_BACKWARD_LOOP      ; Continue copying
+
+MOVE_BACKWARD_DONE:
+    ; Fall through to clear check
+
+MOVE_CLEAR_CHECK:
+    ; Check if this is a move operation (need to clear source)
+    LDA MON_COPY_MODE
+    BEQ MOVE_SUCCESS            ; Copy mode (0), skip clearing
+
+    ; Move mode (1): clear source memory
+    ; Restore original source range
+    LDA MON_STARTADDR_LO
+    STA MON_CURRADDR_LO
+    LDA MON_STARTADDR_HI
+    STA MON_CURRADDR_HI
+
+    LDY #$00                    ; Initialize Y index
+    LDA #$00                    ; Clear value
+
+MOVE_CLEAR_LOOP:
+    ; Clear byte at current source address
+    STA (MON_CURRADDR_LO),Y     ; Store zero at source address
+
+    ; Check if we've reached end address
+    LDA MON_CURRADDR_HI
+    CMP MON_ENDADDR_HI
+    BCC MOVE_CLEAR_CONTINUE     ; Current < end (high), continue
+    BNE MOVE_CLEAR_DONE         ; Current > end (high), done
+    LDA MON_CURRADDR_LO
+    CMP MON_ENDADDR_LO
+    BCS MOVE_CLEAR_DONE         ; Current >= end (low), done
+
+MOVE_CLEAR_CONTINUE:
+    ; Increment current address
+    INC MON_CURRADDR_LO
+    BNE MOVE_CLEAR_NO_CARRY
+    INC MON_CURRADDR_HI
+
+MOVE_CLEAR_NO_CARRY:
+    LDA #$00                    ; Reload clear value
+    JMP MOVE_CLEAR_LOOP         ; Continue clearing
+
+MOVE_CLEAR_DONE:
+    JMP MOVE_SUCCESS            ; Show success message
+
+MOVE_SUCCESS:
+    ; Restore all original address variables from stack
+    PLA
+    STA MON_DEST_ADDR_HI
+    PLA
+    STA MON_DEST_ADDR_LO
+    PLA
+    STA MON_ENDADDR_HI
+    PLA
+    STA MON_ENDADDR_LO
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+
+    ; Print success message based on mode
+    LDA MON_COPY_MODE
+    BEQ MOVE_SHOW_COPY_MSG      ; Copy mode
+
+    ; Move mode - different message could be shown here
+    LDA #<MSG_SUCCESS
     STA MON_MSG_PTR_LO
-    LDA #>MSG_FILENAME_PROMPT
+    LDA #>MSG_SUCCESS
     STA MON_MSG_PTR_HI
     JSR PRINT_MESSAGE
+    JSR PRINT_NEWLINE
+    RTS
 
-    ; Read filename from user
-    JSR READ_COMMAND_LINE
+MOVE_SHOW_COPY_MSG:
+    ; Copy mode
+    LDA #<MSG_SUCCESS
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_SUCCESS
+    STA MON_MSG_PTR_HI
+    JSR PRINT_MESSAGE
+    JSR PRINT_NEWLINE
+    RTS
 
-    ; Check if it's just ESC
-    LDA MON_CMDLEN
-    CMP #$01
-    BNE SAVE_MODE_CHECK_EMPTY
-    LDA MON_CMDBUF
-    CMP #ASCII_ESC
-    BEQ SAVE_MODE_DONE
+; Search memory command - Search for hex pattern in memory range
+; Input: MON_CURRADDR_HI/LO (start), MON_ENDADDR_HI/LO (end), pattern in MON_SEARCH_PATTERN, length in MON_PATTERN_LEN
+; Modifies: A, X, Y
+CMD_SEARCH_MODE:
+    ; Save original current address to preserve it (search should not modify current address)
+    LDA MON_CURRADDR_LO
+    PHA
+    LDA MON_CURRADDR_HI
+    PHA
 
-SAVE_MODE_CHECK_EMPTY:
-    ; Check for empty input
-    LDA MON_CMDLEN
-    BEQ SAVE_MODE_DONE
+    ; Initialize line counter and abort flag for paging
+    LDA #0
+    STA CMD_LINE_COUNT          ; Reset command line counter
+    STA PAGE_ABORT_FLAG         ; Reset abort flag
 
-SAVE_MODE_PROCESS_FILE:
-    ; Validate filename (basic check for non-empty)
-    LDA MON_CMDLEN              ; Check command length
-    BEQ SAVE_MODE_ERROR         ; If empty, error
+    ; Validate address range (start <= end)
+    JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
+    BCS SEARCH_RANGE_ERROR      ; If invalid range, show error
 
-    ; Set up file I/O communication with C++ host
-    ; Store start and end addresses in file I/O interface
-    LDA MON_STARTADDR_LO        ; Get start address low byte
-    STA FILE_ADDR_LO            ; Store in file interface
-    LDA MON_STARTADDR_HI        ; Get start address high byte
-    STA FILE_ADDR_HI            ; Store in file interface
+SEARCH_RANGE_ERROR:
+    ; Restore original current address before error exit
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+    JSR PRINT_RANGE_ERROR       ; Print range error message
+    RTS
 
-    ; Store end address in additional PIA registers (will extend PIA interface)
-    LDA MON_ENDADDR_LO          ; Get end address low byte
-    STA FILE_END_ADDR_LO        ; Store in file end address low
-    LDA MON_ENDADDR_HI          ; Get end address high byte
-    STA FILE_END_ADDR_HI        ; Store in file end address high
+SEARCH_RANGE_VALID:
+    ; Perform search operation
+    ; Copy start address to current address for searching
+    LDA MON_CURRADDR_LO
+    STA MON_STARTADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_STARTADDR_HI
 
-    ; Copy filename from command buffer to file interface (max 12 chars)
-    LDX #$00                    ; Source index (command buffer)
-    LDY #$00                    ; Destination index (file name buffer)
+SEARCH_LOOP:
+    ; Check if user aborted
+    LDA PAGE_ABORT_FLAG
+    BEQ SEARCH_CONTINUE
+    JMP SEARCH_DONE            ; User aborted, exit through normal cleanup
 
-COPY_SAVE_FILENAME_LOOP:
-    CPX MON_CMDLEN              ; Check if we've reached end of command
-    BCS SAVE_FILENAME_COPIED    ; If so, we're done
-    CPY #$0C                    ; Check if file buffer is full (12 bytes max)
-    BCS SAVE_FILENAME_COPIED    ; If so, we're done
-    
-    LDA MON_CMDBUF,X            ; Load character from command buffer
-    STA FILE_NAME_BUF,Y         ; Store in file name buffer
-    INX                         ; Move to next source character
-    INY                         ; Move to next destination character
-    JMP COPY_SAVE_FILENAME_LOOP ; Continue copying
+SEARCH_CONTINUE:
+    ; Check if we've gone past end address
+    LDA MON_CURRADDR_HI
+    CMP MON_ENDADDR_HI
+    BCC SEARCH_CHECK_PATTERN    ; Current < end, continue searching
+    BNE SEARCH_DONE             ; Current > end, done
+    LDA MON_CURRADDR_LO
+    CMP MON_ENDADDR_LO
+    BCC SEARCH_CHECK_PATTERN    ; Current < end, continue searching
+    BEQ SEARCH_CHECK_PATTERN    ; Current = end, check last position
 
-SAVE_FILENAME_COPIED:
-    ; Null-terminate filename if there's room
-    CPY #$0C                    ; Check if buffer is full
-    BCS SAVE_FILENAME_FULL      ; If full, skip null termination
-    LDA #$00                    ; Load null terminator
-    STA FILE_NAME_BUF,Y         ; Store null terminator
+    ; If we get here, current > end
+    JMP SEARCH_DONE             ; We're past the end, done
 
-SAVE_FILENAME_FULL:
-    ; Issue save command to C++ host
-    LDA #FILE_SAVE_CMD          ; Save command code
-    STA FILE_COMMAND            ; Store in command register
+SEARCH_CHECK_PATTERN:
+    ; Check if pattern matches at current address
+    LDY #$00                    ; Pattern index
 
-    ; Wait for operation to complete
-WAIT_FOR_SAVE:
-    LDA FILE_STATUS             ; Read status register
-    CMP #FILE_IN_PROGRESS       ; Still in progress?
-    BEQ WAIT_FOR_SAVE           ; If so, keep waiting
-    
-    ; Check if operation was successful
-    CMP #FILE_SUCCESS           ; Was it successful?
-    BEQ SAVE_SUCCESS            ; If so, show success message
-    
-    ; Operation failed - show error
-    LDA #<MSG_SYNTAX_ERROR      ; Use error message
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_SYNTAX_ERROR      ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the error message
+SEARCH_PATTERN_LOOP:
+    ; Check if we have more pattern bytes to match
+    CPY MON_PATTERN_LEN
+    BCS SEARCH_FOUND_MATCH      ; If Y >= pattern length, we found a match
+
+    ; Get memory byte at current address + Y offset
+    LDA (MON_CURRADDR_LO),Y     ; Load byte from current address + Y
+
+    ; Compare with pattern byte at pattern index Y
+    CMP MON_SEARCH_PATTERN,Y    ; Compare with pattern byte at index Y
+    BNE SEARCH_NO_MATCH         ; If not equal, no match at this position
+
+    ; Bytes match, continue with next byte
+    INY                         ; Move to next pattern byte
+    JMP SEARCH_PATTERN_LOOP     ; Continue pattern matching
+
+SEARCH_NO_MATCH:
+    ; Pattern didn't match at this location, try next address
+    INC MON_CURRADDR_LO         ; Increment current address
+    BNE SEARCH_NO_CARRY
+    INC MON_CURRADDR_HI         ; Handle carry
+
+SEARCH_NO_CARRY:
+    JMP SEARCH_LOOP             ; Continue searching
+
+SEARCH_FOUND_MATCH:
+    ; Found a match! Print the address where pattern was found
+    JSR PRINT_CURRENT_ADDRESS   ; Print the address where match was found
     JSR PRINT_NEWLINE           ; Add newline
-    JMP SAVE_MODE_DONE          ; Exit save mode
 
-SAVE_SUCCESS:
-    ; Show success message
-    LDA #<MSG_SAVE_SUCCESS      ; Save success message
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_SAVE_SUCCESS      ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE           ; Add newline
+    ; Move to next address to continue searching
+    INC MON_CURRADDR_LO         ; Increment current address
+    BNE SEARCH_FOUND_NO_CARRY
+    INC MON_CURRADDR_HI         ; Handle carry
 
-    ; Exit save mode after successful operation
-    JMP SAVE_MODE_DONE
+SEARCH_FOUND_NO_CARRY:
+    JMP SEARCH_LOOP             ; Continue searching for more matches
 
-SAVE_MODE_ERROR:
-    ; Display error message for invalid filename
-    JSR PRINT_ERROR_MSG         ; Print error
-    JMP SAVE_MODE_INPUT         ; Continue input
-
-SAVE_MODE_DONE:
-    ; Exit save mode and return to command mode
-    LDA #MON_MODE_CMD           ; Set to command mode
-    STA MON_MODE                ; Update mode
+SEARCH_DONE:
+    ; Restore original current address before returning
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+    ; Search completed - ensure clean line for next prompt
+    JSR PRINT_NEWLINE
     RTS
 
 ; ================================================================
@@ -2258,6 +2706,15 @@ MONITOR_LOOP:
 
     ; Parse and execute the command
     JSR PARSE_COMMAND           ; Parse the command in MON_CMDBUF
+
+    ; Save the command only if we're in command mode and it completed without error
+    LDA MON_MODE                ; Check current mode
+    BNE MONITOR_SKIP_SAVE       ; If not in command mode, don't save
+    LDA MON_ERROR_FLAG          ; Check if command had error
+    BNE MONITOR_SKIP_SAVE       ; If error, don't save
+    JSR SAVE_COMMAND            ; Save command for dot recall
+
+MONITOR_SKIP_SAVE:
     JMP MONITOR_LOOP            ; Continue command loop
 
 ; Interrupt service routines (minimal implementations)
@@ -2286,6 +2743,9 @@ CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_WRITE_CHECK; 7 - 'W'
     .BYTE <PARSE_CMD_EXIT       ; 8 - 'X'
     .BYTE <PARSE_CMD_ZERO       ; 9 - 'Z'
+    .BYTE <PARSE_CMD_FILL_CHECK ; 10 - 'F'
+    .BYTE <PARSE_CMD_MOVE_CHECK ; 11 - 'M'
+    .BYTE <PARSE_CMD_SEARCH_CHECK; 12 - 'X'
 
 CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_GO_CHECK   ; 0 - 'G'
@@ -2296,23 +2756,26 @@ CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_SAVE_CHECK ; 5 - 'S'
     .BYTE >PARSE_CMD_STACK      ; 6 - 'T'
     .BYTE >PARSE_CMD_WRITE_CHECK; 7 - 'W'
-    .BYTE >PARSE_CMD_EXIT       ; 8 - 'X'
+    .BYTE >PARSE_CMD_EXIT       ; 8 - 'ESC' (keep existing)
     .BYTE >PARSE_CMD_ZERO       ; 9 - 'Z'
+    .BYTE >PARSE_CMD_FILL_CHECK ; 10 - 'F'
+    .BYTE >PARSE_CMD_MOVE_CHECK ; 11 - 'M'
+    .BYTE >PARSE_CMD_SEARCH_CHECK; 12 - 'X'
 
-; Index mapping table - maps command character to table index  
+; Index mapping table - maps command character to table index
 ; For characters C-Z, subtract 'C' ($43) to get offset into this table
 CMD_INDEX_MAP:
     .BYTE 2     ; C -> 2 (Clear)
     .BYTE $FF   ; D -> invalid
     .BYTE $FF   ; E -> invalid
-    .BYTE $FF   ; F -> invalid
+    .BYTE 10    ; F -> 10 (Fill)
     .BYTE 0     ; G -> 0 (Run)
     .BYTE 1     ; H -> 1 (Help)
     .BYTE $FF   ; I -> invalid
     .BYTE $FF   ; J -> invalid
     .BYTE $FF   ; K -> invalid (was 2)
     .BYTE 3     ; L -> 3 (Load)
-    .BYTE $FF   ; M -> invalid
+    .BYTE 11    ; M -> 11 (Move/Copy)
     .BYTE $FF   ; N -> invalid
     .BYTE $FF   ; O -> invalid
     .BYTE $FF   ; P -> invalid
@@ -2323,7 +2786,7 @@ CMD_INDEX_MAP:
     .BYTE $FF   ; U -> invalid
     .BYTE $FF   ; V -> invalid
     .BYTE 7     ; W -> 7 (Write to Memory)
-    .BYTE $FF   ; X -> invalid
+    .BYTE 12    ; X -> 12 (Search)
     .BYTE $FF   ; Y -> invalid
     .BYTE 9     ; Z -> 9 (Print Zero Page)
 
@@ -2334,10 +2797,6 @@ CMD_INDEX_MAP:
 MODE_PREFIX_TABLE:
     .BYTE 0         ; MON_MODE_CMD = 0: No prefix (just address>)
     .BYTE $57       ; MON_MODE_WRITE = 1: 'W' (W:address>)
-    .BYTE $52       ; MON_MODE_READ = 2: 'R' (R:address>)
-    .BYTE 0         ; MON_MODE_RUN = 3: No prefix (not used for prompts)
-    .BYTE $4C       ; MON_MODE_LOAD = 4: 'L' (L:address>)
-    .BYTE $53       ; MON_MODE_SAVE = 5: 'S' (S:address>)
 
 ; ================================================================
 ; HELP MESSAGE TABLE - Addresses of help messages for display
@@ -2353,34 +2812,34 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_WRITE
     .WORD MSG_HELP_ZERO
     .WORD MSG_HELP_EXIT
+    .WORD MSG_HELP_FILL
+    .WORD MSG_HELP_MOVE
+    .WORD MSG_HELP_SEARCH
 
-HELP_MSG_COUNT = 9               ; Number of help messages
+HELP_MSG_COUNT = 12              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
-MSG_HELP_HEADER:     .BYTE "6502 MONITOR COMMANDS", 0
+MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
 MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
 MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
-MSG_HELP_LOAD:       .BYTE "L:XXXX LOAD", 0
+MSG_HELP_LOAD:       .BYTE "L:XXXX,FILENAME LOAD FILE", 0
 MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY) READ FROM MEMORY", 0
 MSG_HELP_SAVE:       .BYTE "S:XXXX-YYYY   SAVE MEMORY RANGE", 0
 MSG_HELP_STACK:      .BYTE "T:     PRINT STACK", 0
 MSG_HELP_WRITE:      .BYTE "W:XXXX WRITE TO MEMORY", 0
 MSG_HELP_ZERO:       .BYTE "Z:     PRINT ZERO PAGE", 0
+MSG_HELP_FILL:       .BYTE "F:XXXX-YYYY,ZZ FILL MEMORY", 0
+MSG_HELP_MOVE:       .BYTE "M:XXXX-YYYY,ZZZZ,B MOVE/COPY", 0
+MSG_HELP_SEARCH:     .BYTE "X:XXXX-YYYY,PATTERN SEARCH MEMORY", 0
 MSG_HELP_EXIT:       .BYTE "ESC    EXIT CURRENT MODE", 0
-MSG_RUN_AT:          .BYTE "RUNNING AT ", 0
-MSG_LOAD_AT:         .BYTE "LOAD AT ", 0
-MSG_SAVE_RANGE:      .BYTE "SAVE ", 0
-MSG_FILENAME_PROMPT: .BYTE "FILENAME: ", 0
-MSG_LOAD_SUCCESS:    .BYTE "LOADED", 0
-MSG_SAVE_SUCCESS:    .BYTE "SAVED", 0
-MSG_ENTERING_BASIC:  .BYTE "ENTERING BASIC...", 0
-MSG_DEBUG_AFTER_JMP: .BYTE "DEBUG: CODE AFTER JMP EXECUTED!", 0
-MSG_SYNTAX_ERROR:    .BYTE "?ERROR", 0
+MSG_SYNTAX_ERROR:    .BYTE "ERROR?", 0
+MSG_RANGE_ERROR:     .BYTE "RANGE?", 0
+MSG_VALUE_ERROR:     .BYTE "VALUE?", 0
 MSG_SUCCESS:         .BYTE "OK", 0
 MSG_WELCOME:         .BYTE "-=MFC 6502 OPERATIONAL=-", 0
-MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER/ESC)", 0
+MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
 
 ; ================================================================
 ; KERNEL API JUMP TABLE
@@ -2395,7 +2854,6 @@ K_PRINT_NEWLINE: JMP PRINT_NEWLINE      ; $FF06
 K_GET_KEYSTROKE: JMP GET_KEYSTROKE      ; $FF09
 K_CLEAR_SCREEN:  JMP CLEAR_SCREEN       ; $FF0C
 K_GET_RAND_NUM:  JMP GET_RANDOM_NUMBER  ; $FF0F
-K_BASIC_RETURN:  JMP RETURN_FROM_BASIC  ; $FF12
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

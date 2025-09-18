@@ -2,25 +2,29 @@
 
 ## Core System Memory Layout
 
-| Address Range | Size | Purpose | Usage in Kernel |
-|---------------|------|---------|-----------------|
-| $0000-$0001 | 2 bytes | **Processor Port Control** | Memory banking configuration |
-| $0002-$00FF | 254 bytes | **Zero Page RAM** | Fast access variables, pointers, kernel workspace |
-| $0100-$01FF | 256 bytes | **Stack** | Subroutine calls, interrupt handling, temporary storage |
-| $0200-$03FF | 512 bytes | **System Variables** | Kernel data structures, I/O buffers |
-| $0400-$07FF | 1024 bytes | **Screen Memory** | Character display data (40x25 = 1000 bytes) |
+| Address Range | Size       | Purpose | Usage in Kernel |
+|---------------|------------|---------|-----------------|
+| $0000-$00FF   | 256 bytes  | **Zero Page RAM** | Fast access variables, pointers, kernel workspace |
+| $0100-$01FF   | 256 bytes  | **Stack** | Subroutine calls, interrupt handling, temporary storage |
+| $0200-$03FF   | 512 bytes  | **System Variables** | Kernel data structures, I/O buffers |
+| $0400-$07FF   | 1024 bytes | **Screen Memory** | Character display data (40x25 = 1000 bytes) |
 
 ## Critical Zero Page Locations
 
 | Address | Size | Purpose | Kernel Usage |
 |---------|------|---------|--------------|
-| $0000 | 1 byte | **Processor Port DDR** | Controls memory banking direction |
-| $0001 | 1 byte | **Processor Port Data** | Memory banking configuration register |
-| $0002-$0003 | 2 bytes | **Monitor Current Address** | MON_CURRADDR_LO/HI - current memory address |
-| $0004-$0005 | 2 bytes | **Monitor Message Pointer** | MON_MSG_PTR_LO/HI - string display pointer |
-| $0006-$0007 | 2 bytes | **Jump Vector** | JUMP_VECTOR - indirect jump target |
-| $0008-$0009 | 2 bytes | **Screen Pointer** | SCREEN_PTR_LO/HI - current screen position |
-| $000A-$00EF | 230 bytes | **Available Zero Page** | **FREE for user programs** |
+| $0000-$0001 | 2 bytes | **Monitor Current Address** | MON_CURRADDR_LO/HI - current memory address |
+| $0002-$0003 | 2 bytes | **Monitor Message Pointer** | MON_MSG_PTR_LO/HI - string display pointer |
+| $0004-$0005 | 2 bytes | **Jump Vector** | JUMP_VECTOR - indirect jump target |
+| $0006-$0007 | 2 bytes | **Screen Pointer** | SCREEN_PTR_LO/HI - current screen position |
+| $0008-$0009 | 2 bytes | **Scroll Source Address** | SCRL_SRC_ADDR_LO/HI - scroll operations |
+| $000A-$000B | 2 bytes | **Scroll Destination Address** | SCRL_DEST_ADDR_LO/HI - scroll operations |
+| $000C | 1 byte | **Scroll Byte Counter** | SCRL_BYTE_CNT - scroll operations |
+| $000D | 1 byte | **Command Line Counter** | CMD_LINE_COUNT - paging support |
+| $000E | 1 byte | **Page Abort Flag** | PAGE_ABORT_FLAG - ESC key handling |
+| $000F | 1 byte | **Random Number Seed** | RNG_SEED - random number generation |
+| $0010 | 1 byte | **Random Number Max** | RNG_MAX - random number range |
+| $0011-$00EF | 223 bytes | **Available Zero Page** | **FREE for user programs** |
 | $00F0-$00FF | 16 bytes | **Hex Lookup Table** | HEX_LOOKUP_TABLE - hex digit conversion |
 
 ## Stack Area Detail
@@ -40,7 +44,9 @@
 | $0252 | 1 byte | **Monitor Mode** | MON_MODE - current operating mode (0-3) |
 | $0253-$0256 | 4 bytes | **Address Range Variables** | MON_STARTADDR/ENDADDR - operation addresses |
 | $0257-$025F | 9 bytes | **Monitor Parser/Display** | Parser state, counters, cursor position |
-| $0260-$03FF | 416 bytes | **Available System RAM** | **FREE for user programs** |
+| $0260-$0287 | 40 bytes | **Extended Monitor Variables** | Fill, move/copy, search command variables |
+| $0288-$02E9 | 98 bytes | **Command History & Patterns** | Last command buffer and search patterns |
+| $02EA-$03FF | 278 bytes | **Available System RAM** | **FREE for user programs** |
 
 ## Screen and Video Memory
 
@@ -89,12 +95,17 @@
 ### Zero Page Usage (Actual Allocations)
 | Address | Symbol | Purpose |
 |---------|--------|---------|
-| $0000 | PROC_DDR | Processor port direction register |
-| $0001 | PROC_PORT | Memory banking control register |
-| $0002-$0003 | MON_CURRADDR_LO/HI | Monitor current address pointer |
-| $0004-$0005 | MON_MSG_PTR_LO/HI | Message display pointer |
-| $0006-$0007 | JUMP_VECTOR | Indirect jump vector (2 bytes) |
-| $0008-$0009 | SCREEN_PTR_LO/HI | Current screen memory pointer |
+| $0000-$0001 | MON_CURRADDR_LO/HI | Monitor current address pointer |
+| $0002-$0003 | MON_MSG_PTR_LO/HI | Message display pointer |
+| $0004-$0005 | JUMP_VECTOR | Indirect jump vector (2 bytes) |
+| $0006-$0007 | SCREEN_PTR_LO/HI | Current screen memory pointer |
+| $0008-$0009 | SCRL_SRC_ADDR_LO/HI | Scroll source address |
+| $000A-$000B | SCRL_DEST_ADDR_LO/HI | Scroll destination address |
+| $000C | SCRL_BYTE_CNT | Scroll byte counter |
+| $000D | CMD_LINE_COUNT | Command line counter for paging |
+| $000E | PAGE_ABORT_FLAG | Page abort flag (ESC handling) |
+| $000F | RNG_SEED | Random number generator seed |
+| $0010 | RNG_MAX | Random number generator maximum |
 | $00F0-$00FF | HEX_LOOKUP_TABLE | Hex digit lookup table |
 
 ### Monitor Variables in System RAM
@@ -119,11 +130,11 @@
 ## Available Memory for User Programs
 
 ### Zero Page Available Space
-- **$000A-$00EF (230 bytes)** - Completely free zero page space
+- **$0011-$00EF (223 bytes)** - Completely free zero page space
 - Fast addressing modes available for user variables and pointers
 
-### System RAM Available Space  
-- **$0260-$03FF (416 bytes)** - Available system variable space
+### System RAM Available Space
+- **$02EA-$03FF (278 bytes)** - Available system variable space
 - **$0800-$7FFF (30,720 bytes)** - Main user program area
 - Screen memory ($0400-$07FF) should not be used for program storage
 
@@ -132,10 +143,9 @@
 | Symbol | Value | Purpose |
 |--------|-------|---------|
 | STACK_TOP | $FF | Initial stack pointer value |
-| RAM_START | $0200 | Start of general purpose RAM |
-| RAM_END | $7FFF | End of available RAM |
-| PROC_PORT | $01 | Memory banking control register |
-| PROC_DDR | $00 | Memory banking direction register |
+| SCREEN_START | $0400 | Start of screen memory |
+| SCREEN_WIDTH | 40 | Characters per line |
+| SCREEN_HEIGHT | 25 | Lines on screen |
 
 ## Memory Usage Notes
 

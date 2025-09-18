@@ -1,0 +1,33 @@
+# Context Forge API keys
+.context-forge-api
+
+# CMake build directories
+cmake-build-*/
+build/
+out/
+
+# CMake cache and files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Build system files
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+
+# IDE files
+.vscode/
+.idea/
+*.user
+*.pro.user*
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.tmp

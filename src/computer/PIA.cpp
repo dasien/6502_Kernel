@@ -2,8 +2,10 @@
 #include "Memory.h"
 #include <cstdio>
 #include <string>
+#ifdef QT_GUI
 #include <QFileDialog>
 #include <QCoreApplication>
+#endif
 #include <fstream>
 #include <vector>
 
@@ -265,27 +267,38 @@ void PIA::processFileOperations()
     
     if (file_command_ == kFileLoadCommand) {
         printf("PIA: File load request - Address: $%04X\n", file_address_);
-        
+
+        std::string filename;
+
+#ifdef QT_GUI
         // Open file dialog to let user select file
-        QString filename = QFileDialog::getOpenFileName(
+        QString qfilename = QFileDialog::getOpenFileName(
             nullptr,
             "Load Binary File",
             QString(),
             "Binary Files (*.bin *.rom *.prg);;All Files (*.*)"
         );
-        
-        if (filename.isEmpty()) {
+
+        if (qfilename.isEmpty()) {
             printf("PIA: File load cancelled by user\n");
             file_status_ = kFileError;
             return;
         }
-        
-        printf("PIA: User selected file: '%s'\n", filename.toStdString().c_str());
-        
+
+        filename = qfilename.toStdString();
+#else
+        // Console-only mode - use a default filename or disable file operations
+        printf("PIA: File operations not supported in console mode\n");
+        file_status_ = kFileError;
+        return;
+#endif
+
+        printf("PIA: User selected file: '%s'\n", filename.c_str());
+
         // Load file using C++ streams for better error handling
-        std::ifstream file(filename.toStdString(), std::ios::binary | std::ios::ate);
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
-            printf("PIA: File load error - Could not open file: %s\n", filename.toStdString().c_str());
+            printf("PIA: File load error - Could not open file: %s\n", filename.c_str());
             file_status_ = kFileError;
             return;
         }
@@ -343,26 +356,37 @@ void PIA::processFileOperations()
             return;
         }
         
+        std::string filename;
+
+#ifdef QT_GUI
         // Open file dialog to let user select save location
-        QString filename = QFileDialog::getSaveFileName(
+        QString qfilename = QFileDialog::getSaveFileName(
             nullptr,
             "Save Binary File",
             QString(),
             "Binary Files (*.bin);;All Files (*.*)"
         );
-        
-        if (filename.isEmpty()) {
+
+        if (qfilename.isEmpty()) {
             printf("PIA: File save cancelled by user\n");
             file_status_ = kFileError;
             return;
         }
-        
-        printf("PIA: User selected save file: '%s'\n", filename.toStdString().c_str());
-        
+
+        filename = qfilename.toStdString();
+#else
+        // Console-only mode - disable file operations
+        printf("PIA: File operations not supported in console mode\n");
+        file_status_ = kFileError;
+        return;
+#endif
+
+        printf("PIA: User selected save file: '%s'\n", filename.c_str());
+
         // Read memory range and save to file
-        std::ofstream file(filename.toStdString(), std::ios::binary);
+        std::ofstream file(filename, std::ios::binary);
         if (!file.is_open()) {
-            printf("PIA: File save error - Could not create file: %s\n", filename.toStdString().c_str());
+            printf("PIA: File save error - Could not create file: %s\n", filename.c_str());
             file_status_ = kFileError;
             return;
         }

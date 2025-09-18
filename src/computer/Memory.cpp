@@ -11,12 +11,12 @@ uint8_t Memory::read(uint16_t address) const {
     if (pia_ && pia_->isPiaAddress(address)) {
         return pia_->readPia(address);
     }
-    
+
     // Check if this is a video memory read
     if (video_chip_ && video_chip_->isScreenAddress(address)) {
         return video_chip_->readScreen(address);
     }
-    
+
     return ram_[address];
 }
 
@@ -37,7 +37,9 @@ void Memory::write(uint16_t address, uint8_t value) {
 }
 
 uint16_t Memory::readWord(uint16_t address) const {
-    return ram_[address] | (ram_[address + 1] << 8);
+    uint8_t low = read(address);
+    uint8_t high = read(address + 1);
+    return low | (high << 8);
 }
 
 void Memory::writeWord(uint16_t address, uint16_t value) {

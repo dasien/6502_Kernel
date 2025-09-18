@@ -37,12 +37,33 @@ void Computer6502::power_on() {
     // Load kernel ROM from file
     std::vector<uint8_t> kernel_rom;
     
-    // Try to load kernel.rom from the current directory
-    std::ifstream rom_file("kernel.rom", std::ios::binary | std::ios::ate);
-    if (!rom_file.is_open()) {
+    // Try to load kernel.rom from multiple possible locations
+    std::ifstream rom_file;
+    std::vector<std::string> possible_paths = {
+        "kernel.rom",           // Current directory
+        "../kernel.rom",        // Parent directory (if running from bin/)
+        "../../kernel.rom",     // Two levels up
+        "./cmake-build-debug/kernel.rom"  // From project root
+    };
+
+    bool rom_found = false;
+    for (const auto& path : possible_paths) {
+        rom_file.open(path, std::ios::binary | std::ios::ate);
+        if (rom_file.is_open()) {
+            rom_found = true;
+            break;
+        }
+    }
+
+    if (!rom_found) {
         showFatalError("Could not open kernel.rom file.\n\n"
                       "Make sure the kernel.rom file exists in the build directory.\n"
-                      "This file should be automatically generated during the build process.");
+                      "This file should be automatically generated during the build process.\n\n"
+                      "Searched locations:\n"
+                      "• kernel.rom (current directory)\n"
+                      "• ../kernel.rom (parent directory)\n"
+                      "• ../../kernel.rom (two levels up)\n"
+                      "• ./cmake-build-debug/kernel.rom (from project root)");
     }
     
     // Get file size and read the entire ROM
@@ -63,7 +84,39 @@ void Computer6502::power_on() {
     // Parse map file to get segment layout
     
     MapFileParser parser;
-    auto segments = parser.parseMapFile("kernel.map");
+
+    // Try to find kernel.map from multiple possible locations
+    std::vector<std::string> map_paths = {
+        "kernel.map",           // Current directory
+        "../kernel.map",        // Parent directory (if running from bin/)
+        "../../kernel.map",     // Two levels up
+        "./cmake-build-debug/kernel.map"  // From project root
+    };
+
+    std::string map_file_path;
+    bool map_found = false;
+    for (const auto& path : map_paths) {
+        std::ifstream test_file(path);
+        if (test_file.is_open()) {
+            map_file_path = path;
+            map_found = true;
+            test_file.close();
+            break;
+        }
+    }
+
+    if (!map_found) {
+        showFatalError("Could not find kernel.map file.\n\n"
+                      "Make sure the kernel.map file exists in the build directory.\n"
+                      "This file should be automatically generated during the build process.\n\n"
+                      "Searched locations:\n"
+                      "• kernel.map (current directory)\n"
+                      "• ../kernel.map (parent directory)\n"
+                      "• ../../kernel.map (two levels up)\n"
+                      "• ./cmake-build-debug/kernel.map (from project root)");
+    }
+
+    auto segments = parser.parseMapFile(map_file_path);
     
     if (segments.empty()) {
         showFatalError("Could not parse kernel.map file.\n\n"
@@ -85,26 +138,27 @@ void Computer6502::power_on() {
         showFatalError(missingSegments);
     }
     
-    // Load segments using correct file offsets
-    // The segments are stored sequentially in ROM file: CODE, then JUMPS, then VECS
-    size_t codeOffset = 0;
-    size_t jumpsOffset = codeSegment->size;
-    size_t vecsOffset = codeSegment->size + jumpsSegment->size;
-    
+    // Load segments using correct ROM file offsets
+    // The ROM file is laid out with segments at their actual memory addresses
+    // ROM is 4KB (0x1000) starting at $F000, so ROM offset = memory_address - 0xF000
+    size_t codeOffset = codeSegment->start - 0xF000;
+    size_t jumpsOffset = jumpsSegment->start - 0xF000;
+    size_t vecsOffset = vecsSegment->start - 0xF000;
+
     // Load CODE segment
     memory.loadProgram(
-        std::vector<uint8_t>(kernel_rom.begin() + codeOffset, 
+        std::vector<uint8_t>(kernel_rom.begin() + codeOffset,
                            kernel_rom.begin() + codeOffset + codeSegment->size),
         codeSegment->start
     );
-    
-    // Load JUMPS segment  
+
+    // Load JUMPS segment
     memory.loadProgram(
         std::vector<uint8_t>(kernel_rom.begin() + jumpsOffset,
                            kernel_rom.begin() + jumpsOffset + jumpsSegment->size),
         jumpsSegment->start
     );
-    
+
     // Load VECS segment
     memory.loadProgram(
         std::vector<uint8_t>(kernel_rom.begin() + vecsOffset,
