@@ -37,3 +37,10 @@ kernel/
 kernel.map
 kernel.rom
 kernel.o
+
+# Qt MOC auto-generated files
+*_autogen/
+**/moc_*.cpp
+**/moc_*.h
+moc_*.cpp
+moc_*.h
