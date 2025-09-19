@@ -762,6 +762,14 @@ PRINT_BACKSPACE_NO_BORROW:
 ; Print a newline (carriage return)
 ; Modifies: A
 PRINT_NEWLINE:
+    ; Scroll screen, printing newline character (no paging)
+    LDA #ASCII_CR
+    JSR PRINT_CHAR
+    RTS
+
+; Print newline with paging for memory dump commands only
+PRINT_NEWLINE_PAGED:
+    ; Scroll screen, printing newline character
     LDA #ASCII_CR
     JSR PRINT_CHAR
 
@@ -771,7 +779,7 @@ PRINT_NEWLINE:
     ; Check if we've printed a full screen in this command
     LDA CMD_LINE_COUNT
     CMP #LINES_PER_PAGE
-    BNE PRINT_NEWLINE_DONE     ; Not at page boundary yet
+    BNE PRINT_NEWLINE_PAGED_DONE     ; Not at page boundary yet
 
     ; We're about to scroll a full page - pause
     JSR HANDLE_PAGE_BREAK
@@ -780,7 +788,7 @@ PRINT_NEWLINE:
     LDA #0
     STA CMD_LINE_COUNT
 
-PRINT_NEWLINE_DONE:
+PRINT_NEWLINE_PAGED_DONE:
     RTS
 
 HANDLE_PAGE_BREAK:
@@ -1166,23 +1174,34 @@ PARSE_CMD_START:
 PARSE_CMD_ERROR_JMP:
     JMP PARSE_CMD_ERROR         ; Jump to main error handler
 
-; Single character commands (no parameters)
+; Commands that require colon syntax
 PARSE_CMD_CLEAR:
+    JSR PARSE_COLON_COMMAND     ; Parse C: format
+    BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
     JSR CMD_CLEAR_SCREEN        ; Execute clear screen command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_STACK:
+    JSR PARSE_COLON_COMMAND     ; Parse T: format
+    BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
     JSR CMD_DUMP_STACK          ; Execute stack dump command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_ZERO:
+    JSR PARSE_COLON_COMMAND     ; Parse Z: format
+    BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
     JSR CMD_DUMP_ZERO_PAGE      ; Execute zero page dump command
     JMP PARSE_CMD_DONE
 
-
 PARSE_CMD_HELP:
+    JSR PARSE_COLON_COMMAND     ; Parse H: format
+    BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
     JSR CMD_SHOW_HELP           ; Execute help command
     JMP PARSE_CMD_DONE
+
+; Second local error handler for new commands (within branch range)
+PARSE_CMD_ERROR_JMP2:
+    JMP PARSE_CMD_ERROR         ; Jump to main error handler
 
 PARSE_CMD_EXIT:
     JSR CMD_EXIT_MODE           ; Execute exit mode command
@@ -1778,13 +1797,18 @@ CMD_DUMP_ZERO_PAGE:
 ; Show help command (H:) - Display available commands
 ; Modifies: A, X, Y
 CMD_SHOW_HELP:
+    ; Reset line counter for paging
+    LDA #0
+    STA CMD_LINE_COUNT          ; Reset command line counter
+    STA PAGE_ABORT_FLAG         ; Reset abort flag
+
     ; Print comprehensive help for all monitor commands
     JSR PRINT_HELP_HEADER       ; Print "6502 MONITOR COMMANDS"
-    JSR PRINT_NEWLINE
+    JSR PRINT_NEWLINE_PAGED
 
     ; Print each command with description
     JSR PRINT_HELP_BODY
-    JSR PRINT_NEWLINE
+    JSR PRINT_NEWLINE_PAGED
     RTS
 
 ; Print help header text
@@ -1808,7 +1832,7 @@ HELP_LOOP:
     LDA HELP_MSG_TABLE,X
     STA MON_MSG_PTR_HI
     JSR PRINT_MESSAGE
-    JSR PRINT_NEWLINE
+    JSR PRINT_NEWLINE_PAGED
     INX
     CPX #24                 ; 12 messages * 2 bytes each
     BNE HELP_LOOP
@@ -2107,14 +2131,14 @@ DUMP_NO_CARRY:
     BNE DUMP_PRINT_BYTES
 
     ; End of line
-    JSR PRINT_NEWLINE
+    JSR PRINT_NEWLINE_PAGED
     JMP DUMP_RANGE_LOOP
 
 DUMP_ABORTED:
     ; Just fall through to done
 
 DUMP_RANGE_DONE:
-    JSR PRINT_NEWLINE
+    JSR PRINT_NEWLINE_PAGED
     RTS
 
 ; ================================================================
@@ -2144,7 +2168,7 @@ SHOW_WRITE_ADDRESS:
     PLA                         ; Restore second character
     JSR PRINT_CHAR              ; Print it
 
-    JSR PRINT_NEWLINE           ; End with newline
+    JSR PRINT_NEWLINE_PAGED     ; End with newline
     RTS
 
 ; Write mode main loop - handles sequential byte input
@@ -2665,7 +2689,7 @@ SEARCH_NO_CARRY:
 SEARCH_FOUND_MATCH:
     ; Found a match! Print the address where pattern was found
     JSR PRINT_CURRENT_ADDRESS   ; Print the address where match was found
-    JSR PRINT_NEWLINE           ; Add newline
+    JSR PRINT_NEWLINE_PAGED     ; Add newline
 
     ; Move to next address to continue searching
     INC MON_CURRADDR_LO         ; Increment current address
@@ -2682,7 +2706,7 @@ SEARCH_DONE:
     PLA
     STA MON_CURRADDR_LO
     ; Search completed - ensure clean line for next prompt
-    JSR PRINT_NEWLINE
+    JSR PRINT_NEWLINE_PAGED
     RTS
 
 ; ================================================================
@@ -2838,7 +2862,7 @@ MSG_SYNTAX_ERROR:    .BYTE "ERROR?", 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", 0
 MSG_SUCCESS:         .BYTE "OK", 0
-MSG_WELCOME:         .BYTE "-=MFC 6502 OPERATIONAL=-", 0
+MSG_WELCOME:         .BYTE "       -=MFC 6502 OPERATIONAL=-", 0
 MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
 
 ; ================================================================
