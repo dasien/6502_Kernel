@@ -33,7 +33,7 @@ Thumbs.db
 *.tmp
 
 # Kernel build artifacts (should be in cmake-build-*/ instead)
-kernel/
+/kernel/
 kernel.map
 kernel.rom
 kernel.o

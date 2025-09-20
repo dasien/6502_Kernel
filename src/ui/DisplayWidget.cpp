@@ -12,8 +12,8 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, QWidget* parent)
     , refresh_timer_(new QTimer(this))
     , background_color_(Qt::black)
     , foreground_color_(Qt::green)
-    , char_width_(8)
-    , char_height_(16)
+    , char_width_(11)   // Significantly reduced for much tighter character spacing
+    , char_height_(19)  // 25 rows × 19px = 475px (close to 480px for 4:3 aspect ratio)
     , refresh_rate_hz_(60)
     , needs_full_redraw_(true)
     , has_focus_(false)
@@ -22,8 +22,11 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, QWidget* parent)
 {
     setupFont();
     calculateCharacterSize();
-    
-    setFixedSize(440, 400);
+
+    // Set initial widget size based on character dimensions
+    const int widget_width = Computer::VIC::kScreenWidth * char_width_;
+    const int widget_height = Computer::VIC::kScreenHeight * char_height_;
+    setFixedSize(widget_width, widget_height);
 
     // Setup refresh timer
     connect(refresh_timer_, &QTimer::timeout, this, &DisplayWidget::refreshDisplay);
@@ -155,21 +158,59 @@ void DisplayWidget::refreshDisplay()
 
 void DisplayWidget::setupFont()
 {
-    // Set up a monospace font suitable for terminal display
-    // Scale font size to match the 2x larger character cells
-    character_font_ = QFont("Courier New", 14);
+    // Period-appropriate 1980s computer font for authentic 6502 system feel
+    // Try period-appropriate fonts in order of preference
+    QStringList period_fonts = {
+        "Monaco",           // Classic 80s Mac terminal font
+        "Menlo",            // Modern Monaco variant
+        "Liberation Mono",  // Classic terminal style
+        "DejaVu Sans Mono", // Clean 80s terminal feel
+        "IBM Plex Mono",    // Based on IBM computer fonts
+        "Consolas",         // Microsoft's terminal font
+        "Courier New"       // Final fallback
+    };
+
+    // Try each font until we find one that's available
+    bool font_found = false;
+    QString selected_font = "none";
+    for (const QString& font_name : period_fonts) {
+        character_font_ = QFont(font_name, 14);
+        QFontInfo font_info(character_font_);
+        if (font_info.exactMatch()) {
+            font_found = true;
+            selected_font = font_name;
+            printf("DisplayWidget: Using period-appropriate font: %s\n", font_name.toStdString().c_str());
+            break;
+        } else {
+            printf("DisplayWidget: Font not available: %s (actual: %s)\n",
+                   font_name.toStdString().c_str(),
+                   font_info.family().toStdString().c_str());
+        }
+    }
+
+    // Final fallback to system monospace if none found
+    if (!font_found) {
+        character_font_ = QFont("monospace", 14);
+        character_font_.setStyleHint(QFont::TypeWriter);
+        QFontInfo fallback_info(character_font_);
+        selected_font = fallback_info.family();
+        printf("DisplayWidget: Using system fallback font: %s\n", selected_font.toStdString().c_str());
+    }
+
     character_font_.setFixedPitch(true);
     character_font_.setStyleHint(QFont::TypeWriter);
+    character_font_.setPixelSize(17); // Properly sized for 11x19px character cells
+    character_font_.setWeight(QFont::Normal); // Keep normal weight for authentic feel
 }
 
 void DisplayWidget::calculateCharacterSize()
 {
-    // Keep our explicitly set 16x16 pixel grid - don't let font metrics override it
-    // This ensures we maintain the intended 640x400 display dimensions
-    // (40 columns × 16 pixels = 640, 25 rows × 16 pixels = 400)
-    
+    // Keep our explicitly set 11x19 pixel grid - don't let font metrics override it
+    // This ensures we maintain the intended 440x475 display dimensions (very tight char spacing)
+    // (40 columns × 11 pixels = 440, 25 rows × 19 pixels = 475)
+
     // char_width_ and char_height_ are already set in constructor - don't change them!
-    // This creates a true square pixel grid for that classic retro computer look
+    // Dramatically reduced char_width_ from 16 to 11 pixels for much tighter character spacing
 }
 
 QChar DisplayWidget::asciiToChar(const uint8_t ascii_code) const
@@ -195,8 +236,14 @@ void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
     const QChar ch = asciiToChar(character);
 
     const int pixel_x = x * char_width_;
-    const int pixel_y = y * char_height_ + char_height_ - 2; // Adjust for font baseline
-    
+
+    // Better baseline calculation for larger font - center vertically in the cell
+    const QFontMetrics metrics(character_font_);
+    const int font_height = metrics.height();
+    const int font_ascent = metrics.ascent();
+    const int vertical_offset = (char_height_ - font_height) / 2 + font_ascent;
+    const int pixel_y = y * char_height_ + vertical_offset;
+
     painter.drawText(pixel_x, pixel_y, QString(ch));
 }
 

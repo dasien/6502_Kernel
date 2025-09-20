@@ -2,6 +2,11 @@
 
 A comprehensive 6502 microprocessor kernel implementation with an interactive monitor program for debugging, programming, and system control.
 
+This project started as a continuation of a CPU/assembler/disassembler I wrote in Python.  I wanted to create an actual
+running environment to enter code directly or load from a file and run.
+
+I also wanted to test the abilities of AI as part of the development and documentation process.
+
 ## Project Overview
 
 This project implements a complete 6502-based computer system kernel for emulated environments. The kernel provides low-level system initialization, hardware control, and most importantly, a powerful interactive monitor program for direct system interaction.
@@ -22,10 +27,8 @@ The heart of this system is the **6502 Monitor** - a complete interactive debugg
 
 The monitor features a streamlined architecture with:
 - **Two primary modes**: Command mode (default) and Write mode for interactive editing  
-- **Universal commands** that work from any mode: ESC, H:, R:, and . (dot)
-- **One-shot operations** for G:, L:, and S: commands that execute immediately
 - **Simplified command processing** with consistent syntax and error handling
-
+- **Command repeatability** recall last command for quick replay or modification
 ### Getting Started
 
 When the system boots, you'll see:
@@ -55,7 +58,7 @@ The command reference provides comprehensive documentation for all monitor comma
 
 ### Key Command Features
 
-- **R: Read Memory** - Universal command that works from any mode, supports single addresses or ranges
+- **R: Read Memory** - Display bytes in memory, supports single addresses or ranges
 - **W: Write Memory** - Interactive hex editing with address advancement  
 - **G: Go/Run** - Direct program execution with return to monitor
 - **L: Load File** - Immediate file loading: `L:8000,FILENAME`
@@ -64,14 +67,6 @@ The command reference provides comprehensive documentation for all monitor comma
 - **M: Move/Copy** - Smart memory operations with overlap detection  
 - **X: Search Memory** - Multi-byte pattern search with paged output
 
-### Universal Commands
-
-These commands work from any monitor mode:
-- **ESC** - Exit current mode, abort operations
-- **H:** - Display help information
-- **R:** - Read memory (non-modal)
-- **.** - Recall and edit last command
-
 ### Error Handling
 
 The monitor provides clear, consistent error messages:
@@ -79,7 +74,7 @@ The monitor provides clear, consistent error messages:
 - **`?RANGE`** - Invalid or out-of-bounds address range  
 - **`?VALUE`** - Invalid hexadecimal characters in input
 
-## System Architecture
+### **📖 [Detailed Architecture Reference](docs/system_architecture.md)**
 
 ### Memory Layout
 
@@ -89,7 +84,8 @@ The monitor provides clear, consistent error messages:
 - **$0400-$07FF**: Screen memory (display buffer)
 - **$F000-$FFFF**: Kernel ROM (3,834 bytes optimized)
 
-### Kernel Services
+### **📖 [Kernel Services Guide](docs/kernel_user_functions.md)**
+
 
 User programs can access kernel services via the jump table at $FF00:
 
@@ -110,17 +106,6 @@ The kernel provides memory-mapped file I/O at:
 - **$DC12-$DC13**: Address registers
 - **$DC14-$DC1F**: Filename buffer
 - **$DC20-$DC21**: End address (for save operations)
-
-## Recent Optimizations
-
-The kernel has been extensively optimized for size and performance:
-
-- **ROM Size**: 3,413 bytes (83.3% of 4KB limit)
-- **Mode Simplification**: Reduced from 6 modes to 2 modes
-- **Universal Commands**: R:, H:, ESC, and . work from any context
-- **One-Shot Operations**: G:, L:, and S: execute immediately without mode changes
-- **Code Cleanup**: Removed unused functions and variables
-- **Memory Banking**: Eliminated C64-specific banking for pure emulated environment
 
 ## Building and Development
 
@@ -169,9 +154,8 @@ For detailed development information and project context, see:
 
 1. **Start with Help**: Use `H:` to see all available commands
 2. **Use Command Recall**: The `.` command saves time when refining commands
-3. **Leverage Universal Commands**: R: works from any mode for quick memory checks
-4. **File Operations**: Use immediate syntax `L:8000,FILE` and `S:8000-8FFF,FILE`
-5. **Search Effectively**: Use X: with multiple byte patterns for precise matching
-6. **Program Development**: Load programs with L:, test with G:, save modifications with S:
+3. **File Operations**: Use immediate syntax `L:8000,FILE` and `S:8000-8FFF,FILE`
+4. **Search Effectively**: Use X: with multiple byte patterns for precise matching
+5. **Program Development**: Load programs with L:, test with G:, save modifications with S:
 
 The monitor is designed for both interactive exploration and efficient program development workflows.
