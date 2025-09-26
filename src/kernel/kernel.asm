@@ -198,10 +198,9 @@ RESET:
 ; ================================================================
 
     LDX #$00                    ; Start at beginning of zero page
-    LDA #$00                    ; Load zero
 
 ZP_CLEAR_LOOP:
-    STA $00,X               ; Clear zero page location
+    STZ $00,X               ; Clear zero page location
     INX                     ; Increment address
     CPX #$F0                ; Stop before hex table (and prevent wrap)
     BNE ZP_CLEAR_LOOP       ; Loop until done
@@ -249,53 +248,22 @@ STORE_HEX_CHAR:
     STA RNG_SEED                ; Initialize RNG
 
     ; Initialize monitor variables and state
-    LDA #$00                    ; Clear accumulator
-    STA MON_CMDPTR              ; Reset command buffer pointer
-    STA MON_CMDLEN              ; Reset command buffer length
-    STA MON_MODE                ; Set to command mode (0)
-    STA MON_CURRADDR_LO         ; Clear current address low byte
-    STA MON_CURRADDR_HI         ; Clear current address high byte
-    STA MON_STARTADDR_LO        ; Clear start address low byte
-    STA MON_STARTADDR_HI        ; Clear start address high byte
-    STA MON_ENDADDR_LO          ; Clear end address low byte
-    STA MON_ENDADDR_HI          ; Clear end address high byte
-    STA MON_PARSE_PTR           ; Reset parser pointer
-    STA MON_PARSE_LEN           ; Reset parser length
-    STA MON_HEX_TEMP            ; Clear hex temporary storage
-    STA MON_BYTE_COUNT          ; Clear byte count
-    STA MON_LINE_COUNT          ; Clear line count
-    STA MON_ERROR_FLAG          ; Clear error flag
-    STA MON_MSG_PTR_LO          ; Clear message pointer low byte
-    STA MON_MSG_PTR_HI          ; Clear message pointer high byte
-    STA MON_MSG_TMP_POS         ; Clear temp message pointer
-    STA MON_LAST_CMD_LEN        ; Clear last command length
+    LDX #$E9                    ; Clear monitor area $0200-$02E9 (234 bytes)
+
+CLEAR_MON_VAR_LOOP:
+    STZ $0200,X                 ; Store zero to monitor variable area
+    DEX                         ; Decrement counter
+    BPL CLEAR_MON_VAR_LOOP      ; Continue while X >= 0 (branch on plus)
 
     ; Initialize cursor position to top-left of screen
-    STA CURSOR_X                ; Set cursor X to 0
-    STA CURSOR_Y                ; Set cursor Y to 0
+    STZ CURSOR_X                ; Set cursor X to 0
+    STZ CURSOR_Y                ; Set cursor Y to 0
 
     ; Initialize screen pointer to start of screen memory
     LDA #<SCREEN_START          ; Load low byte of screen start ($00)
     STA SCREEN_PTR_LO           ; Store in screen pointer
     LDA #>SCREEN_START          ; Load high byte of screen start ($04)
     STA SCREEN_PTR_HI           ; Store in screen pointer
-
-    ; Clear command buffer
-    LDX #$00                    ; Start at beginning of buffer
-
-; Only clear up to the previous command length
-MON_CLEAR_CMDBUF:
-    LDX MON_CMDLEN              ; Get previous length
-    BEQ CLEAR_DONE              ; If zero, nothing to clear
-    LDA #$00
-
-CLEAR_LOOP:
-    DEX
-    STA MON_CMDBUF,X
-    BNE CLEAR_LOOP
-
-CLEAR_DONE:
-    STX MON_CMDLEN              ; X is now 0
 
     CLI                         ; Enable interrupts
 
@@ -359,20 +327,13 @@ NO_XOR:
 ; ================================================================
 
 ; Convert ASCII hex character to 4-bit binary value
-; Input: A = ASCII character ('0'-'9', 'A'-'F', 'a'-'f')
+; Input: A = ASCII character ('0'-'9', 'A'-'F') - lowercase already converted by input processing
 ; Output: A = 4-bit value (0-15), Carry clear if valid, set if invalid
-; Preserves: X, Y
+; Modifies: A
+; Note: Fundamental parsing routine used by all hex conversion functions
 HEX_CHAR_TO_NIBBLE:
-    ; Convert lowercase to uppercase if needed
-    CMP #$61                    ; 'a'
-    BCC NOT_LOWERCASE_HEX
-    CMP #$67                    ; 'g' (one past 'f')
-    BCS NOT_LOWERCASE_HEX
-    AND #$DF                    ; Convert to uppercase (clear bit 5)
-NOT_LOWERCASE_HEX:
 
-    ; Subtract '0' to normalize
-    SEC
+    SEC                         ; Set carry
     SBC #$30                    ; Subtract '0' (ASCII $30)
 
     ; Check if it was 0-9 (result will be 0-9)
@@ -413,11 +374,11 @@ NIBBLE_DIGIT:
     ADC #ASCII_0                ; Add '0' (gives '0'-'9')
     RTS
 
-; Convert two ASCII hex characters to a byte
+; Convert two ASCII hex characters to a byte value
 ; Input: X = pointer to first hex character in MON_CMDBUF
-; Output: A = byte value, Carry clear if valid, set if invalid
-;         X = X + 2 (points to character after the hex pair)
-; Uses: MON_HEX_TEMP
+; Output: A = byte value (0-255), X = X + 2 (points after hex pair), Carry clear if valid, set if invalid
+; Modifies: A, X, MON_HEX_TEMP
+; Note: Validates both characters are valid hex (0-9, A-F), used by multi-byte parsing
 HEX_PAIR_TO_BYTE:
     ; Convert first character (high nibble)
     LDA MON_CMDBUF,X            ; Load first hex character
@@ -443,13 +404,13 @@ HEX_PAIR_TO_BYTE:
     RTS
 
 HEX_PAIR_ERROR:
-    SEC                         ; Set carry for error
     RTS
 
 ; Convert byte to two ASCII hex characters using lookup table
-; Input: A = byte value
-; Output: First char in MON_HEX_TEMP, second char in A
-; Preserves: Y
+; Input: A = byte value (0-255)
+; Output: High nibble hex char in MON_HEX_TEMP, low nibble hex char in A
+; Modifies: A, X, MON_HEX_TEMP
+; Note: Uses HEX_LOOKUP_TABLE for fast conversion, used by address display routines
 BYTE_TO_HEX_PAIR:
     PHX                         ; Push X to stack
     PHA                         ; Save original byte
@@ -473,24 +434,20 @@ BYTE_TO_HEX_PAIR:
 
 ; Convert four ASCII hex characters to 16-bit address
 ; Input: X = pointer to first hex character in MON_CMDBUF
-; Output: MON_CURRADDR_HI/LO = 16-bit value, Carry clear if valid, set if invalid
-;         X = X + 4 (points to character after the hex quartet)
+; Output: MON_CURRADDR_HI/LO = 16-bit address value, X = X + 4 (points after hex quartet), Carry clear if valid, set if invalid
+; Modifies: A, X, Y
+; Note: Validates each character is valid hex (0-9, A-F), used by address parsing routines
 HEX_QUAD_TO_ADDR:
-    ; Convert first byte (high byte of address)
     JSR HEX_PAIR_TO_BYTE        ; Convert first two hex chars
     BCS HEX_QUAD_ERROR          ; If invalid, return error
     STA MON_CURRADDR_HI         ; Store high byte
-
-    ; Convert second byte (low byte of address)
     JSR HEX_PAIR_TO_BYTE        ; Convert next two hex chars
     BCS HEX_QUAD_ERROR          ; If invalid, return error
     STA MON_CURRADDR_LO         ; Store low byte
-
     CLC                         ; Clear carry for success
     RTS
 
 HEX_QUAD_ERROR:
-    SEC                         ; Set carry for error
     RTS
 
 ; Convert 16-bit address to four ASCII hex characters
@@ -498,7 +455,6 @@ HEX_QUAD_ERROR:
 ; Output: Four characters stored starting at MON_CMDBUF,X
 ;         X = X + 4 (points to position after the four characters)
 ADDR_TO_HEX_QUAD:
-    ; Convert high byte
     LDA MON_CURRADDR_HI         ; Load high byte
     JSR BYTE_TO_HEX_PAIR        ; Convert to two hex chars
     PHA                         ; Save second character (in A)
@@ -508,8 +464,6 @@ ADDR_TO_HEX_QUAD:
     PLA                         ; Restore second character
     STA MON_CMDBUF,X            ; Store in buffer
     INX                         ; Move to next position
-
-    ; Convert low byte
     LDA MON_CURRADDR_LO         ; Load low byte
     JSR BYTE_TO_HEX_PAIR        ; Convert to two hex chars
     PHA                         ; Save second character (in A)
@@ -559,15 +513,14 @@ SCROLL_LOOP:
     INC SCRL_SRC_ADDR_LO
     BNE SCROLL_NO_SRC_CARRY
     INC SCRL_SRC_ADDR_HI
-SCROLL_NO_SRC_CARRY:
 
+SCROLL_NO_SRC_CARRY:
     INC SCRL_DEST_ADDR_LO
     BNE SCROLL_NO_DEST_CARRY
     INC SCRL_DEST_ADDR_HI
-SCROLL_NO_DEST_CARRY:
 
-    ; Decrement 16-bit counter
-    DEC SCRL_BYTE_CNT
+SCROLL_NO_DEST_CARRY:
+    DEC SCRL_BYTE_CNT           ; Decrement 16-bit counter
     LDA SCRL_BYTE_CNT
     CMP #$FF
     BNE SCROLL_LOOP
@@ -598,16 +551,10 @@ CLEAR_SCREEN:
     LDX #$00                    ; Initialize index
 
 CLEAR_SCREEN_LOOP:
-    ; Unrolled loop - do two sets of writes per iteration
-    ; This cuts loop overhead in half (128 iterations instead of 256)
-
-    ; First set of writes
     STA $0400,X                 ; Clear screen memory page 1
     STA $0500,X                 ; Clear screen memory page 2
     STA $0600,X                 ; Clear screen memory page 3
     STA $0700,X                 ; Clear screen memory page 4
-
-    ; Second set of writes (X+1)
     INX                         ; Increment to next position
     STA $0400,X                 ; Clear screen memory page 1
     STA $0500,X                 ; Clear screen memory page 2
@@ -616,29 +563,23 @@ CLEAR_SCREEN_LOOP:
 
     INX                         ; Increment for next iteration
     BNE CLEAR_SCREEN_LOOP       ; Loop until X wraps to 0
-
     RTS
 
 ; Print a single character to screen at current cursor position
-; Input: A = character to print
-; Modifies: A, X, Y
-; Optimized version using direct screen pointer tracking
+; Input: A = character to print (ASCII value)
+; Output: Character displayed on screen, cursor and screen pointer advanced
+; Modifies: A, X, Y, CURSOR_X/Y, SCREEN_PTR_LO/HI
+; Note: Handles special characters (CR, backspace), automatic scrolling, cursor wrapping
 PRINT_CHAR:
-    ; Handle special characters
     CMP #ASCII_CR               ; Is it carriage return?
     BEQ PRINT_CHAR_NEWLINE      ; Handle newline
 
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ PRINT_CHAR_BACKSPACE    ; Handle backspace
 
-    ; Save Y register to memory variable (preserves A with character)
     STY MON_MSG_TMP_POS         ; Save Y register to memory
-
-    ; Store character directly to screen memory
     LDY #$00                    ; Y=0 for indirect addressing
     STA (SCREEN_PTR_LO),Y       ; Store character (A still has the character!)
-
-    ; Restore Y register
     LDY MON_MSG_TMP_POS         ; Restore Y from memory
 
     ; Advance screen pointer
@@ -647,8 +588,7 @@ PRINT_CHAR:
     INC SCREEN_PTR_HI           ; Increment high byte if carry
 
 PRINT_CHAR_NO_CARRY:
-    ; Advance cursor X position
-    INC CURSOR_X
+    INC CURSOR_X                ; Advance cursor X position
 
     ; Check for line wrap (X >= 40)
     PHA                         ; Save character
@@ -731,11 +671,30 @@ PRINT_CHAR_NEWLINE_DONE:
 
 PRINT_CHAR_BACKSPACE:
     ; Handle backspace - move cursor back and clear character
-    ; Check if we're at beginning of line
+    ; Check if we're at beginning of current line
     LDA CURSOR_X
-    BEQ PRINT_CHAR_DONE         ; If X=0, can't go back further
+    BNE PRINT_BACKSPACE_SAME_LINE ; If X>0, backspace within current line
 
-    ; Move cursor back one position
+    ; At beginning of line - check if we can go to previous line
+    LDA CURSOR_Y
+    BEQ PRINT_CHAR_DONE         ; If Y=0, we're at top-left, can't go back
+
+    ; Move to end of previous line
+    DEC CURSOR_Y                ; Move up one line
+    LDA #SCREEN_WIDTH-1         ; Move to end of line (position 39)
+    STA CURSOR_X
+
+    ; Decrement screen pointer to end of previous line
+    LDA SCREEN_PTR_LO           ; Get current screen pointer low
+    BNE PRINT_BACKSPACE_CROSS_NO_BORROW ; If not zero, no borrow needed
+    DEC SCREEN_PTR_HI           ; Decrement high byte if borrow
+
+PRINT_BACKSPACE_CROSS_NO_BORROW:
+    DEC SCREEN_PTR_LO           ; Decrement low byte (moves to end of previous line)
+    JMP PRINT_BACKSPACE_CLEAR_CHAR ; Clear the character
+
+PRINT_BACKSPACE_SAME_LINE:
+    ; Move cursor back one position on same line
     DEC CURSOR_X                ; Decrement cursor X position
 
     ; Decrement screen pointer
@@ -746,6 +705,7 @@ PRINT_CHAR_BACKSPACE:
 PRINT_BACKSPACE_NO_BORROW:
     DEC SCREEN_PTR_LO           ; Decrement low byte
 
+PRINT_BACKSPACE_CLEAR_CHAR:
     ; Save Y register to memory variable (like normal character printing)
     STY MON_MSG_TMP_POS         ; Save Y register to memory
 
@@ -756,7 +716,6 @@ PRINT_BACKSPACE_NO_BORROW:
 
     ; Restore Y register
     LDY MON_MSG_TMP_POS         ; Restore Y from memory
-
     RTS                         ; Done with backspace
 
 ; Print a newline (carriage return)
@@ -810,21 +769,16 @@ HANDLE_PAGE_BREAK:
     JSR PRINT_MESSAGE
 
 PAGE_WAIT_KEY:
-    JSR GET_KEYSTROKE
-
-    CMP #ASCII_CR             ; Enter to continue
+    JSR GET_KEYSTROKE           ; Get the key pressed
+    CMP #ASCII_CR               ; Enter to continue
     BEQ PAGE_CONTINUE
-
-    CMP #ASCII_ESC            ; ESC to abort?
+    CMP #ASCII_ESC              ; ESC to abort
     BEQ PAGE_ABORT
-
-    JMP PAGE_WAIT_KEY         ; Wait for valid input
+    JMP PAGE_WAIT_KEY           ; Wait for valid input
 
 PAGE_ABORT:
-    ; Set abort flag
     LDA #1
-    STA PAGE_ABORT_FLAG
-    ; Fall through to restore
+    STA PAGE_ABORT_FLAG         ; Set abort flag
 
 PAGE_CONTINUE:
     ; Restore cursor state
@@ -838,9 +792,11 @@ PAGE_CONTINUE:
     STA CURSOR_X
     RTS
 
-; Print null-terminated string at address in MON_MSG_PTR_LO/MON_MSG_PTR_HI
-; Input: MON_MSG_PTR_LO = low byte of string address, MON_MSG_PTR_HI = high byte
-; Modifies: A, Y
+; Print null-terminated string using indirect addressing
+; Input: MON_MSG_PTR_LO/HI = pointer to null-terminated string
+; Output: String displayed on screen, cursor advanced
+; Modifies: A, Y, MON_MSG_TMP_POS
+; Note: Core string display routine, handles newlines and special characters
 PRINT_MESSAGE:
     LDY #$00                    ; Initialize string index
 
@@ -850,27 +806,26 @@ PRINT_MSG_LOOP:
     JSR PRINT_CHAR              ; Print the character
     INY                         ; Move to next character
     BNE PRINT_MSG_LOOP          ; Continue if Y hasn't wrapped (strings < 256 chars)
-    ; Note: For strings > 255 chars, we'd need to increment MON_MSG_PTR_HI
 
 PRINT_MSG_DONE:
     RTS
 
-; Wait for and read a single keystroke from keyboard
-; Output: A = ASCII character received
+; Wait for and read a single keystroke from keyboard hardware
+; Input: None (blocks until key pressed)
+; Output: A = ASCII character received from keyboard
 ; Modifies: A
+; Note: Polls PIA keyboard interface, blocks until data available, raw keystroke input
 GET_KEYSTROKE:
-    ; Poll PIA for available data
 
 GET_KEYSTROKE_WAIT:
     INC RNG_SEED            ; Add entropy while waiting!
     BNE CHECK_KEY           ; Skip if no wrap
     INC RNG_SEED            ; Keep it non-zero
+
 CHECK_KEY:
     LDA PIA_CONTROL         ; Read PIA control register
     AND #PIA_DATA_AVAIL     ; Check data available bit
     BEQ GET_KEYSTROKE_WAIT  ; Loop until data available
-
-    ; Read the keystroke
     LDA PIA_DATA            ; Read character from PIA
     RTS
 
@@ -879,57 +834,42 @@ CHECK_KEY:
 ; ================================================================
 
 ; Read a complete command line from keyboard with editing support
-; Output: Command stored in MON_CMDBUF, length in MON_CMDLEN
-; Supports: backspace editing, 80 character limit
-; Modifies: A, X, Y
+; Input: None (reads from keyboard until ENTER pressed)
+; Output: Command stored in MON_CMDBUF, length in MON_CMDLEN, command echoed to screen
+; Modifies: A, X, Y, MON_CMDBUF, MON_CMDLEN
+; Note: Supports backspace editing, 80 char limit, lowercase to uppercase conversion, '.' recall
 READ_COMMAND_LINE:
-    ; Initialize command buffer
     LDA #$00                    ; Clear accumulator
     STA MON_CMDLEN              ; Reset command length
     LDX #$00                    ; Reset buffer index
 
 READ_CMD_LOOP:
     JSR GET_KEYSTROKE           ; Wait for keystroke
-
-    ; Check for special keys
     CMP #ASCII_CR               ; Is it Enter/Return?
     BEQ READ_CMD_DONE_CR_JMP    ; If so, command is complete (use local jump)
-
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ READ_CMD_BACKSPACE      ; Handle backspace
-
     CMP #ASCII_DELETE           ; Is it delete?
     BEQ READ_CMD_BACKSPACE      ; Handle delete same as backspace
-
     CMP #ASCII_ESC              ; Is it escape?
     BEQ READ_CMD_ESCAPE         ; Handle escape (cancel command)
-
-    ; Check for dot command (instant recall of last command)
     CMP #ASCII_DOT              ; Is it a dot?
     BNE CHECK_BUFFER_FULL       ; If not, continue normal processing
 
     ; Only process dot if it's the first character AND we're in command mode
     CPX #$00                    ; Is buffer empty?
     BNE CHECK_BUFFER_FULL       ; If not, treat as normal character
-
-    ; Check if we're in command mode - only recall in command mode
     LDA MON_MODE                ; Load current mode
     BNE CHECK_BUFFER_FULL       ; If not command mode (0), treat dot as normal character
-
-    ; It's a dot as first character in command mode - recall last command
     JSR RECALL_LAST_COMMAND     ; Recall and display last command
     JMP READ_CMD_LOOP           ; Continue normal input processing
 
-; Local jump helper for CR done (within branch range)
 READ_CMD_DONE_CR_JMP:
     JMP READ_CMD_DONE_CR        ; Jump to actual CR handler
 
 CHECK_BUFFER_FULL:
-    ; Check if buffer is full
     CPX #MON_CMDBUF_LEN-1       ; Check if at max length (leave room for null)
     BCS READ_CMD_LOOP           ; If full, ignore additional characters
-
-    ; Check if character is printable (space to tilde)
     CMP #ASCII_SPACE            ; Is it less than space?
     BCC READ_CMD_LOOP           ; If so, ignore it
     CMP #$7F                    ; Is it greater than tilde?
@@ -943,7 +883,6 @@ CHECK_BUFFER_FULL:
     AND #$5F                    ; Clear bit 5 to convert to uppercase
 
 NOT_LOWERCASE_INPUT:
-    ; Add character to buffer and echo to screen
     STA MON_CMDBUF,X            ; Store character in buffer (now uppercase if it was lowercase)
     JSR PRINT_CHAR              ; Echo character to screen
     INX                         ; Increment buffer position
@@ -951,48 +890,37 @@ NOT_LOWERCASE_INPUT:
     JMP READ_CMD_LOOP           ; Continue reading
 
 READ_CMD_BACKSPACE:
-    ; Handle backspace - remove last character
     CPX #$00                    ; Is buffer empty?
     BEQ READ_CMD_LOOP           ; If empty, ignore backspace
-
     DEX                         ; Move back one position
     STX MON_CMDLEN              ; Update command length
     LDA #$00                    ; Load null character
     STA MON_CMDBUF,X            ; Clear the character in buffer
-
-    ; Echo backspace to screen (PRINT_CHAR will handle the backspace properly)
     LDA #ASCII_BACKSPACE        ; Print backspace
     JSR PRINT_CHAR              ; PRINT_CHAR now handles backspace correctly
-
     JMP READ_CMD_LOOP           ; Continue reading
 
 READ_CMD_ESCAPE:
-    ; Check if buffer is empty
-    CPX #$00
-    BNE READ_CMD_CANCEL      ; If not empty, clear buffer (existing behavior)
+    CPX #$00                    ; Check if buffer is empty
+    BNE READ_CMD_CANCEL         ; If not empty, clear buffer
 
-    ; Buffer is empty - treat like we got a special "ESC command"
-    LDA #ASCII_ESC
-    STA MON_CMDBUF           ; Put ESC as the only character
+    LDA #ASCII_ESC              ; Buffer is empty - treat like we got ESC command
+    STA MON_CMDBUF              ; Put ESC as the only character
     LDA #$01
-    STA MON_CMDLEN           ; Length = 1
+    STA MON_CMDLEN              ; Length = 1
     JSR PRINT_NEWLINE
     RTS
 
 READ_CMD_CANCEL:
-    ; Handle escape - clear entire command
     LDA #$00                    ; Clear accumulator
     STA MON_CMDLEN              ; Reset command length
     LDX #$00                    ; Reset buffer index
 
-    ; Clear the buffer
 READ_CMD_CLEAR_LOOP:
     STA MON_CMDBUF,X            ; Clear buffer position
     INX                         ; Move to next position
     CPX #MON_CMDBUF_LEN         ; Have we cleared entire buffer?
     BNE READ_CMD_CLEAR_LOOP     ; Continue if not done
-
-    ; Print new prompt
     JSR PRINT_NEWLINE           ; Start new line
     LDX #$00                    ; Reset buffer index
     JMP READ_CMD_LOOP           ; Start over
@@ -1019,6 +947,7 @@ RECALL_LAST_COMMAND:
     ; Clear current command buffer first
     LDX #$00
     LDA #$00
+
 RECALL_CLEAR_LOOP:
     STA MON_CMDBUF,X            ; Clear buffer position
     INX
@@ -1027,6 +956,7 @@ RECALL_CLEAR_LOOP:
 
     ; Copy last command to current command buffer
     LDX #$00                    ; Initialize copy index
+
 RECALL_COPY_LOOP:
     CPX MON_LAST_CMD_LEN        ; Have we copied all characters?
     BCS RECALL_COPY_DONE        ; If so, we're done copying
@@ -1059,6 +989,7 @@ SAVE_COMMAND:
 
     ; Copy current command to last command buffer
     LDX #$00                    ; Initialize copy index
+
 SAVE_CMD_COPY_LOOP:
     CPX MON_CMDLEN              ; Have we copied all characters?
     BCS SAVE_CMD_COPY_DONE      ; If so, we're done copying
@@ -1127,9 +1058,11 @@ PRINT_ADDRESS_ONLY:
 ; MONITOR COMMAND PARSER
 ; ================================================================
 
-; Parse and execute a command from MON_CMDBUF
-; Input: Command in MON_CMDBUF, length in MON_CMDLEN
-; Modifies: A, X, Y
+; Parse and execute a command from command buffer
+; Input: Command text in MON_CMDBUF, length in MON_CMDLEN
+; Output: Command executed, results displayed to screen, errors handled
+; Modifies: A, X, Y, and various command-specific variables
+; Note: Uses jump table for command dispatch, validates command syntax and parameters
 PARSE_COMMAND:
     ; Initialize parser state
     LDA #$00
@@ -1141,7 +1074,6 @@ PARSE_COMMAND:
     ; Check if command is empty
     BNE PARSE_CMD_START
     JMP PARSE_CMD_DONE
-
 
 PARSE_CMD_START:
     ; Get first character
@@ -1174,7 +1106,10 @@ PARSE_CMD_START:
 PARSE_CMD_ERROR_JMP:
     JMP PARSE_CMD_ERROR         ; Jump to main error handler
 
-; Commands that require colon syntax
+; ================================================================
+; MONITOR COMMAND PARSING ROUTINES
+; ================================================================
+
 PARSE_CMD_CLEAR:
     JSR PARSE_COLON_COMMAND     ; Parse C: format
     BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
@@ -1217,13 +1152,13 @@ PARSE_CMD_WRITE_CHECK:
 PARSE_CMD_READ_CHECK:
     JSR PARSE_COLON_COMMAND     ; Parse R:xxxx or R:xxxx-yyyy format
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_READ_MODE           ; Execute read mode command
+    JSR CMD_READ_MEMORY         ; Execute read memory command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_GO_CHECK:
     JSR PARSE_COLON_COMMAND     ; Parse G:xxxx format
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_GO_MODE             ; Execute go mode command
+    JSR CMD_RUN_PROGRAM         ; Execute run program command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_LOAD_CHECK:
@@ -1231,7 +1166,7 @@ PARSE_CMD_LOAD_CHECK:
     BCS PARSE_CMD_ERROR         ; If error, show error message
     JSR PARSE_FILENAME          ; Parse comma and filename
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_LOAD_MODE           ; Execute load mode command
+    JSR CMD_LOAD_FILE           ; Execute load file command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_SAVE_CHECK:
@@ -1239,7 +1174,7 @@ PARSE_CMD_SAVE_CHECK:
     BCS PARSE_CMD_ERROR         ; If error, show error message
     JSR PARSE_FILENAME          ; Parse comma and filename
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_SAVE_MODE           ; Execute save mode command
+    JSR CMD_SAVE_FILE           ; Execute save file command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_FILL_CHECK:
@@ -1247,7 +1182,7 @@ PARSE_CMD_FILL_CHECK:
     BCS PARSE_CMD_RANGE_ERROR   ; If address parsing error, show range error
     JSR PARSE_FILL_VALUE        ; Parse comma and fill value
     BCS PARSE_CMD_VALUE_ERROR   ; If value parsing error, show value error
-    JSR CMD_FILL_MODE           ; Execute fill mode command
+    JSR CMD_FILL_MEMORY         ; Execute fill memory command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_MOVE_CHECK:
@@ -1255,7 +1190,7 @@ PARSE_CMD_MOVE_CHECK:
     BCS PARSE_CMD_ERROR         ; If error, show error message
     JSR PARSE_MOVE_PARAMS       ; Parse comma, destination, and mode
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_MOVE_MODE           ; Execute move/copy mode command
+    JSR CMD_MOVE_MEMORY         ; Execute move/copy memory command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_SEARCH_CHECK:
@@ -1263,7 +1198,7 @@ PARSE_CMD_SEARCH_CHECK:
     BCS PARSE_CMD_ERROR         ; If error, show error message
     JSR PARSE_SEARCH_PARAMS     ; Parse comma and hex pattern
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_SEARCH_MODE         ; Execute memory search command
+    JSR CMD_SEARCH_MEMORY       ; Execute memory search command
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_ERROR:
@@ -1290,28 +1225,24 @@ PARSE_CMD_RANGE_ERROR:
 PARSE_CMD_DONE:
     RTS
 
-; Parse colon command syntax (e.g., "W:8000", "R:8000-8010")
-; Input: Command in MON_CMDBUF starting with command character
-; Output: Address(es) parsed into MON_CURRADDR_HI/LO and optionally MON_ENDADDR_HI/LO
-;         Carry clear if successful, set if error
-; Modifies: A, X, Y
+; Parse colon command syntax for address specification
+; Input: Command in MON_CMDBUF (e.g., "W:8000", "R:8000-8010", "L:8000,filename")
+; Output: Address(es) in MON_CURRADDR_HI/LO and optionally MON_STARTADDR/ENDADDR, Carry clear if valid, set if error
+; Modifies: A, X, Y, address variables
+; Note: Handles single addresses, ranges (dash), and parameters (comma), validates hex syntax
 PARSE_COLON_COMMAND:
 
     ; Clear end address to ensure single address commands work correctly
-        LDA #$00
-        STA MON_ENDADDR_LO
-        STA MON_ENDADDR_HI
+    LDA #$00
+    STA MON_ENDADDR_LO
+    STA MON_ENDADDR_HI
 
-    ; Check for colon after command character
     LDX #$01                    ; Position after command character
     LDA MON_CMDBUF,X            ; Load second character
     CMP #ASCII_COLON            ; Is it a colon?
     BNE PARSE_COLON_ERROR       ; If not, error
 
-    ; Move past the colon
     INX                         ; X now points to first character after colon
-
-    ; Check if there's anything after the colon
     CPX MON_CMDLEN              ; Are we at end of command?
     BEQ PARSE_COLON_NO_ADDR     ; If so, use current address
 
@@ -1323,18 +1254,24 @@ PARSE_COLON_COMMAND:
     CPX MON_CMDLEN              ; Are we at end of command?
     BEQ PARSE_COLON_SUCCESS     ; If so, single address is complete
 
-    ; Check for dash (range separator)
+    ; Check for dash (range separator) or comma (parameter separator)
     LDA MON_CMDBUF,X            ; Load next character
     CMP #ASCII_DASH             ; Is it a dash?
-    BNE PARSE_COLON_SUCCESS     ; If not, assume single address
+    BEQ PARSE_RANGE             ; If dash, parse range
+    CMP #$2C                    ; Is it a comma?
+    BEQ PARSE_COLON_SUCCESS     ; If comma, single address with parameters
 
-    ; Parse range - copy current address to start address
+    ; Check if we're at end of command (valid single address)
+    CPX MON_CMDLEN              ; Are we at end?
+    BEQ PARSE_COLON_SUCCESS     ; If so, valid single address
+    JMP PARSE_COLON_ERROR       ; Otherwise invalid character after address
+
+PARSE_RANGE:
     LDA MON_CURRADDR_LO         ; Copy current address to start address
     STA MON_STARTADDR_LO
     LDA MON_CURRADDR_HI
     STA MON_STARTADDR_HI
 
-    ; Move past the dash and parse end address
     INX                         ; Move past dash
     JSR HEX_QUAD_TO_ADDR        ; Parse end address into MON_CURRADDR
     BCS PARSE_COLON_ERROR       ; If error, return error
@@ -1404,7 +1341,6 @@ PARSE_FILL_GET_VALUE:
     RTS
 
 PARSE_FILL_ERROR:
-    SEC                         ; Set carry for error
     RTS
 
 ; Parse move/copy parameters (expects comma, destination address, and mode)
@@ -1597,7 +1533,6 @@ PARSE_SEARCH_PATTERN_DONE:
     RTS
 
 PARSE_SEARCH_ERROR:
-    SEC                         ; Set carry for error
     RTS
 
 ; Parse filename parameter (expects comma followed by filename)
@@ -1737,8 +1672,11 @@ RANGE_VALID:
 
 
 
-; Clear screen command (C:)
+; Clear screen command - Clears all screen memory and resets cursor to origin
+; Input: None (address in MON_CURRADDR_HI/LO is ignored for clear command)
+; Output: Screen memory cleared to spaces, cursor at (0,0), screen pointer reset
 ; Modifies: A, X
+; Note: This is a one-shot command that returns to command prompt
 CMD_CLEAR_SCREEN:
     JSR CLEAR_SCREEN            ; Call the unrolled clear screen routine
 
@@ -1754,8 +1692,11 @@ CMD_CLEAR_SCREEN:
     STA SCREEN_PTR_HI           ; Store in screen pointer
     RTS
 
-; Stack dump command (T:) - Display stack memory ($0100-$01FF)
+; Stack dump command - Display complete stack memory with paging support
+; Input: None (dumps entire stack page $0100-$01FF regardless of current address)
+; Output: Formatted hex dump of stack memory to screen with addresses and data
 ; Modifies: A, X, Y
+; Note: Uses paging - user can press ESC to abort or ENTER to continue
 CMD_DUMP_STACK:
 
     LDA #0
@@ -1774,8 +1715,11 @@ CMD_DUMP_STACK:
     JSR DUMP_MEMORY_RANGE       ; Use common memory dump routine
     RTS
 
-; Zero page dump command (Z:) - Display zero page memory ($0000-$00FF)
+; Zero page dump command - Display complete zero page memory with paging support
+; Input: None (dumps entire zero page $0000-$00FF regardless of current address)
+; Output: Formatted hex dump of zero page memory to screen with addresses and data
 ; Modifies: A, X, Y
+; Note: Uses paging - user can press ESC to abort or ENTER to continue
 CMD_DUMP_ZERO_PAGE:
     LDA #0
     STA CMD_LINE_COUNT          ; Reset command line counter
@@ -1794,8 +1738,11 @@ CMD_DUMP_ZERO_PAGE:
     RTS
 
 
-; Show help command (H:) - Display available commands
+; Show help command - Display comprehensive list of all monitor commands
+; Input: None (help is context-independent)
+; Output: Multi-page help text displayed to screen with command syntax and descriptions
 ; Modifies: A, X, Y
+; Note: Uses paging - user can press ESC to abort or ENTER to continue pages
 CMD_SHOW_HELP:
     ; Reset line counter for paging
     LDA #0
@@ -1838,16 +1785,21 @@ HELP_LOOP:
     BNE HELP_LOOP
     RTS
 
-; Exit mode command (ESC) - Return to command mode
+; Exit mode command - Return from any interactive mode to command mode
+; Input: None (can be called from any mode state)
+; Output: MON_MODE set to command mode (0)
 ; Modifies: A
+; Note: Used by ESC key handling to exit write mode or other interactive states
 CMD_EXIT_MODE:
     LDA #MON_MODE_CMD           ; Set to command mode
     STA MON_MODE                ; Update mode
     RTS
 
-; Write mode command (W:xxxx) - Enter write mode at specified address
-; Input: Address in MON_CURRADDR_HI/LO
+; Write mode command - Enter interactive memory writing mode at specified address
+; Input: Target address in MON_CURRADDR_HI/LO (parsed from W:xxxx command)
+; Output: MON_MODE set to write mode, displays current memory value, enters write loop
 ; Modifies: A, X, Y
+; Note: Enters persistent interactive mode - user can write hex bytes until ESC pressed
 CMD_WRITE_MODE:
     LDA #MON_MODE_WRITE         ; Set to write mode
     STA MON_MODE                ; Update mode
@@ -1859,10 +1811,12 @@ CMD_WRITE_MODE:
     JSR WRITE_MODE_LOOP         ; Handle sequential byte input
     RTS
 
-; Read mode command (R:xxxx or R:xxxx-yyyy) - Display memory (one-shot)
-; Input: Address(es) in MON_CURRADDR_HI/LO and optionally MON_ENDADDR_HI/LO
+; Read memory command - Display memory contents at single address or address range
+; Input: Start address in MON_CURRADDR_HI/LO, optional end address in MON_ENDADDR_HI/LO
+; Output: Memory contents displayed to screen in hex format with addresses
 ; Modifies: A, X, Y
-CMD_READ_MODE:
+; Note: Single address shows "XXXX: YY" format, range shows 8-byte lines with paging
+CMD_READ_MEMORY:
 
     LDA #0
     STA CMD_LINE_COUNT          ; Reset command line counter
@@ -1891,10 +1845,12 @@ CMD_READ_SINGLE:
     JSR SHOW_READ_ADDRESS       ; Use read-specific display routine
     RTS
 
-; Go/Run mode command (G:xxxx) - Execute program at specified address
-; Input: Address in MON_CURRADDR_HI/LO
-; Modifies: A
-CMD_GO_MODE:
+; Run program command - Transfer control to user program at specified address
+; Input: Execution address in MON_CURRADDR_HI/LO (parsed from G:xxxx command)
+; Output: Transfers control to user program (may not return)
+; Modifies: A, and all registers depending on user program
+; Note: Uses JSR so user program can RTS to return to monitor
+CMD_RUN_PROGRAM:
     ; Call user program (this pushes return address)
     JSR RUN_USER_PROGRAM
 
@@ -1904,10 +1860,12 @@ CMD_GO_MODE:
 RUN_USER_PROGRAM:
     JMP (MON_CURRADDR_LO)       ; Jump to user program
 
-; Load command (L:xxxx,filename) - Load file at specified address (one-shot)
-; Input: Address in MON_CURRADDR_HI/LO, filename in FILE_NAME_BUF
-; Modifies: A, X, Y
-CMD_LOAD_MODE:
+; Load file command - Load binary file from host system to specified memory address
+; Input: Target address in MON_CURRADDR_HI/LO, filename in FILE_NAME_BUF (parsed from L:xxxx,filename)
+; Output: File contents loaded to memory, success/error message displayed
+; Modifies: A, X, Y, and memory at target address
+; Note: Communicates with C++ host via file I/O interface, one-shot operation
+CMD_LOAD_FILE:
     ; Set up file I/O communication with C++ host
     ; Store target address in file I/O interface
     LDA MON_CURRADDR_LO         ; Get load address low byte
@@ -1945,11 +1903,12 @@ LOAD_CMD_SUCCESS:
     JSR PRINT_NEWLINE           ; Add newline
     RTS
 
-; Save mode command (S:xxxx-yyyy,filename) - Save memory range to file
-; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
-;        Filename already parsed in MON_PARSE_FILENAME buffer
+; Save file command - Save memory range to binary file on host system
+; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, filename in FILE_NAME_BUF
+; Output: Memory range written to file, success/error message displayed
 ; Modifies: A, X, Y
-CMD_SAVE_MODE:
+; Note: Validates address range, communicates with C++ host via file I/O interface
+CMD_SAVE_FILE:
     ; Check if we have a valid address range (end address must be non-zero)
     LDA MON_ENDADDR_LO          ; Check end address low byte
     ORA MON_ENDADDR_HI          ; OR with high byte
@@ -2008,9 +1967,11 @@ SAVE_CMD_SUCCESS:
     RTS
 
 
+; Dump memory range in formatted hex display with paging support
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
-; Modifies: A, X, Y
-; Uses: MON_MSG_TMP_POS as temporary storage
+; Output: Formatted memory dump to screen (8 bytes per line with addresses)
+; Modifies: A, X, Y, MON_LINE_COUNT, MON_MSG_TMP_POS
+; Note: Supports paging - user can ESC to abort, shows address: data format
 DUMP_MEMORY_RANGE:
     ; Initialize line counter
     LDA #$00
@@ -2303,10 +2264,12 @@ READ_MEMORY_RANGE:
 
 
 
-; Fill memory command - Fill memory range with specified byte value
-; Input: MON_CURRADDR_HI/LO (start), MON_ENDADDR_HI/LO (end), MON_FILL_VALUE (fill byte)
-; Modifies: A, X, Y
-CMD_FILL_MODE:
+; Fill memory command - Fill specified memory range with a single byte value
+; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, fill value in MON_FILL_VALUE
+; Output: Memory range filled with specified byte, success message with byte count
+; Modifies: A, X, Y, and memory in specified range
+; Note: Validates address range, uses forward-fill algorithm, displays progress
+CMD_FILL_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS FILL_RANGE_ERROR        ; If invalid range, show error
@@ -2354,10 +2317,12 @@ FILL_DONE:
     JSR PRINT_NEWLINE
     RTS
 
-; Move/Copy memory command - Copy or move memory block with optional source clearing
-; Input: MON_CURRADDR_HI/LO (start), MON_ENDADDR_HI/LO (end), MON_DEST_ADDR_HI/LO (destination), MON_COPY_MODE (0=copy, 1=move)
-; Modifies: A, X, Y
-CMD_MOVE_MODE:
+; Move/Copy memory command - Copy or move memory block between addresses
+; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, destination in MON_DEST_ADDR_HI/LO, mode in MON_COPY_MODE (0=copy, 1=move)
+; Output: Memory block copied/moved to destination, source optionally cleared if move, success message with byte count
+; Modifies: A, X, Y, and memory at destination and optionally source
+; Note: Handles overlapping regions correctly, validates ranges, clears source if move mode
+CMD_MOVE_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS MOVE_RANGE_ERROR        ; If invalid range, show error
@@ -2601,10 +2566,12 @@ MOVE_SHOW_COPY_MSG:
     JSR PRINT_NEWLINE
     RTS
 
-; Search memory command - Search for hex pattern in memory range
-; Input: MON_CURRADDR_HI/LO (start), MON_ENDADDR_HI/LO (end), pattern in MON_SEARCH_PATTERN, length in MON_PATTERN_LEN
+; Search memory command - Search for multi-byte hex pattern within memory range
+; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, search pattern in MON_SEARCH_PATTERN, pattern length in MON_PATTERN_LEN
+; Output: Address of each match displayed to screen with paging support
 ; Modifies: A, X, Y
-CMD_SEARCH_MODE:
+; Note: Supports 1-16 byte patterns, uses paging - user can press ESC to abort
+CMD_SEARCH_MEMORY:
     ; Save original current address to preserve it (search should not modify current address)
     LDA MON_CURRADDR_LO
     PHA
