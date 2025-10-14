@@ -38,9 +38,33 @@ kernel.map
 kernel.rom
 kernel.o
 
-# Qt MOC auto-generated files
+# Qt auto-generated files and directories
 *_autogen/
 **/moc_*.cpp
 **/moc_*.h
 moc_*.cpp
 moc_*.h
+.qt/
+**/.qt/
+
+# Test artifacts (executables built in cmake-build-*/tests/)
+*test
+*tests
+*_test
+*_tests
+test_*.exe
+*_test.exe
+
+# Google Test build artifacts (already covered by cmake-build-*/ but being explicit)
+**/googletest-*/
+**/googlemock-*/
+
+# Test output files
+test_results.xml
+*.gcov
+*.gcda
+*.gcno
+
+# Agent logs
+.claude/logs/*.log
+enhancements/*/logs/

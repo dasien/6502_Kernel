@@ -1,0 +1,199 @@
+# Demo Hardware Interface - 6502 Hardware Abstraction
+# This demonstrates hardware interfacing patterns for 6502 systems
+
+=== VIC-II VIDEO CHIP INTERFACE ($D000-$D3FF) ===
+
+; Example: Screen character output routine
+DEMO_PRINT_CHAR:
+    STA CHAR_TO_PRINT       ; Store character
+    LDA SCREEN_CURSOR_POS   ; Get current cursor position
+    CLC
+    ADC #<SCREEN_BASE       ; Add to screen base address
+    STA SCREEN_ADDR         ; Store screen address low
+    LDA SCREEN_CURSOR_POS+1
+    ADC #>SCREEN_BASE
+    STA SCREEN_ADDR+1       ; Store screen address high
+
+    LDA CHAR_TO_PRINT       ; Retrieve character
+    LDY #$00
+    STA (SCREEN_ADDR),Y     ; Write to screen memory
+
+    ; Update color memory
+    LDA SCREEN_ADDR         ; Get screen address
+    CLC
+    ADC #<(COLOR_BASE-SCREEN_BASE) ; Calculate color offset
+    STA COLOR_ADDR
+    LDA SCREEN_ADDR+1
+    ADC #>(COLOR_BASE-SCREEN_BASE)
+    STA COLOR_ADDR+1
+
+    LDA #$0E                ; Light blue color
+    STA (COLOR_ADDR),Y      ; Set character color
+    RTS
+
+=== MEMORY-MAPPED I/O PATTERNS ===
+
+VIC_BASE        = $D000
+VIC_SPRITE_0_X  = VIC_BASE + $00    ; Sprite 0 X position
+VIC_SPRITE_0_Y  = VIC_BASE + $01    ; Sprite 0 Y position
+VIC_CONTROL_1   = VIC_BASE + $11    ; Screen control register
+VIC_CONTROL_2   = VIC_BASE + $16    ; Screen control register 2
+VIC_MEMORY      = VIC_BASE + $18    ; Memory setup register
+
+; Initialize VIC-II for 40x25 text mode
+DEMO_INIT_VIC:
+    LDA #$1B                ; Enable screen, 25 rows, bitmap off
+    STA VIC_CONTROL_1
+
+    LDA #$C8                ; 40 columns, multicolor off
+    STA VIC_CONTROL_2
+
+    LDA #$15                ; Screen at $0400, character set at $1000
+    STA VIC_MEMORY
+
+    RTS
+
+=== CIA CHIP INTERFACE ($DC00-$DCFF, $DD00-$DDFF) ===
+
+CIA1_BASE       = $DC00
+CIA1_DATA_A     = CIA1_BASE + $00   ; Data port A (keyboard)
+CIA1_DATA_B     = CIA1_BASE + $01   ; Data port B (keyboard)
+CIA1_DDR_A      = CIA1_BASE + $02   ; Data direction A
+CIA1_DDR_B      = CIA1_BASE + $03   ; Data direction B
+
+; Example: Keyboard scanning routine
+DEMO_SCAN_KEYBOARD:
+    LDA #$FF                ; Set all bits as output
+    STA CIA1_DDR_A          ; Configure port A for output
+
+    LDA #$00                ; Set all bits as input
+    STA CIA1_DDR_B          ; Configure port B for input
+
+    LDX #$00                ; Start with row 0
+SCAN_LOOP:
+    LDA KEYBOARD_MATRIX,X   ; Get row mask
+    STA CIA1_DATA_A         ; Select keyboard row
+
+    LDA CIA1_DATA_B         ; Read column data
+    EOR #$FF                ; Invert (pressed = 0)
+    BEQ NEXT_ROW            ; No keys pressed in this row
+
+    ; Key found, process it
+    JSR PROCESS_KEY_PRESS
+    BCS KEY_PROCESSED       ; Exit if key handled
+
+NEXT_ROW:
+    INX
+    CPX #$08                ; Check all 8 rows
+    BNE SCAN_LOOP
+
+KEY_PROCESSED:
+    RTS
+
+KEYBOARD_MATRIX:
+    .BYTE $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F
+
+=== SID SOUND CHIP INTERFACE ($D400-$D7FF) ===
+
+SID_BASE        = $D400
+SID_FREQ_LO_1   = SID_BASE + $00    ; Voice 1 frequency low
+SID_FREQ_HI_1   = SID_BASE + $01    ; Voice 1 frequency high
+SID_CONTROL_1   = SID_BASE + $04    ; Voice 1 control register
+SID_ATTACK_1    = SID_BASE + $05    ; Voice 1 attack/decay
+SID_SUSTAIN_1   = SID_BASE + $06    ; Voice 1 sustain/release
+SID_FILTER      = SID_BASE + $17    ; Filter frequency low
+SID_VOLUME      = SID_BASE + $18    ; Filter/volume control
+
+; Example: Play demonstration tone
+DEMO_PLAY_TONE:
+    ; Set frequency for middle C (approximately)
+    LDA #$1D                ; Low byte of frequency
+    STA SID_FREQ_LO_1
+    LDA #$11                ; High byte of frequency
+    STA SID_FREQ_HI_1
+
+    ; Configure envelope
+    LDA #$22                ; Fast attack, medium decay
+    STA SID_ATTACK_1
+    LDA #$77                ; Medium sustain, medium release
+    STA SID_SUSTAIN_1
+
+    ; Set volume and start tone
+    LDA #$0F                ; Maximum volume
+    STA SID_VOLUME
+
+    LDA #$11                ; Sawtooth wave, gate on
+    STA SID_CONTROL_1
+
+    ; Tone will play until gate turned off
+    RTS
+
+=== INTERRUPT-SAFE HARDWARE ACCESS ===
+
+; Critical section pattern for hardware access
+DEMO_HARDWARE_CRITICAL:
+    SEI                     ; Disable interrupts
+
+    ; Critical hardware operations here
+    LDA VIC_CONTROL_1       ; Read current state
+    AND #$7F                ; Clear bit 7
+    ORA #$10                ; Set bit 4
+    STA VIC_CONTROL_1       ; Write back modified value
+
+    CLI                     ; Re-enable interrupts
+    RTS
+
+=== TIMING-CRITICAL OPERATIONS ===
+
+; Precise timing using NOPs (each NOP = 2 cycles)
+DEMO_PRECISE_DELAY:
+    LDX #$10                ; Outer loop counter
+DELAY_OUTER:
+    LDY #$FF                ; Inner loop counter (255 iterations)
+DELAY_INNER:
+    NOP                     ; 2 cycles
+    NOP                     ; 2 cycles
+    DEY                     ; 2 cycles
+    BNE DELAY_INNER         ; 3 cycles when branching, 2 when not
+
+    DEX                     ; 2 cycles
+    BNE DELAY_OUTER         ; 3 cycles when branching
+
+    RTS
+
+=== HARDWARE INITIALIZATION SEQUENCE ===
+
+DEMO_INIT_HARDWARE:
+    ; 1. Initialize VIC-II
+    JSR DEMO_INIT_VIC
+
+    ; 2. Clear SID registers
+    LDX #$00
+    LDA #$00
+CLEAR_SID:
+    STA SID_BASE,X
+    INX
+    BPL CLEAR_SID           ; Clear $00-$7F
+
+    ; 3. Initialize CIA ports
+    LDA #$FF                ; All outputs
+    STA CIA1_DDR_A
+    LDA #$00                ; All inputs
+    STA CIA1_DDR_B
+
+    ; 4. Set initial hardware state
+    LDA #$37                ; Enable ROM, disable BASIC
+    STA $01                 ; Processor port
+
+    RTS
+
+=== HARDWARE ABSTRACTION PRINCIPLES ===
+
+1. **Register Isolation**: Access hardware through defined constants
+2. **State Preservation**: Save/restore register contents when needed
+3. **Interrupt Safety**: Disable interrupts during critical sections
+4. **Timing Awareness**: Account for instruction cycle counts
+5. **Error Handling**: Validate hardware responses where possible
+
+This demonstrates the patterns used throughout the kernel
+for safe, efficient hardware interface programming.

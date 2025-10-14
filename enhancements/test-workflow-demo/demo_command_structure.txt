@@ -1,0 +1,104 @@
+# Demo Command Structure - Monitor Command Pattern
+# This demonstrates how 6502 monitor commands are structured
+
+=== COMMAND SYNTAX DESIGN ===
+Command Format: D:start-end[,format]
+Examples:
+  D:8000-80FF      ; Display memory $8000-$80FF in hex/ASCII
+  D:C000-C0FF,H    ; Display in hex only
+  D:0400-07FF,A    ; Display in ASCII only
+
+=== ASSEMBLY IMPLEMENTATION PATTERN ===
+
+; Entry point for D: command
+DEMO_COMMAND:
+    JSR PARSE_D_COMMAND     ; Parse "D:" prefix
+    BCC DEMO_SYNTAX_ERROR   ; Branch on parse error
+    JSR PARSE_ADDRESS_RANGE ; Parse start-end addresses
+    BCC DEMO_RANGE_ERROR    ; Branch on address error
+    JSR PARSE_FORMAT_OPTION ; Parse optional format specifier
+    JSR EXECUTE_DEMO_DISPLAY; Execute the display operation
+    JMP MONITOR_READY       ; Return to monitor prompt
+
+; Address range parser
+PARSE_ADDRESS_RANGE:
+    JSR PARSE_HEX_ADDRESS   ; Parse start address
+    BCC PARSE_RANGE_EXIT    ; Exit on error
+    STA DEMO_START_ADDR     ; Store start address low
+    STX DEMO_START_ADDR+1   ; Store start address high
+
+    JSR EXPECT_DASH         ; Look for '-' separator
+    BCC PARSE_RANGE_EXIT    ; Exit if not found
+
+    JSR PARSE_HEX_ADDRESS   ; Parse end address
+    BCC PARSE_RANGE_EXIT    ; Exit on error
+    STA DEMO_END_ADDR       ; Store end address low
+    STX DEMO_END_ADDR+1     ; Store end address high
+
+    SEC                     ; Set carry = success
+PARSE_RANGE_EXIT:
+    RTS
+
+; Display execution routine
+EXECUTE_DEMO_DISPLAY:
+    LDA DEMO_START_ADDR     ; Load start address
+    STA DEMO_CURR_ADDR      ; Initialize current pointer
+    LDA DEMO_START_ADDR+1
+    STA DEMO_CURR_ADDR+1
+
+DEMO_DISPLAY_LOOP:
+    JSR PRINT_ADDRESS_HEADER; Print address on left
+    JSR PRINT_HEX_BYTES     ; Print 16 hex bytes
+    JSR PRINT_ASCII_SECTION ; Print ASCII representation
+    JSR PRINT_NEWLINE       ; End the line
+
+    ; Advance to next 16-byte boundary
+    CLC
+    LDA DEMO_CURR_ADDR
+    ADC #$10
+    STA DEMO_CURR_ADDR
+    BCC NO_CARRY
+    INC DEMO_CURR_ADDR+1
+NO_CARRY:
+
+    ; Check if we've reached end address
+    JSR COMPARE_END_ADDRESS
+    BCC DEMO_DISPLAY_LOOP   ; Continue if not done
+
+    RTS
+
+=== OUTPUT FORMAT EXAMPLE ===
+8000: 4C 20 80 A9 42 85 01 20  L .•©B•.
+8008: 82 80 4C 25 80 A2 00 BD  ‚€L%€¢.½
+8010: 00 80 F0 03 20 D2 FF E8  .€ð. ÒÿÈ
+8018: D0 F7 60 48 65 6C 6C 6F  Ð÷`Hello
+
+=== ERROR HANDLING PATTERNS ===
+DEMO_SYNTAX_ERROR:
+    JSR PRINT_ERROR_MESSAGE
+    LDX #<MSG_SYNTAX_ERROR
+    LDY #>MSG_SYNTAX_ERROR
+    JSR PRINT_STRING
+    RTS
+
+DEMO_RANGE_ERROR:
+    JSR PRINT_ERROR_MESSAGE
+    LDX #<MSG_RANGE_ERROR
+    LDY #>MSG_RANGE_ERROR
+    JSR PRINT_STRING
+    RTS
+
+=== MESSAGE STRINGS (Null-terminated) ===
+MSG_SYNTAX_ERROR: .BYTE "?SYNTAX ERROR IN D: COMMAND", 0
+MSG_RANGE_ERROR:  .BYTE "?INVALID ADDRESS RANGE", 0
+MSG_HELP_TEXT:    .BYTE "D:START-END[,FORMAT] DISPLAY MEMORY", 0
+
+=== INTEGRATION POINTS ===
+- Uses existing PARSE_HEX_ADDRESS routine
+- Uses existing PRINT_STRING routine
+- Uses existing PRINT_CHAR routine
+- Follows standard error message format
+- Returns to MONITOR_READY when complete
+
+This structure demonstrates the standard pattern used
+throughout the 6502 monitor command system.
