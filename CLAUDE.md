@@ -13,11 +13,51 @@ This is not a c64 emulator and does not use PETSCII.
 The project uses CMake and ninja as the build system:
 
 ```bash
-cmake -G Ninja ..
+cmake -G Ninja -DBUILD_TESTS=ON ..
 ninja
 ```
 
 The main executable target is `6502_Kernel` which builds from `main.cpp`.
+
+## Testing
+
+### Test Organization
+```
+/tests/                          # Source-controlled test code
+├── CMakeLists.txt              # Test build configuration
+├── test_advanced_commands.cpp  # Unit tests for monitor commands
+├── test_monitor_integration.cpp # Integration tests
+└── scripts/                    # Test utility scripts
+
+cmake-build-debug/tests/        # Build artifacts (excluded from Git)
+├── kernel_tests               # Unit test executable
+├── monitor_integration_tests  # Integration test executable
+└── [generated files]          # CMake and build artifacts
+```
+
+### Running Tests
+```bash
+# Build with tests enabled
+cmake -G Ninja -DBUILD_TESTS=ON ..
+ninja
+
+# Run all tests
+ctest
+
+# Run specific test suites
+ctest -R kernel_unit_tests
+ctest -R monitor_integration
+ctest -R validate_kernel_rom
+
+# Run tests with verbose output
+ctest --verbose
+```
+
+### Test Types
+- **Unit Tests** (`kernel_tests`): Test individual components using Google Test
+- **Integration Tests** (`monitor_integration_tests`): Test monitor command functionality
+- **ROM Validation** (`validate_kernel_rom`): Verify kernel ROM integrity
+- **Memory Layout Validation** (`validate_memory_layout`): Check memory map compliance
 
 ## Architecture and Code Organization
 

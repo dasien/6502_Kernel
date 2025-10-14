@@ -20,11 +20,10 @@
 ;   JUMPS segment:  ($FF00-$FF11) - 18 bytes
 ;   VECS segment:   ($FFFA-$FFFF) - 6 bytes
 ;
-; Zero Page:    $00-$10 (17 bytes used)
-;   Monitor:    $00-$0F (16 bytes)
-;   Scroll:     $08-$0C (5 bytes, overlapped)
-;   Paging:     $0D-$0E (2 bytes, overlapped)
-;   RNG:        $0F-$10 (2 bytes, overlapped)
+; Zero Page:    $14-$34 (33 bytes used) - Relocated for BASIC compatibility
+;   Monitor:    $14-$24 (17 bytes) - core variables
+;   HEX_LOOKUP: $25-$34 (16 bytes) - lookup table
+;   Note: Original $00-$10, $F0-$FF conflicted with BASIC interpreter
 ;
 ; RAM Usage:    $0200-$0284 (133 bytes)
 ;   Cmd Buffer: $0200-$024F (80 bytes)
@@ -66,7 +65,7 @@
 
 .PC02                               ; ca65 directive to enable 65C02 instructions.
 
-.org $F000                          ; ROM start address.
+.org $E000                          ; ROM start address.
 
 ; ================================================================
 ; SYSTEM CONSTANTS SECTION
@@ -74,25 +73,32 @@
 STACK_TOP          = $FF           ; Top of stack page
 
 ; ================================================================
-; ZERO PAGE VARIABLES
+; ZERO PAGE VARIABLES - Relocated for BASIC compatibility
 ; ================================================================
-MON_CURRADDR_LO    = $00           ; Current address low byte (MUST be zero page)
-MON_CURRADDR_HI    = $01           ; Current address high byte (MUST be zero page)
-MON_MSG_PTR_LO     = $02           ; Message pointer low byte (MUST be zero page)
-MON_MSG_PTR_HI     = $03           ; Message pointer high byte (MUST be zero page)
-JUMP_VECTOR        = $04           ; Indirect jump vector (2 bytes: $04-$05)
-SCREEN_PTR_LO      = $06           ; Current screen memory pointer (low byte)
-SCREEN_PTR_HI      = $07           ; Current screen memory pointer (high byte)
-SCRL_SRC_ADDR_LO   = $08           ; Scroll source address low byte
-SCRL_SRC_ADDR_HI   = $09           ; Scroll source address high byte
-SCRL_DEST_ADDR_LO  = $0A           ; Scroll destination address low byte
-SCRL_DEST_ADDR_HI  = $0B           ; Scroll destination address high byte
-SCRL_BYTE_CNT      = $0C           ; Scroll byte counter
-CMD_LINE_COUNT     = $0D           ; Lines printed by current command
-PAGE_ABORT_FLAG    = $0E           ; Set to 1 if user pressed ESC
-RNG_SEED           = $0F           ; Random number generator seed
-RNG_MAX            = $10           ; Maximum value for random number (1-255)
-HEX_LOOKUP_TABLE   = $F0           ; Hex lookup table location (16 bytes: $F0-$FF)
+; Original locations $00-$10, $F0-$FF conflicted with BASIC interpreter
+; Relocated to $14-$3F range which is unused by BASIC
+MON_CURRADDR_LO    = $14           ; Current address low byte (was $00)
+MON_CURRADDR_HI    = $15           ; Current address high byte (was $01)
+MON_MSG_PTR_LO     = $16           ; Message pointer low byte (was $02)
+MON_MSG_PTR_HI     = $17           ; Message pointer high byte (was $03)
+JUMP_VECTOR        = $18           ; Indirect jump vector (2 bytes: $18-$19) (was $04-$05)
+SCREEN_PTR_LO      = $1A           ; Current screen memory pointer low (was $06)
+SCREEN_PTR_HI      = $1B           ; Current screen memory pointer high (was $07)
+SCRL_SRC_ADDR_LO   = $1C           ; Scroll source address low byte (was $08)
+SCRL_SRC_ADDR_HI   = $1D           ; Scroll source address high byte (was $09)
+SCRL_DEST_ADDR_LO  = $1E           ; Scroll destination address low byte (was $0A)
+SCRL_DEST_ADDR_HI  = $1F           ; Scroll destination address high byte (was $0B)
+SCRL_BYTE_CNT      = $20           ; Scroll byte counter (was $0C)
+CMD_LINE_COUNT     = $21           ; Lines printed by current command (was $0D)
+PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
+RNG_SEED           = $23           ; Random number generator seed (was $0F)
+RNG_MAX            = $24           ; Maximum value for random number (was $10)
+HEX_LOOKUP_TABLE   = $25           ; Hex lookup table (16 bytes: $25-$34) (was $F0-$FF)
+DEC_TEMP_LO        = $35           ; Decimal conversion temporary low byte
+DEC_TEMP_HI        = $36           ; Decimal conversion temporary high byte
+DEC_DIGIT_IDX      = $37           ; Decimal digit index/counter
+DEC_RESULT_LO      = $38           ; Decimal conversion result low byte
+DEC_RESULT_HI      = $39           ; Decimal conversion result high byte
 
 ; ================================================================
 ; MONITOR VARIABLES
@@ -101,30 +107,33 @@ HEX_LOOKUP_TABLE   = $F0           ; Hex lookup table location (16 bytes: $F0-$F
 ; Monitor Command Buffer and State Variables
 MON_CMDBUF         = $0200         ; Command input buffer (80 bytes: $0200-$024F)
 MON_CMDBUF_LEN     = 80            ; Maximum command buffer length
-MON_CMDPTR         = $0250         ; Pointer to current position in command buffer
-MON_CMDLEN         = $0251         ; Current length of command in buffer
-MON_MODE           = $0252         ; Current monitor mode (0=Command, 1=Write, 2=Read, 3=Run)
-MON_STARTADDR_LO   = $0253         ; Start address for range operations (low)
-MON_STARTADDR_HI   = $0254         ; Start address for range operations (high)
-MON_ENDADDR_LO     = $0255         ; End address for range operations (low)
-MON_ENDADDR_HI     = $0256         ; End address for range operations (high)
-MON_PARSE_PTR      = $0257         ; Parser position pointer
-MON_PARSE_LEN      = $0258         ; Remaining characters to parse
-MON_HEX_TEMP       = $0259         ; Temporary storage for hex conversion
-MON_BYTE_COUNT     = $025A         ; Count of bytes for write operations
-MON_LINE_COUNT     = $025B         ; Line counter for display formatting
-MON_ERROR_FLAG     = $025C         ; Error flag for invalid operations
-CURSOR_X           = $025D         ; Current cursor X position (0-39)
-CURSOR_Y           = $025E         ; Current cursor Y position (0-24)
-MON_MSG_TMP_POS    = $025F         ; Temp pointer to current position in message
-MON_FILL_VALUE     = $0284         ; Fill command byte value
-MON_DEST_ADDR_LO   = $0285         ; Move/Copy destination address low byte
-MON_DEST_ADDR_HI   = $0286         ; Move/Copy destination address high byte
-MON_COPY_MODE      = $0287         ; Move/Copy mode (0=copy, 1=move)
-MON_SEARCH_PATTERN = $0288         ; Search pattern buffer (16 bytes: $0288-$0297)
-MON_PATTERN_LEN    = $0298         ; Search pattern length (1-16 bytes)
-MON_LAST_CMD_BUF   = $0299         ; Last command buffer (80 bytes: $0299-$02E8)
-MON_LAST_CMD_LEN   = $02E9         ; Last command length (1 byte)
+
+; Monitor variables relocated to $0269+ to avoid BASIC memory conflicts
+; BASIC uses $0200-$0268, Monitor command buffer $0200-$024F overlaps but is inactive during BASIC mode
+MON_CMDPTR         = $0269         ; Pointer to current position in command buffer (was $0250)
+MON_CMDLEN         = $026A         ; Current length of command in buffer (was $0251)
+MON_MODE           = $026B         ; Current monitor mode (0=Command, 1=Write, 2=Read, 3=Run) (was $0252)
+MON_STARTADDR_LO   = $026C         ; Start address for range operations (low) (was $0253)
+MON_STARTADDR_HI   = $026D         ; Start address for range operations (high) (was $0254)
+MON_ENDADDR_LO     = $026E         ; End address for range operations (low) (was $0255)
+MON_ENDADDR_HI     = $026F         ; End address for range operations (high) (was $0256)
+MON_PARSE_PTR      = $0270         ; Parser position pointer (was $0257)
+MON_PARSE_LEN      = $0271         ; Remaining characters to parse (was $0258)
+MON_HEX_TEMP       = $0272         ; Temporary storage for hex conversion (was $0259)
+MON_BYTE_COUNT     = $0273         ; Count of bytes for write operations (was $025A)
+MON_LINE_COUNT     = $0274         ; Line counter for display formatting (was $025B)
+MON_ERROR_FLAG     = $0275         ; Error flag for invalid operations (was $025C)
+CURSOR_X           = $0276         ; Current cursor X position (0-39) (was $025D)
+CURSOR_Y           = $0277         ; Current cursor Y position (0-24) (was $025E)
+MON_MSG_TMP_POS    = $0278         ; Temp pointer to current position in message (was $025F)
+MON_FILL_VALUE     = $0279         ; Fill command byte value (was $0260)
+MON_DEST_ADDR_LO   = $027A         ; Move/Copy destination address low byte (was $0261)
+MON_DEST_ADDR_HI   = $027B         ; Move/Copy destination address high byte (was $0262)
+MON_COPY_MODE      = $027C         ; Move/Copy mode (0=copy, 1=move) (was $0263)
+MON_SEARCH_PATTERN = $027D         ; Search pattern buffer (16 bytes: $027D-$028C) (was $0264-$0273)
+MON_PATTERN_LEN    = $028D         ; Search pattern length (1-16 bytes) (was $0274)
+MON_LAST_CMD_BUF   = $028E         ; Last command buffer (80 bytes: $028E-$02DD) (was $0275-$02C4)
+MON_LAST_CMD_LEN   = $02DE         ; Last command length (1 byte) (was $02C5)
 
 ; Monitor Mode Constants
 MON_MODE_CMD       = 0             ; Command mode
@@ -276,7 +285,6 @@ CLEAR_MON_VAR_LOOP:
     LDA #>MSG_WELCOME           ; Load high byte of message address
     STA MON_MSG_PTR_HI          ; Store in message pointer high
     JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE           ; Add newline for proper formatting
 
     ; Jump to monitor main loop
     JMP MONITOR_MAIN
@@ -563,6 +571,18 @@ CLEAR_SCREEN_LOOP:
 
     INX                         ; Increment for next iteration
     BNE CLEAR_SCREEN_LOOP       ; Loop until X wraps to 0
+
+    ; Reset screen pointer to start of screen
+    LDA #<SCREEN_START          ; Low byte of $0400
+    STA SCREEN_PTR_LO
+    LDA #>SCREEN_START          ; High byte of $0400
+    STA SCREEN_PTR_HI
+
+    ; Reset cursor position to (0, 0)
+    LDA #$00
+    STA CURSOR_X
+    STA CURSOR_Y
+
     RTS
 
 ; Print a single character to screen at current cursor position
@@ -573,6 +593,9 @@ CLEAR_SCREEN_LOOP:
 PRINT_CHAR:
     CMP #ASCII_CR               ; Is it carriage return?
     BEQ PRINT_CHAR_NEWLINE      ; Handle newline
+
+    CMP #ASCII_LF               ; Is it line feed?
+    BEQ PRINT_CHAR_NEWLINE      ; Handle newline (treat same as CR)
 
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ PRINT_CHAR_BACKSPACE    ; Handle backspace
@@ -769,7 +792,8 @@ HANDLE_PAGE_BREAK:
     JSR PRINT_MESSAGE
 
 PAGE_WAIT_KEY:
-    JSR GET_KEYSTROKE           ; Get the key pressed
+    JSR GET_KEYSTROKE           ; Check for key pressed
+    BCC PAGE_WAIT_KEY           ; Loop if no key available
     CMP #ASCII_CR               ; Enter to continue
     BEQ PAGE_CONTINUE
     CMP #ASCII_ESC              ; ESC to abort
@@ -810,23 +834,28 @@ PRINT_MSG_LOOP:
 PRINT_MSG_DONE:
     RTS
 
-; Wait for and read a single keystroke from keyboard hardware
-; Input: None (blocks until key pressed)
-; Output: A = ASCII character received from keyboard
+; Scan keyboard without blocking - standard non-blocking input routine
+; Input: None
+; Output: A = ASCII character if available, Carry SET if character available, Carry CLEAR if no character
 ; Modifies: A
-; Note: Polls PIA keyboard interface, blocks until data available, raw keystroke input
+; Note: Non-blocking keyboard scan, compatible with BASIC interpreter expectations
 GET_KEYSTROKE:
-
-GET_KEYSTROKE_WAIT:
-    INC RNG_SEED            ; Add entropy while waiting!
-    BNE CHECK_KEY           ; Skip if no wrap
-    INC RNG_SEED            ; Keep it non-zero
-
-CHECK_KEY:
     LDA PIA_CONTROL         ; Read PIA control register
     AND #PIA_DATA_AVAIL     ; Check data available bit
-    BEQ GET_KEYSTROKE_WAIT  ; Loop until data available
+    BEQ GET_NO_KEY          ; Branch if no data available
     LDA PIA_DATA            ; Read character from PIA
+
+    ; Convert lowercase to uppercase
+    CMP #$61                ; Less than 'a'?
+    BCC GET_KEYSTROKE_DONE  ; If less, skip conversion
+    CMP #$7B                ; Greater than 'z'?
+    BCS GET_KEYSTROKE_DONE  ; If greater or equal, skip conversion
+    AND #$DF                ; Convert to uppercase (clear bit 5)
+GET_KEYSTROKE_DONE:
+    SEC                     ; Set carry to indicate character available
+    RTS
+GET_NO_KEY:
+    CLC                     ; Clear carry to indicate no character available
     RTS
 
 ; ================================================================
@@ -844,7 +873,8 @@ READ_COMMAND_LINE:
     LDX #$00                    ; Reset buffer index
 
 READ_CMD_LOOP:
-    JSR GET_KEYSTROKE           ; Wait for keystroke
+    JSR GET_KEYSTROKE           ; Check for keystroke
+    BCC READ_CMD_LOOP           ; Loop if no key available
     CMP #ASCII_CR               ; Is it Enter/Return?
     BEQ READ_CMD_DONE_CR_JMP    ; If so, command is complete (use local jump)
     CMP #ASCII_BACKSPACE        ; Is it backspace?
@@ -1080,15 +1110,15 @@ PARSE_CMD_START:
     LDX #$00
     LDA MON_CMDBUF,X
 
-    ; Quick range check - is it between 'C' and 'Z'?
-    CMP #$43                    ; 'C'
-    BCC PARSE_CMD_ERROR_JMP     ; Less than 'C' - jump to local error handler
+    ; Quick range check - is it between 'B' and 'Z'?
+    CMP #$42                    ; 'B'
+    BCC PARSE_CMD_ERROR_JMP     ; Less than 'B' - jump to local error handler
     CMP #$5B                    ; 'Z'+1
     BCS PARSE_CMD_ERROR_JMP     ; Greater than 'Z' - jump to local error handler
 
     ; Get index from mapping table
     SEC
-    SBC #$43                    ; Subtract 'C' to get offset
+    SBC #$42                    ; Subtract 'B' to get offset
     TAX
     LDA CMD_INDEX_MAP,X         ; Get command index
     CMP #$FF                    ; Is it invalid?
@@ -1110,6 +1140,15 @@ PARSE_CMD_ERROR_JMP:
 ; MONITOR COMMAND PARSING ROUTINES
 ; ================================================================
 
+PARSE_CMD_BASIC:
+    JSR PARSE_COLON_COMMAND     ; Parse B: format
+    BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
+
+    ; Save monitor state BEFORE launching BASIC (ensures clean stack)
+    JSR SAVE_MONITOR_STATE
+
+    JMP CMD_LAUNCH_BASIC        ; Jump (not JSR) to BASIC launch - never returns
+
 PARSE_CMD_CLEAR:
     JSR PARSE_COLON_COMMAND     ; Parse C: format
     BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
@@ -1126,6 +1165,29 @@ PARSE_CMD_ZERO:
     JSR PARSE_COLON_COMMAND     ; Parse Z: format
     BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
     JSR CMD_DUMP_ZERO_PAGE      ; Execute zero page dump command
+    JMP PARSE_CMD_DONE
+
+; ================================================================
+; DECIMAL TO HEX COMMAND (D:nnnnn)
+; ================================================================
+; Parse and execute D:nnnnn command
+; Input: MON_CMDBUF contains "D:nnnnn" (decimal number 0-65535)
+; Output: Displays 4-digit hex equivalent
+; Modifies: A, X, Y, MON_CURRADDR_HI/LO, DEC_TEMP_LO/HI, DEC_DIGIT_IDX
+; Errors: MSG_VALUE_ERROR (invalid decimal), MSG_RANGE_ERROR (>65535)
+; ================================================================
+PARSE_CMD_DECIMAL_CHECK:
+    ; Validate colon at position 1
+    LDA MON_CMDBUF+1
+    CMP #ASCII_COLON
+    BNE PARSE_CMD_ERROR_JMP2
+
+    ; Check if we have digits after colon
+    LDA MON_CMDLEN
+    CMP #$03                     ; Need at least "D:n"
+    BCC PARSE_CMD_ERROR_JMP2     ; Too short
+
+    JSR CMD_DECIMAL_TO_HEX
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_HELP:
@@ -1206,21 +1268,21 @@ PARSE_CMD_ERROR:
     LDA #$01                    ; Set error flag
     STA MON_ERROR_FLAG
     JSR PRINT_ERROR_MSG         ; Print error message
-    JMP PARSE_CMD_DONE
+    JMP PARSE_CMD_DONE          ; Jump to done (prevent fall-through)
 
 PARSE_CMD_VALUE_ERROR:
     ; Display value error message for invalid hex values
     LDA #$01                    ; Set error flag
     STA MON_ERROR_FLAG
     JSR PRINT_VALUE_ERROR       ; Print value error message
-    JMP PARSE_CMD_DONE
+    JMP PARSE_CMD_DONE          ; Jump to done (prevent fall-through)
 
 PARSE_CMD_RANGE_ERROR:
     ; Display range error message for invalid address ranges
     LDA #$01                    ; Set error flag
     STA MON_ERROR_FLAG
     JSR PRINT_RANGE_ERROR       ; Print range error message
-    ; Fall through to done
+    JMP PARSE_CMD_DONE          ; Jump to done (prevent fall-through)
 
 PARSE_CMD_DONE:
     RTS
@@ -1231,6 +1293,11 @@ PARSE_CMD_DONE:
 ; Modifies: A, X, Y, address variables
 ; Note: Handles single addresses, ranges (dash), and parameters (comma), validates hex syntax
 PARSE_COLON_COMMAND:
+    ; Save current address to restore on error
+    LDA MON_CURRADDR_LO
+    PHA
+    LDA MON_CURRADDR_HI
+    PHA
 
     ; Clear end address to ensure single address commands work correctly
     LDA #$00
@@ -1287,17 +1354,29 @@ PARSE_RANGE:
     STA MON_CURRADDR_LO
     LDA MON_STARTADDR_HI
     STA MON_CURRADDR_HI
+    ; Fall through to success
 
 PARSE_COLON_NO_ADDR:
     ; Current address is already in MON_CURRADDR_HI/LO
+    ; Discard saved values
+    PLA
+    PLA
     CLC                         ; Clear carry for success
     RTS
 
 PARSE_COLON_SUCCESS:
+    ; Discard saved address values (new address is valid)
+    PLA
+    PLA
     CLC                         ; Clear carry for success
     RTS
 
 PARSE_COLON_ERROR:
+    ; Restore original address
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
     SEC                         ; Set carry for error
     RTS
 
@@ -1614,7 +1693,6 @@ PRINT_ERROR_MSG:
     LDA #>MSG_SYNTAX_ERROR      ; Load high byte of message address
     STA MON_MSG_PTR_HI          ; Store in message pointer high
     JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE
     RTS
 
 ; Print value error message for invalid hex values
@@ -1626,7 +1704,6 @@ PRINT_VALUE_ERROR:
     LDA #>MSG_VALUE_ERROR       ; Load high byte of message address
     STA MON_MSG_PTR_HI          ; Store in message pointer high
     JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE
     RTS
 
 ; Print range error message for invalid address ranges
@@ -1638,7 +1715,6 @@ PRINT_RANGE_ERROR:
     LDA #>MSG_RANGE_ERROR       ; Load high byte of message address
     STA MON_MSG_PTR_HI          ; Store in message pointer high
     JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE
     RTS
 
 ; Validate address range (start <= end)
@@ -1667,10 +1743,191 @@ RANGE_VALID:
     RTS
 
 ; ================================================================
+; BASIC INTEGRATION - STATE MANAGEMENT
+; ================================================================
+
+; Monitor state save area (stores state during BASIC execution)
+MONITOR_SP_SAVE:        .RES 1     ; Stack pointer
+MONITOR_SCREEN_X_SAVE:  .RES 1     ; Cursor X position
+MONITOR_SCREEN_Y_SAVE:  .RES 1     ; Cursor Y position
+MONITOR_MODE_SAVE:      .RES 1     ; Monitor mode
+
+; ----------------------------------------------------------------
+; SAVE_MONITOR_STATE
+; Save critical monitor state before entering BASIC
+; Input: None
+; Output: None
+; Preserves: A, X, Y
+; ----------------------------------------------------------------
+SAVE_MONITOR_STATE:
+    PHA                     ; Preserve A
+    TXA
+    PHA                     ; Preserve X
+    TYA
+    PHA                     ; Preserve Y
+
+    ; Save stack pointer
+    TSX
+    STX MONITOR_SP_SAVE
+
+    ; Save cursor position
+    LDA CURSOR_X
+    STA MONITOR_SCREEN_X_SAVE
+    LDA CURSOR_Y
+    STA MONITOR_SCREEN_Y_SAVE
+
+    ; Save monitor mode
+    LDA MON_MODE
+    STA MONITOR_MODE_SAVE
+
+    ; Restore registers
+    PLA
+    TAY
+    PLA
+    TAX
+    PLA
+    RTS
+
+; ----------------------------------------------------------------
+; RESTORE_MONITOR_STATE
+; Restore monitor state after exiting BASIC
+; Input: None
+; Output: None
+; Preserves: None (state restoration may modify registers)
+; ----------------------------------------------------------------
+RESTORE_MONITOR_STATE:
+    ; Don't restore stack pointer here - will be reset by caller after return
+    ; (Can't restore old SP because it contains stale return address)
+
+    ; Clear monitor command buffer (CRITICAL!)
+    LDA #$00
+    STA MON_CMDPTR
+    STA MON_CMDLEN
+
+    LDX #MON_CMDBUF_LEN-1
+CLEAR_CMD_BUF_LOOP:
+    STA MON_CMDBUF,X
+    DEX
+    BPL CLEAR_CMD_BUF_LOOP
+
+    ; Restore cursor position
+    LDA MONITOR_SCREEN_X_SAVE
+    STA CURSOR_X
+    LDA MONITOR_SCREEN_Y_SAVE
+    STA CURSOR_Y
+
+    ; Restore monitor mode to command mode
+    LDA #MON_MODE_CMD
+    STA MON_MODE
+
+    RTS
+
+; ----------------------------------------------------------------
+; INIT_BASIC_IO
+; Initialize BASIC I/O vectors to use monitor routines
+; Input: None
+; Output: None
+; Preserves: None
+; ----------------------------------------------------------------
+INIT_BASIC_IO:
+    ; Set output vector to monitor PRINT_CHAR
+    LDA #<PRINT_CHAR
+    STA $0207               ; VEC_OUT low byte
+    LDA #>PRINT_CHAR
+    STA $0208               ; VEC_OUT high byte
+
+    ; Set input vector to monitor GET_KEYSTROKE
+    LDA #<GET_KEYSTROKE
+    STA $0205               ; VEC_IN low byte
+    LDA #>GET_KEYSTROKE
+    STA $0206               ; VEC_IN high byte
+
+    ; Set load/save vectors to stub routines (future enhancement)
+    ; For now, point to RTS instructions
+    LDA #<IO_STUB
+    STA $0209               ; VEC_LD low byte
+    STA $020B               ; VEC_SV low byte
+    LDA #>IO_STUB
+    STA $020A               ; VEC_LD high byte
+    STA $020C               ; VEC_SV high byte
+
+    RTS
+
+; Stub routine for unimplemented load/save
+IO_STUB:
+    RTS
+
+; ================================================================
 ; MONITOR COMMAND IMPLEMENTATIONS
 ; ================================================================
 
+; ----------------------------------------------------------------
+; CMD_LAUNCH_BASIC - Launch BASIC interpreter
+; Input: None
+; Output: Transfers control to BASIC (does not return until BYE)
+; Modifies: A, X, Y
+; Note: Milestone 4 implementation - jumps to BASIC cold start at $C000
+; ----------------------------------------------------------------
+CMD_LAUNCH_BASIC:
+    ; Check for BASIC ROM signature at $C000
+    ; Expecting LDY #$0D opcode sequence ($A0 $0D) at start of BASIC (LAB_COLD)
+    ; LAB_COLD starts with: LDY #PG2_TABE-PG2_TABS-1 which is LDY #$0D
+    LDA $C000
+    CMP #$A0                ; LDY immediate opcode
+    BNE BASIC_NOT_FOUND
 
+    ; Verify second byte is $0C (LDY #$0C)
+    LDA $C001
+    CMP #$0C                ; Expected immediate value (actual value from ROM)
+    BNE BASIC_SIG_FAIL
+
+    ; Clear screen for clean transition
+    JSR CLEAR_SCREEN
+
+    ; Initialize BASIC I/O vectors
+    JSR INIT_BASIC_IO
+
+    ; Jump to BASIC cold start
+    ; LAB_COLD is at $C000 (first instruction in basic.rom)
+    JMP $C000
+
+BASIC_NOT_FOUND:
+    LDA #<MSG_NO_BASIC
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_NO_BASIC
+    STA MON_MSG_PTR_HI
+    JSR PRINT_MESSAGE
+    RTS
+
+BASIC_SIG_FAIL:
+    LDA #<MSG_BASIC_SIG_FAIL
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_BASIC_SIG_FAIL
+    STA MON_MSG_PTR_HI
+    JSR PRINT_MESSAGE
+    RTS
+
+; ----------------------------------------------------------------
+; RETURN_FROM_BASIC
+; Return handler called when user exits BASIC with BYE command
+; Entry point: $FF12 (called from BASIC CMD_BYE)
+; Input: None (called via JMP from BASIC)
+; Output: Returns to monitor prompt
+; Modifies: A, X, Y
+; ----------------------------------------------------------------
+RETURN_FROM_BASIC:
+    ; Restore monitor state
+    JSR RESTORE_MONITOR_STATE
+
+    ; Reset stack pointer to clean state (must be done AFTER JSR returns)
+    LDX #$FF
+    TXS
+
+    ; Clear screen for clean transition
+    JSR CLEAR_SCREEN
+
+    ; Return to monitor loop
+    JMP MONITOR_LOOP
 
 ; Clear screen command - Clears all screen memory and resets cursor to origin
 ; Input: None (address in MON_CURRADDR_HI/LO is ignored for clear command)
@@ -1737,6 +1994,193 @@ CMD_DUMP_ZERO_PAGE:
     JSR DUMP_MEMORY_RANGE       ; Use common memory dump routine
     RTS
 
+; ================================================================
+; CMD_DECIMAL_TO_HEX - Main decimal-to-hex conversion routine
+; ================================================================
+; Converts decimal string to hex and displays result
+; Input: MON_CMDBUF contains decimal string starting at position 2 (after "D:")
+;        MON_CMDLEN contains total command length
+; Output: Displays 4-digit hex result, returns to prompt
+; Errors: MSG_VALUE_ERROR (invalid digit), MSG_RANGE_ERROR (overflow)
+; ================================================================
+CMD_DECIMAL_TO_HEX:
+    ; Initialize result to zero
+    STZ DEC_RESULT_LO
+    STZ DEC_RESULT_HI
+
+    ; Initialize parser - start at position 2 (after "D:")
+    LDA #$02
+    STA MON_PARSE_PTR
+
+    ; Initialize digit counter
+    STZ DEC_DIGIT_IDX
+
+    ; Call decimal parser
+    JSR PARSE_DECIMAL_VALUE
+    BCS CMD_DEC_ERROR           ; If error, error flag already set
+
+    ; Success - print result
+    LDA #'$'
+    JSR PRINT_CHAR
+
+    ; Display result in hex
+    LDA DEC_RESULT_HI
+    JSR BYTE_TO_HEX_PAIR
+    PHA
+    LDA MON_HEX_TEMP
+    JSR PRINT_CHAR
+    PLA
+    JSR PRINT_CHAR
+
+    LDA DEC_RESULT_LO
+    JSR BYTE_TO_HEX_PAIR
+    PHA
+    LDA MON_HEX_TEMP
+    JSR PRINT_CHAR
+    PLA
+    JSR PRINT_CHAR
+
+    JSR PRINT_NEWLINE
+    RTS
+
+CMD_DEC_ERROR:
+    ; Error flag and message already set by parser
+    RTS
+
+; ================================================================
+; PARSE_DECIMAL_VALUE - Parse decimal digits from command buffer
+; ================================================================
+; Converts ASCII decimal string to 16-bit binary value
+; Input: MON_PARSE_PTR = position in MON_CMDBUF to start parsing
+;        DEC_RESULT_HI/LO = current accumulated value (usually 0)
+; Output: DEC_RESULT_HI/LO = 16-bit result
+;         DEC_DIGIT_IDX = number of digits parsed
+;         Carry clear if success, set if error
+; Errors: VALUE? if invalid decimal digit
+;         RANGE? if result > 65535
+; Algorithm: For each digit: result = result × 10 + digit
+; ================================================================
+PARSE_DECIMAL_VALUE:
+    LDX MON_PARSE_PTR
+
+PARSE_DEC_LOOP:
+    CPX MON_CMDLEN
+    BCS PARSE_DEC_DONE
+
+    LDA MON_CMDBUF,X
+
+    ; Check if it's a decimal digit (0-9)
+    CMP #'0'
+    BCC PARSE_DEC_DONE          ; Not a digit, we're done
+    CMP #'9'+1
+    BCS PARSE_DEC_INVALID       ; > '9', invalid character
+
+    ; Valid digit - convert to binary value
+    SEC
+    SBC #'0'
+    PHA
+
+    ; Multiply current result by 10 and add digit
+    JSR MULTIPLY_BY_10
+    BCS PARSE_DEC_OVERFLOW      ; If overflow, error
+
+    ; Add digit to result
+    PLA
+    CLC
+    ADC DEC_RESULT_LO
+    STA DEC_RESULT_LO
+    BCC PARSE_DEC_NO_CARRY
+
+    ; Handle carry to high byte
+    INC DEC_RESULT_HI
+    BEQ PARSE_DEC_OVERFLOW      ; If wrapped to 0, overflow
+
+PARSE_DEC_NO_CARRY:
+    INX
+    INC DEC_DIGIT_IDX
+    BRA PARSE_DEC_LOOP
+
+PARSE_DEC_INVALID:
+    ; Invalid character - this is a value error
+    LDA #$01
+    STA MON_ERROR_FLAG
+    JSR PRINT_VALUE_ERROR       ; Use standard error printer
+    SEC
+    RTS
+
+PARSE_DEC_OVERFLOW:
+    ; Overflow detected - this is a range error
+    PLA
+    LDA #$01
+    STA MON_ERROR_FLAG
+    JSR PRINT_RANGE_ERROR       ; Use standard error printer
+    SEC
+    RTS
+
+PARSE_DEC_DONE:
+    ; Check if we parsed at least one digit
+    LDA DEC_DIGIT_IDX
+    BEQ PARSE_DEC_NO_DIGITS     ; No digits parsed
+
+    STX MON_PARSE_PTR
+    CLC                         ; Clear carry for success
+    RTS
+
+PARSE_DEC_NO_DIGITS:
+    ; No digits found - value error
+    LDA #$01
+    STA MON_ERROR_FLAG
+    JSR PRINT_VALUE_ERROR
+    SEC
+    RTS
+
+; ================================================================
+; MULTIPLY_BY_10 - Multiply 16-bit value by 10
+; ================================================================
+; Multiplies DEC_RESULT_HI/LO by 10 using shift-and-add
+; Formula: value × 10 = (value × 8) + (value × 2)
+; Input: DEC_RESULT_HI/LO = 16-bit value to multiply
+; Output: DEC_RESULT_HI/LO = value × 10
+;         Carry set if overflow (result > 65535)
+; Uses: DEC_TEMP_LO/HI for intermediate storage
+; Preserves: X, Y
+; ================================================================
+MULTIPLY_BY_10:
+    ; Shift left to get × 2
+    ASL DEC_RESULT_LO
+    ROL DEC_RESULT_HI
+    BCS MULT10_OVERFLOW
+
+    ; Save × 2 value in temp
+    LDA DEC_RESULT_LO
+    STA DEC_TEMP_LO
+    LDA DEC_RESULT_HI
+    STA DEC_TEMP_HI
+
+    ; Shift left to get × 4
+    ASL DEC_RESULT_LO
+    ROL DEC_RESULT_HI
+    BCS MULT10_OVERFLOW
+
+    ; Shift left to get × 8
+    ASL DEC_RESULT_LO
+    ROL DEC_RESULT_HI
+    BCS MULT10_OVERFLOW
+
+    ; Add × 2 to × 8 to get × 10
+    CLC
+    LDA DEC_TEMP_LO
+    ADC DEC_RESULT_LO
+    STA DEC_RESULT_LO
+    LDA DEC_TEMP_HI
+    ADC DEC_RESULT_HI
+    STA DEC_RESULT_HI
+    RTS                         ; Carry already reflects overflow
+
+MULT10_OVERFLOW:
+    SEC
+    RTS
+
 
 ; Show help command - Display comprehensive list of all monitor commands
 ; Input: None (help is context-independent)
@@ -1781,7 +2225,7 @@ HELP_LOOP:
     JSR PRINT_MESSAGE
     JSR PRINT_NEWLINE_PAGED
     INX
-    CPX #24                 ; 12 messages * 2 bytes each
+    CPX #26                 ; 13 messages * 2 bytes each
     BNE HELP_LOOP
     RTS
 
@@ -1900,7 +2344,6 @@ LOAD_CMD_SUCCESS:
     LDA #>MSG_SUCCESS           ; Load high byte of message address
     STA MON_MSG_PTR_HI          ; Store in message pointer high
     JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE           ; Add newline
     RTS
 
 ; Save file command - Save memory range to binary file on host system
@@ -1963,7 +2406,6 @@ SAVE_CMD_SUCCESS:
     LDA #>MSG_SUCCESS           ; Load high byte of message address
     STA MON_MSG_PTR_HI          ; Store in message pointer high
     JSR PRINT_MESSAGE           ; Print the message
-    JSR PRINT_NEWLINE           ; Add newline
     RTS
 
 
@@ -2314,7 +2756,6 @@ FILL_DONE:
     LDA #>MSG_SUCCESS
     STA MON_MSG_PTR_HI
     JSR PRINT_MESSAGE
-    JSR PRINT_NEWLINE
     RTS
 
 ; Move/Copy memory command - Copy or move memory block between addresses
@@ -2553,7 +2994,6 @@ MOVE_SUCCESS:
     LDA #>MSG_SUCCESS
     STA MON_MSG_PTR_HI
     JSR PRINT_MESSAGE
-    JSR PRINT_NEWLINE
     RTS
 
 MOVE_SHOW_COPY_MSG:
@@ -2563,7 +3003,6 @@ MOVE_SHOW_COPY_MSG:
     LDA #>MSG_SUCCESS
     STA MON_MSG_PTR_HI
     JSR PRINT_MESSAGE
-    JSR PRINT_NEWLINE
     RTS
 
 ; Search memory command - Search for multi-byte hex pattern within memory range
@@ -2710,11 +3149,9 @@ MONITOR_SKIP_SAVE:
 
 ; Interrupt service routines (minimal implementations)
 IRQ_HANDLER:
-    ; Handle IRQ interrupts here
     RTI                         ; Return from interrupt
 
 NMI_HANDLER:
-    ; Handle NMI interrupts here
     RTI                         ; Return from interrupt
 
 ; ================================================================
@@ -2722,69 +3159,73 @@ NMI_HANDLER:
 ; ================================================================
 
 ; Compact jump table - only valid commands
-; Maps B,C,G,H,L,R,T,W,X,Z to indices 0-10
+; Maps B,C,F,G,H,L,M,R,S,T,W,X,Z to indices 0-12
 CMD_JUMP_COMPACT_LO:
-    .BYTE <PARSE_CMD_GO_CHECK   ; 0 - 'G'
-    .BYTE <PARSE_CMD_HELP       ; 1 - 'H'
-    .BYTE <PARSE_CMD_CLEAR      ; 2 - 'C'
-    .BYTE <PARSE_CMD_LOAD_CHECK ; 3 - 'L'
-    .BYTE <PARSE_CMD_READ_CHECK ; 4 - 'R'
-    .BYTE <PARSE_CMD_SAVE_CHECK ; 5 - 'S'
-    .BYTE <PARSE_CMD_STACK      ; 6 - 'T'
-    .BYTE <PARSE_CMD_WRITE_CHECK; 7 - 'W'
-    .BYTE <PARSE_CMD_EXIT       ; 8 - 'X'
-    .BYTE <PARSE_CMD_ZERO       ; 9 - 'Z'
-    .BYTE <PARSE_CMD_FILL_CHECK ; 10 - 'F'
-    .BYTE <PARSE_CMD_MOVE_CHECK ; 11 - 'M'
-    .BYTE <PARSE_CMD_SEARCH_CHECK; 12 - 'X'
+    .BYTE <PARSE_CMD_BASIC      ; 0 - 'B'
+    .BYTE <PARSE_CMD_CLEAR      ; 1 - 'C'
+    .BYTE <PARSE_CMD_FILL_CHECK ; 2 - 'F'
+    .BYTE <PARSE_CMD_GO_CHECK   ; 3 - 'G'
+    .BYTE <PARSE_CMD_HELP       ; 4 - 'H'
+    .BYTE <PARSE_CMD_LOAD_CHECK ; 5 - 'L'
+    .BYTE <PARSE_CMD_MOVE_CHECK ; 6 - 'M'
+    .BYTE <PARSE_CMD_READ_CHECK ; 7 - 'R'
+    .BYTE <PARSE_CMD_SAVE_CHECK ; 8 - 'S'
+    .BYTE <PARSE_CMD_STACK      ; 9 - 'T'
+    .BYTE <PARSE_CMD_WRITE_CHECK; 10 - 'W'
+    .BYTE <PARSE_CMD_EXIT       ; 11 - 'X'
+    .BYTE <PARSE_CMD_ZERO       ; 12 - 'Z'
+    .BYTE <PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
+    .BYTE <PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
 
 CMD_JUMP_COMPACT_HI:
-    .BYTE >PARSE_CMD_GO_CHECK   ; 0 - 'G'
-    .BYTE >PARSE_CMD_HELP       ; 1 - 'H'
-    .BYTE >PARSE_CMD_CLEAR      ; 2 - 'C'
-    .BYTE >PARSE_CMD_LOAD_CHECK ; 3 - 'L'
-    .BYTE >PARSE_CMD_READ_CHECK ; 4 - 'R'
-    .BYTE >PARSE_CMD_SAVE_CHECK ; 5 - 'S'
-    .BYTE >PARSE_CMD_STACK      ; 6 - 'T'
-    .BYTE >PARSE_CMD_WRITE_CHECK; 7 - 'W'
-    .BYTE >PARSE_CMD_EXIT       ; 8 - 'ESC' (keep existing)
-    .BYTE >PARSE_CMD_ZERO       ; 9 - 'Z'
-    .BYTE >PARSE_CMD_FILL_CHECK ; 10 - 'F'
-    .BYTE >PARSE_CMD_MOVE_CHECK ; 11 - 'M'
-    .BYTE >PARSE_CMD_SEARCH_CHECK; 12 - 'X'
+    .BYTE >PARSE_CMD_BASIC      ; 0 - 'B'
+    .BYTE >PARSE_CMD_CLEAR      ; 1 - 'C'
+    .BYTE >PARSE_CMD_FILL_CHECK ; 2 - 'F'
+    .BYTE >PARSE_CMD_GO_CHECK   ; 3 - 'G'
+    .BYTE >PARSE_CMD_HELP       ; 4 - 'H'
+    .BYTE >PARSE_CMD_LOAD_CHECK ; 5 - 'L'
+    .BYTE >PARSE_CMD_MOVE_CHECK ; 6 - 'M'
+    .BYTE >PARSE_CMD_READ_CHECK ; 7 - 'R'
+    .BYTE >PARSE_CMD_SAVE_CHECK ; 8 - 'S'
+    .BYTE >PARSE_CMD_STACK      ; 9 - 'T'
+    .BYTE >PARSE_CMD_WRITE_CHECK; 10 - 'W'
+    .BYTE >PARSE_CMD_EXIT       ; 11 - 'ESC' (keep existing)
+    .BYTE >PARSE_CMD_ZERO       ; 12 - 'Z'
+    .BYTE >PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
+    .BYTE >PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
 
 ; Index mapping table - maps command character to table index
-; For characters C-Z, subtract 'C' ($43) to get offset into this table
+; For characters B-Z, subtract 'B' ($42) to get offset into this table
 CMD_INDEX_MAP:
-    .BYTE 2     ; C -> 2 (Clear)
-    .BYTE $FF   ; D -> invalid
+    .BYTE 0     ; B -> 0 (BASIC)
+    .BYTE 1     ; C -> 1 (Clear)
+    .BYTE 14    ; D -> 14 (Decimal to Hex)
     .BYTE $FF   ; E -> invalid
-    .BYTE 10    ; F -> 10 (Fill)
-    .BYTE 0     ; G -> 0 (Run)
-    .BYTE 1     ; H -> 1 (Help)
+    .BYTE 2     ; F -> 2 (Fill)
+    .BYTE 3     ; G -> 3 (Run)
+    .BYTE 4     ; H -> 4 (Help)
     .BYTE $FF   ; I -> invalid
     .BYTE $FF   ; J -> invalid
-    .BYTE $FF   ; K -> invalid (was 2)
-    .BYTE 3     ; L -> 3 (Load)
-    .BYTE 11    ; M -> 11 (Move/Copy)
+    .BYTE $FF   ; K -> invalid
+    .BYTE 5     ; L -> 5 (Load)
+    .BYTE 6     ; M -> 6 (Move/Copy)
     .BYTE $FF   ; N -> invalid
     .BYTE $FF   ; O -> invalid
     .BYTE $FF   ; P -> invalid
     .BYTE $FF   ; Q -> invalid
-    .BYTE 4     ; R -> 4 (Read Memory)
-    .BYTE 5     ; S -> 5 (Save)
-    .BYTE 6     ; T -> 6 (Print Stack)
+    .BYTE 7     ; R -> 7 (Read Memory)
+    .BYTE 8     ; S -> 8 (Save)
+    .BYTE 9     ; T -> 9 (Print Stack)
     .BYTE $FF   ; U -> invalid
     .BYTE $FF   ; V -> invalid
-    .BYTE 7     ; W -> 7 (Write to Memory)
-    .BYTE 12    ; X -> 12 (Search)
+    .BYTE 10    ; W -> 10 (Write to Memory)
+    .BYTE 13    ; X -> 13 (Search)
     .BYTE $FF   ; Y -> invalid
-    .BYTE 9     ; Z -> 9 (Print Zero Page)
+    .BYTE 12    ; Z -> 12 (Print Zero Page)
 
 ; ================================================================
 ; MODE PREFIX TABLE - Characters for prompt prefixes
 ; ================================================================
-; Indexed by MON_MODE value: CMD(0), WRITE(1), READ(2), RUN(3), LOAD(4), SAVE(5)
 MODE_PREFIX_TABLE:
     .BYTE 0         ; MON_MODE_CMD = 0: No prefix (just address>)
     .BYTE $57       ; MON_MODE_WRITE = 1: 'W' (W:address>)
@@ -2792,9 +3233,10 @@ MODE_PREFIX_TABLE:
 ; ================================================================
 ; HELP MESSAGE TABLE - Addresses of help messages for display
 ; ================================================================
-; Word addresses of help messages in display order
 HELP_MSG_TABLE:
+    .WORD MSG_HELP_BASIC
     .WORD MSG_HELP_CLEAR
+    .WORD MSG_HELP_DECIMAL
     .WORD MSG_HELP_GO
     .WORD MSG_HELP_LOAD
     .WORD MSG_HELP_READ
@@ -2807,13 +3249,15 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_MOVE
     .WORD MSG_HELP_SEARCH
 
-HELP_MSG_COUNT = 12              ; Number of help messages
+HELP_MSG_COUNT = 14              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
 MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
+MSG_HELP_BASIC:      .BYTE "B:     BASIC INTERPRETER", 0
 MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
+MSG_HELP_DECIMAL:    .BYTE "D:NNNNN DECIMAL TO HEX", 0
 MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
 MSG_HELP_LOAD:       .BYTE "L:XXXX,FILENAME LOAD FILE", 0
 MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY) READ FROM MEMORY", 0
@@ -2825,12 +3269,14 @@ MSG_HELP_FILL:       .BYTE "F:XXXX-YYYY,ZZ FILL MEMORY", 0
 MSG_HELP_MOVE:       .BYTE "M:XXXX-YYYY,ZZZZ,B MOVE/COPY", 0
 MSG_HELP_SEARCH:     .BYTE "X:XXXX-YYYY,PATTERN SEARCH MEMORY", 0
 MSG_HELP_EXIT:       .BYTE "ESC    EXIT CURRENT MODE", 0
-MSG_SYNTAX_ERROR:    .BYTE "ERROR?", 0
-MSG_RANGE_ERROR:     .BYTE "RANGE?", 0
-MSG_VALUE_ERROR:     .BYTE "VALUE?", 0
-MSG_SUCCESS:         .BYTE "OK", 0
-MSG_WELCOME:         .BYTE "       -=MFC 6502 OPERATIONAL=-", 0
+MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
+MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
+MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
+MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
+MSG_WELCOME:         .BYTE "       -=MFC 6502 OPERATIONAL=-", $0D, $0A, 0
 MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
+MSG_NO_BASIC:        .BYTE "BASIC ROM NOT FOUND", $0D, $0A, 0
+MSG_BASIC_SIG_FAIL:  .BYTE "BASIC ROM INVALID", $0D, $0A, 0
 
 ; ================================================================
 ; KERNEL API JUMP TABLE
@@ -2845,6 +3291,7 @@ K_PRINT_NEWLINE: JMP PRINT_NEWLINE      ; $FF06
 K_GET_KEYSTROKE: JMP GET_KEYSTROKE      ; $FF09
 K_CLEAR_SCREEN:  JMP CLEAR_SCREEN       ; $FF0C
 K_GET_RAND_NUM:  JMP GET_RANDOM_NUMBER  ; $FF0F
+K_RETURN_BASIC:  JMP RETURN_FROM_BASIC  ; $FF12 - BASIC exit point
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

@@ -28,8 +28,6 @@ if(CA65_FOUND AND LD65_FOUND)
         COMMAND ${CMAKE_COMMAND} -E echo "================================================================"
         COMMAND ${CMAKE_COMMAND} -DROM_FILE=${KERNEL_ROM} -DMAP_FILE=${KERNEL_MAP} -P ${CMAKE_SOURCE_DIR}/tools/cmake/rom_size.cmake
         COMMAND ${CMAKE_COMMAND} -E echo "================================================================"
-        COMMAND ${CMAKE_COMMAND} -E copy ${KERNEL_ROM} ${CMAKE_BINARY_DIR}/kernel.rom
-        COMMAND ${CMAKE_COMMAND} -E copy ${KERNEL_MAP} ${CMAKE_BINARY_DIR}/kernel.map
         COMMENT "Building kernel ROM in build directory"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${KERNEL_ASM_SOURCE} ${KERNEL_CONFIG}
@@ -38,7 +36,35 @@ if(CA65_FOUND AND LD65_FOUND)
     
     # Make the main executable depend on kernel ROM
     add_dependencies(6502-kernel kernel_rom)
-    
+
+    # ================================================================
+    # BASIC ROM Build Target
+    # ================================================================
+
+    # Define BASIC source and config paths
+    set(BASIC_ASM_SOURCE ${CMAKE_SOURCE_DIR}/src/kernel/basic.asm)
+    set(BASIC_CONFIG ${CMAKE_SOURCE_DIR}/src/kernel/basic_memory.cfg)
+
+    # Define BASIC build outputs
+    set(BASIC_OBJECT ${CMAKE_BINARY_DIR}/kernel/basic.o)
+    set(BASIC_ROM ${CMAKE_BINARY_DIR}/kernel/basic.rom)
+    set(BASIC_MAP ${CMAKE_BINARY_DIR}/kernel/basic.map)
+    set(BASIC_LST ${CMAKE_BINARY_DIR}/kernel/basic.lst)
+
+    # Create BASIC ROM build target
+    add_custom_target(basic_rom ALL
+        COMMAND ca65 ${BASIC_ASM_SOURCE} -o ${BASIC_OBJECT} --listing ${BASIC_LST}
+        COMMAND ld65 -C ${BASIC_CONFIG} ${BASIC_OBJECT} -o ${BASIC_ROM} -m ${BASIC_MAP}
+        COMMAND ${CMAKE_COMMAND} -E echo "================================================================"
+        COMMAND ${CMAKE_COMMAND} -E echo "BASIC ROM BUILD COMPLETE"
+        COMMAND ${CMAKE_COMMAND} -E echo "================================================================"
+        COMMAND ${CMAKE_COMMAND} -DBASIC_ROM_FILE=${BASIC_ROM} -P ${CMAKE_SOURCE_DIR}/tools/cmake/check_basic_size.cmake
+        COMMENT "Building BASIC ROM"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+        DEPENDS ${BASIC_ASM_SOURCE} ${BASIC_CONFIG}
+        VERBATIM
+    )
+
 else()
     message(WARNING "cc65 toolchain not found. Please install ca65 and ld65 to build kernel ROM automatically.")
     message(STATUS "You can manually build the kernel ROM with:")
