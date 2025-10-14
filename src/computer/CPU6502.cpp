@@ -215,6 +215,33 @@ bool CPU6502::validateAddress(const uint16_t address)
     return true;
 }
 
+uint16_t CPU6502::calculateAbsoluteIndirectAddress()
+{
+    // Read 16-bit absolute address from instruction stream
+    const uint16_t indirect_addr = readWord();
+
+    // Read the actual target address from the indirect address
+    const uint16_t target_addr = mem_.readWord(indirect_addr);
+
+    validateAddress(target_addr);
+    return target_addr;
+}
+
+uint16_t CPU6502::calculateAbsoluteIndexedIndirectAddress()
+{
+    // Read 16-bit absolute address from instruction stream
+    const uint16_t base_addr = readWord();
+
+    // Add X register to base address (no page boundary check needed for 65C02)
+    const uint16_t indexed_addr = (base_addr + reg.X) & 0xFFFF;
+
+    // Read the actual target address from the indexed address
+    const uint16_t target_addr = mem_.readWord(indexed_addr);
+
+    validateAddress(target_addr);
+    return target_addr;
+}
+
 // ALU helper functions
 uint8_t CPU6502::addValues(const uint8_t val1, const uint8_t val2)
 {
@@ -494,6 +521,16 @@ void CPU6502::handleAslBase(const uint16_t address, const uint8_t pc_offset, con
 }
 
 // Branch instruction handlers
+void CPU6502::handleBra()
+{
+    // BRA rel - $80: Branch always
+    const uint8_t offset = readByte();
+    auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
+
+    reg.PC = target_pc;
+    cycles_ += 2 + (page_crossed ? 1 : 0);
+}
+
 void CPU6502::handleBcc()
 {
     // Branch if Carry Clear
@@ -1424,6 +1461,33 @@ void CPU6502::handleBitAbsolute()
     handleBitBase(address, 2, 4);
 }
 
+    void CPU6502::handleBitImmediate()
+{
+    // BIT # - $89: Bit test immediate (only affects zero flag)
+    const uint8_t val = readByte();
+    const uint8_t result = reg.A & val;
+
+    // Only zero flag is affected in immediate mode
+    setFlag(kZero, result == 0);
+
+    cycles_ += 2;
+}
+
+    void CPU6502::handleBitZeroPageX()
+{
+    // BIT zp,X - $34: Bit test zero page,X
+    const uint16_t address = calculateAddressSimple(true, reg.X);
+    handleBitBase(address, 1, 4);
+}
+
+    void CPU6502::handleBitAbsoluteX()
+{
+    // BIT abs,X - $3C: Bit test absolute,X
+    auto [address, page_crossed] = calculateAddress(false, reg.X);
+    const uint8_t cycles = 4 + (page_crossed ? 1 : 0);
+    handleBitBase(address, 2, cycles);
+}
+
 void CPU6502::handleBitBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
 {
     const uint8_t val = mem_.read(address);
@@ -1724,6 +1788,217 @@ void CPU6502::handleDey()
     cycles_ += 2;
 }
 
+void CPU6502::handleIncAccumulator()
+{
+    // INC A - $1A: Increment accumulator
+    reg.A++;
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 2;
+}
+
+void CPU6502::handleDecAccumulator()
+{
+    // DEC A - $3A: Decrement accumulator
+    reg.A--;
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 2;
+}
+
+// 65C02 Absolute Indirect addressing modes
+void CPU6502::handleAdcAbsoluteIndirect()
+{
+    // ADC (addr) - $72: Add with carry absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    const uint8_t val = mem_.read(address);
+    reg.A = addValues(reg.A, val);
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 6;  // 65C02 timing
+}
+
+void CPU6502::handleAndAbsoluteIndirect()
+{
+    // AND (addr) - $32: AND absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    const uint8_t val = mem_.read(address);
+    reg.A &= val;
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 6;  // 65C02 timing
+}
+
+void CPU6502::handleCmpAbsoluteIndirect()
+{
+    // CMP (addr) - $D2: Compare absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    const uint8_t val = mem_.read(address);
+    compareValues(reg.A, val);
+    cycles_ += 6;  // 65C02 timing
+}
+
+void CPU6502::handleEorAbsoluteIndirect()
+{
+    // EOR (addr) - $52: Exclusive OR absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    const uint8_t val = mem_.read(address);
+    reg.A ^= val;
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 6;  // 65C02 timing
+}
+
+void CPU6502::handleLdaAbsoluteIndirect()
+{
+    // LDA (addr) - $B2: Load accumulator absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    const uint8_t val = mem_.read(address);
+    reg.A = val;
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 6;  // 65C02 timing
+}
+
+void CPU6502::handleOraAbsoluteIndirect()
+{
+    // ORA (addr) - $12: OR with accumulator absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    const uint8_t val = mem_.read(address);
+    reg.A |= val;
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 6;  // 65C02 timing
+}
+
+void CPU6502::handleSbcAbsoluteIndirect()
+{
+    // SBC (addr) - $F2: Subtract with carry absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    const uint8_t val = mem_.read(address);
+    reg.A = subtractValues(reg.A, val);
+    updateZeroNegativeFlags(reg.A);
+    cycles_ += 6;  // 65C02 timing
+}
+
+void CPU6502::handleStaAbsoluteIndirect()
+{
+    // STA (addr) - $92: Store accumulator absolute indirect
+    const uint16_t address = calculateAbsoluteIndirectAddress();
+    mem_.write(address, reg.A);
+    cycles_ += 6;  // 65C02 timing
+}
+
+// 65C02 Jump Absolute Indexed Indirect
+void CPU6502::handleJmpAbsoluteIndexedIndirect()
+{
+    // JMP (addr,X) - $7C: Jump absolute indexed indirect
+    const uint16_t target_addr = calculateAbsoluteIndexedIndirectAddress();
+    reg.PC = target_addr;
+    cycles_ += 6;  // 65C02 timing
+}
+
+// 65C02 Store Zero instructions
+void CPU6502::handleStzZeroPage()
+{
+    // STZ zp - $64: Store zero to zero page
+    const uint16_t address = calculateAddressSimple(true, 0);
+    handleStzBase(address, 1, 3);
+}
+
+void CPU6502::handleStzZeroPageX()
+{
+    // STZ zp,X - $74: Store zero to zero page,X
+    const uint16_t address = calculateAddressSimple(true, reg.X);
+    handleStzBase(address, 1, 4);
+}
+
+void CPU6502::handleStzAbsolute()
+{
+    // STZ abs - $9C: Store zero to absolute
+    const uint16_t address = calculateAddressSimple(false, 0);
+    handleStzBase(address, 2, 4);
+}
+
+void CPU6502::handleStzAbsoluteX()
+{
+    // STZ abs,X - $9E: Store zero to absolute,X
+    auto [address, page_crossed] = calculateAddress(false, reg.X);
+    handleStzBase(address, 2, 5);  // Always 5 cycles for STZ
+}
+
+void CPU6502::handleStzBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles)
+{
+    mem_.write(address, 0x00);  // Store zero
+    reg.PC += pc_offset;
+    cycles_ += cycles;
+}
+
+// 65C02 Test and Reset/Set Bits
+void CPU6502::handleTrbZeroPage()
+{
+    // TRB zp - $14: Test and reset bits zero page
+    const uint16_t address = calculateAddressSimple(true, 0);
+    handleTrbTsbBase(address, 1, 5, false);
+}
+
+void CPU6502::handleTrbAbsolute()
+{
+    // TRB abs - $1C: Test and reset bits absolute
+    const uint16_t address = calculateAddressSimple(false, 0);
+    handleTrbTsbBase(address, 2, 6, false);
+}
+
+void CPU6502::handleTsbZeroPage()
+{
+    // TSB zp - $04: Test and set bits zero page
+    const uint16_t address = calculateAddressSimple(true, 0);
+    handleTrbTsbBase(address, 1, 5, true);
+}
+
+void CPU6502::handleTsbAbsolute()
+{
+    // TSB abs - $0C: Test and set bits absolute
+    const uint16_t address = calculateAddressSimple(false, 0);
+    handleTrbTsbBase(address, 2, 6, true);
+}
+
+void CPU6502::handleTrbTsbBase(const uint16_t address, const uint8_t pc_offset, const uint8_t cycles, const bool is_set)
+{
+    uint8_t val = mem_.read(address);
+
+    // Test: Set zero flag if (A AND memory) == 0
+    setFlag(kZero, (reg.A & val) == 0);
+
+    if (is_set) {
+        // TSB: Set bits in memory where accumulator has 1 bits
+        val |= reg.A;
+    } else {
+        // TRB: Reset bits in memory where accumulator has 1 bits
+        val &= ~reg.A;
+    }
+
+    mem_.write(address, val);
+    reg.PC += pc_offset;
+    cycles_ += cycles;
+}
+
+// 65C02 Processor Control
+void CPU6502::handleStp()
+{
+    // STP - $DB: Stop processor
+    // In a real implementation, this would halt the CPU
+    // For our emulator, we'll just add cycles and continue
+    cycles_ += 3;
+
+    // TODO: In a full implementation, this should set a "stopped" flag
+    // that prevents further instruction execution until reset
+}
+
+void CPU6502::handleWai()
+{
+    // WAI - $CB: Wait for interrupt
+    // In a real implementation, this would wait for IRQ/NMI
+    // For our emulator, we'll just add cycles and continue
+    cycles_ += 3;
+
+    // TODO: In a full implementation, this should wait for an interrupt
+    // and only resume execution when IRQ or NMI occurs
+}
+
 void CPU6502::initializeInstructionHandlers()
 {
     // System instructions
@@ -1936,6 +2211,51 @@ void CPU6502::initializeInstructionHandlers()
     handlers_[0x8A] = [this]() { handleTxa(); };
     handlers_[0x9A] = [this]() { handleTxs(); };
     handlers_[0x98] = [this]() { handleTya(); };
+
+    // ================================================================
+    // 65C02 NEW INSTRUCTIONS
+    // ================================================================
+
+    // 65C02 Accumulator increment/decrement
+    handlers_[0x1A] = [this]() { handleIncAccumulator(); };  // INC A
+    handlers_[0x3A] = [this]() { handleDecAccumulator(); };  // DEC A
+
+    // 65C02 Enhanced BIT instructions
+    handlers_[0x89] = [this]() { handleBitImmediate(); };    // BIT #
+    handlers_[0x34] = [this]() { handleBitZeroPageX(); };    // BIT zp,X
+    handlers_[0x3C] = [this]() { handleBitAbsoluteX(); };    // BIT abs,X
+
+    // 65C02 Branch Always
+    handlers_[0x80] = [this]() { handleBra(); };             // BRA rel
+
+    // 65C02 Absolute Indirect addressing modes
+    handlers_[0x72] = [this]() { handleAdcAbsoluteIndirect(); };  // ADC (addr)
+    handlers_[0x32] = [this]() { handleAndAbsoluteIndirect(); };  // AND (addr)
+    handlers_[0xD2] = [this]() { handleCmpAbsoluteIndirect(); };  // CMP (addr)
+    handlers_[0x52] = [this]() { handleEorAbsoluteIndirect(); };  // EOR (addr)
+    handlers_[0xB2] = [this]() { handleLdaAbsoluteIndirect(); };  // LDA (addr)
+    handlers_[0x12] = [this]() { handleOraAbsoluteIndirect(); };  // ORA (addr)
+    handlers_[0xF2] = [this]() { handleSbcAbsoluteIndirect(); };  // SBC (addr)
+    handlers_[0x92] = [this]() { handleStaAbsoluteIndirect(); };  // STA (addr)
+
+    // 65C02 Jump Absolute Indexed Indirect
+    handlers_[0x7C] = [this]() { handleJmpAbsoluteIndexedIndirect(); };  // JMP (addr,X)
+
+    // 65C02 Store Zero instructions
+    handlers_[0x64] = [this]() { handleStzZeroPage(); };     // STZ zp
+    handlers_[0x74] = [this]() { handleStzZeroPageX(); };    // STZ zp,X
+    handlers_[0x9C] = [this]() { handleStzAbsolute(); };     // STZ abs
+    handlers_[0x9E] = [this]() { handleStzAbsoluteX(); };    // STZ abs,X
+
+    // 65C02 Test and Reset/Set Bits
+    handlers_[0x14] = [this]() { handleTrbZeroPage(); };     // TRB zp
+    handlers_[0x1C] = [this]() { handleTrbAbsolute(); };     // TRB abs
+    handlers_[0x04] = [this]() { handleTsbZeroPage(); };     // TSB zp
+    handlers_[0x0C] = [this]() { handleTsbAbsolute(); };     // TSB abs
+
+    // 65C02 Processor Control
+    handlers_[0xDB] = [this]() { handleStp(); };             // STP - Stop processor
+    handlers_[0xCB] = [this]() { handleWai(); };             // WAI - Wait for interrupt
 }
 
 

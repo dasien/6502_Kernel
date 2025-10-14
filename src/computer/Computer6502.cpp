@@ -2,6 +2,7 @@
 #include "MapFileParser.h"
 #include <vector>
 #include <fstream>
+#include <iostream>
 #include <cstdlib>
 
 #ifdef QT_GUI
@@ -36,7 +37,7 @@ namespace Computer
         std::vector<uint8_t> kernel_rom;
 
         // Set path for ROM file.
-        const std::string rom_path = "../kernel.rom";
+        const std::string rom_path = "../kernel/kernel.rom";
 
         // Try to open it.
         std::ifstream rom_file(rom_path, std::ios::binary | std::ios::ate);
@@ -71,7 +72,7 @@ namespace Computer
         MapFileParser parser;
 
         // Set path for map file.
-        const std::string map_path = "../kernel.map";
+        const std::string map_path = "../kernel/kernel.map";
 
         // Try to open it
         std::ifstream map_file(map_path);
@@ -114,10 +115,10 @@ namespace Computer
 
         // Load segments using correct ROM file offsets
         // The ROM file is laid out with segments at their actual memory addresses
-        // ROM is 4KB (0x1000) starting at $F000, so ROM offset = memory_address - 0xF000
-        size_t codeOffset = codeSegment->start - 0xF000;
-        size_t jumpsOffset = jumpsSegment->start - 0xF000;
-        size_t vecsOffset = vecsSegment->start - 0xF000;
+        // ROM is 8KB (0x2000) starting at $E000, so ROM offset = memory_address - 0xE000
+        size_t codeOffset = codeSegment->start - 0xE000;
+        size_t jumpsOffset = jumpsSegment->start - 0xE000;
+        size_t vecsOffset = vecsSegment->start - 0xE000;
 
         // Load CODE segment.
         memory.loadProgram(
@@ -139,6 +140,31 @@ namespace Computer
                                  kernel_rom.begin() + vecsOffset + vecsSegment->size),
             vecsSegment->start
         );
+
+        // Load BASIC ROM at $B000-$DFFF
+        const std::string basic_rom_path = "../kernel/basic.rom";
+        std::ifstream basic_rom_file(basic_rom_path, std::ios::binary | std::ios::ate);
+
+        if (basic_rom_file.is_open())
+        {
+            // Get BASIC ROM size
+            std::streamsize basic_size = basic_rom_file.tellg();
+            basic_rom_file.seekg(0, std::ios::beg);
+
+            // Read BASIC ROM
+            std::vector<uint8_t> basic_rom(basic_size);
+            if (basic_rom_file.read(reinterpret_cast<char *>(basic_rom.data()), basic_size))
+            {
+                // Load BASIC ROM into memory at $B000
+                memory.loadProgram(basic_rom, 0xB000);
+                std::cout << "BASIC ROM loaded successfully at $B000 (" << basic_size << " bytes)\n";
+            }
+            basic_rom_file.close();
+        }
+        else
+        {
+            std::cout << "Warning: BASIC ROM not found at " << basic_rom_path << " - B: command will show error\n";
+        }
 
         // Power-on reset
         reset_circuit.powerOnReset();

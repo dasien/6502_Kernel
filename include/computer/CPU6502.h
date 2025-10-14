@@ -179,6 +179,10 @@ private:
     bool checkPageBoundaryCrossed(uint16_t base_addr, uint16_t final_addr);
     bool validateAddress(uint16_t address);
 
+    // 65C02 New addressing mode functions
+    uint16_t calculateAbsoluteIndirectAddress();
+    uint16_t calculateAbsoluteIndexedIndirectAddress();
+
     // ALU helper functions
     uint8_t addValues(uint8_t val1, uint8_t val2);
     uint8_t subtractValues(uint8_t val1, uint8_t val2);
@@ -389,6 +393,51 @@ private:
     void handleTxa();
     void handleTxs();
     void handleTya();
+
+    // 65C02 New Instructions
+
+    // 65C02 Accumulator increment/decrement
+    void handleIncAccumulator();  // INC A - $1A
+    void handleDecAccumulator();  // DEC A - $3A
+
+    // 65C02 Enhanced BIT instructions
+    void handleBitImmediate();    // BIT # - $89
+    void handleBitZeroPageX();    // BIT zp,X - $34
+    void handleBitAbsoluteX();    // BIT abs,X - $3C
+
+    // 65C02 Branch Always
+    void handleBra();             // BRA rel - $80
+
+    // 65C02 Absolute Indirect addressing modes
+    void handleAdcAbsoluteIndirect();  // ADC (addr) - $72
+    void handleAndAbsoluteIndirect();  // AND (addr) - $32
+    void handleCmpAbsoluteIndirect();  // CMP (addr) - $D2
+    void handleEorAbsoluteIndirect();  // EOR (addr) - $52
+    void handleLdaAbsoluteIndirect();  // LDA (addr) - $B2
+    void handleOraAbsoluteIndirect();  // ORA (addr) - $12
+    void handleSbcAbsoluteIndirect();  // SBC (addr) - $F2
+    void handleStaAbsoluteIndirect();  // STA (addr) - $92
+
+    // 65C02 Jump Absolute Indexed Indirect
+    void handleJmpAbsoluteIndexedIndirect();  // JMP (addr,X) - $7C
+
+    // 65C02 Store Zero instructions
+    void handleStzZeroPage();     // STZ zp - $64
+    void handleStzZeroPageX();    // STZ zp,X - $74
+    void handleStzAbsolute();     // STZ abs - $9C
+    void handleStzAbsoluteX();    // STZ abs,X - $9E
+    void handleStzBase(uint16_t address, uint8_t pc_offset, uint8_t cycles);
+
+    // 65C02 Test and Reset/Set Bits
+    void handleTrbZeroPage();     // TRB zp - $14
+    void handleTrbAbsolute();     // TRB abs - $1C
+    void handleTsbZeroPage();     // TSB zp - $04
+    void handleTsbAbsolute();     // TSB abs - $0C
+    void handleTrbTsbBase(uint16_t address, uint8_t pc_offset, uint8_t cycles, bool is_set);
+
+    // 65C02 Processor Control
+    void handleStp();             // STP - $DB (Stop processor)
+    void handleWai();             // WAI - $CB (Wait for interrupt)
 
     // No operation & break.
     void handleNop();

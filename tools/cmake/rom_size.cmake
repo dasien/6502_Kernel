@@ -21,8 +21,8 @@ file(SIZE ${ROM_FILE} ROM_SIZE)
 # Convert to hex for display
 math(EXPR ROM_SIZE_HEX "${ROM_SIZE}" OUTPUT_FORMAT HEXADECIMAL)
 
-# Calculate ROM utilization (assuming 4KB ROM space from $F000-$FFFF)
-set(ROM_CAPACITY 4096)
+# Calculate ROM utilization (assuming 8KB ROM space from $E000-$FFFF)
+set(ROM_CAPACITY 8192)
 math(EXPR ROM_USAGE_PERCENT "${ROM_SIZE} * 100 / ${ROM_CAPACITY}")
 
 # Parse map file if it exists to get detailed segment information
@@ -57,7 +57,7 @@ endif()
 # Output size analysis
 message("ROM FILE: kernel.rom")
 message("TOTAL SIZE: ${ROM_SIZE} bytes (${ROM_SIZE_HEX})")
-message("ROM CAPACITY: ${ROM_CAPACITY} bytes (4KB)")
+message("ROM CAPACITY: ${ROM_CAPACITY} bytes (8KB)")
 message("UTILIZATION: ${ROM_USAGE_PERCENT}% of available ROM space")
 
 if(NOT CODE_SIZE STREQUAL "Unknown")
