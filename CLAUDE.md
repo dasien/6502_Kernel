@@ -121,11 +121,15 @@ The monitor provides a comprehensive set of commands for memory operations, prog
 - **L:xxxx** - Load program from file at specified address
 - **S:xxxx-yyyy** - Save memory range to file
 
+#### Number Conversion
+- **D:nnnnn** - Convert decimal (0-65535) to hexadecimal with '$' prefix
+- **H:xxxx** - Convert hexadecimal (0000-FFFF) to decimal with '#' prefix
+
 #### System Information
-- **C:** - Clear screen  
+- **C:** - Clear screen
 - **T:** - Display stack memory ($0100-$01FF) with paging
 - **Z:** - Display zero page memory ($0000-$00FF) with paging
-- **H:** - Display help with all available commands
+- **?** - Display help with all available commands (no colon required)
 
 #### Navigation
 - **ESC** - Exit current mode and return to command prompt

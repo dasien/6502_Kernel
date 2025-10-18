@@ -1110,6 +1110,10 @@ PARSE_CMD_START:
     LDX #$00
     LDA MON_CMDBUF,X
 
+    ; Check for special character '?' (help)
+    CMP #'?'                    ; ASCII $3F
+    BEQ PARSE_CMD_HELP_DIRECT   ; Jump directly to help
+
     ; Quick range check - is it between 'B' and 'Z'?
     CMP #$42                    ; 'B'
     BCC PARSE_CMD_ERROR_JMP     ; Less than 'B' - jump to local error handler
@@ -1131,6 +1135,10 @@ PARSE_CMD_START:
     LDA CMD_JUMP_COMPACT_HI,X
     STA JUMP_VECTOR+1
     JMP (JUMP_VECTOR)
+
+PARSE_CMD_HELP_DIRECT:
+    ; Direct jump to help for '?' character
+    JMP PARSE_CMD_HELP
 
 ; Local error handler for range check jumps (within branch range)
 PARSE_CMD_ERROR_JMP:
@@ -1190,9 +1198,63 @@ PARSE_CMD_DECIMAL_CHECK:
     JSR CMD_DECIMAL_TO_HEX
     JMP PARSE_CMD_DONE
 
+; ================================================================
+; HEX TO DECIMAL COMMAND (H:xxxx)
+; ================================================================
+; Parse and execute H:xxxx command
+; Input: MON_CMDBUF contains "H:xxxx" (hex value 0000-FFFF)
+; Output: Displays decimal equivalent (0-65535)
+; Modifies: A, X, Y, MON_CURRADDR_HI/LO, DEC_TEMP_LO/HI, DEC_DIGIT_IDX
+; Errors: MSG_VALUE_ERROR (invalid hex input)
+; ================================================================
+PARSE_CMD_HEX_TO_DEC:
+    ; Validate colon at position 1
+    LDA MON_CMDBUF+1
+    CMP #ASCII_COLON
+    BNE @error
+
+    ; Check if we have 4 hex digits after colon
+    LDA MON_CMDLEN
+    CMP #$06                    ; Need exactly "H:xxxx" (6 chars)
+    BNE @error                  ; Wrong length
+
+    ; Save current address (this command should not modify it)
+    LDA MON_CURRADDR_LO
+    PHA
+    LDA MON_CURRADDR_HI
+    PHA
+
+    ; Parse the hex address using existing routine
+    LDX #$02                    ; Start at position 2 (after "H:")
+    JSR HEX_QUAD_TO_ADDR        ; Parse hex into MON_CURRADDR
+    BCS @error_restore          ; If error, restore and jump to error handler
+
+    ; Execute conversion
+    JSR CMD_HEX_TO_DECIMAL
+
+    ; Restore current address
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+    JMP PARSE_CMD_DONE
+
+@error_restore:
+    ; Restore current address before error exit
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+
+@error:
+    ; Display VALUE? error and return
+    LDA #$01
+    STA MON_ERROR_FLAG
+    JSR PRINT_VALUE_ERROR
+    JMP PARSE_CMD_DONE
+
 PARSE_CMD_HELP:
-    JSR PARSE_COLON_COMMAND     ; Parse H: format
-    BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
+    ; Help can be invoked with just '?' (no colon required)
     JSR CMD_SHOW_HELP           ; Execute help command
     JMP PARSE_CMD_DONE
 
@@ -2181,6 +2243,125 @@ MULT10_OVERFLOW:
     SEC
     RTS
 
+; ================================================================
+; HEX TO DECIMAL CONVERSION COMMAND
+; ================================================================
+
+; Digit buffer for decimal output (5 bytes: stores "65535" max)
+DEC_DIGIT_BUFFER = $027D        ; Reuse MON_SEARCH_PATTERN space
+
+; Main conversion routine
+; Input: MON_CURRADDR_HI/LO = 16-bit value to convert
+; Output: Decimal value printed to screen
+; Modifies: A, X, Y, DEC_RESULT_*, DEC_TEMP_*, DEC_DIGIT_IDX
+CMD_HEX_TO_DECIMAL:
+    ; Initialize digit buffer index to 0
+    STZ DEC_DIGIT_IDX
+
+    ; Copy input value to working registers
+    LDA MON_CURRADDR_LO
+    STA DEC_RESULT_LO
+    LDA MON_CURRADDR_HI
+    STA DEC_RESULT_HI
+
+    ; Check for special case: value is zero
+    ORA DEC_RESULT_LO           ; A = HI | LO (zero if both zero)
+    BNE @convert_loop
+
+    ; Special case: print "#0" and return
+    LDA #'#'
+    JSR PRINT_CHAR
+    LDA #'0'
+    JSR PRINT_CHAR
+    JSR PRINT_NEWLINE
+    RTS
+
+@convert_loop:
+    ; Check if value is zero (done converting)
+    LDA DEC_RESULT_LO
+    ORA DEC_RESULT_HI
+    BEQ @convert_done           ; If zero, all digits extracted
+
+    ; Divide by 10 and get remainder (next digit)
+    JSR DIVIDE_BY_10            ; Result in DEC_RESULT, remainder in A
+
+    ; Convert remainder (0-9) to ASCII and store
+    CLC
+    ADC #'0'                    ; Convert to ASCII ('0'-'9')
+    LDX DEC_DIGIT_IDX           ; Get current buffer position
+    STA DEC_DIGIT_BUFFER,X      ; Store digit in buffer
+    INC DEC_DIGIT_IDX           ; Increment digit count
+
+    ; Continue loop
+    JMP @convert_loop
+
+@convert_done:
+    ; Print '#' prefix before digits
+    LDA #'#'
+    JSR PRINT_CHAR
+
+    ; Digits are stored in reverse order, print them backwards
+    LDX DEC_DIGIT_IDX           ; X = number of digits
+    DEX                         ; X = index of last digit
+
+@print_loop:
+    LDA DEC_DIGIT_BUFFER,X      ; Load digit from buffer
+    JSR PRINT_CHAR              ; Print it
+    DEX                         ; Move to previous digit
+    BPL @print_loop             ; Continue while X >= 0
+
+    JSR PRINT_NEWLINE           ; Print newline after result
+    RTS
+
+; ================================================================
+; DIVIDE_BY_10 - Divide 16-bit value by 10
+; ================================================================
+; Divides DEC_RESULT_HI/LO by 10 using repeated subtraction
+; Input: DEC_RESULT_HI/LO = 16-bit dividend
+; Output: DEC_RESULT_HI/LO = quotient
+;         A = remainder (0-9)
+; Uses: DEC_TEMP_LO/HI for temporary storage
+; Preserves: X, Y
+; ================================================================
+DIVIDE_BY_10:
+    ; Save input value
+    LDA DEC_RESULT_LO
+    STA DEC_TEMP_LO
+    LDA DEC_RESULT_HI
+    STA DEC_TEMP_HI
+
+    ; Quotient starts at 0
+    STZ DEC_RESULT_LO
+    STZ DEC_RESULT_HI
+
+@loop:
+    ; Check if we can subtract 10
+    LDA DEC_TEMP_LO
+    CMP #10
+    LDA DEC_TEMP_HI
+    SBC #0
+    BCC @done                   ; < 10, done
+
+    ; Subtract 10
+    LDA DEC_TEMP_LO
+    SEC
+    SBC #10
+    STA DEC_TEMP_LO
+    BCS @no_borrow
+    DEC DEC_TEMP_HI
+
+@no_borrow:
+    ; Increment quotient
+    INC DEC_RESULT_LO
+    BNE @loop
+    INC DEC_RESULT_HI
+    BRA @loop
+
+@done:
+    ; Remainder is in DEC_TEMP_LO
+    LDA DEC_TEMP_LO             ; Get remainder
+    RTS
+
 
 ; Show help command - Display comprehensive list of all monitor commands
 ; Input: None (help is context-independent)
@@ -2225,7 +2406,7 @@ HELP_LOOP:
     JSR PRINT_MESSAGE
     JSR PRINT_NEWLINE_PAGED
     INX
-    CPX #26                 ; 13 messages * 2 bytes each
+    CPX #30                 ; 15 messages * 2 bytes each
     BNE HELP_LOOP
     RTS
 
@@ -3165,7 +3346,7 @@ CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE <PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE <PARSE_CMD_GO_CHECK   ; 3 - 'G'
-    .BYTE <PARSE_CMD_HELP       ; 4 - 'H'
+    .BYTE <PARSE_CMD_HELP       ; 4 - 'H' (old help, kept for compatibility)
     .BYTE <PARSE_CMD_LOAD_CHECK ; 5 - 'L'
     .BYTE <PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE <PARSE_CMD_READ_CHECK ; 7 - 'R'
@@ -3176,13 +3357,14 @@ CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_ZERO       ; 12 - 'Z'
     .BYTE <PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
     .BYTE <PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
+    .BYTE <PARSE_CMD_HEX_TO_DEC ; 15 - 'H' (hex to decimal)
 
 CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_BASIC      ; 0 - 'B'
     .BYTE >PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE >PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE >PARSE_CMD_GO_CHECK   ; 3 - 'G'
-    .BYTE >PARSE_CMD_HELP       ; 4 - 'H'
+    .BYTE >PARSE_CMD_HELP       ; 4 - 'H' (old help, kept for compatibility)
     .BYTE >PARSE_CMD_LOAD_CHECK ; 5 - 'L'
     .BYTE >PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE >PARSE_CMD_READ_CHECK ; 7 - 'R'
@@ -3193,9 +3375,11 @@ CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_ZERO       ; 12 - 'Z'
     .BYTE >PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
     .BYTE >PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
+    .BYTE >PARSE_CMD_HEX_TO_DEC ; 15 - 'H' (hex to decimal)
 
 ; Index mapping table - maps command character to table index
 ; For characters B-Z, subtract 'B' ($42) to get offset into this table
+; Note: '?' character is handled as special case before table lookup (maps to help)
 CMD_INDEX_MAP:
     .BYTE 0     ; B -> 0 (BASIC)
     .BYTE 1     ; C -> 1 (Clear)
@@ -3203,7 +3387,7 @@ CMD_INDEX_MAP:
     .BYTE $FF   ; E -> invalid
     .BYTE 2     ; F -> 2 (Fill)
     .BYTE 3     ; G -> 3 (Run)
-    .BYTE 4     ; H -> 4 (Help)
+    .BYTE 15    ; H -> 15 (Hex to Decimal) - Help is now via '?' character
     .BYTE $FF   ; I -> invalid
     .BYTE $FF   ; J -> invalid
     .BYTE $FF   ; K -> invalid
@@ -3238,6 +3422,7 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_CLEAR
     .WORD MSG_HELP_DECIMAL
     .WORD MSG_HELP_GO
+    .WORD MSG_HELP_HEX_TO_DEC
     .WORD MSG_HELP_LOAD
     .WORD MSG_HELP_READ
     .WORD MSG_HELP_SAVE
@@ -3249,7 +3434,7 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_MOVE
     .WORD MSG_HELP_SEARCH
 
-HELP_MSG_COUNT = 14              ; Number of help messages
+HELP_MSG_COUNT = 15              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
@@ -3259,6 +3444,7 @@ MSG_HELP_BASIC:      .BYTE "B:     BASIC INTERPRETER", 0
 MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
 MSG_HELP_DECIMAL:    .BYTE "D:NNNNN DECIMAL TO HEX", 0
 MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
+MSG_HELP_HEX_TO_DEC: .BYTE "H:XXXX HEX TO DECIMAL", 0
 MSG_HELP_LOAD:       .BYTE "L:XXXX,FILENAME LOAD FILE", 0
 MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY) READ FROM MEMORY", 0
 MSG_HELP_SAVE:       .BYTE "S:XXXX-YYYY   SAVE MEMORY RANGE", 0

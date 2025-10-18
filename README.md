@@ -53,19 +53,22 @@ The command reference provides comprehensive documentation for all monitor comma
 |----------|----------|-------------|
 | **Memory Operations** | [R:](docs/read_command.md), [W:](docs/write_command.md), [F:](docs/fill_command.md), [M:](docs/move_copy_command.md), [X:](docs/search_command.md) | Read, write, fill, move/copy, and search memory |
 | **Program Operations** | [G:](docs/run_command.md), [L:](docs/load_command.md), [S:](docs/save_command.md) | Execute, load, and save programs |
+| **Number Conversion** | [D:](docs/decimal_to_hex_command.md), [H:](docs/hex_to_decimal_command.md) | Convert between decimal and hexadecimal |
 | **Display Commands** | C:, T:, Z: | Clear screen, show stack, show zero page |
-| **System Commands** | H:, ESC, . | Help, exit mode, command recall |
+| **System Commands** | ?, ESC, . | Help, exit mode, command recall |
 
 ### Key Command Features
 
 - **R: Read Memory** - Display bytes in memory, supports single addresses or ranges
-- **W: Write Memory** - Interactive hex editing with address advancement  
+- **W: Write Memory** - Interactive hex editing with address advancement
 - **G: Go/Run** - Direct program execution with return to monitor
 - **L: Load File** - Immediate file loading: `L:8000,FILENAME`
 - **S: Save File** - Immediate file saving: `S:8000-8FFF,FILENAME`
 - **F: Fill Memory** - High-performance memory filling with progress feedback
-- **M: Move/Copy** - Smart memory operations with overlap detection  
+- **M: Move/Copy** - Smart memory operations with overlap detection
 - **X: Search Memory** - Multi-byte pattern search with paged output
+- **D: Decimal to Hex** - Convert decimal (0-65535) to hexadecimal format
+- **H: Hex to Decimal** - Convert hexadecimal (0000-FFFF) to decimal format
 
 ### Error Handling
 
@@ -152,10 +155,11 @@ For detailed development information and project context, see:
 
 ## Tips for Effective Use
 
-1. **Start with Help**: Use `H:` to see all available commands
+1. **Start with Help**: Use `?` to see all available commands
 2. **Use Command Recall**: The `.` command saves time when refining commands
 3. **File Operations**: Use immediate syntax `L:8000,FILE` and `S:8000-8FFF,FILE`
 4. **Search Effectively**: Use X: with multiple byte patterns for precise matching
-5. **Program Development**: Load programs with L:, test with G:, save modifications with S:
+5. **Number Conversion**: Use D: and H: commands to convert between decimal and hex
+6. **Program Development**: Load programs with L:, test with G:, save modifications with S:
 
 The monitor is designed for both interactive exploration and efficient program development workflows.

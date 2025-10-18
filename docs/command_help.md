@@ -12,10 +12,14 @@ The 6502 Monitor provides a comprehensive set of commands for memory manipulatio
 - **[M: Move/Copy Memory](move_copy_command.md)** - Copy or move memory blocks
 - **[X: Search Memory](search_command.md)** - Search memory for byte patterns
 
-### Program Operations  
+### Program Operations
 - **[G: Go/Run](run_command.md)** - Execute user program at specified address
 - **[L: Load File](load_command.md)** - Load binary file into memory
 - **[S: Save File](save_command.md)** - Save memory range to binary file
+
+### Number Conversion
+- **[D: Decimal to Hex](decimal_to_hex_command.md)** - Convert decimal (0-65535) to hexadecimal
+- **[H: Hex to Decimal](hex_to_decimal_command.md)** - Convert hexadecimal (0000-FFFF) to decimal
 
 ### Display Commands
 
@@ -39,11 +43,11 @@ The 6502 Monitor provides a comprehensive set of commands for memory manipulatio
 
 ### System Commands
 
-#### H: Help
+#### ?: Help
 - **Purpose**: Display available monitor commands
-- **Format**: `H:`
+- **Format**: `?` (no colon)
 - **Output**: List of all commands with brief descriptions
-- **Notes**: Shows command syntax and usage
+- **Notes**: Shows command syntax and usage. Previously accessed via `H:` which is now hex-to-decimal conversion
 
 #### ESC: Exit Mode
 - **Purpose**: Exit current command mode and return to command prompt
@@ -78,7 +82,7 @@ The 6502 Monitor provides a comprehensive set of commands for memory manipulatio
 ## Universal Commands
 These commands work from any monitor mode:
 - **ESC** - Exit current mode
-- **H:** - Display help
+- **?** - Display help
 - **R:** - Read memory (does not change mode)
 - **.** - Recall last command
 
