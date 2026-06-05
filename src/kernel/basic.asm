@@ -467,7 +467,7 @@ Ibuffs            = VEC_SV+$16
                               ; start of input buffer after IRQ/NMI code
 Ibuffe            = Ibuffs+$47; end of input buffer
 
-Ram_base          = $0300     ; start of user RAM (after BASIC variables at $0200-$0268)
+Ram_base          = $0800     ; start of user RAM (above screen RAM $0400-$07FF; below it is system/monitor RAM and screen)
 Ram_top           = $B000     ; end of user RAM+1 (before BASIC ROM at $B000-$DFFF)
 
 Stack_floor       = 16        ; bytes left free on stack for background interrupts
