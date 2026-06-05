@@ -1931,15 +1931,15 @@ IO_STUB:
 ; Note: Milestone 4 implementation - jumps to BASIC cold start at $C000
 ; ----------------------------------------------------------------
 CMD_LAUNCH_BASIC:
-    ; Check for BASIC ROM signature at $C000
-    ; Expecting LDY #$0D opcode sequence ($A0 $0D) at start of BASIC (LAB_COLD)
-    ; LAB_COLD starts with: LDY #PG2_TABE-PG2_TABS-1 which is LDY #$0D
-    LDA $C000
+    ; Check for BASIC ROM signature at $B000 (ROM base per basic_memory.cfg)
+    ; Expecting LDY immediate opcode sequence ($A0 $0C) at start of BASIC (LAB_COLD)
+    ; LAB_COLD starts with: LDY #PG2_TABE-PG2_TABS-1 which is LDY #$0C
+    LDA $B000
     CMP #$A0                ; LDY immediate opcode
     BNE BASIC_NOT_FOUND
 
     ; Verify second byte is $0C (LDY #$0C)
-    LDA $C001
+    LDA $B001
     CMP #$0C                ; Expected immediate value (actual value from ROM)
     BNE BASIC_SIG_FAIL
 
@@ -1950,8 +1950,8 @@ CMD_LAUNCH_BASIC:
     JSR INIT_BASIC_IO
 
     ; Jump to BASIC cold start
-    ; LAB_COLD is at $C000 (first instruction in basic.rom)
-    JMP $C000
+    ; LAB_COLD is at $B000 (first instruction in basic.rom)
+    JMP $B000
 
 BASIC_NOT_FOUND:
     LDA #<MSG_NO_BASIC

@@ -468,7 +468,7 @@ Ibuffs            = VEC_SV+$16
 Ibuffe            = Ibuffs+$47; end of input buffer
 
 Ram_base          = $0300     ; start of user RAM (after BASIC variables at $0200-$0268)
-Ram_top           = $C000     ; end of user RAM+1 (before BASIC ROM at $C000-$EFFF)
+Ram_top           = $B000     ; end of user RAM+1 (before BASIC ROM at $B000-$DFFF)
 
 Stack_floor       = 16        ; bytes left free on stack for background interrupts
 
@@ -8795,6 +8795,8 @@ LAB_KEYT:
       .word LBB_IRQ           ; IRQ
       .byte 3,'N'
       .word LBB_NMI           ; NMI
+      .byte 3,'B'
+      .word LBB_BYE           ; BYE
 
 ; secondary commands (can't start a statement)
 
