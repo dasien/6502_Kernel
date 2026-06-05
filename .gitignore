@@ -47,13 +47,12 @@ moc_*.h
 .qt/
 **/.qt/
 
-# Test artifacts (executables built in cmake-build-*/tests/)
-*test
-*tests
-*_test
-*_tests
-test_*.exe
+# Test executables are built inside the already-ignored build dirs
+# (build/, cmake-build-*/), so they need no separate rule here.
+# Do NOT add unanchored patterns like "*tests" or "*_test": they also match
+# the tests/ source directory and silently ignore new test source files.
 *_test.exe
+test_*.exe
 
 # Google Test build artifacts (already covered by cmake-build-*/ but being explicit)
 **/googletest-*/
