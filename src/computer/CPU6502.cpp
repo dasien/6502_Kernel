@@ -258,9 +258,12 @@ uint8_t CPU6502::addValues(const uint8_t val1, const uint8_t val2)
         setFlag(kCarry, (result > 0x99));
     } else
     {
-        // Set carry and overflow based on result
+        // Set carry and overflow based on result.
+        // V is set when both operands have the same sign but the result's
+        // sign differs (signed overflow): ~(val1^val2) & (val1^result) & $80.
         setFlag(kCarry, (result > 0xFF));
-        setFlag(kOverflow, (val1 < 128 && val2 < 128 && result > 127));
+        const uint8_t res8 = result & 0xFF;
+        setFlag(kOverflow, ((~(val1 ^ val2) & (val1 ^ res8)) & 0x80) != 0);
     }
 
     // Return the 8-bit result
@@ -282,9 +285,12 @@ uint8_t CPU6502::subtractValues(const uint8_t val1, const uint8_t val2)
         setFlag(kCarry, (result > 0x99));
     } else
     {
-        // Set carry and overflow based on result
+        // Set carry and overflow based on result.
+        // For subtraction V is set when the operands have different signs and
+        // the result's sign differs from val1: (val1^val2) & (val1^result) & $80.
         setFlag(kCarry, (result >= 0));
-        setFlag(kOverflow, (val1 < 128 && val2 < 128 && result > 127));
+        const uint8_t res8 = result & 0xFF;
+        setFlag(kOverflow, (((val1 ^ val2) & (val1 ^ res8)) & 0x80) != 0);
     }
 
     // Return the 8-bit result
@@ -293,10 +299,14 @@ uint8_t CPU6502::subtractValues(const uint8_t val1, const uint8_t val2)
 
 void CPU6502::compareValues(const uint8_t val1, const uint8_t val2)
 {
-    // Set flags
+    // CMP/CPX/CPY compute (val1 - val2) and set flags from the result.
+    // N must come from bit 7 of the 8-bit difference, NOT from val1 itself,
+    // otherwise CMP-then-BMI/BPL idioms (e.g. EhBASIC's FP exponent alignment)
+    // branch the wrong way.
+    const uint8_t diff = static_cast<uint8_t>(val1 - val2);
     setFlag(kCarry, (val1 >= val2));
     setFlag(kZero, (val1 == val2));
-    setFlag(kNegative, (val1 & 0x80));
+    setFlag(kNegative, (diff & 0x80) != 0);
 }
 
 uint8_t CPU6502::convertToBcd(uint8_t value)
