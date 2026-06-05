@@ -2016,7 +2016,19 @@ CMD_CLEAR_SCREEN:
 ; Output: Formatted hex dump of stack memory to screen with addresses and data
 ; Modifies: A, X, Y
 ; Note: Uses paging - user can press ESC to abort or ENTER to continue
+; Note: Preserves MON_CURRADDR (DUMP_MEMORY_RANGE walks it across the range).
+;       The stack page is the data being dumped here, so the saved address is
+;       stashed in MON_DEST_ADDR (used only by the M: command) as scratch space
+;       rather than on the stack, to avoid perturbing the displayed bytes.
 CMD_DUMP_STACK:
+
+    ; Save current address so the dump doesn't disturb the prompt's address.
+    ; Use MON_DEST_ADDR as scratch (idle outside the M: command) instead of the
+    ; stack, since we are dumping the stack page itself.
+    LDA MON_CURRADDR_LO
+    STA MON_DEST_ADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_DEST_ADDR_HI
 
     LDA #0
     STA CMD_LINE_COUNT          ; Reset command line counter
@@ -2032,6 +2044,12 @@ CMD_DUMP_STACK:
     LDA #$01                    ; End address high byte
     STA MON_ENDADDR_HI
     JSR DUMP_MEMORY_RANGE       ; Use common memory dump routine
+
+    ; Restore current address from scratch
+    LDA MON_DEST_ADDR_LO
+    STA MON_CURRADDR_LO
+    LDA MON_DEST_ADDR_HI
+    STA MON_CURRADDR_HI
     RTS
 
 ; Zero page dump command - Display complete zero page memory with paging support
@@ -2039,7 +2057,15 @@ CMD_DUMP_STACK:
 ; Output: Formatted hex dump of zero page memory to screen with addresses and data
 ; Modifies: A, X, Y
 ; Note: Uses paging - user can press ESC to abort or ENTER to continue
+; Note: Preserves MON_CURRADDR (DUMP_MEMORY_RANGE walks it across the range) by
+;       saving/restoring it on the stack, matching the WRITE_MODE_SHOW_RESULT idiom.
 CMD_DUMP_ZERO_PAGE:
+    ; Save current address so the dump doesn't disturb the prompt's address
+    LDA MON_CURRADDR_LO
+    PHA
+    LDA MON_CURRADDR_HI
+    PHA
+
     LDA #0
     STA CMD_LINE_COUNT          ; Reset command line counter
     STA PAGE_ABORT_FLAG         ; Reset abort flag
@@ -2054,6 +2080,12 @@ CMD_DUMP_ZERO_PAGE:
     LDA #$00                    ; End address high byte
     STA MON_ENDADDR_HI
     JSR DUMP_MEMORY_RANGE       ; Use common memory dump routine
+
+    ; Restore current address
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
     RTS
 
 ; ================================================================
