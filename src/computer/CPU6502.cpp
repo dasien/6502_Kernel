@@ -245,56 +245,73 @@ uint16_t CPU6502::calculateAbsoluteIndexedIndirectAddress()
 // ALU helper functions
 uint8_t CPU6502::addValues(const uint8_t val1, const uint8_t val2)
 {
-    // Do the math A+M+C
-    uint16_t result = val1 + val2 + (getFlag(kCarry) ? 1 : 0);
+    const int carry_in = getFlag(kCarry) ? 1 : 0;
 
-    // Check to see if this is BCD mode
     if (getFlag(kDecimal))
     {
-        // Do the conversion to BCD
-        result = convertToBcd(result);
+        // 65C02 BCD add, nibble-wise with per-nibble adjust
+        // (http://www.6502.org/tutorials/decimal_mode.html). N and Z are set
+        // from the final result by the caller; here we set V and C.
+        int al = (val1 & 0x0F) + (val2 & 0x0F) + carry_in;
+        if (al >= 0x0A)
+        {
+            al = ((al + 0x06) & 0x0F) + 0x10;
+        }
+        int a = (val1 & 0xF0) + (val2 & 0xF0) + al;
 
-        // Now check to see if we need to set carry
-        setFlag(kCarry, (result > 0x99));
-    } else
-    {
-        // Set carry and overflow based on result.
-        // V is set when both operands have the same sign but the result's
-        // sign differs (signed overflow): ~(val1^val2) & (val1^result) & $80.
-        setFlag(kCarry, (result > 0xFF));
-        const uint8_t res8 = result & 0xFF;
-        setFlag(kOverflow, ((~(val1 ^ val2) & (val1 ^ res8)) & 0x80) != 0);
+        // Overflow is taken from the intermediate sum, before the high adjust.
+        const uint8_t res_pre = static_cast<uint8_t>(a);
+        setFlag(kOverflow, ((~(val1 ^ val2) & (val1 ^ res_pre)) & 0x80) != 0);
+
+        if (a >= 0xA0)
+        {
+            a += 0x60;
+        }
+        setFlag(kCarry, a >= 0x100);
+        return static_cast<uint8_t>(a & 0xFF);
     }
 
-    // Return the 8-bit result
-    return result & 0xFF;
+    // Binary mode: A + M + C.
+    // V is set when both operands have the same sign but the result's sign
+    // differs (signed overflow): ~(val1^val2) & (val1^result) & $80.
+    const uint16_t result = val1 + val2 + carry_in;
+    const uint8_t res8 = result & 0xFF;
+    setFlag(kCarry, (result > 0xFF));
+    setFlag(kOverflow, ((~(val1 ^ val2) & (val1 ^ res8)) & 0x80) != 0);
+    return res8;
 }
 
 uint8_t CPU6502::subtractValues(const uint8_t val1, const uint8_t val2)
 {
-    // Do the math A-M-(1-C)
-    int16_t result = val1 - val2 - (getFlag(kCarry) ? 0 : 1);
+    const int carry_in = getFlag(kCarry) ? 1 : 0;
 
-    // Check to see if this is BCD mode
+    // Carry and overflow derive from the binary subtraction in BOTH decimal and
+    // binary modes (this matches real 6502/65C02 SBC behaviour). Carry is set
+    // when there is no borrow; V on signed overflow:
+    // (val1^val2) & (val1^result) & $80.
+    const int bin = val1 - val2 - (1 - carry_in);
+    const uint8_t res8 = static_cast<uint8_t>(bin);
+    setFlag(kCarry, bin >= 0);
+    setFlag(kOverflow, (((val1 ^ val2) & (val1 ^ res8)) & 0x80) != 0);
+
     if (getFlag(kDecimal))
     {
-        // Do the conversion to BCD
-        result = convertToBcd(result);
-
-        // Now check to see if we need to set carry
-        setFlag(kCarry, (result > 0x99));
-    } else
-    {
-        // Set carry and overflow based on result.
-        // For subtraction V is set when the operands have different signs and
-        // the result's sign differs from val1: (val1^val2) & (val1^result) & $80.
-        setFlag(kCarry, (result >= 0));
-        const uint8_t res8 = result & 0xFF;
-        setFlag(kOverflow, (((val1 ^ val2) & (val1 ^ res8)) & 0x80) != 0);
+        // 65C02 BCD subtract, nibble-wise with per-nibble adjust
+        // (http://www.6502.org/tutorials/decimal_mode.html).
+        int al = (val1 & 0x0F) - (val2 & 0x0F) + carry_in - 1;
+        if (al < 0)
+        {
+            al = ((al - 0x06) & 0x0F) - 0x10;
+        }
+        int a = (val1 & 0xF0) - (val2 & 0xF0) + al;
+        if (a < 0)
+        {
+            a -= 0x60;
+        }
+        return static_cast<uint8_t>(a & 0xFF);
     }
 
-    // Return the 8-bit result
-    return result & 0xFF;
+    return res8;
 }
 
 void CPU6502::compareValues(const uint8_t val1, const uint8_t val2)
@@ -307,25 +324,6 @@ void CPU6502::compareValues(const uint8_t val1, const uint8_t val2)
     setFlag(kCarry, (val1 >= val2));
     setFlag(kZero, (val1 == val2));
     setFlag(kNegative, (diff & 0x80) != 0);
-}
-
-uint8_t CPU6502::convertToBcd(uint8_t value)
-{
-    // Mask LSBit to see if that digit is greater than 9
-    if ((value & 0x0F) > 0x09)
-    {
-        // Roll the digit
-        value += 0x06;
-    }
-
-    // Mask MSBit to see if that digit is greater than 9
-    if ((value & 0xF0) > 0x90)
-    {
-        // Roll that digit
-        value += 0x60;
-    }
-
-    return value;
 }
 
 // Stack helper functions

@@ -187,7 +187,6 @@ private:
     uint8_t addValues(uint8_t val1, uint8_t val2);
     uint8_t subtractValues(uint8_t val1, uint8_t val2);
     void compareValues(uint8_t val1, uint8_t val2);
-    uint8_t convertToBcd(uint8_t value);
 
     // Stack helper functions
     void pushStack16(uint16_t value);
