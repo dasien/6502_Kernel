@@ -156,6 +156,15 @@ public:
                 result.error = "Each pattern byte must be 2 hex digits";
                 return result;
             }
+            for (char c : byteStr) {
+                bool isHexDigit = (c >= '0' && c <= '9') ||
+                                  (c >= 'A' && c <= 'F') ||
+                                  (c >= 'a' && c <= 'f');
+                if (!isHexDigit) {
+                    result.error = "Pattern byte is not valid hex";
+                    return result;
+                }
+            }
             result.pattern.push_back(hexStringToUint8(byteStr));
         }
 

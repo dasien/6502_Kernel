@@ -16,9 +16,9 @@ message(STATUS "=== ROM VALIDATION ===")
 message(STATUS "ROM File: ${ROM_FILE}")
 message(STATUS "ROM Size: ${ROM_SIZE} bytes")
 
-# Validate ROM size is exactly 4KB (4096 bytes)
-if(NOT ROM_SIZE EQUAL 4096)
-    message(FATAL_ERROR "Invalid ROM size: ${ROM_SIZE} bytes. Expected: 4096 bytes (4KB)")
+# Validate ROM size is exactly 8KB (8192 bytes) - ROM region is $E000-$FFFF
+if(NOT ROM_SIZE EQUAL 8192)
+    message(FATAL_ERROR "Invalid ROM size: ${ROM_SIZE} bytes. Expected: 8192 bytes (8KB)")
 endif()
 
 # Read ROM content to validate critical sections

@@ -91,11 +91,11 @@ add_test(NAME monitor_integration
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom
     COMMAND ${CMAKE_COMMAND}
-    -DROM_FILE=${CMAKE_BINARY_DIR}/kernel.rom
+    -DROM_FILE=${CMAKE_BINARY_DIR}/kernel/kernel.rom
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/validate_rom.cmake)
 
 # Add custom test for memory layout validation
 add_test(NAME validate_memory_layout
     COMMAND ${CMAKE_COMMAND}
-    -DMAP_FILE=${CMAKE_BINARY_DIR}/kernel.map
+    -DMAP_FILE=${CMAKE_BINARY_DIR}/kernel/kernel.map
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/validate_memory_layout.cmake)

@@ -110,6 +110,16 @@ namespace Computer
             return &cpu;
         }
 
+        /**
+         * @brief Get pointer to system memory
+         * @return Memory* Pointer to the 64KB memory for direct read/write
+         * @note Used primarily for testing (verifying command results in RAM)
+         */
+        Memory *getMemory()
+        {
+            return &memory;
+        }
+
     private:
         /**
          * @brief Display fatal error message and exit program

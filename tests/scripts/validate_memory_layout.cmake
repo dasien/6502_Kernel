@@ -38,9 +38,9 @@ if(MAP_CONTENT MATCHES "CODE[ \t]+([0-9A-F]+)[ \t]+([0-9A-F]+)[ \t]+([0-9A-F]+)"
 
     message(STATUS "CODE segment: $${CODE_START}-$${CODE_END} (${CODE_SIZE_DEC} bytes)")
 
-    # Validate CODE starts at F000
-    if(NOT CODE_START STREQUAL "00F000")
-        message(FATAL_ERROR "CODE segment should start at $F000, found: $${CODE_START}")
+    # Validate CODE starts at E000 (ROM region $E000-$FFFF)
+    if(NOT CODE_START STREQUAL "00E000")
+        message(FATAL_ERROR "CODE segment should start at $E000, found: $${CODE_START}")
     endif()
 
 else()
@@ -97,13 +97,13 @@ endif()
 message(STATUS "Found ${SEGMENTS_FOUND} memory segments")
 message(STATUS "Total code size: ${TOTAL_SIZE} bytes")
 
-# Validate total size doesn't exceed 4KB
-if(TOTAL_SIZE GREATER 4096)
-    message(FATAL_ERROR "Total ROM size ${TOTAL_SIZE} exceeds 4096 bytes")
+# Validate total size doesn't exceed 8KB (ROM region $E000-$FFFF)
+if(TOTAL_SIZE GREATER 8192)
+    message(FATAL_ERROR "Total ROM size ${TOTAL_SIZE} exceeds 8192 bytes")
 endif()
 
 # Calculate utilization
-math(EXPR UTILIZATION_PERCENT "${TOTAL_SIZE} * 100 / 4096")
+math(EXPR UTILIZATION_PERCENT "${TOTAL_SIZE} * 100 / 8192")
 message(STATUS "ROM utilization: ${UTILIZATION_PERCENT}%")
 
 if(UTILIZATION_PERCENT GREATER 95)
