@@ -8,6 +8,8 @@
 
 #include <cstdint>
 #include <array>
+#include <vector>
+#include <string>
 
 namespace Computer
 {
@@ -32,6 +34,13 @@ namespace Computer
      * - $DC10-$DC13: File operation command and addressing
      * - $DC14-$DC1F: Filename buffer (12 characters)
      * - $DC20-$DC21: End address for save operations
+     * - $DC22:       Byte-stream data register (for streaming load/save)
+     *
+     * Two file models are supported:
+     * - Block (kernel L:/S:): one command transfers a whole memory range.
+     * - Byte stream (BASIC LOAD/SAVE): OPEN_READ/OPEN_WRITE, then read/write the
+     *   data register one byte at a time, then CLOSE. Used by BASIC so it can
+     *   stream a program as ASCII text via its character I/O vectors.
      *
      * @see Memory, Computer6502
      */
@@ -39,7 +48,7 @@ namespace Computer
     {
     public:
         static constexpr uint16_t kPiaMemoryStart = 0xDC00;
-        static constexpr uint16_t kPiaMemoryEnd = 0xDC21; // Extended for file I/O and save range
+        static constexpr uint16_t kPiaMemoryEnd = 0xDC22; // Through the stream data register
         static constexpr uint8_t kKeyboardBufferSize = 32;
 
         // PIA Register offsets
@@ -58,16 +67,27 @@ namespace Computer
         static constexpr uint8_t kFilenameStart = 0x14; // $DC14-$DC1F - Filename buffer (12 bytes)
         static constexpr uint8_t kFileEndAddrLo = 0x20; // $DC20 - End address low byte (for save range)
         static constexpr uint8_t kFileEndAddrHi = 0x21; // $DC21 - End address high byte (for save range)
+        static constexpr uint8_t kFileData = 0x22;      // $DC22 - Byte-stream data register
 
         // File command codes
-        static constexpr uint8_t kFileLoadCommand = 0x01;
-        static constexpr uint8_t kFileSaveCommand = 0x02;
+        static constexpr uint8_t kFileLoadCommand = 0x01;  // block: file -> memory range
+        static constexpr uint8_t kFileSaveCommand = 0x02;  // block: memory range -> file
+        static constexpr uint8_t kFileOpenReadCommand = 0x03;   // stream: open file for reading
+        static constexpr uint8_t kFileOpenWriteCommand = 0x04;  // stream: open file for writing
+        static constexpr uint8_t kFileCloseCommand = 0x05;      // stream: close current stream
 
         // File status codes
         static constexpr uint8_t kFileIdle = 0x00;
         static constexpr uint8_t kFileInProgress = 0x01;
         static constexpr uint8_t kFileSuccess = 0x02;
+        static constexpr uint8_t kFileStreamOpen = 0x03; // stream open, data available to read/write
+        static constexpr uint8_t kFileEof = 0x04;        // stream read: no more bytes
         static constexpr uint8_t kFileError = 0xFF;
+
+        // Stream modes
+        static constexpr uint8_t kStreamNone = 0x00;
+        static constexpr uint8_t kStreamRead = 0x01;
+        static constexpr uint8_t kStreamWrite = 0x02;
 
         // Control register flags
         static constexpr uint8_t kDataAvailable = 0x01; // Bit 0: Data ready to read
@@ -191,6 +211,15 @@ namespace Computer
         uint16_t file_end_address_;
         std::array<char, 12> filename_{};
         class Memory *memory_;
+
+        // Byte-stream file state (BASIC LOAD/SAVE)
+        uint8_t stream_mode_ = kStreamNone;  // none / read / write
+        std::vector<uint8_t> stream_buffer_; // read: file contents; write: pending output
+        size_t stream_pos_ = 0;              // read position into stream_buffer_
+        std::string stream_filename_;        // chosen filename for the write stream
+
+        // Close the active stream: flush a write stream to disk, reset state.
+        void closeStream();
 
         // Helper functions
         [[nodiscard]] uint8_t addressToOffset(uint16_t address) const;

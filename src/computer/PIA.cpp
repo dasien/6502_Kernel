@@ -67,9 +67,20 @@ void PIA::writePia(const uint16_t address, const uint8_t value)
         case kFileCommand:
             printf("PIA: Received file command: 0x%02X\n", value);
             file_command_ = value;
-            if (value == kFileLoadCommand || value == kFileSaveCommand) {
+            // Block transfers and stream OPENs need a host action (and a file
+            // dialog); mark IN_PROGRESS so processFileOperations() picks them up.
+            if (value == kFileLoadCommand || value == kFileSaveCommand ||
+                value == kFileOpenReadCommand || value == kFileOpenWriteCommand) {
                 printf("PIA: Setting file status to IN_PROGRESS\n");
                 file_status_ = kFileInProgress;
+            } else if (value == kFileCloseCommand) {
+                closeStream();  // handled inline (flushes a write stream)
+            }
+            break;
+        case kFileData:
+            // Stream write: append a byte to the pending output buffer.
+            if (stream_mode_ == kStreamWrite) {
+                stream_buffer_.push_back(value);
             }
             break;
         case kFileAddrLo:
@@ -133,8 +144,20 @@ uint8_t PIA::readPia(const uint16_t address)
             return port_b_control_;
             
         case kFileStatus:
+            // In a read stream, report EOF vs. data-available dynamically so the
+            // 6502 can loop "while not EOF: read data".
+            if (stream_mode_ == kStreamRead) {
+                return (stream_pos_ >= stream_buffer_.size()) ? kFileEof : kFileStreamOpen;
+            }
             return file_status_;
-            
+
+        case kFileData:
+            // Stream read: return the next byte and advance.
+            if (stream_mode_ == kStreamRead && stream_pos_ < stream_buffer_.size()) {
+                return stream_buffer_[stream_pos_++];
+            }
+            return 0x00;
+
         default:
             return 0x00;
     }
@@ -252,7 +275,30 @@ void PIA::setMemoryInterface(Memory* memory)
 
 bool PIA::hasFileOperation() const
 {
-    return (file_command_ == kFileLoadCommand || file_command_ == kFileSaveCommand) && file_status_ == kFileInProgress;
+    return (file_command_ == kFileLoadCommand || file_command_ == kFileSaveCommand ||
+            file_command_ == kFileOpenReadCommand || file_command_ == kFileOpenWriteCommand) &&
+           file_status_ == kFileInProgress;
+}
+
+void PIA::closeStream()
+{
+    // Flush a pending write stream to disk.
+    if (stream_mode_ == kStreamWrite) {
+        std::ofstream file(stream_filename_, std::ios::binary);
+        if (file.is_open() && !stream_buffer_.empty()) {
+            file.write(reinterpret_cast<const char*>(stream_buffer_.data()),
+                       static_cast<std::streamsize>(stream_buffer_.size()));
+        }
+        printf("PIA: Stream write closed - %zu bytes to '%s'\n",
+               stream_buffer_.size(), stream_filename_.c_str());
+    }
+
+    stream_mode_ = kStreamNone;
+    stream_buffer_.clear();
+    stream_pos_ = 0;
+    stream_filename_.clear();
+    file_command_ = kFileIdle;
+    file_status_ = kFileSuccess;
 }
 
 void PIA::processFileOperations()
@@ -401,12 +447,82 @@ void PIA::processFileOperations()
             return;
         }
         
-        printf("PIA: File saved successfully - %zu bytes saved from $%04X-$%04X\n", 
+        printf("PIA: File saved successfully - %zu bytes saved from $%04X-$%04X\n",
                buffer.size(), file_address_, file_end_address_);
-        
+
         // Clear the file operation
         file_command_ = kFileIdle;
         file_status_ = kFileSuccess;
+    }
+    else if (file_command_ == kFileOpenReadCommand) {
+        // Open a file for streaming read (BASIC LOAD). Buffer the whole file;
+        // the 6502 then reads it a byte at a time via the data register.
+        std::string filename;
+#ifdef QT_GUI
+        QString qfilename = QFileDialog::getOpenFileName(
+            nullptr, "Load BASIC Program", QString(),
+            "BASIC Programs (*.bas);;Text Files (*.txt);;All Files (*.*)");
+        if (qfilename.isEmpty()) {
+            printf("PIA: Stream open(read) cancelled by user\n");
+            file_command_ = kFileIdle;
+            file_status_ = kFileError;
+            return;
+        }
+        filename = qfilename.toStdString();
+#else
+        printf("PIA: File operations not supported in console mode\n");
+        file_command_ = kFileIdle;
+        file_status_ = kFileError;
+        return;
+#endif
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            printf("PIA: Stream open(read) error - cannot open '%s'\n", filename.c_str());
+            file_command_ = kFileIdle;
+            file_status_ = kFileError;
+            return;
+        }
+        std::streamsize sz = file.tellg();
+        file.seekg(0, std::ios::beg);
+        stream_buffer_.assign(static_cast<size_t>(sz > 0 ? sz : 0), 0);
+        if (sz > 0) {
+            file.read(reinterpret_cast<char*>(stream_buffer_.data()), sz);
+        }
+        stream_pos_ = 0;
+        stream_mode_ = kStreamRead;
+        printf("PIA: Stream open(read) - '%s' (%zu bytes)\n",
+               filename.c_str(), stream_buffer_.size());
+        file_command_ = kFileIdle;
+        file_status_ = stream_buffer_.empty() ? kFileEof : kFileStreamOpen;
+    }
+    else if (file_command_ == kFileOpenWriteCommand) {
+        // Open a file for streaming write (BASIC SAVE). Output is accumulated
+        // and flushed on CLOSE.
+        std::string filename;
+#ifdef QT_GUI
+        QString qfilename = QFileDialog::getSaveFileName(
+            nullptr, "Save BASIC Program", QString(),
+            "BASIC Programs (*.bas);;Text Files (*.txt);;All Files (*.*)");
+        if (qfilename.isEmpty()) {
+            printf("PIA: Stream open(write) cancelled by user\n");
+            file_command_ = kFileIdle;
+            file_status_ = kFileError;
+            return;
+        }
+        filename = qfilename.toStdString();
+#else
+        printf("PIA: File operations not supported in console mode\n");
+        file_command_ = kFileIdle;
+        file_status_ = kFileError;
+        return;
+#endif
+        stream_filename_ = filename;
+        stream_buffer_.clear();
+        stream_pos_ = 0;
+        stream_mode_ = kStreamWrite;
+        printf("PIA: Stream open(write) - '%s'\n", filename.c_str());
+        file_command_ = kFileIdle;
+        file_status_ = kFileStreamOpen;
     }
 }
 

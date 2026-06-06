@@ -8012,6 +8012,65 @@ V_LOAD:
 V_SAVE:
       JMP   (VEC_SV)          ; save BASIC program
 
+; ================================================================
+; Project addition: BASIC LOAD / SAVE via the host byte-stream file I/O
+; (PIA stream registers). SAVE lists the program as ASCII text to a file;
+; LOAD (Stage 3) streams a text file back in as if typed. Wired in through
+; PG2_TABS (VEC_LD / VEC_SV) below. These live here, not in the kernel ROM,
+; because they use BASIC internals (LAB_LIST, VEC_OUT, LAB_GBYT).
+; ================================================================
+FIO_COMMAND = $DC10           ; file command register
+FIO_STATUS  = $DC11           ; file status register
+FIO_DATA    = $DC22           ; byte-stream data register
+FIO_OPEN_WR = $04             ; command: open stream for write
+FIO_CLOSE   = $05             ; command: close stream
+FIO_INPROG  = $01             ; status: operation in progress
+FIO_ERROR   = $FF             ; status: error / cancelled
+
+; SAVE: write the current BASIC program to a file as ASCII source text.
+BASIC_SAVE:
+      LDA   #FIO_OPEN_WR      ; ask the host to open an output file (save dialog)
+      STA   FIO_COMMAND
+BSAVE_WAIT:
+      LDA   FIO_STATUS        ; wait for the host to finish opening
+      CMP   #FIO_INPROG
+      BEQ   BSAVE_WAIT
+      CMP   #FIO_ERROR        ; cancelled or failed?
+      BEQ   BSAVE_RET         ; if so, just return to BASIC
+
+      LDA   VEC_OUT           ; save the current output vector
+      PHA
+      LDA   VEC_OUT+1
+      PHA
+      LDA   #<BSAVE_PUT       ; redirect character output to the file stream
+      STA   VEC_OUT
+      LDA   #>BSAVE_PUT
+      STA   VEC_OUT+1
+
+      JSR   LAB_GBYT          ; flags from byte after SAVE ($00 -> list all)
+      JSR   LAB_LIST          ; list the whole program -> stream
+
+      PLA                     ; restore the output vector
+      STA   VEC_OUT+1
+      PLA
+      STA   VEC_OUT
+
+      LDA   #FIO_CLOSE        ; close (flush) the file
+      STA   FIO_COMMAND
+BSAVE_RET:
+      RTS
+
+; Output-vector target while saving: send one byte to the stream.
+; Must preserve A (BASIC re-tests it after V_OUTP); STA leaves A unchanged.
+BSAVE_PUT:
+      STA   FIO_DATA
+      RTS
+
+; LOAD: Stage 3 - not yet implemented. Clean no-op (better than the old
+; vector that fell through to the RNG routine).
+BASIC_LOAD:
+      RTS
+
 ; The rest are tables messages and code for RAM
 
 ; the rest of the code is tables and BASIC start-up code
@@ -8023,8 +8082,8 @@ PG2_TABS:
       .word CTRLC             ; ctrl c check vector
       .word $FF09             ; VEC_IN - monitor GET_KEYSTROKE at $FF09
       .word $FF00             ; VEC_OUT - monitor PRINT_CHAR at $FF00
-      .word $FF0F             ; VEC_LD - stub routine (will be $FF0F)
-      .word $FF0F             ; VEC_SV - stub routine (will be $FF0F)
+      .word BASIC_LOAD        ; VEC_LD - stream load (Stage 3: stub)
+      .word BASIC_SAVE        ; VEC_SV - save program as ASCII text to a file
 PG2_TABE:
 
 ; character get subroutine for zero page
