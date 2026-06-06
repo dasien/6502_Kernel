@@ -595,8 +595,12 @@ PRINT_CHAR:
     BEQ PRINT_CHAR_NEWLINE      ; Handle newline
 
     CMP #ASCII_LF               ; Is it line feed?
-    BEQ PRINT_CHAR_NEWLINE      ; Handle newline (treat same as CR)
+    BNE PRINT_CHAR_CHECK_BS     ; Not LF; keep checking
+    RTS                         ; Ignore LF: CR alone performs the newline, so a
+                                ; CR+LF sequence (EhBASIC LAB_CRLF, kernel messages)
+                                ; produces a single newline, not a double space
 
+PRINT_CHAR_CHECK_BS:
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ PRINT_CHAR_BACKSPACE    ; Handle backspace
 
@@ -2980,6 +2984,7 @@ CMD_MOVE_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS MOVE_RANGE_ERROR        ; If invalid range, show error
+    JMP MOVE_RANGE_VALID        ; Continue with valid range
 
 MOVE_RANGE_ERROR:
     JSR PRINT_RANGE_ERROR       ; Print range error message
@@ -3085,6 +3090,7 @@ MOVE_BACKWARD:
     TAX                         ; Save offset low
     LDA MON_ENDADDR_HI
     SBC MON_STARTADDR_HI        ; offset_hi = end_hi - start_hi with borrow
+    PHA                         ; preserve offset_hi (A is about to be reused)
 
     ; Add offset to destination to get destination end
     STX MON_HEX_TEMP            ; Use temp storage for offset_lo
@@ -3092,8 +3098,8 @@ MOVE_BACKWARD:
     LDA MON_DEST_ADDR_LO
     ADC MON_HEX_TEMP            ; dest_end_lo = dest_lo + offset_lo
     STA MON_DEST_ADDR_LO
-    LDA MON_DEST_ADDR_HI
-    ADC $00                     ; dest_end_hi = dest_hi + offset_hi + carry
+    PLA                         ; recover offset_hi (PLA preserves carry)
+    ADC MON_DEST_ADDR_HI        ; dest_end_hi = offset_hi + dest_hi + carry
     STA MON_DEST_ADDR_HI
 
     LDY #$00                    ; Initialize Y index
@@ -3238,6 +3244,7 @@ CMD_SEARCH_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS SEARCH_RANGE_ERROR      ; If invalid range, show error
+    JMP SEARCH_RANGE_VALID      ; Continue with valid range
 
 SEARCH_RANGE_ERROR:
     ; Restore original current address before error exit
@@ -3277,6 +3284,28 @@ SEARCH_CONTINUE:
     JMP SEARCH_DONE             ; We're past the end, done
 
 SEARCH_CHECK_PATTERN:
+    ; The whole pattern must fit within the range: (current + len - 1) <= end.
+    ; current only increases, so once it can't fit the search is finished.
+    ; MON_STARTADDR is free here (unused during the search) so reuse it as scratch.
+    LDA MON_PATTERN_LEN
+    SEC
+    SBC #$01                    ; len - 1 (parser guarantees len >= 1)
+    CLC
+    ADC MON_CURRADDR_LO         ; last_lo = current_lo + (len - 1)
+    STA MON_STARTADDR_LO
+    LDA MON_CURRADDR_HI
+    ADC #$00                    ; propagate carry
+    BCS SEARCH_DONE             ; address wrapped past $FFFF -> can't fit, done
+    STA MON_STARTADDR_HI
+    CMP MON_ENDADDR_HI
+    BCC SEARCH_DO_MATCH         ; last_hi < end_hi -> fits
+    BNE SEARCH_DONE             ; last_hi > end_hi -> past end, done
+    LDA MON_STARTADDR_LO
+    CMP MON_ENDADDR_LO
+    BEQ SEARCH_DO_MATCH         ; last == end -> fits (pattern ends exactly at end)
+    BCS SEARCH_DONE             ; last > end -> past end, done
+
+SEARCH_DO_MATCH:
     ; Check if pattern matches at current address
     LDY #$00                    ; Pattern index
 
