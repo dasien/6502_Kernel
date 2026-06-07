@@ -8,8 +8,8 @@
 
 ### BASIC integration fixes
 - [x] LOAD/SAVE I/O vectors (PG2_TABS) pointed at $FF0F = the RNG routine. Resolved by implementing real BASIC SAVE/LOAD: SAVE writes the program as ASCII .bas text and LOAD reads it back (via a new byte-stream mode on the PIA file I/O). VEC_SV/VEC_LD now point at BASIC_SAVE/BASIC_LOAD, so the RNG bug is gone.
-- [ ] INIT_BASIC_IO (kernel.asm:1894) is dead code: cold-start's PG2_TABS copy overwrites the vectors it sets. Delete it and treat PG2_TABS as the single source of truth (or keep them in sync with a cross-reference comment).
-- [ ] IRQ/NMI/RETIRQ/RETNMI machinery is inert: the kernel ISRs are bare RTI and never set BASIC's "happened" bit, so these tokens can't fire from hardware. Either implement (kernel ISRs set the bit) or strip the feature.
+- [x] INIT_BASIC_IO removed (dead code); PG2_TABS is the single source of truth for the BASIC I/O vectors.
+- [x] IRQ/NMI wired (v2.2): CPU IRQ/NMI dispatch + a ~60Hz PIA interval timer (BASIC ON IRQ) + NMI stop key (BASIC ON NMI / break to monitor). The kernel ISRs set EhBASIC's "happened" bit.
 
 ### BASIC label rewrite
 - [ ] Rename cryptic basic.asm labels (~570 LAB_<hexaddr> labels with no semantic content; meaning already exists in the block comment above each). Recommended approach from the analysis: (B) add a symbol-glossary header + (D) ca65 aliases (NEW_NAME = OLD_NAME) for the hottest labels, keeping LAB_<hex> as the canonical name to preserve EhBASIC upstream parity; optionally (C) targeted rename of the ~20-40 most-referenced labels. Avoid a full rename (A) unless we accept a permanent upstream fork. MUST gate any change on a byte-identical ROM diff. Special-care subset: the ".word LAB_xxx-1" RTS-dispatch tables, the LAB_2A9A/B/C "+1" chains, and LAB_1C18p2 = LAB_1C18+2.
