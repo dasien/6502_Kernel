@@ -6,9 +6,10 @@
 #include <QFocusEvent>
 #include <cstdio>
 
-DisplayWidget::DisplayWidget(Computer::VIC* video_chip, QWidget* parent)
+DisplayWidget::DisplayWidget(Computer::VIC* video_chip, Computer::Memory* memory, QWidget* parent)
     : QWidget(parent)
     , video_chip_(video_chip)
+    , memory_(memory)
     , refresh_timer_(new QTimer(this))
     , background_color_(Qt::black)
     , foreground_color_(Qt::green)
@@ -32,9 +33,10 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, QWidget* parent)
     connect(refresh_timer_, &QTimer::timeout, this, &DisplayWidget::refreshDisplay);
     setRefreshRate(refresh_rate_hz_);
     
-    // Setup cursor blink timer (disabled)
+    // Setup cursor blink timer (~500ms). The cursor is only painted while the
+    // widget has focus (see blinkCursor / paintEvent).
     connect(cursor_timer_, &QTimer::timeout, this, &DisplayWidget::blinkCursor);
-    // cursor_timer_->start(500); // Cursor disabled - comment out to remove blinking
+    cursor_timer_->start(500);
     
     // Widget properties
     setAutoFillBackground(true);
@@ -249,15 +251,27 @@ void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
 
 void DisplayWidget::drawCursor(QPainter& painter)
 {
-    // Simple cursor at bottom-right of display (where input would appear)
-    // In a real implementation, cursor position would be tracked by the 6502 system
-    const int cursor_x = 0; // Column 0 for now
-    const int cursor_y = 24; // Bottom row
+    // The kernel tracks the text cursor in CURSOR_X ($0276) / CURSOR_Y ($0277),
+    // kept current for both the monitor and BASIC (all output flows through
+    // PRINT_CHAR), so the on-screen cursor follows the typing point.
+    if (!memory_)
+    {
+        return;
+    }
+
+    const int cursor_x = memory_->read(0x0276);
+    const int cursor_y = memory_->read(0x0277);
+
+    // Guard against any out-of-range value
+    if (cursor_x >= Computer::VIC::kScreenWidth || cursor_y >= Computer::VIC::kScreenHeight)
+    {
+        return;
+    }
 
     const int pixel_x = cursor_x * char_width_;
     const int pixel_y = (cursor_y + 1) * char_height_ - 2;
-    
-    // Draw a simple underscore cursor
+
+    // Underscore cursor: a line along the bottom of the current character cell.
     painter.setPen(foreground_color_);
     painter.drawLine(pixel_x, pixel_y, pixel_x + char_width_ - 1, pixel_y);
 }
@@ -281,7 +295,7 @@ void DisplayWidget::keyPressEvent(QKeyEvent* event)
 void DisplayWidget::focusInEvent(QFocusEvent* event)
 {
     has_focus_ = true;
-    show_cursor_ = false; // Keep cursor disabled even on focus
+    show_cursor_ = true; // show immediately on focus; blink toggles it thereafter
     update();
     QWidget::focusInEvent(event);
 }

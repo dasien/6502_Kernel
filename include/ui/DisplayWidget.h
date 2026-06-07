@@ -8,13 +8,16 @@
 #include <QPaintEvent>
 #include <QKeyEvent>
 #include "VIC.h"
+#include "Memory.h"
 
 class DisplayWidget : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit DisplayWidget(Computer::VIC* video_chip, QWidget* parent = nullptr);
+    // memory is used to read the kernel's tracked cursor position
+    // (CURSOR_X/CURSOR_Y) so the on-screen cursor follows where text is typed.
+    DisplayWidget(Computer::VIC* video_chip, Computer::Memory* memory, QWidget* parent = nullptr);
 
     // Display configuration
     void setCharacterSize(int width, int height);
@@ -43,6 +46,7 @@ private slots:
 
 private:
     Computer::VIC* video_chip_;
+    Computer::Memory* memory_;
     QTimer* refresh_timer_;
     
     // Display settings

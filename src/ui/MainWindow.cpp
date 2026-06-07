@@ -100,7 +100,7 @@ void MainWindow::setupUI()
     display_layout_->setContentsMargins(0, 0, 0, 0); // No margins
     
     // Create display widget
-    display_widget_ = new DisplayWidget(computer_->getVideoChip(), this);
+    display_widget_ = new DisplayWidget(computer_->getVideoChip(), computer_->getMemory(), this);
     display_layout_->addWidget(display_widget_);
     
     // Connect display widget keyboard input to PIA
