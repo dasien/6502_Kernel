@@ -2290,7 +2290,7 @@ MULT10_OVERFLOW:
 ; ================================================================
 
 ; Digit buffer for decimal output (5 bytes: stores "65535" max)
-DEC_DIGIT_BUFFER = $027D        ; Reuse MON_SEARCH_PATTERN space
+DEC_DIGIT_BUFFER = MON_SEARCH_PATTERN  ; reuse the X: search-pattern buffer (D:/H: and X: never run together)
 
 ; Main conversion routine
 ; Input: MON_CURRADDR_HI/LO = 16-bit value to convert
