@@ -40,6 +40,8 @@ public:
         testWriteCommand();
         testStackCommand();
         testZeroPageCommand();
+        testHexToDecimal();
+        testDecimalToHex();
 
         // Print summary
         printSummary();
@@ -297,6 +299,41 @@ private:
         sendCommand("Z:");
         verifyResponse("0000:", "Zero Page Display Command");
         drainPaging();
+    }
+
+    // H: hex->decimal. Exercises the double-dabble (binary->BCD via decimal
+    // mode) conversion across boundary, carry-propagation, and max cases.
+    void testHexToDecimal() {
+        clearScreen();
+        sendCommand("H:0000");
+        verifyResponse("#0", "Hex->Dec zero");
+
+        clearScreen();
+        sendCommand("H:000A");
+        verifyResponse("#10", "Hex->Dec small (10)");
+
+        clearScreen();
+        sendCommand("H:0064");          // carry from tens into hundreds
+        verifyResponse("#100", "Hex->Dec 100");
+
+        clearScreen();
+        sendCommand("H:0102");
+        verifyResponse("#258", "Hex->Dec 258");
+
+        clearScreen();
+        sendCommand("H:FFFF");          // 16-bit maximum, all 5 digits
+        verifyResponse("#65535", "Hex->Dec max (65535)");
+    }
+
+    // D: decimal->hex (unchanged, but guards the round trip with H:).
+    void testDecimalToHex() {
+        clearScreen();
+        sendCommand("D:65535");
+        verifyResponse("$FFFF", "Dec->Hex max (65535)");
+
+        clearScreen();
+        sendCommand("D:258");
+        verifyResponse("$0102", "Dec->Hex 258");
     }
 
     void printSummary() {

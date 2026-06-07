@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-07
-; Version:      2.2.1
+; Version:      2.2.2
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,8 +15,8 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~3973 bytes
-;   CODE segment:  $E000-$EF69 (3946 bytes)
+; ROM (Used):      ~3989 bytes
+;   CODE segment:  $E000-$EF79 (3962 bytes)
 ;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
@@ -77,6 +77,10 @@
 ;                   (PRINT_HEX_BYTE, PRINT_MSG_AY, SKIP_SPACES/EXPECT_COMMA).
 ;                   Alphabetized the ? help list and clarified the M: mode
 ;                   digit (B:0=COPY 1=MOVE).
+; 2026-06-07  v2.2.2 H: hex-to-decimal now converts via the double-dabble
+;                   binary->BCD algorithm using the CPU's decimal mode (fixed
+;                   16 iterations) instead of repeated DIVIDE_BY_10 subtraction
+;                   (up to ~7300 passes for $FFFF); removed the dead DIVIDE_BY_10.
 ;
 ; ================================================================
 
@@ -2181,120 +2185,108 @@ MULT10_OVERFLOW:
 ; HEX TO DECIMAL CONVERSION COMMAND
 ; ================================================================
 
-; Digit buffer for decimal output (5 bytes: stores "65535" max)
-DEC_DIGIT_BUFFER = MON_SEARCH_PATTERN  ; reuse the X: search-pattern buffer (D:/H: and X: never run together)
-
 ; Main conversion routine
 ; Input: MON_CURRADDR_HI/LO = 16-bit value to convert
-; Output: Decimal value printed to screen
-; Modifies: A, X, Y, DEC_RESULT_*, DEC_TEMP_*, DEC_DIGIT_IDX
+; Output: Decimal value printed to screen as #NNNNN
+; Modifies: A, X, Y, DEC_TEMP_*, DEC_RESULT_*, DEC_DIGIT_IDX
+; Method: binary -> BCD by the "double-dabble" shift-and-add algorithm, using
+;         the CPU's decimal mode so each doubling carries between BCD digits
+;         automatically. Fixed 16 iterations regardless of magnitude (the old
+;         repeated-subtraction DIVIDE_BY_10 took up to ~7300 passes for $FFFF).
 CMD_HEX_TO_DECIMAL:
-    ; Initialize digit buffer index to 0
-    STZ DEC_DIGIT_IDX
-
-    ; Copy input value to working registers
-    LDA MON_CURRADDR_LO
-    STA DEC_RESULT_LO
-    LDA MON_CURRADDR_HI
-    STA DEC_RESULT_HI
-
-    ; Check for special case: value is zero
-    ORA DEC_RESULT_LO           ; A = HI | LO (zero if both zero)
-    BNE @convert_loop
-
-    ; Special case: print "#0" and return
-    LDA #'#'
+    LDA #'#'                    ; All results are prefixed with '#'
     JSR PRINT_CHAR
+
+    ; Special case: value is zero -> print "0"
+    LDA MON_CURRADDR_LO
+    ORA MON_CURRADDR_HI
+    BNE @nonzero
     LDA #'0'
     JSR PRINT_CHAR
-    JSR PRINT_NEWLINE
-    RTS
+    JMP @done
 
-@convert_loop:
-    ; Check if value is zero (done converting)
-    LDA DEC_RESULT_LO
-    ORA DEC_RESULT_HI
-    BEQ @convert_done           ; If zero, all digits extracted
+@nonzero:
+    ; Copy the value into the binary shift register
+    LDA MON_CURRADDR_LO
+    STA DEC_TEMP_LO
+    LDA MON_CURRADDR_HI
+    STA DEC_TEMP_HI
 
-    ; Divide by 10 and get remainder (next digit)
-    JSR DIVIDE_BY_10            ; Result in DEC_RESULT, remainder in A
+    ; Clear the 3-byte packed-BCD accumulator (holds up to 5 digits):
+    ;   DEC_RESULT_LO = digits 1-2 (units/tens)
+    ;   DEC_RESULT_HI = digits 3-4 (hundreds/thousands)
+    ;   DEC_DIGIT_IDX = digit 5    (ten-thousands)
+    STZ DEC_RESULT_LO
+    STZ DEC_RESULT_HI
+    STZ DEC_DIGIT_IDX
 
-    ; Convert remainder (0-9) to ASCII and store
-    CLC
-    ADC #'0'                    ; Convert to ASCII ('0'-'9')
-    LDX DEC_DIGIT_IDX           ; Get current buffer position
-    STA DEC_DIGIT_BUFFER,X      ; Store digit in buffer
-    INC DEC_DIGIT_IDX           ; Increment digit count
+    ; Double-dabble: for each of the 16 bits (MSB first), shift it out of the
+    ; binary value into carry, then double the BCD accumulator with that carry.
+    ; Decimal mode makes ADC perform the per-digit BCD correction.
+    LDX #16
+    SED
+@bit:
+    ASL DEC_TEMP_LO             ; carry = next-highest bit of the value
+    ROL DEC_TEMP_HI
+    LDA DEC_RESULT_LO           ; BCD = BCD + BCD + carry
+    ADC DEC_RESULT_LO
+    STA DEC_RESULT_LO
+    LDA DEC_RESULT_HI
+    ADC DEC_RESULT_HI
+    STA DEC_RESULT_HI
+    LDA DEC_DIGIT_IDX
+    ADC DEC_DIGIT_IDX
+    STA DEC_DIGIT_IDX
+    DEX
+    BNE @bit
+    CLD
 
-    ; Continue loop
-    JMP @convert_loop
+    ; Print the five digits MSB-first, suppressing leading zeros. Y = 0 while
+    ; still in the leading zeros, 1 once a significant digit has been printed.
+    LDY #0
+    LDA DEC_DIGIT_IDX           ; digit 5 (ten-thousands)
+    AND #$0F
+    JSR PRINT_DEC_DIGIT
+    LDA DEC_RESULT_HI           ; digit 4 (thousands)
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    JSR PRINT_DEC_DIGIT
+    LDA DEC_RESULT_HI           ; digit 3 (hundreds)
+    AND #$0F
+    JSR PRINT_DEC_DIGIT
+    LDA DEC_RESULT_LO           ; digit 2 (tens)
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    JSR PRINT_DEC_DIGIT
+    LDA DEC_RESULT_LO           ; digit 1 (units)
+    AND #$0F
+    JSR PRINT_DEC_DIGIT
 
-@convert_done:
-    ; Print '#' prefix before digits
-    LDA #'#'
-    JSR PRINT_CHAR
-
-    ; Digits are stored in reverse order, print them backwards
-    LDX DEC_DIGIT_IDX           ; X = number of digits
-    DEX                         ; X = index of last digit
-
-@print_loop:
-    LDA DEC_DIGIT_BUFFER,X      ; Load digit from buffer
-    JSR PRINT_CHAR              ; Print it
-    DEX                         ; Move to previous digit
-    BPL @print_loop             ; Continue while X >= 0
-
+@done:
     JSR PRINT_NEWLINE           ; Print newline after result
     RTS
 
-; ================================================================
-; DIVIDE_BY_10 - Divide 16-bit value by 10
-; ================================================================
-; Divides DEC_RESULT_HI/LO by 10 using repeated subtraction
-; Input: DEC_RESULT_HI/LO = 16-bit dividend
-; Output: DEC_RESULT_HI/LO = quotient
-;         A = remainder (0-9)
-; Uses: DEC_TEMP_LO/HI for temporary storage
-; Preserves: X, Y
-; ================================================================
-DIVIDE_BY_10:
-    ; Save input value
-    LDA DEC_RESULT_LO
-    STA DEC_TEMP_LO
-    LDA DEC_RESULT_HI
-    STA DEC_TEMP_HI
-
-    ; Quotient starts at 0
-    STZ DEC_RESULT_LO
-    STZ DEC_RESULT_HI
-
-@loop:
-    ; Check if we can subtract 10
-    LDA DEC_TEMP_LO
-    CMP #10
-    LDA DEC_TEMP_HI
-    SBC #0
-    BCC @done                   ; < 10, done
-
-    ; Subtract 10
-    LDA DEC_TEMP_LO
-    SEC
-    SBC #10
-    STA DEC_TEMP_LO
-    BCS @no_borrow
-    DEC DEC_TEMP_HI
-
-@no_borrow:
-    ; Increment quotient
-    INC DEC_RESULT_LO
-    BNE @loop
-    INC DEC_RESULT_HI
-    BRA @loop
-
-@done:
-    ; Remainder is in DEC_TEMP_LO
-    LDA DEC_TEMP_LO             ; Get remainder
+; Print one decimal digit with leading-zero suppression.
+; In:  A = digit value (0-9); Y = 0 while leading zeros are still being skipped.
+; Out: digit printed unless it is a leading zero; Y set to 1 once any digit has
+;      been printed. Relies on PRINT_CHAR preserving Y across calls.
+PRINT_DEC_DIGIT:
+    TAX                         ; remember the digit (sets Z if it is zero)
+    BNE @emit                   ; nonzero digit -> always print
+    CPY #0
+    BEQ @skip                   ; still suppressing leading zeros -> skip it
+@emit:
+    TXA
+    ORA #'0'                    ; digit 0-9 -> ASCII '0'-'9'
+    JSR PRINT_CHAR
+    LDY #1                      ; a significant digit has now been printed
+@skip:
     RTS
+
 
 
 ; Show help command - Display comprehensive list of all monitor commands
