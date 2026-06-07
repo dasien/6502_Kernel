@@ -294,6 +294,16 @@ void PIA::setCpu(CPU6502* cpu)
     cpu_ = cpu;
 }
 
+void PIA::pulseTimerIrq()
+{
+    // Interval-timer tick: assert the IRQ line. The handler clears it by
+    // writing the timer ack register ($DC0E).
+    if (cpu_)
+    {
+        cpu_->setIrqLine(true);
+    }
+}
+
 bool PIA::hasFileOperation() const
 {
     return (file_command_ == kFileLoadCommand || file_command_ == kFileSaveCommand ||

@@ -29,6 +29,7 @@ MainWindow::MainWindow(QWidget* parent)
     , status_timer_(new QTimer(this))
     , computer_(new Computer::Computer6502())
     , execution_timer_(new QTimer(this))
+    , irq_timer_(new QTimer(this))
     , is_running_(false)
     , execution_cycle_count_(0)
 {
@@ -42,6 +43,13 @@ MainWindow::MainWindow(QWidget* parent)
     display_widget_->setFocus();
     is_running_ = true;
     execution_timer_->start(1); // 1ms intervals for 1MHz operation
+
+    // Drive the PIA interval-timer IRQ at ~60 Hz (wall-clock), independent of
+    // emulation speed. This is the system "jiffy" tick behind BASIC's ON IRQ.
+    connect(irq_timer_, &QTimer::timeout, this, [this]() {
+        computer_->getPia()->pulseTimerIrq();
+    });
+    irq_timer_->start(16); // ~62.5 Hz
     
     // Initialize status
     updateStatus();

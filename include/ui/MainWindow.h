@@ -61,6 +61,7 @@ private:
     // Computer system
     Computer::Computer6502* computer_;
     QTimer* execution_timer_;
+    QTimer* irq_timer_;   ///< drives the PIA interval-timer IRQ at ~60 Hz
     
     bool is_running_;
     int execution_cycle_count_;

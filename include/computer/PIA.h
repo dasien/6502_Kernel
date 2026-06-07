@@ -182,10 +182,17 @@ namespace Computer
         void setMemoryInterface(class Memory *memory);
 
         /**
-         * @brief Set the CPU interface so the PIA can deassert the IRQ line
-         *        when the timer interrupt is acknowledged.
+         * @brief Set the CPU interface so the PIA can assert/deassert the IRQ
+         *        line for its interval timer.
          */
         void setCpu(class CPU6502 *cpu);
+
+        /**
+         * @brief One tick of the VIA/CIA-style interval timer: assert the CPU
+         *        IRQ line. Driven by the host at wall-clock frequency (~60 Hz);
+         *        the line stays asserted until the handler acks it via $DC0E.
+         */
+        void pulseTimerIrq();
 
         /**
          * @brief Check if a file operation is pending

@@ -185,14 +185,6 @@ namespace Computer
                 break;
             }
 
-            // Periodic ~60 Hz timer interrupt: assert the IRQ line when the
-            // cycle threshold is reached. The handler acks it via the PIA.
-            if (cpu.getCycles() >= next_irq_cycle_)
-            {
-                cpu.setIrqLine(true);
-                next_irq_cycle_ = cpu.getCycles() + kIrqPeriodCycles;
-            }
-
             // Process any pending file operations
             pia.processFileOperations();
         }

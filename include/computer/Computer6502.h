@@ -134,11 +134,6 @@ namespace Computer
         CPU6502 cpu; ///< MOS 65C02 microprocessor
         ResetCircuit reset_circuit; ///< Reset circuit for system initialization
         TimingCircuit timing_circuit; ///< System timing and synchronization
-
-        // ~60 Hz periodic IRQ timer (drives BASIC's ON IRQ). At the emulated
-        // ~1 MHz, 60 Hz is roughly one IRQ every 16667 CPU cycles.
-        static constexpr uint64_t kIrqPeriodCycles = 16667;
-        uint64_t next_irq_cycle_ = kIrqPeriodCycles;
     };
 } // namespace Computer
 
