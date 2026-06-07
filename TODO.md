@@ -19,4 +19,4 @@
 - [ ] Remove dead code: NIBBLE_TO_HEX_CHAR/NIBBLE_DIGIT (unreferenced), unused constants, and the MOVE "copy vs move" branch that prints identical text (the documented "COPIED/MOVED N BYTES" output was never implemented — implement or drop).
 
 ### Documentation
-- [ ] docs/kernel_memory_map.md is badly stale: it documents the pre-relocation zero-page layout ($00-$10, $F0-$FF) that no longer matches the code ($14-$39). The kernel.asm file header is also stale ($F000 vs actual $E000 org, outdated command list). Regenerate/reconcile. Also DEC_DIGIT_BUFFER = $027D should be "= MON_SEARCH_PATTERN" rather than a hardcoded literal.
+- [x] docs/kernel_memory_map.md and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
