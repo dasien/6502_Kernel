@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-07
-; Version:      2.2
+; Version:      2.2.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,8 +15,8 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~4205 bytes
-;   CODE segment:  $E000-$F051 (~4178 bytes)
+; ROM (Used):      ~3973 bytes
+;   CODE segment:  $E000-$EF69 (3946 bytes)
 ;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
@@ -72,6 +72,11 @@
 ; 2026-06-07  v2.2  Hardware IRQ/NMI support: periodic timer IRQ (BASIC ON IRQ),
 ;                   NMI stop key (BASIC ON NMI / break to monitor); removed dead
 ;                   INIT_BASIC_IO
+; 2026-06-07  v2.2.1 Code-quality cleanup (behavior-preserving): removed dead
+;                   code and unused constants; factored shared helpers
+;                   (PRINT_HEX_BYTE, PRINT_MSG_AY, SKIP_SPACES/EXPECT_COMMA).
+;                   Alphabetized the ? help list and clarified the M: mode
+;                   digit (B:0=COPY 1=MOVE).
 ;
 ; ================================================================
 
@@ -153,20 +158,14 @@ MON_MODE_WRITE     = 1             ; Write mode
 
 ; Monitor Display Constants
 MON_BYTES_PER_LINE = 8             ; Number of bytes displayed per line
-MON_HEX_DIGITS     = 2             ; Hex digits per byte
 
 ; Screen and I/O Constants for Monitor
 SCREEN_START       = $0400         ; Screen memory start
 SCREEN_WIDTH       = 40            ; Characters per line
 SCREEN_HEIGHT      = 25            ; Lines on screen
 LINES_PER_PAGE     = 24            ; Full screen height
-CURSOR_CHAR        = $5F           ; Underscore cursor character
 
 ; ASCII Character Constants
-ASCII_0            = $30           ; ASCII '0'
-ASCII_9            = $39           ; ASCII '9'
-ASCII_A            = $41           ; ASCII 'A'
-ASCII_F            = $46           ; ASCII 'F'
 ASCII_CR           = $0D           ; Carriage return
 ASCII_LF           = $0A           ; Line feed
 ASCII_SPACE        = $20           ; Space
@@ -198,10 +197,8 @@ FILE_LOAD_CMD      = $01           ; Load file command
 FILE_SAVE_CMD      = $02           ; Save file command
 
 ; File status codes
-FILE_IDLE          = $00           ; No operation
 FILE_IN_PROGRESS   = $01           ; Operation in progress
 FILE_SUCCESS       = $02           ; Operation completed successfully
-FILE_ERROR         = $FF           ; Operation failed
 
 ; Interrupt-related addresses and bits
 TIMER_IRQ_ACK      = $DC0E         ; write to acknowledge the periodic timer IRQ
@@ -299,11 +296,9 @@ CLEAR_MON_VAR_LOOP:
 ; MONITOR START/WELCOME MESSAAGE
 ; ================================================================
     ; Display welcome message
-    LDA #<MSG_WELCOME           ; Load low byte of message address
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_WELCOME           ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+    LDA #<MSG_WELCOME
+    LDY #>MSG_WELCOME
+    JSR PRINT_MSG_AY
 
     ; Jump to monitor main loop
     JMP MONITOR_MAIN
@@ -385,22 +380,6 @@ HEX_CHAR_INVALID:
     SEC                         ; Set carry for error
     RTS
 
-; Convert 4-bit binary value to ASCII hex character using lookup table
-; Input: A = 4-bit value (0-15)
-; Output: A = ASCII character ('0'-'9', 'A'-'F')
-; Preserves: Y
-NIBBLE_TO_HEX_CHAR:
-    AND #$0F                    ; Ensure only low 4 bits
-    TAX                         ; Transfer to X for indexing
-    LDA HEX_LOOKUP_TABLE,X      ; Load from lookup table ($F0+X)
-    RTS                         ; Much faster than branching!
-
-NIBBLE_DIGIT:
-    ; Handle 0-9: add '0'
-    CLC
-    ADC #ASCII_0                ; Add '0' (gives '0'-'9')
-    RTS
-
 ; Convert two ASCII hex characters to a byte value
 ; Input: X = pointer to first hex character in MON_CMDBUF
 ; Output: A = byte value (0-255), X = X + 2 (points after hex pair), Carry clear if valid, set if invalid
@@ -458,6 +437,23 @@ BYTE_TO_HEX_PAIR:
     LDA HEX_LOOKUP_TABLE,X      ; Get hex char from lookup
     PLX                         ; Restore X
     RTS
+
+; Print the byte in A as two ASCII hex digits directly to the screen.
+; Input: A = byte value. Modifies A, X. Preserves Y (PRINT_CHAR preserves Y).
+PRINT_HEX_BYTE:
+    PHA                         ; Save the byte for the low nibble
+    LSR A                       ; High nibble -> low 4 bits
+    LSR A
+    LSR A
+    LSR A
+    TAX
+    LDA HEX_LOOKUP_TABLE,X      ; High-nibble hex char
+    JSR PRINT_CHAR
+    PLA                         ; Restore the byte
+    AND #$0F                    ; Low nibble
+    TAX
+    LDA HEX_LOOKUP_TABLE,X      ; Low-nibble hex char
+    JMP PRINT_CHAR              ; Tail call: PRINT_CHAR's RTS returns to caller
 
 ; Convert four ASCII hex characters to 16-bit address
 ; Input: X = pointer to first hex character in MON_CMDBUF
@@ -809,10 +805,8 @@ HANDLE_PAGE_BREAK:
 
     ; Print prompt on current line (before it scrolls away)
     LDA #<MSG_PAGE_PROMPT
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_PAGE_PROMPT
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
+    LDY #>MSG_PAGE_PROMPT
+    JSR PRINT_MSG_AY
 
 PAGE_WAIT_KEY:
     JSR GET_KEYSTROKE           ; Check for key pressed
@@ -856,6 +850,15 @@ PRINT_MSG_LOOP:
 
 PRINT_MSG_DONE:
     RTS
+
+; Set the message pointer from A/Y and print the string. Lets callers print a
+; message in 3 instructions (LDA #<MSG / LDY #>MSG / JSR PRINT_MSG_AY) instead
+; of repeating the four-store MON_MSG_PTR setup at every site.
+; Input: A = low byte of message address, Y = high byte
+PRINT_MSG_AY:
+    STA MON_MSG_PTR_LO
+    STY MON_MSG_PTR_HI
+    JMP PRINT_MESSAGE           ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Scan keyboard without blocking - standard non-blocking input routine
 ; Input: None
@@ -1465,36 +1468,50 @@ PARSE_COLON_ERROR:
     SEC                         ; Set carry for error
     RTS
 
+; ----------------------------------------------------------------------------
+; Shared command-line parser helpers (used by the F:, M:, X:, L:/S: parsers)
+; ----------------------------------------------------------------------------
+; Skip spaces in the command buffer.
+; In:  X = current position, MON_CMDLEN = command length.
+; Out: carry CLEAR -> X points at the first non-space char, A = that char.
+;      carry SET   -> reached end of buffer (no non-space char found).
+SKIP_SPACES:
+    CPX MON_CMDLEN              ; At or past end of command?
+    BCS SKIP_SPACES_END         ; Yes -> return carry set
+    LDA MON_CMDBUF,X            ; Load character
+    CMP #$20                    ; Is it a space?
+    BEQ SKIP_SPACES_NEXT
+    CLC                         ; Found a non-space char; report success
+    RTS
+SKIP_SPACES_NEXT:
+    INX                         ; Consume the space
+    JMP SKIP_SPACES
+SKIP_SPACES_END:
+    RTS                         ; carry already set by CPX
+
+; Skip spaces, require a single comma separator, then skip trailing spaces,
+; leaving X at the first character of the next field.
+; In:  X = current position, MON_CMDLEN = length.
+; Out: carry CLEAR on success (X at next field, A = that char);
+;      carry SET on end-of-buffer or a missing comma.
+EXPECT_COMMA:
+    JSR SKIP_SPACES
+    BCS EXPECT_COMMA_FAIL       ; ran off the end before a comma
+    CMP #$2C                    ; comma separator?
+    BNE EXPECT_COMMA_FAIL
+    INX                         ; consume the comma
+    JMP SKIP_SPACES             ; tail call: skip trailing spaces, return its carry
+EXPECT_COMMA_FAIL:
+    SEC
+    RTS
+
 ; Parse fill value parameter (expects comma followed by 2-digit hex byte)
 ; Input: Command buffer positioned after address range
 ; Output: Fill value in MON_FILL_VALUE, Carry clear if success
 ; Modifies: A, X, Y
 PARSE_FILL_VALUE:
-    ; X register already contains correct position from PARSE_COLON_COMMAND
-    ; Skip any spaces
-PARSE_FILL_SKIP_SPACES:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_FILL_ERROR        ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_FILL_CHECK_COMMA  ; If not space, check for comma
-    INX                         ; Skip space
-    JMP PARSE_FILL_SKIP_SPACES
-
-PARSE_FILL_CHECK_COMMA:
-    CMP #$2C                    ; Is it a comma?
-    BNE PARSE_FILL_ERROR        ; If not comma, error
-    INX                         ; Skip comma
-
-    ; Skip any spaces after comma
-PARSE_FILL_SKIP_SPACES2:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_FILL_ERROR        ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_FILL_GET_VALUE    ; If not space, get value
-    INX                         ; Skip space
-    JMP PARSE_FILL_SKIP_SPACES2
+    JSR EXPECT_COMMA            ; skip spaces, require comma, skip spaces
+    BCS PARSE_FILL_ERROR
 
 PARSE_FILL_GET_VALUE:
     ; Parse 2-digit hex value
@@ -1512,31 +1529,8 @@ PARSE_FILL_ERROR:
 ; Output: Destination address in MON_DEST_ADDR_HI/LO, mode in MON_COPY_MODE, Carry clear if success
 ; Modifies: A, X, Y
 PARSE_MOVE_PARAMS:
-    ; X register already contains correct position from PARSE_COLON_COMMAND
-    ; Skip any spaces
-PARSE_MOVE_SKIP_SPACES:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_MOVE_CHECK_COMMA  ; If not space, check for comma
-    INX                         ; Skip space
-    JMP PARSE_MOVE_SKIP_SPACES
-
-PARSE_MOVE_CHECK_COMMA:
-    CMP #$2C                    ; Is it a comma?
-    BNE PARSE_MOVE_ERROR_JMP    ; If not comma, error
-    INX                         ; Skip comma
-
-    ; Skip any spaces after comma
-PARSE_MOVE_SKIP_SPACES2:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_MOVE_GET_DEST     ; If not space, get destination
-    INX                         ; Skip space
-    JMP PARSE_MOVE_SKIP_SPACES2
+    JSR EXPECT_COMMA            ; skip spaces, require comma, skip spaces
+    BCS PARSE_MOVE_ERROR_JMP
 
 PARSE_MOVE_GET_DEST:
     ; Parse 4-digit hex destination address
@@ -1561,30 +1555,9 @@ PARSE_MOVE_GET_DEST:
     PLA
     STA MON_CURRADDR_LO
 
-    ; Skip any spaces before comma
-PARSE_MOVE_SKIP_SPACES3:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_MOVE_CHECK_COMMA2 ; If not space, check for comma
-    INX                         ; Skip space
-    JMP PARSE_MOVE_SKIP_SPACES3
-
-PARSE_MOVE_CHECK_COMMA2:
-    CMP #$2C                    ; Is it a comma?
-    BNE PARSE_MOVE_ERROR_JMP    ; If not comma, error
-    INX                         ; Skip comma
-
-    ; Skip any spaces after second comma
-PARSE_MOVE_SKIP_SPACES4:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_MOVE_ERROR_JMP    ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_MOVE_GET_MODE     ; If not space, get mode
-    INX                         ; Skip space
-    JMP PARSE_MOVE_SKIP_SPACES4
+    ; Require the second comma (before the mode digit), skipping spaces
+    JSR EXPECT_COMMA
+    BCS PARSE_MOVE_ERROR_JMP
 
 PARSE_MOVE_GET_MODE:
     ; Parse 1-digit mode (0=copy, 1=move)
@@ -1628,31 +1601,8 @@ PARSE_MOVE_ERROR:
 ; Output: Pattern in MON_SEARCH_PATTERN, length in MON_PATTERN_LEN, Carry clear if success
 ; Modifies: A, X, Y
 PARSE_SEARCH_PARAMS:
-    ; X register already contains correct position from PARSE_COLON_COMMAND
-    ; Skip any spaces
-PARSE_SEARCH_SKIP_SPACES:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_SEARCH_ERROR      ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_SEARCH_CHECK_COMMA ; If not space, check for comma
-    INX                         ; Skip space
-    JMP PARSE_SEARCH_SKIP_SPACES
-
-PARSE_SEARCH_CHECK_COMMA:
-    CMP #$2C                    ; Is it a comma?
-    BNE PARSE_SEARCH_ERROR      ; If not comma, error
-    INX                         ; Skip comma
-
-    ; Skip any spaces after comma
-PARSE_SEARCH_SKIP_SPACES2:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_SEARCH_ERROR      ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_SEARCH_GET_PATTERN ; If not space, get pattern
-    INX                         ; Skip space
-    JMP PARSE_SEARCH_SKIP_SPACES2
+    JSR EXPECT_COMMA            ; skip spaces, require comma, skip spaces
+    BCS PARSE_SEARCH_ERROR
 
 PARSE_SEARCH_GET_PATTERN:
     ; Parse hex pattern bytes (1-16 bytes)
@@ -1679,15 +1629,10 @@ PARSE_SEARCH_PATTERN_LOOP:
     INC MON_PATTERN_LEN         ; Increment pattern length
     INY                         ; Move to next pattern position
 
-    ; Skip any spaces before next hex pair
-PARSE_SEARCH_SKIP_SPACES3:
-    CPX MON_CMDLEN              ; At end of command?
-    BCS PARSE_SEARCH_PATTERN_DONE ; If so, we're done
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_SEARCH_PATTERN_LOOP ; If not space, try next hex pair
-    INX                         ; Skip space
-    JMP PARSE_SEARCH_SKIP_SPACES3
+    ; Skip any spaces before next hex pair (end of buffer = pattern complete)
+    JSR SKIP_SPACES
+    BCS PARSE_SEARCH_PATTERN_DONE
+    JMP PARSE_SEARCH_PATTERN_LOOP
 
 PARSE_SEARCH_PATTERN_DONE:
     ; Check if we have at least one pattern byte
@@ -1704,31 +1649,8 @@ PARSE_SEARCH_ERROR:
 ; Output: Filename copied to FILE_NAME_BUF, Carry clear if success
 ; Modifies: A, X, Y
 PARSE_FILENAME:
-    ; X register already contains correct position from PARSE_COLON_COMMAND
-    ; Skip any spaces
-PARSE_FILENAME_SKIP_SPACES:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_FILENAME_ERROR    ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_FILENAME_CHECK_COMMA ; If not space, check for comma
-    INX                         ; Skip space
-    JMP PARSE_FILENAME_SKIP_SPACES
-
-PARSE_FILENAME_CHECK_COMMA:
-    CMP #$2C                    ; Is it a comma?
-    BNE PARSE_FILENAME_ERROR    ; If not comma, error
-    INX                         ; Skip comma
-
-    ; Skip any spaces after comma
-PARSE_FILENAME_SKIP_SPACES2:
-    CPX MON_CMDLEN              ; Check if we're at end of command
-    BCS PARSE_FILENAME_ERROR    ; If at or past end, error
-    LDA MON_CMDBUF,X            ; Load character
-    CMP #$20                    ; Is it a space?
-    BNE PARSE_FILENAME_GET_NAME ; If not space, get filename
-    INX                         ; Skip space
-    JMP PARSE_FILENAME_SKIP_SPACES2
+    JSR EXPECT_COMMA            ; skip spaces, require comma, skip spaces
+    BCS PARSE_FILENAME_ERROR
 
 PARSE_FILENAME_GET_NAME:
     ; Copy filename from command buffer to file interface (max 12 chars)
@@ -1773,33 +1695,27 @@ PARSE_FILENAME_ERROR:
 ; Modifies: A, X, Y
 PRINT_ERROR_MSG:
     ; Print syntax error message
-    LDA #<MSG_SYNTAX_ERROR      ; Load low byte of message address
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_SYNTAX_ERROR      ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+    LDA #<MSG_SYNTAX_ERROR
+    LDY #>MSG_SYNTAX_ERROR
+    JSR PRINT_MSG_AY
     RTS
 
 ; Print value error message for invalid hex values
 ; Modifies: A, X, Y
 PRINT_VALUE_ERROR:
     ; Print value error message
-    LDA #<MSG_VALUE_ERROR       ; Load low byte of message address
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_VALUE_ERROR       ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+    LDA #<MSG_VALUE_ERROR
+    LDY #>MSG_VALUE_ERROR
+    JSR PRINT_MSG_AY
     RTS
 
 ; Print range error message for invalid address ranges
 ; Modifies: A, X, Y
 PRINT_RANGE_ERROR:
     ; Print range error message
-    LDA #<MSG_RANGE_ERROR       ; Load low byte of message address
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_RANGE_ERROR       ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+    LDA #<MSG_RANGE_ERROR
+    LDY #>MSG_RANGE_ERROR
+    JSR PRINT_MSG_AY
     RTS
 
 ; Validate address range (start <= end)
@@ -1940,18 +1856,14 @@ CMD_LAUNCH_BASIC:
 
 BASIC_NOT_FOUND:
     LDA #<MSG_NO_BASIC
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_NO_BASIC
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
+    LDY #>MSG_NO_BASIC
+    JSR PRINT_MSG_AY
     RTS
 
 BASIC_SIG_FAIL:
     LDA #<MSG_BASIC_SIG_FAIL
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_BASIC_SIG_FAIL
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
+    LDY #>MSG_BASIC_SIG_FAIL
+    JSR PRINT_MSG_AY
     RTS
 
 ; ----------------------------------------------------------------
@@ -2407,11 +2319,9 @@ CMD_SHOW_HELP:
 
 ; Print help header text
 PRINT_HELP_HEADER:
-    LDA #<MSG_HELP_HEADER       ; Load low byte of message address
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_HELP_HEADER       ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+    LDA #<MSG_HELP_HEADER
+    LDY #>MSG_HELP_HEADER
+    JSR PRINT_MSG_AY
     RTS
 
 ; Print the help body text
@@ -2428,7 +2338,7 @@ HELP_LOOP:
     JSR PRINT_MESSAGE
     JSR PRINT_NEWLINE_PAGED
     INX
-    CPX #30                 ; 15 messages * 2 bytes each
+    CPX #(HELP_MSG_COUNT * 2)   ; loop over the whole table (2 bytes per entry)
     BNE HELP_LOOP
     RTS
 
@@ -2542,11 +2452,9 @@ LOAD_WAIT_COMPLETE:
 
 LOAD_CMD_SUCCESS:
     ; Show success message
-    LDA #<MSG_SUCCESS           ; Use OK message
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_SUCCESS           ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+    LDA #<MSG_SUCCESS
+    LDY #>MSG_SUCCESS
+    JSR PRINT_MSG_AY
     RTS
 
 ; Save file command - Save memory range to binary file on host system
@@ -2604,11 +2512,9 @@ SAVE_WAIT_COMPLETE:
 
 SAVE_CMD_SUCCESS:
     ; Show success message
-    LDA #<MSG_SUCCESS           ; Use OK message
-    STA MON_MSG_PTR_LO          ; Store in message pointer
-    LDA #>MSG_SUCCESS           ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
+    LDA #<MSG_SUCCESS
+    LDY #>MSG_SUCCESS
+    JSR PRINT_MSG_AY
     RTS
 
 
@@ -2635,37 +2541,11 @@ DUMP_RANGE_LOOP:
     JMP DUMP_ABORTED
 CONTINUE_DUMP:
 
-    ; Print high byte of address (first two hex digits)
-    LDA MON_CURRADDR_HI         ; Load high byte
-    LSR A                       ; Shift right 4 times for high nibble
-    LSR A
-    LSR A
-    LSR A
-    TAX                         ; Use as index
-    LDA HEX_LOOKUP_TABLE,X      ; Get hex character from lookup
-    JSR PRINT_CHAR              ; Print first hex digit
-
-    LDA MON_CURRADDR_HI         ; Reload high byte
-    AND #$0F                    ; Keep only low nibble
-    TAX                         ; Use as index
-    LDA HEX_LOOKUP_TABLE,X      ; Get hex character from lookup
-    JSR PRINT_CHAR              ; Print second hex digit
-
-    ; Print low byte of address (last two hex digits)
-    LDA MON_CURRADDR_LO         ; Load low byte
-    LSR A                       ; Shift right 4 times for high nibble
-    LSR A
-    LSR A
-    LSR A
-    TAX                         ; Use as index
-    LDA HEX_LOOKUP_TABLE,X      ; Get hex character from lookup
-    JSR PRINT_CHAR              ; Print third hex digit
-
-    LDA MON_CURRADDR_LO         ; Reload low byte
-    AND #$0F                    ; Keep only low nibble
-    TAX                         ; Use as index
-    LDA HEX_LOOKUP_TABLE,X      ; Get hex character from lookup
-    JSR PRINT_CHAR              ; Print fourth hex digit
+    ; Print the address (four hex digits: high byte then low byte)
+    LDA MON_CURRADDR_HI
+    JSR PRINT_HEX_BYTE
+    LDA MON_CURRADDR_LO
+    JSR PRINT_HEX_BYTE
 
     ; Print colon and space
     LDA #ASCII_COLON
@@ -2692,24 +2572,9 @@ DUMP_PRINT_BYTES:
     JMP DUMP_RANGE_DONE         ; We're past the end, done
 
 DUMP_PRINT_BYTE:
-    ; Load byte and convert to hex inline
-    LDA (MON_CURRADDR_LO),Y     ; Load byte from memory (Y=0)
-
-    ; Print high nibble
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    TAX
-    LDA HEX_LOOKUP_TABLE,X
-    JSR PRINT_CHAR
-
-    ; Print low nibble
+    ; Load byte from memory (Y=0) and print as two hex digits
     LDA (MON_CURRADDR_LO),Y
-    AND #$0F
-    TAX
-    LDA HEX_LOOKUP_TABLE,X
-    JSR PRINT_CHAR
+    JSR PRINT_HEX_BYTE
 
     ; Check if this is the last byte
     LDA MON_CURRADDR_HI
@@ -2955,10 +2820,8 @@ FILL_NO_CARRY:
 FILL_DONE:
     ; Print success message
     LDA #<MSG_SUCCESS
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_SUCCESS
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
+    LDY #>MSG_SUCCESS
+    JSR PRINT_MSG_AY
     RTS
 
 ; Move/Copy memory command - Copy or move memory block between addresses
@@ -3189,25 +3052,11 @@ MOVE_SUCCESS:
     PLA
     STA MON_CURRADDR_LO
 
-    ; Print success message based on mode
-    LDA MON_COPY_MODE
-    BEQ MOVE_SHOW_COPY_MSG      ; Copy mode
-
-    ; Move mode - different message could be shown here
+    ; Print the success message. (Copy and move share the same message; the
+    ; distinct "COPIED/MOVED N BYTES" output was never implemented.)
     LDA #<MSG_SUCCESS
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_SUCCESS
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
-    RTS
-
-MOVE_SHOW_COPY_MSG:
-    ; Copy mode
-    LDA #<MSG_SUCCESS
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_SUCCESS
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
+    LDY #>MSG_SUCCESS
+    JSR PRINT_MSG_AY
     RTS
 
 ; Search memory command - Search for multi-byte hex pattern within memory range
@@ -3494,22 +3343,24 @@ MODE_PREFIX_TABLE:
 ; ================================================================
 ; HELP MESSAGE TABLE - Addresses of help messages for display
 ; ================================================================
+; Commands listed alphabetically by command letter; ESC (a navigation key,
+; not a colon command) is kept last.
 HELP_MSG_TABLE:
-    .WORD MSG_HELP_BASIC
-    .WORD MSG_HELP_CLEAR
-    .WORD MSG_HELP_DECIMAL
-    .WORD MSG_HELP_GO
-    .WORD MSG_HELP_HEX_TO_DEC
-    .WORD MSG_HELP_LOAD
-    .WORD MSG_HELP_READ
-    .WORD MSG_HELP_SAVE
-    .WORD MSG_HELP_STACK
-    .WORD MSG_HELP_WRITE
-    .WORD MSG_HELP_ZERO
-    .WORD MSG_HELP_EXIT
-    .WORD MSG_HELP_FILL
-    .WORD MSG_HELP_MOVE
-    .WORD MSG_HELP_SEARCH
+    .WORD MSG_HELP_BASIC        ; B
+    .WORD MSG_HELP_CLEAR        ; C
+    .WORD MSG_HELP_DECIMAL      ; D
+    .WORD MSG_HELP_FILL         ; F
+    .WORD MSG_HELP_GO           ; G
+    .WORD MSG_HELP_HEX_TO_DEC   ; H
+    .WORD MSG_HELP_LOAD         ; L
+    .WORD MSG_HELP_MOVE         ; M
+    .WORD MSG_HELP_READ         ; R
+    .WORD MSG_HELP_SAVE         ; S
+    .WORD MSG_HELP_STACK        ; T
+    .WORD MSG_HELP_WRITE        ; W
+    .WORD MSG_HELP_SEARCH       ; X
+    .WORD MSG_HELP_ZERO         ; Z
+    .WORD MSG_HELP_EXIT         ; ESC
 
 HELP_MSG_COUNT = 15              ; Number of help messages
 
@@ -3529,7 +3380,7 @@ MSG_HELP_STACK:      .BYTE "T:     PRINT STACK", 0
 MSG_HELP_WRITE:      .BYTE "W:XXXX WRITE TO MEMORY", 0
 MSG_HELP_ZERO:       .BYTE "Z:     PRINT ZERO PAGE", 0
 MSG_HELP_FILL:       .BYTE "F:XXXX-YYYY,ZZ FILL MEMORY", 0
-MSG_HELP_MOVE:       .BYTE "M:XXXX-YYYY,ZZZZ,B MOVE/COPY", 0
+MSG_HELP_MOVE:       .BYTE "M:XXXX-YYYY,ZZZZ,B (B:0=COPY 1=MOVE)", 0
 MSG_HELP_SEARCH:     .BYTE "X:XXXX-YYYY,PATTERN SEARCH MEMORY", 0
 MSG_HELP_EXIT:       .BYTE "ESC    EXIT CURRENT MODE", 0
 MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
