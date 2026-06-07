@@ -8022,9 +8022,11 @@ V_SAVE:
 FIO_COMMAND = $DC10           ; file command register
 FIO_STATUS  = $DC11           ; file status register
 FIO_DATA    = $DC22           ; byte-stream data register
+FIO_OPEN_RD = $03             ; command: open stream for read
 FIO_OPEN_WR = $04             ; command: open stream for write
 FIO_CLOSE   = $05             ; command: close stream
 FIO_INPROG  = $01             ; status: operation in progress
+FIO_EOF     = $04             ; status (read): no more bytes
 FIO_ERROR   = $FF             ; status: error / cancelled
 
 ; SAVE: write the current BASIC program to a file as ASCII source text.
@@ -8036,7 +8038,7 @@ BSAVE_WAIT:
       CMP   #FIO_INPROG
       BEQ   BSAVE_WAIT
       CMP   #FIO_ERROR        ; cancelled or failed?
-      BEQ   BSAVE_RET         ; if so, just return to BASIC
+      BEQ   BFIO_ERR          ; if so, report "ERROR?"
 
       LDA   VEC_OUT           ; save the current output vector
       PHA
@@ -8066,10 +8068,71 @@ BSAVE_PUT:
       STA   FIO_DATA
       RTS
 
-; LOAD: Stage 3 - not yet implemented. Clean no-op (better than the old
-; vector that fell through to the RNG routine).
-BASIC_LOAD:
+; Output sink used to suppress echo while LOADing (A is preserved).
+BASIC_NULLOUT:
       RTS
+
+; Report a file error the kernel's way ("ERROR?"), then return to BASIC
+; (which prints Ready). Placed between SAVE and LOAD so both can branch here.
+BFIO_ERR:
+      LDA   #<MSG_FIOERR
+      LDY   #>MSG_FIOERR
+      JMP   LAB_18C3          ; print string, then RTS to the SAVE/LOAD caller
+
+MSG_FIOERR:
+      .byte $0D,"ERROR?",$0D,$0A,$00
+
+; LOAD: read a .bas text file and feed it into BASIC line by line, as if
+; typed. The normal interpreter loop inserts each numbered line (which also
+; rebuilds the line links and clears variables), so no separate relink is
+; needed. Reached via VEC_LD.
+BASIC_LOAD:
+      LDA   #FIO_OPEN_RD      ; ask the host to open an input file (open dialog)
+      STA   FIO_COMMAND
+BLOAD_WAIT:
+      LDA   FIO_STATUS        ; wait for the host to finish opening
+      CMP   #FIO_INPROG
+      BEQ   BLOAD_WAIT
+      CMP   #FIO_ERROR        ; cancelled or failed?
+      BEQ   BFIO_ERR          ; if so, report "ERROR?"
+      LDA   #<BASIC_GET       ; redirect character input to the file reader
+      STA   VEC_IN
+      LDA   #>BASIC_GET
+      STA   VEC_IN+1
+      LDA   #<BASIC_NULLOUT   ; suppress echo (and the premature Ready) while loading
+      STA   VEC_OUT
+      LDA   #>BASIC_NULLOUT
+      STA   VEC_OUT+1
+      RTS
+
+; Input-vector target while loading. Non-halting input contract: return
+; carry set + byte in A. LF is skipped so CR+LF files load as if each line
+; ended with a single CR. At EOF, restore keyboard input, close the file,
+; and hand this input call off to the keyboard routine.
+BASIC_GET:
+      LDA   FIO_STATUS
+      CMP   #FIO_EOF
+      BEQ   BGET_EOF
+      LDA   FIO_DATA          ; next byte from the stream
+      CMP   #$0A              ; skip LF (SAVE writes CR+LF line endings)
+      BEQ   BASIC_GET
+      SEC                     ; carry set = byte available
+      RTS
+BGET_EOF:
+      LDA   #$09              ; restore VEC_IN -> $FF09 (keyboard GET_KEYSTROKE)
+      STA   VEC_IN
+      LDA   #$FF
+      STA   VEC_IN+1
+      LDA   #$00              ; restore VEC_OUT -> $FF00 (screen PRINT_CHAR)
+      STA   VEC_OUT
+      LDA   #$FF
+      STA   VEC_OUT+1
+      LDA   #FIO_CLOSE        ; close the file
+      STA   FIO_COMMAND
+      LDA   #<LAB_RMSG        ; print "Ready" now that the load is complete
+      LDY   #>LAB_RMSG
+      JSR   LAB_18C3
+      JMP   (VEC_IN)          ; satisfy this input call from the keyboard
 
 ; The rest are tables messages and code for RAM
 
