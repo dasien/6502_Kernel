@@ -713,10 +713,11 @@ void CPU6502::handleBvs()
 
 void CPU6502::handleBrk()
 {
-    // Increment program counter by 2
-    reg.PC += 2;
+    // BRK pushes the address of the BRK opcode + 2 (it skips a signature byte).
+    // The opcode fetch already advanced PC by 1, so add 1 more to reach BRK+2.
+    reg.PC += 1;
 
-    // Set break flag
+    // Set break flag (B is set in the status pushed by BRK)
     setFlag(kBreak, true);
 
     // Store the pc on the stack

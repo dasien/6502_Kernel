@@ -27,6 +27,10 @@ constexpr uint8_t kCmpImm = 0xC9;
 constexpr uint8_t kCpxImm = 0xE0;
 constexpr uint8_t kCpyImm = 0xC0;
 
+// Implied-mode opcodes used by the BRK/RTI test.
+constexpr uint8_t kBrk = 0x00;
+constexpr uint8_t kRti = 0x40;
+
 // Address used to stage the two-byte instruction. Well clear of screen RAM
 // ($0400-$07E7) and the PIA ($DC00+), so Memory routes it to plain RAM.
 constexpr uint16_t kProgAddr = 0x0200;
@@ -53,6 +57,12 @@ protected:
     void setMode(const bool decimal, const bool carry) {
         cpu.setFlag(CPU6502::kDecimal, decimal);
         cpu.setFlag(CPU6502::kCarry, carry);
+    }
+
+    // Stage and execute one implied (single-byte) instruction.
+    void execImplied(const uint8_t opcode) {
+        mem.write(cpu.reg.PC, opcode);
+        ASSERT_TRUE(cpu.executeSingleInstruction());
     }
 };
 
@@ -285,6 +295,42 @@ TEST_F(CpuAluTest, SbcDecimalBorrowIn) {
     execImm(kSbcImm, 0x25);  // 0x50 - 0x25 - 1 = 0x24
     EXPECT_EQ(cpu.reg.A, 0x24);
     EXPECT_TRUE(c());
+}
+
+// ---------------------------------------------------------------------------
+// BRK / RTI return address
+// ---------------------------------------------------------------------------
+
+// Regression test for the BRK off-by-one. BRK pushes the address of the BRK
+// opcode + 2 (it skips a one-byte signature/pad byte that follows the opcode),
+// so a matching RTI resumes at BRK+2. The old handler pushed BRK+3 because it
+// added 2 to a PC that the opcode fetch had already advanced past the opcode.
+// Klaus2m5's functional test trapped on this in its BRK return-address check.
+TEST_F(CpuAluTest, BrkPushesReturnAddressBrkPlusTwo) {
+    // Point the IRQ/BRK vector ($FFFE/$FFFF) at an RTI handler.
+    constexpr uint16_t kHandler = 0x0300;
+    mem.writeWord(0xFFFE, kHandler);
+    mem.write(kHandler, kRti);
+
+    cpu.reg.SP = 0xFF;
+    cpu.reg.PC = kProgAddr;          // BRK lives at kProgAddr
+    mem.write(kProgAddr, kBrk);
+    ASSERT_TRUE(cpu.executeSingleInstruction());
+
+    // BRK should have vectored through $FFFE.
+    EXPECT_EQ(cpu.reg.PC, kHandler);
+
+    // Stack now holds (top-down): PCH @ $01FF, PCL @ $01FE, P @ $01FD.
+    const uint16_t pushed =
+        (static_cast<uint16_t>(mem.read(0x01FF)) << 8) | mem.read(0x01FE);
+    EXPECT_EQ(pushed, static_cast<uint16_t>(kProgAddr + 2));
+
+    // The pushed status must have the Break flag set.
+    EXPECT_NE(mem.read(0x01FD) & CPU6502::kBreak, 0);
+
+    // RTI must resume exactly at BRK+2.
+    ASSERT_TRUE(cpu.executeSingleInstruction());
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 2));
 }
 
 }  // namespace
