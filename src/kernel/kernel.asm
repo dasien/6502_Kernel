@@ -14,47 +14,53 @@
 ; ================================================================
 ; MEMORY USAGE SUMMARY
 ; ================================================================
-; ROM Size (Reserved): ($F000-$FFFF) - 4096 bytes
-; ROM Size (Used): 3413 bytes
-;   CODE segment:   ($F000-$FD3D) - 3389 bytes
-;   JUMPS segment:  ($FF00-$FF11) - 18 bytes
-;   VECS segment:   ($FFFA-$FFFF) - 6 bytes
+; ROM (Reserved):  $E000-$FFFF (8192 bytes)
+; ROM (Used):      ~4205 bytes
+;   CODE segment:  $E000-$F051 (~4178 bytes)
+;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
+;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
-; Zero Page:    $14-$34 (33 bytes used) - Relocated for BASIC compatibility
+; Zero Page:    $14-$39 (38 bytes used) - relocated to avoid the EhBASIC
+;               interpreter, which uses $00-$13 and ~$5B-$FF
 ;   Monitor:    $14-$24 (17 bytes) - core variables
-;   HEX_LOOKUP: $25-$34 (16 bytes) - lookup table
-;   Note: Original $00-$10, $F0-$FF conflicted with BASIC interpreter
+;   HEX_LOOKUP: $25-$34 (16 bytes) - hex digit lookup table
+;   DEC_*:      $35-$39 (5 bytes)  - decimal conversion workspace
 ;
-; RAM Usage:    $0200-$0284 (133 bytes)
-;   Cmd Buffer: $0200-$024F (80 bytes)
-;   Variables:  $0250-$025F (16 bytes)
+; RAM Usage:    $0200-$02DD
+;   Cmd buffer: $0200-$024F (80 bytes) - overlaps BASIC's page-2 area,
+;               but the monitor and BASIC never run concurrently
+;   Variables:  $0269-$028D - relocated above BASIC's $0200-$0268
+;   Last cmd:   $028E-$02DD (80 bytes)
 ;
 ; Stack:        $0100-$01FF (256 bytes)
-; Screen RAM:   $0400-$07FF (1024 bytes)
+; Screen RAM:   $0400-$07E7 (1000 bytes, 40x25 text)
 ;
 ; ================================================================
 ; FEATURES
 ; ================================================================
 ; - Interactive command processor
-; - Memory read/write/dump operations
-; - Program execution (GO command)
-; - Hexadecimal conversion routines
+; - Memory read/write/dump/fill/move/search operations
+; - Program execution (G) and file load/save (L/S)
+; - Hex<->decimal conversion (D/H)
 ; - Screen scrolling with paging
 ; - Built-in help system
+; - EhBASIC integration (B launches the BASIC ROM at $B000)
 ; - Kernel API at $FF00 for user programs
 ;
-; Commands:     R:(read) W:(write) G:(go) L:(load) C:(clear)
-;               T:(stack) Z:(zero page) H:(help) F:(fill)
+; Commands:     R:(read) W:(write) F:(fill) M:(move/copy) X:(search)
+;               G:(go) L:(load) S:(save) D:(dec->hex) H:(hex->dec)
+;               C:(clear) T:(stack) Z:(zero page) B:(BASIC) ?:(help)
+;               ESC (exit current mode)
 ;
 ; ================================================================
 ; BUILD INFORMATION
 ; ================================================================
-; Entry Point:  RESET ($F000)
+; ROM base:     $E000 (RESET label); reset vector at $FFFC
 ; Vectors:      NMI ($FFFA), RESET ($FFFC), IRQ ($FFFE)
-; API Entry:    $FF00 (jump table)
+; API entry:    $FF00 (jump table)
+; CPU:          65C02 (.PC02)
 ;
 ; Assembly:     ca65 kernel.asm -o kernel.o && ld65 -C memory.cfg kernel.o -o kernel.rom
-; Checksum:     50f82437174779e391d3ac3b5b445357882251a5 (SHA-1)
 ;
 ; ================================================================
 ; REVISION HISTORY
