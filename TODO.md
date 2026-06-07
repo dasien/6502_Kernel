@@ -7,7 +7,7 @@
 ## Deferred from the kernel/BASIC deep scan (2026-06)
 
 ### BASIC integration fixes
-- [ ] LOAD/SAVE I/O vectors (PG2_TABS, basic.asm:8026) point at $FF0F = the RNG routine, not a real stub. LOAD/SAVE in BASIC silently return a random byte instead of failing. Point them at a clean stub or a "?NOT IMPLEMENTED" handler.
+- [x] LOAD/SAVE I/O vectors (PG2_TABS) pointed at $FF0F = the RNG routine. Resolved by implementing real BASIC SAVE/LOAD: SAVE writes the program as ASCII .bas text and LOAD reads it back (via a new byte-stream mode on the PIA file I/O). VEC_SV/VEC_LD now point at BASIC_SAVE/BASIC_LOAD, so the RNG bug is gone.
 - [ ] INIT_BASIC_IO (kernel.asm:1894) is dead code: cold-start's PG2_TABS copy overwrites the vectors it sets. Delete it and treat PG2_TABS as the single source of truth (or keep them in sync with a cross-reference comment).
 - [ ] IRQ/NMI/RETIRQ/RETNMI machinery is inert: the kernel ISRs are bare RTI and never set BASIC's "happened" bit, so these tokens can't fire from hardware. Either implement (kernel ISRs set the bit) or strip the feature.
 
