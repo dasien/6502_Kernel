@@ -2,6 +2,14 @@
 #include <iostream>
 #include <cstdio>
 
+// Verbose per-screen-write debug logging. Set VIC_DEBUG to 1 to re-enable it.
+#define VIC_DEBUG 0
+#if VIC_DEBUG
+#define VIC_LOG(...) printf(__VA_ARGS__)
+#else
+#define VIC_LOG(...) ((void)0)
+#endif
+
 namespace Computer
 {
     VIC::VIC() : cursor_x_(0), cursor_y_(0), dirty_flag_(false)
@@ -27,8 +35,8 @@ namespace Computer
             // Only log non-space characters to reduce noise
             if (value != 0x20)
             {
-                printf("VIC: Writing '%c' (0x%02X) to screen offset %d (addr $%04X)\n",
-                       (value >= 32 && value <= 126) ? value : '?', value, offset, address);
+                VIC_LOG("VIC: Writing '%c' (0x%02X) to screen offset %d (addr $%04X)\n",
+                        (value >= 32 && value <= 126) ? value : '?', value, offset, address);
             }
             screen_buffer_[offset] = value;
             dirty_flag_ = true;

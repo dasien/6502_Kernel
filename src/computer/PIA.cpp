@@ -9,6 +9,15 @@
 #include <fstream>
 #include <vector>
 
+// Verbose PIA debug logging (keystrokes, file/stream operations). Set
+// PIA_DEBUG to 1 to re-enable console output.
+#define PIA_DEBUG 0
+#if PIA_DEBUG
+#define PIA_LOG(...) printf(__VA_ARGS__)
+#else
+#define PIA_LOG(...) ((void)0)
+#endif
+
 namespace Computer {
 
 PIA::PIA() 
@@ -65,13 +74,13 @@ void PIA::writePia(const uint16_t address, const uint8_t value)
             port_b_control_ = value;
             break;
         case kFileCommand:
-            printf("PIA: Received file command: 0x%02X\n", value);
+            PIA_LOG("PIA: Received file command: 0x%02X\n", value);
             file_command_ = value;
             // Block transfers and stream OPENs need a host action (and a file
             // dialog); mark IN_PROGRESS so processFileOperations() picks them up.
             if (value == kFileLoadCommand || value == kFileSaveCommand ||
                 value == kFileOpenReadCommand || value == kFileOpenWriteCommand) {
-                printf("PIA: Setting file status to IN_PROGRESS\n");
+                PIA_LOG("PIA: Setting file status to IN_PROGRESS\n");
                 file_status_ = kFileInProgress;
             } else if (value == kFileCloseCommand) {
                 closeStream();  // handled inline (flushes a write stream)
@@ -118,12 +127,12 @@ uint8_t PIA::readPia(const uint16_t address)
             if (hasKeypress())
             {
                 const uint8_t key = getKeypress();
-                printf("PIA: 6502 reading data register: '%c' (0x%02X), remaining count=%d\n", 
+                PIA_LOG("PIA: 6502 reading data register: '%c' (0x%02X), remaining count=%d\n", 
                        (key >= 32 && key <= 126) ? key : '?', key, buffer_count_);
                 updateControlFlags();
                 return key;
             }
-            printf("PIA: 6502 reading data register: no data available\n");
+            PIA_LOG("PIA: 6502 reading data register: no data available\n");
             return 0x00;
             
         case kPortADdr:
@@ -289,7 +298,7 @@ void PIA::closeStream()
             file.write(reinterpret_cast<const char*>(stream_buffer_.data()),
                        static_cast<std::streamsize>(stream_buffer_.size()));
         }
-        printf("PIA: Stream write closed - %zu bytes to '%s'\n",
+        PIA_LOG("PIA: Stream write closed - %zu bytes to '%s'\n",
                stream_buffer_.size(), stream_filename_.c_str());
     }
 
@@ -308,7 +317,7 @@ void PIA::processFileOperations()
     }
     
     if (file_command_ == kFileLoadCommand) {
-        printf("PIA: File load request - Address: $%04X\n", file_address_);
+        PIA_LOG("PIA: File load request - Address: $%04X\n", file_address_);
 
         std::string filename;
 
@@ -322,7 +331,7 @@ void PIA::processFileOperations()
         );
 
         if (qfilename.isEmpty()) {
-            printf("PIA: File load cancelled by user\n");
+            PIA_LOG("PIA: File load cancelled by user\n");
             file_status_ = kFileError;
             return;
         }
@@ -330,17 +339,17 @@ void PIA::processFileOperations()
         filename = qfilename.toStdString();
 #else
         // Console-only mode - use a default filename or disable file operations
-        printf("PIA: File operations not supported in console mode\n");
+        PIA_LOG("PIA: File operations not supported in console mode\n");
         file_status_ = kFileError;
         return;
 #endif
 
-        printf("PIA: User selected file: '%s'\n", filename.c_str());
+        PIA_LOG("PIA: User selected file: '%s'\n", filename.c_str());
 
         // Load file using C++ streams for better error handling
         std::ifstream file(filename, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
-            printf("PIA: File load error - Could not open file: %s\n", filename.c_str());
+            PIA_LOG("PIA: File load error - Could not open file: %s\n", filename.c_str());
             file_status_ = kFileError;
             return;
         }
@@ -350,7 +359,7 @@ void PIA::processFileOperations()
         file.seekg(0, std::ios::beg);
         
         if (file_size <= 0 || file_size > 65536) {
-            printf("PIA: File load error - Invalid file size: %ld bytes\n", static_cast<long>(file_size));
+            PIA_LOG("PIA: File load error - Invalid file size: %ld bytes\n", static_cast<long>(file_size));
             file_status_ = kFileError;
             return;
         }
@@ -358,34 +367,31 @@ void PIA::processFileOperations()
         // Read file into buffer
         std::vector<uint8_t> buffer(static_cast<size_t>(file_size));
         if (!file.read(reinterpret_cast<char*>(buffer.data()), file_size)) {
-            printf("PIA: File load error - Failed to read file data\n");
+            PIA_LOG("PIA: File load error - Failed to read file data\n");
             file_status_ = kFileError;
             return;
         }
         
         // Load file data into emulated memory
         uint16_t current_address = file_address_;
-        size_t bytes_loaded = 0;
-        
+
         for (uint8_t byte : buffer) {
             if (current_address > 0xFFFF) break;
             memory_->write(current_address++, byte);
-            bytes_loaded++;
         }
-        
-        printf("PIA: File loaded successfully - %zu bytes loaded at $%04X\n", 
-               bytes_loaded, file_address_);
+
+        PIA_LOG("PIA: File loaded successfully at $%04X\n", file_address_);
         
         // Clear the file operation
         file_command_ = kFileIdle;
         file_status_ = kFileSuccess;
     }
     else if (file_command_ == kFileSaveCommand) {
-        printf("PIA: File save request - Range: $%04X-$%04X\n", file_address_, file_end_address_);
+        PIA_LOG("PIA: File save request - Range: $%04X-$%04X\n", file_address_, file_end_address_);
         
         // Validate address range
         if (file_end_address_ < file_address_) {
-            printf("PIA: File save error - Invalid address range (end < start)\n");
+            PIA_LOG("PIA: File save error - Invalid address range (end < start)\n");
             file_status_ = kFileError;
             return;
         }
@@ -393,7 +399,7 @@ void PIA::processFileOperations()
         // Calculate number of bytes to save
         size_t bytes_to_save = file_end_address_ - file_address_ + 1;
         if (bytes_to_save > 65536) {
-            printf("PIA: File save error - Range too large: %zu bytes\n", bytes_to_save);
+            PIA_LOG("PIA: File save error - Range too large: %zu bytes\n", bytes_to_save);
             file_status_ = kFileError;
             return;
         }
@@ -410,7 +416,7 @@ void PIA::processFileOperations()
         );
 
         if (qfilename.isEmpty()) {
-            printf("PIA: File save cancelled by user\n");
+            PIA_LOG("PIA: File save cancelled by user\n");
             file_status_ = kFileError;
             return;
         }
@@ -418,17 +424,17 @@ void PIA::processFileOperations()
         filename = qfilename.toStdString();
 #else
         // Console-only mode - disable file operations
-        printf("PIA: File operations not supported in console mode\n");
+        PIA_LOG("PIA: File operations not supported in console mode\n");
         file_status_ = kFileError;
         return;
 #endif
 
-        printf("PIA: User selected save file: '%s'\n", filename.c_str());
+        PIA_LOG("PIA: User selected save file: '%s'\n", filename.c_str());
 
         // Read memory range and save to file
         std::ofstream file(filename, std::ios::binary);
         if (!file.is_open()) {
-            printf("PIA: File save error - Could not create file: %s\n", filename.c_str());
+            PIA_LOG("PIA: File save error - Could not create file: %s\n", filename.c_str());
             file_status_ = kFileError;
             return;
         }
@@ -442,12 +448,12 @@ void PIA::processFileOperations()
         }
         
         if (!file.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()))) {
-            printf("PIA: File save error - Failed to write file data\n");
+            PIA_LOG("PIA: File save error - Failed to write file data\n");
             file_status_ = kFileError;
             return;
         }
         
-        printf("PIA: File saved successfully - %zu bytes saved from $%04X-$%04X\n",
+        PIA_LOG("PIA: File saved successfully - %zu bytes saved from $%04X-$%04X\n",
                buffer.size(), file_address_, file_end_address_);
 
         // Clear the file operation
@@ -463,21 +469,21 @@ void PIA::processFileOperations()
             nullptr, "Load BASIC Program", QString(),
             "BASIC Programs (*.bas);;Text Files (*.txt);;All Files (*.*)");
         if (qfilename.isEmpty()) {
-            printf("PIA: Stream open(read) cancelled by user\n");
+            PIA_LOG("PIA: Stream open(read) cancelled by user\n");
             file_command_ = kFileIdle;
             file_status_ = kFileError;
             return;
         }
         filename = qfilename.toStdString();
 #else
-        printf("PIA: File operations not supported in console mode\n");
+        PIA_LOG("PIA: File operations not supported in console mode\n");
         file_command_ = kFileIdle;
         file_status_ = kFileError;
         return;
 #endif
         std::ifstream file(filename, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
-            printf("PIA: Stream open(read) error - cannot open '%s'\n", filename.c_str());
+            PIA_LOG("PIA: Stream open(read) error - cannot open '%s'\n", filename.c_str());
             file_command_ = kFileIdle;
             file_status_ = kFileError;
             return;
@@ -490,7 +496,7 @@ void PIA::processFileOperations()
         }
         stream_pos_ = 0;
         stream_mode_ = kStreamRead;
-        printf("PIA: Stream open(read) - '%s' (%zu bytes)\n",
+        PIA_LOG("PIA: Stream open(read) - '%s' (%zu bytes)\n",
                filename.c_str(), stream_buffer_.size());
         file_command_ = kFileIdle;
         file_status_ = stream_buffer_.empty() ? kFileEof : kFileStreamOpen;
@@ -504,14 +510,14 @@ void PIA::processFileOperations()
             nullptr, "Save BASIC Program", QString(),
             "BASIC Programs (*.bas);;Text Files (*.txt);;All Files (*.*)");
         if (qfilename.isEmpty()) {
-            printf("PIA: Stream open(write) cancelled by user\n");
+            PIA_LOG("PIA: Stream open(write) cancelled by user\n");
             file_command_ = kFileIdle;
             file_status_ = kFileError;
             return;
         }
         filename = qfilename.toStdString();
 #else
-        printf("PIA: File operations not supported in console mode\n");
+        PIA_LOG("PIA: File operations not supported in console mode\n");
         file_command_ = kFileIdle;
         file_status_ = kFileError;
         return;
@@ -520,7 +526,7 @@ void PIA::processFileOperations()
         stream_buffer_.clear();
         stream_pos_ = 0;
         stream_mode_ = kStreamWrite;
-        printf("PIA: Stream open(write) - '%s'\n", filename.c_str());
+        PIA_LOG("PIA: Stream open(write) - '%s'\n", filename.c_str());
         file_command_ = kFileIdle;
         file_status_ = kFileStreamOpen;
     }
