@@ -27,3 +27,8 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
 
 ### Documentation
 - [x] docs/kernel_memory_map.md and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
+
+### Memory map (future, not urgent)
+- [ ] Reclaim ROM address space for user RAM by a *coordinated* relocation: shrink the kernel from 8KB ($E000-$FFFF) to a 4KB window ($F000-$FFFF) AND move the BASIC ROM up (e.g. $B000-$DFFF -> $C000-$EFFF). Done together, the reclaimed 4KB lands contiguous with the user RAM below BASIC, growing one usable block (shrinking the kernel alone just strands an isolated 4KB island between BASIC and the kernel — not worth it).
+  - **Prerequisite (blocking):** the kernel must first shrink to fit a 4KB ROM. CODE is currently 3962 bytes, but the $FF00 API jump table caps contiguous code at $F000-$FEFF = 3840 bytes, so we must free **at least ~122 bytes** (more for headroom) before this is even possible — i.e. find further code-size optimizations first.
+  - Also requires: rebuilding the EhBASIC ROM at the new base (Ram_top + any absolute self-references), updating memory.cfg / basic_memory.cfg, and the emulator's ROM load addresses + Memory region routing. Gate on a byte-diff sanity check. The reset/IRQ/NMI vectors ($FFFA) and jump table ($FF00) pin the kernel to the top regardless, so the kernel can only shrink the window, not move off the top.
