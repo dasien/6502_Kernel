@@ -251,13 +251,14 @@ bool CPU6502::validateAddress(const uint16_t address)
     return true;
 }
 
-uint16_t CPU6502::calculateAbsoluteIndirectAddress()
+uint16_t CPU6502::calculateZeroPageIndirectAddress()
 {
-    // Read 16-bit absolute address from instruction stream
-    const uint16_t indirect_addr = readWord();
-
-    // Read the actual target address from the indirect address
-    const uint16_t target_addr = mem_.readWord(indirect_addr);
+    // 65C02 (zp) mode: a single zero-page operand byte names a pointer held at
+    // zp and zp+1 (the +1 wraps within zero page). The operand is NOT consumed
+    // here; the caller's base handler advances PC past it (pc_offset = 1).
+    const uint8_t zp_addr = mem_.read(reg.PC);
+    const uint16_t target_addr =
+        mem_.read(zp_addr) | (mem_.read((zp_addr + 1) & 0xFF) << 8);
 
     validateAddress(target_addr);
     return target_addr;
@@ -285,26 +286,42 @@ uint8_t CPU6502::addValues(const uint8_t val1, const uint8_t val2)
 
     if (getFlag(kDecimal))
     {
-        // 65C02 BCD add, nibble-wise with per-nibble adjust
-        // (http://www.6502.org/tutorials/decimal_mode.html). N and Z are set
-        // from the final result by the caller; here we set V and C.
-        int al = (val1 & 0x0F) + (val2 & 0x0F) + carry_in;
-        if (al >= 0x0A)
+        // 65C02 BCD add — a faithful port of the documented hardware algorithm
+        // (http://www.6502.org/tutorials/decimal_mode.html, appendix B), so the
+        // result/flags match a real W65C02S even for invalid BCD inputs
+        // (validated against the Klaus2m5/amb5l decimal test, cputype=65C02).
+        // N and Z are set from the final result by the caller; C and V here.
+        bool carry = carry_in != 0;
+        int t = (val1 & 0x0F) + (val2 & 0x0F) + (carry ? 1 : 0);
+        uint8_t a = static_cast<uint8_t>(t);
+        int x = 0;
+        if (a >= 0x0A)                       // low nibble decimal-adjusts
         {
-            al = ((al + 0x06) & 0x0F) + 0x10;
+            x = 1;
+            a = static_cast<uint8_t>(a + 5 + 1) & 0x0F;   // adc #5 (compare set carry)
+            carry = true;                                  // sec
         }
-        int a = (val1 & 0xF0) + (val2 & 0xF0) + al;
-
-        // Overflow is taken from the intermediate sum, before the high adjust.
-        const uint8_t res_pre = static_cast<uint8_t>(a);
-        setFlag(kOverflow, ((~(val1 ^ val2) & (val1 ^ res_pre)) & 0x80) != 0);
-
-        if (a >= 0xA0)
+        else
         {
-            a += 0x60;
+            carry = false;
         }
-        setFlag(kCarry, a >= 0x100);
-        return static_cast<uint8_t>(a & 0xFF);
+        a |= (val1 & 0xF0);
+        const uint8_t hi_operand = x ? ((val2 & 0xF0) | 0x0F) : (val2 & 0xF0);
+        const uint8_t a_before = a;
+        t = a + hi_operand + (carry ? 1 : 0);
+        a = static_cast<uint8_t>(t);
+        carry = t > 0xFF;
+
+        // V is the overflow of this high-nibble add, before the +$60 adjust.
+        setFlag(kOverflow, ((~(a_before ^ hi_operand) & (a_before ^ a)) & 0x80) != 0);
+
+        if (carry || a >= 0xA0)              // high nibble decimal-adjusts (+$60)
+        {
+            a = static_cast<uint8_t>(a + 0x5F + 1);
+            carry = true;
+        }
+        setFlag(kCarry, carry);
+        return a;
     }
 
     // Binary mode: A + M + C.
@@ -332,19 +349,42 @@ uint8_t CPU6502::subtractValues(const uint8_t val1, const uint8_t val2)
 
     if (getFlag(kDecimal))
     {
-        // 65C02 BCD subtract, nibble-wise with per-nibble adjust
-        // (http://www.6502.org/tutorials/decimal_mode.html).
-        int al = (val1 & 0x0F) - (val2 & 0x0F) + carry_in - 1;
-        if (al < 0)
+        // 65C02 BCD subtract — faithful port of the documented hardware
+        // algorithm (matches a real W65C02S for invalid BCD too). On the 65C02,
+        // SBC takes V and C from the binary subtraction above; only the
+        // accumulator result is decimal-adjusted here (N and Z come from it).
+        bool dcarry = carry_in != 0;
+        int t = (val1 & 0x0F) - (val2 & 0x0F) - (dcarry ? 0 : 1);
+        uint8_t a = static_cast<uint8_t>(t);
+        int x = 0;
+        if (t < 0)                           // low nibble borrowed
         {
-            al = ((al - 0x06) & 0x0F) - 0x10;
+            x = 1;
+            a &= 0x0F;
+            dcarry = false;                  // clc
         }
-        int a = (val1 & 0xF0) - (val2 & 0xF0) + al;
-        if (a < 0)
+        else
         {
-            a -= 0x60;
+            dcarry = true;
         }
-        return static_cast<uint8_t>(a & 0xFF);
+        a |= (val1 & 0xF0);
+        const uint8_t hi_operand = x ? ((val2 & 0xF0) | 0x0F) : (val2 & 0xF0);
+        t = a - hi_operand - (dcarry ? 0 : 1);
+        a = static_cast<uint8_t>(t);
+        dcarry = (t >= 0);
+        if (!dcarry)                         // sbc #$5F  (-$60)
+        {
+            t = a - 0x5F - 1;
+            a = static_cast<uint8_t>(t);
+            dcarry = (t >= 0);
+        }
+        if (x != 0)                          // extra -6 when the low nibble borrowed
+        {
+            // The hardware does `cpx #0` (which always sets carry) before this
+            // SBC, so there is never a borrow-in here.
+            a = static_cast<uint8_t>(a - 6);
+        }
+        return a;
     }
 
     return res8;
@@ -726,8 +766,10 @@ void CPU6502::handleBrk()
     // Store the processor flags on the stack
     pushByte(reg.P);
 
-    // Set the interrupt flag
+    // Set the interrupt flag; the 65C02 also clears decimal mode on BRK
+    // (the NMOS 6502 does not). Matches serviceInterrupt() for IRQ/NMI.
     setFlag(kInterrupt, true);
+    setFlag(kDecimal, false);
 
     // Load the pc with the interrupt vector contents at $FFFE/$FFFF
     reg.PC = mem_.readWord(0xFFFE);
@@ -968,9 +1010,10 @@ void CPU6502::handleJmpAbsolute()
 
 void CPU6502::handleJmpIndirect()
 {
+    // 65C02 reads the pointer linearly (no NMOS $xxFF page-wrap bug) in 6 cycles.
     const uint16_t indirect_addr = readWord();
     const uint16_t target_addr = mem_.readWord(indirect_addr);
-    handleJmpBase(target_addr, 5);
+    handleJmpBase(target_addr, 6);
 }
 
 void CPU6502::handleJmpBase(const uint16_t address, const uint8_t cycles)
@@ -1849,82 +1892,47 @@ void CPU6502::handleDecAccumulator()
     cycles_ += 2;
 }
 
-// 65C02 Absolute Indirect addressing modes
-void CPU6502::handleAdcAbsoluteIndirect()
+// 65C02 zero-page indirect addressing modes — (zp), 5 cycles, 2-byte instruction.
+// These reuse the shared base handlers, which advance PC past the 1-byte
+// operand (pc_offset = 1) and set flags identically to the other modes.
+void CPU6502::handleAdcZeroPageIndirect()  // ADC (zp) - $72
 {
-    // ADC (addr) - $72: Add with carry absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    const uint8_t val = mem_.read(address);
-    reg.A = addValues(reg.A, val);
-    updateZeroNegativeFlags(reg.A);
-    cycles_ += 6;  // 65C02 timing
+    handleAdcBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
-void CPU6502::handleAndAbsoluteIndirect()
+void CPU6502::handleAndZeroPageIndirect()  // AND (zp) - $32
 {
-    // AND (addr) - $32: AND absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    const uint8_t val = mem_.read(address);
-    reg.A &= val;
-    updateZeroNegativeFlags(reg.A);
-    cycles_ += 6;  // 65C02 timing
+    handleAndBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
-void CPU6502::handleCmpAbsoluteIndirect()
+void CPU6502::handleCmpZeroPageIndirect()  // CMP (zp) - $D2
 {
-    // CMP (addr) - $D2: Compare absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    const uint8_t val = mem_.read(address);
-    compareValues(reg.A, val);
-    cycles_ += 6;  // 65C02 timing
+    handleCmpBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
-void CPU6502::handleEorAbsoluteIndirect()
+void CPU6502::handleEorZeroPageIndirect()  // EOR (zp) - $52
 {
-    // EOR (addr) - $52: Exclusive OR absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    const uint8_t val = mem_.read(address);
-    reg.A ^= val;
-    updateZeroNegativeFlags(reg.A);
-    cycles_ += 6;  // 65C02 timing
+    handleEorBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
-void CPU6502::handleLdaAbsoluteIndirect()
+void CPU6502::handleLdaZeroPageIndirect()  // LDA (zp) - $B2
 {
-    // LDA (addr) - $B2: Load accumulator absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    const uint8_t val = mem_.read(address);
-    reg.A = val;
-    updateZeroNegativeFlags(reg.A);
-    cycles_ += 6;  // 65C02 timing
+    handleLdaBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
-void CPU6502::handleOraAbsoluteIndirect()
+void CPU6502::handleOraZeroPageIndirect()  // ORA (zp) - $12
 {
-    // ORA (addr) - $12: OR with accumulator absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    const uint8_t val = mem_.read(address);
-    reg.A |= val;
-    updateZeroNegativeFlags(reg.A);
-    cycles_ += 6;  // 65C02 timing
+    handleOraBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
-void CPU6502::handleSbcAbsoluteIndirect()
+void CPU6502::handleSbcZeroPageIndirect()  // SBC (zp) - $F2
 {
-    // SBC (addr) - $F2: Subtract with carry absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    const uint8_t val = mem_.read(address);
-    reg.A = subtractValues(reg.A, val);
-    updateZeroNegativeFlags(reg.A);
-    cycles_ += 6;  // 65C02 timing
+    handleSbcBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
-void CPU6502::handleStaAbsoluteIndirect()
+void CPU6502::handleStaZeroPageIndirect()  // STA (zp) - $92
 {
-    // STA (addr) - $92: Store accumulator absolute indirect
-    const uint16_t address = calculateAbsoluteIndirectAddress();
-    mem_.write(address, reg.A);
-    cycles_ += 6;  // 65C02 timing
+    handleStaBase(calculateZeroPageIndirectAddress(), 1, 5);
 }
 
 // 65C02 Jump Absolute Indexed Indirect
@@ -2042,6 +2050,53 @@ void CPU6502::handleWai()
 
     // TODO: In a full implementation, this should wait for an interrupt
     // and only resume execution when IRQ or NMI occurs
+}
+
+// 65C02 (Rockwell/WDC) single-bit memory operations on zero page.
+// RMB/SMB reset/set bit n of a zero-page byte; no flags are affected.
+// BBR/BBS test bit n and branch (rel) if it is reset/set; no flags affected.
+void CPU6502::handleRmb(const uint8_t bit)  // RMBn zp - 5 cycles, 2 bytes
+{
+    const uint8_t addr = mem_.read(reg.PC);
+    reg.PC += 1;
+    const uint8_t val = mem_.read(addr);
+    mem_.write(addr, static_cast<uint8_t>(val & ~(1u << bit)));
+    cycles_ += 5;
+}
+
+void CPU6502::handleSmb(const uint8_t bit)  // SMBn zp - 5 cycles, 2 bytes
+{
+    const uint8_t addr = mem_.read(reg.PC);
+    reg.PC += 1;
+    const uint8_t val = mem_.read(addr);
+    mem_.write(addr, static_cast<uint8_t>(val | (1u << bit)));
+    cycles_ += 5;
+}
+
+void CPU6502::handleBbr(const uint8_t bit)  // BBRn zp,rel - 5 cycles, 3 bytes
+{
+    const uint8_t addr = mem_.read(reg.PC);
+    const uint8_t offset = mem_.read(reg.PC + 1);
+    reg.PC += 2;
+    cycles_ += 5;
+    if ((mem_.read(addr) & (1u << bit)) == 0)
+    {
+        auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
+        reg.PC = target_pc;
+    }
+}
+
+void CPU6502::handleBbs(const uint8_t bit)  // BBSn zp,rel - 5 cycles, 3 bytes
+{
+    const uint8_t addr = mem_.read(reg.PC);
+    const uint8_t offset = mem_.read(reg.PC + 1);
+    reg.PC += 2;
+    cycles_ += 5;
+    if ((mem_.read(addr) & (1u << bit)) != 0)
+    {
+        auto [target_pc, page_crossed] = calculateRelativeAddress(offset);
+        reg.PC = target_pc;
+    }
 }
 
 void CPU6502::initializeInstructionHandlers()
@@ -2273,15 +2328,15 @@ void CPU6502::initializeInstructionHandlers()
     // 65C02 Branch Always
     handlers_[0x80] = [this]() { handleBra(); };             // BRA rel
 
-    // 65C02 Absolute Indirect addressing modes
-    handlers_[0x72] = [this]() { handleAdcAbsoluteIndirect(); };  // ADC (addr)
-    handlers_[0x32] = [this]() { handleAndAbsoluteIndirect(); };  // AND (addr)
-    handlers_[0xD2] = [this]() { handleCmpAbsoluteIndirect(); };  // CMP (addr)
-    handlers_[0x52] = [this]() { handleEorAbsoluteIndirect(); };  // EOR (addr)
-    handlers_[0xB2] = [this]() { handleLdaAbsoluteIndirect(); };  // LDA (addr)
-    handlers_[0x12] = [this]() { handleOraAbsoluteIndirect(); };  // ORA (addr)
-    handlers_[0xF2] = [this]() { handleSbcAbsoluteIndirect(); };  // SBC (addr)
-    handlers_[0x92] = [this]() { handleStaAbsoluteIndirect(); };  // STA (addr)
+    // 65C02 zero-page indirect addressing modes — (zp)
+    handlers_[0x72] = [this]() { handleAdcZeroPageIndirect(); };  // ADC (zp)
+    handlers_[0x32] = [this]() { handleAndZeroPageIndirect(); };  // AND (zp)
+    handlers_[0xD2] = [this]() { handleCmpZeroPageIndirect(); };  // CMP (zp)
+    handlers_[0x52] = [this]() { handleEorZeroPageIndirect(); };  // EOR (zp)
+    handlers_[0xB2] = [this]() { handleLdaZeroPageIndirect(); };  // LDA (zp)
+    handlers_[0x12] = [this]() { handleOraZeroPageIndirect(); };  // ORA (zp)
+    handlers_[0xF2] = [this]() { handleSbcZeroPageIndirect(); };  // SBC (zp)
+    handlers_[0x92] = [this]() { handleStaZeroPageIndirect(); };  // STA (zp)
 
     // 65C02 Jump Absolute Indexed Indirect
     handlers_[0x7C] = [this]() { handleJmpAbsoluteIndexedIndirect(); };  // JMP (addr,X)
@@ -2301,6 +2356,32 @@ void CPU6502::initializeInstructionHandlers()
     // 65C02 Processor Control
     handlers_[0xDB] = [this]() { handleStp(); };             // STP - Stop processor
     handlers_[0xCB] = [this]() { handleWai(); };             // WAI - Wait for interrupt
+
+    // 65C02 (Rockwell/WDC) bit ops: RMBn $07+n*$10, SMBn $87+n*$10,
+    // BBRn $0F+n*$10, BBSn $8F+n*$10, for n = 0..7.
+    for (uint8_t n = 0; n < 8; ++n)
+    {
+        handlers_[0x07 + n * 0x10] = [this, n]() { handleRmb(n); };
+        handlers_[0x87 + n * 0x10] = [this, n]() { handleSmb(n); };
+        handlers_[0x0F + n * 0x10] = [this, n]() { handleBbr(n); };
+        handlers_[0x8F + n * 0x10] = [this, n]() { handleBbs(n); };
+    }
+
+    // 65C02 undefined opcodes behave as deterministic multi-byte NOPs (unlike
+    // the NMOS undocumented instructions). Lengths/cycles per the WDC datasheet.
+    // 1-byte NOPs: the $x3 column (all 16) and the $xB column (minus $CB/$DB
+    // which are WAI/STP). handleNop already consumes no operand.
+    for (uint16_t op = 0x03; op <= 0xF3; op += 0x10)
+        handlers_[op] = [this]() { handleNop(); };
+    for (uint16_t op = 0x0B; op <= 0xFB; op += 0x10)
+        if (op != 0xCB && op != 0xDB)
+            handlers_[op] = [this]() { handleNop(); };
+    // 2-byte NOPs: consume one operand byte.
+    for (uint8_t op : {0x02, 0x22, 0x42, 0x62, 0x82, 0xC2, 0xE2, 0x44, 0x54, 0xD4, 0xF4})
+        handlers_[op] = [this]() { reg.PC += 1; cycles_ += 2; };
+    // 3-byte NOPs: consume two operand bytes.
+    for (uint8_t op : {0x5C, 0xDC, 0xFC})
+        handlers_[op] = [this]() { reg.PC += 2; cycles_ += 4; };
 }
 
 

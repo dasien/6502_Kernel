@@ -64,6 +64,17 @@ protected:
         mem.write(cpu.reg.PC, opcode);
         ASSERT_TRUE(cpu.executeSingleInstruction());
     }
+
+    // Stage and execute a three-byte instruction (opcode + two operand bytes).
+    void execThreeByte(const uint8_t opcode, const uint8_t b1, const uint8_t b2) {
+        mem.write(kProgAddr, opcode);
+        mem.write(kProgAddr + 1, b1);
+        mem.write(kProgAddr + 2, b2);
+        cpu.reg.PC = kProgAddr;
+        ASSERT_TRUE(cpu.executeSingleInstruction());
+    }
+
+    bool d() const { return cpu.getFlag(CPU6502::kDecimal); }
 };
 
 // ---------------------------------------------------------------------------
@@ -331,6 +342,151 @@ TEST_F(CpuAluTest, BrkPushesReturnAddressBrkPlusTwo) {
     // RTI must resume exactly at BRK+2.
     ASSERT_TRUE(cpu.executeSingleInstruction());
     EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 2));
+}
+
+// ---------------------------------------------------------------------------
+// 65C02: zero-page indirect (zp) addressing  — opcodes $12/$32/$52/$72/$92/
+// $B2/$D2/$F2. A 1-byte zero-page operand names a pointer at zp/zp+1.
+// (These were previously mis-decoded as 2-byte absolute-indirect.)
+// ---------------------------------------------------------------------------
+
+constexpr uint8_t kLdaZpInd = 0xB2;
+constexpr uint8_t kStaZpInd = 0x92;
+constexpr uint8_t kAdcZpInd = 0x72;
+
+TEST_F(CpuAluTest, LdaZeroPageIndirect) {
+    // Pointer at zp $40 -> $0900 (plain RAM); target holds $7C.
+    mem.write(0x40, 0x00);
+    mem.write(0x41, 0x09);
+    mem.write(0x0900, 0x7C);
+    execImm(kLdaZpInd, 0x40);          // LDA ($40)
+    EXPECT_EQ(cpu.reg.A, 0x7C);
+    EXPECT_FALSE(z());
+    EXPECT_FALSE(n());
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 2));  // 2-byte instruction
+}
+
+TEST_F(CpuAluTest, StaZeroPageIndirect) {
+    mem.write(0x40, 0x00);
+    mem.write(0x41, 0x09);
+    cpu.reg.A = 0xAB;
+    execImm(kStaZpInd, 0x40);          // STA ($40)
+    EXPECT_EQ(mem.read(0x0900), 0xAB);
+}
+
+TEST_F(CpuAluTest, AdcZeroPageIndirect) {
+    mem.write(0x40, 0x00);
+    mem.write(0x41, 0x09);
+    mem.write(0x0900, 0x22);
+    cpu.reg.A = 0x10;
+    setMode(/*decimal=*/false, /*carry=*/false);
+    execImm(kAdcZpInd, 0x40);          // ADC ($40)
+    EXPECT_EQ(cpu.reg.A, 0x32);
+}
+
+// The pointer's high byte must wrap within zero page: ($FF) reads from $FF/$00.
+TEST_F(CpuAluTest, ZeroPageIndirectPointerWraps) {
+    mem.write(0xFF, 0x34);             // low byte of pointer
+    mem.write(0x00, 0x09);             // high byte wraps to $00 -> $0934
+    mem.write(0x0934, 0x5E);
+    execImm(kLdaZpInd, 0xFF);          // LDA ($FF)
+    EXPECT_EQ(cpu.reg.A, 0x5E);
+}
+
+// ---------------------------------------------------------------------------
+// 65C02 (Rockwell/WDC) single-bit memory ops: RMB/SMB and BBR/BBS
+// ---------------------------------------------------------------------------
+
+TEST_F(CpuAluTest, RmbClearsBit) {
+    mem.write(0x40, 0xFF);
+    execImm(0x37, 0x40);               // RMB3 $40
+    EXPECT_EQ(mem.read(0x40), 0xF7);   // bit 3 cleared
+}
+
+TEST_F(CpuAluTest, SmbSetsBit) {
+    mem.write(0x40, 0x00);
+    execImm(0xD7, 0x40);               // SMB5 $40  ($87 + 5*$10)
+    EXPECT_EQ(mem.read(0x40), 0x20);   // bit 5 set
+}
+
+TEST_F(CpuAluTest, BbrBranchesWhenBitReset) {
+    mem.write(0x40, 0x00);             // bit 0 is reset
+    execThreeByte(0x0F, 0x40, 0x10);   // BBR0 $40,+$10
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 3 + 0x10));
+}
+
+TEST_F(CpuAluTest, BbrNotTakenWhenBitSet) {
+    mem.write(0x40, 0x01);             // bit 0 is set
+    execThreeByte(0x0F, 0x40, 0x10);   // BBR0 $40,+$10 (not taken)
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 3));
+}
+
+TEST_F(CpuAluTest, BbsBranchesWhenBitSet) {
+    mem.write(0x40, 0x80);             // bit 7 is set
+    execThreeByte(0xFF, 0x40, 0x20);   // BBS7 $40,+$20  ($8F + 7*$10)
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 3 + 0x20));
+}
+
+// ---------------------------------------------------------------------------
+// 65C02 undefined opcodes act as deterministic multi-byte NOPs
+// ---------------------------------------------------------------------------
+
+TEST_F(CpuAluTest, NopOneByte) {
+    mem.write(kProgAddr, 0x03);        // $03: 1-byte NOP
+    cpu.reg.PC = kProgAddr;
+    ASSERT_TRUE(cpu.executeSingleInstruction());
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 1));
+}
+
+TEST_F(CpuAluTest, NopTwoByte) {
+    execImm(0x02, 0xEE);               // $02: 2-byte NOP
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 2));
+}
+
+TEST_F(CpuAluTest, NopThreeByte) {
+    execThreeByte(0x5C, 0xEE, 0xEE);   // $5C: 3-byte NOP
+    EXPECT_EQ(cpu.reg.PC, static_cast<uint16_t>(kProgAddr + 3));
+}
+
+// ---------------------------------------------------------------------------
+// 65C02 BRK clears the decimal flag (the NMOS 6502 does not)
+// ---------------------------------------------------------------------------
+
+TEST_F(CpuAluTest, BrkClearsDecimalFlag) {
+    mem.writeWord(0xFFFE, 0x0300);
+    mem.write(0x0300, 0x40);           // RTI (irrelevant; we check D after BRK)
+    cpu.reg.SP = 0xFF;
+    cpu.setFlag(CPU6502::kDecimal, true);
+    cpu.reg.PC = kProgAddr;
+    mem.write(kProgAddr, 0x00);        // BRK
+    ASSERT_TRUE(cpu.executeSingleInstruction());
+    EXPECT_FALSE(d());                 // D cleared on entry to the handler
+}
+
+// ---------------------------------------------------------------------------
+// 65C02 decimal mode sets N/V/Z validly, and matches the hardware even for
+// invalid BCD inputs (validated against the Klaus2m5/amb5l decimal test).
+// ---------------------------------------------------------------------------
+
+// Valid BCD: 50 + 50 = 100 -> $00 with carry; Z set, V set, N clear on 65C02.
+TEST_F(CpuAluTest, AdcDecimalFlagsValid) {
+    cpu.reg.A = 0x50;
+    setMode(/*decimal=*/true, /*carry=*/false);
+    execImm(kAdcImm, 0x50);
+    EXPECT_EQ(cpu.reg.A, 0x00);
+    EXPECT_TRUE(c());
+    EXPECT_TRUE(z());
+    EXPECT_FALSE(n());
+}
+
+// Invalid BCD: $00 - $0B with carry set. A real W65C02S yields $8F here (the
+// 6502.org per-nibble formula would give $9F). C comes from the binary borrow.
+TEST_F(CpuAluTest, SbcDecimalInvalidBcdMatchesHardware) {
+    cpu.reg.A = 0x00;
+    setMode(/*decimal=*/true, /*carry=*/true);
+    execImm(kSbcImm, 0x0B);
+    EXPECT_EQ(cpu.reg.A, 0x8F);
+    EXPECT_FALSE(c());                 // binary borrow
 }
 
 }  // namespace

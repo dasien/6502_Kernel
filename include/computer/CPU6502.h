@@ -200,7 +200,7 @@ private:
     bool validateAddress(uint16_t address);
 
     // 65C02 New addressing mode functions
-    uint16_t calculateAbsoluteIndirectAddress();
+    uint16_t calculateZeroPageIndirectAddress();
     uint16_t calculateAbsoluteIndexedIndirectAddress();
 
     // ALU helper functions
@@ -427,15 +427,16 @@ private:
     // 65C02 Branch Always
     void handleBra();             // BRA rel - $80
 
-    // 65C02 Absolute Indirect addressing modes
-    void handleAdcAbsoluteIndirect();  // ADC (addr) - $72
-    void handleAndAbsoluteIndirect();  // AND (addr) - $32
-    void handleCmpAbsoluteIndirect();  // CMP (addr) - $D2
-    void handleEorAbsoluteIndirect();  // EOR (addr) - $52
-    void handleLdaAbsoluteIndirect();  // LDA (addr) - $B2
-    void handleOraAbsoluteIndirect();  // ORA (addr) - $12
-    void handleSbcAbsoluteIndirect();  // SBC (addr) - $F2
-    void handleStaAbsoluteIndirect();  // STA (addr) - $92
+    // 65C02 Zero-page indirect addressing modes — (zp), a 1-byte zero-page
+    // operand whose pointer at zp/zp+1 (zp-wrapped) gives the effective address.
+    void handleAdcZeroPageIndirect();  // ADC (zp) - $72
+    void handleAndZeroPageIndirect();  // AND (zp) - $32
+    void handleCmpZeroPageIndirect();  // CMP (zp) - $D2
+    void handleEorZeroPageIndirect();  // EOR (zp) - $52
+    void handleLdaZeroPageIndirect();  // LDA (zp) - $B2
+    void handleOraZeroPageIndirect();  // ORA (zp) - $12
+    void handleSbcZeroPageIndirect();  // SBC (zp) - $F2
+    void handleStaZeroPageIndirect();  // STA (zp) - $92
 
     // 65C02 Jump Absolute Indexed Indirect
     void handleJmpAbsoluteIndexedIndirect();  // JMP (addr,X) - $7C
@@ -453,6 +454,12 @@ private:
     void handleTsbZeroPage();     // TSB zp - $04
     void handleTsbAbsolute();     // TSB abs - $0C
     void handleTrbTsbBase(uint16_t address, uint8_t pc_offset, uint8_t cycles, bool is_set);
+
+    // 65C02 (Rockwell/WDC) single-bit memory ops on zero page.
+    void handleRmb(uint8_t bit);  // RMBn zp - $07,$17,...,$77 (reset bit n)
+    void handleSmb(uint8_t bit);  // SMBn zp - $87,$97,...,$F7 (set bit n)
+    void handleBbr(uint8_t bit);  // BBRn zp,rel - $0F,$1F,...,$7F (branch if bit n reset)
+    void handleBbs(uint8_t bit);  // BBSn zp,rel - $8F,$9F,...,$FF (branch if bit n set)
 
     // 65C02 Processor Control
     void handleStp();             // STP - $DB (Stop processor)

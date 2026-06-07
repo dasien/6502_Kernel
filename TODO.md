@@ -4,11 +4,11 @@
 - [x] Fix BASIC token parsing (e.g. enter 10 FOR I = 1 TO 10) and that is not what prints when you LIST
 ## CPU emulation accuracy (surfaced by the Klaus2m5 / amb5l functional tests, 2026-06)
 
-These are dormant fidelity gaps — none affect software we actually run (EhBASIC is NMOS-only and doesn't use CPU decimal mode; the monitor's D:/H: are software conversion). The NMOS functional test passes fully (incl. BCD accumulator+carry results) after the BRK fix.
+The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5l ca65 ports (kept local, GPL, never committed): 6502_functional_test ($3469), 6502_decimal_test built for 65C02 (ERROR=0, incl. invalid BCD), and 65C02_extended_opcodes_test with wdc_op/rkwl_wdc_op ($24F1). Locked by unit tests in tests/test_cpu_alu.cpp.
 
-- [ ] Decimal-mode N/V/Z flags: ADC/SBC in decimal mode produce the correct accumulator and carry (verified exact vs. the amb5l 6502_decimal_test, including invalid-BCD inputs), but the N/V/Z flags don't match the NMOS quirk behavior, so the full decimal test trips its flag checks (ERROR=1; A+C-only checks pass). Low priority: these flags are officially "undefined" after a decimal op on NMOS and are unused by our software.
-- [ ] Complete the 65C02 opcode set in CPU6502. The amb5l 65C02_extended_opcodes_test halts immediately on UNKNOWN OPCODE $0F (RMB0): our CPU is only a partial 65C02 — missing the Rockwell/WDC bit ops (RMB/SMB/BBR/BBS) and others. Includes the known bare-"(zp)" indirect gap below.
-  - Bare "(zp)" indirect opcodes ($12/$32/$52/$72/$92/$B2/$D2/$F2) are decoded as 2-byte absolute-indirect instead of 1-byte zero-page-indirect (calculateAbsoluteIndirectAddress). Unexercised by EhBASIC today.
+- [x] Decimal-mode N/V/Z flags: 65C02 ADC/SBC now set N/V/Z validly. addValues/subtractValues are faithful ports of the documented hardware algorithm, matching a real W65C02S even for invalid BCD inputs.
+- [x] Complete the 65C02 opcode set in CPU6502: added RMB/SMB/BBR/BBS (Rockwell/WDC), the standard multi-byte NOP opcodes, BRK clearing the decimal flag, and JMP-indirect WDC timing. WAI/STP remain benign stubs (not exercised by the test).
+  - [x] Bare "(zp)" indirect opcodes ($12/$32/$52/$72/$92/$B2/$D2/$F2) now decode as 1-byte zero-page-indirect (calculateZeroPageIndirectAddress), not 2-byte absolute-indirect.
 - [ ] (Optional) Interrupt test: not available in the amb5l ca65 port (as65 source only) and uses a memory-mapped IRQ/NMI feedback register, so it'd need an as65 build (or manual ca65 port) plus a harness extension to assert the IRQ/NMI lines. Would validate the v2.2 IRQ/NMI path.
 
 ## Deferred from the kernel/BASIC deep scan (2026-06)
