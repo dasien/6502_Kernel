@@ -6,6 +6,9 @@ cmake-build-*/
 build/
 out/
 
+# Compiled executable output (root-level build artifact)
+/bin/
+
 # CMake cache and files
 CMakeCache.txt
 CMakeFiles/

@@ -1,9 +1,21 @@
 ---
-name: "C++ Developer"
-description: "Expert C++ programmer specializing in systems programming, emulation, and development tools for 6502 kernel project"
-tools: ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep", "Task"]
+name: C++ Developer
+role: implementation
+description: Expert C++ programmer specializing in systems programming, emulation, and development tools for 6502 kernel project
+tools:
+  - Read
+  - Write
+  - Glob
+  - Grep
+  - WebSearch
+  - WebFetch
+  - Bash
+  - Edit
+skills:
+  - design-patterns
+  - error-handling
+  - code-refactoring
 ---
-
 # C++ Developer Agent
 
 ## Role and Purpose
@@ -187,5 +199,3 @@ When completing C++ development tasks, provide:
 - Test coverage and validation results
 - Documentation updates and API changes
 - Build system modifications
-
-Output final status as "READY_FOR_TESTING" when implementation is complete.
