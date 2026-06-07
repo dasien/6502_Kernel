@@ -3,8 +3,8 @@
 ; ================================================================
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
-; Date:         2025-08-05
-; Version:      1.0
+; Date:         2026-06-06
+; Version:      2.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -65,7 +65,10 @@
 ; ================================================================
 ; REVISION HISTORY
 ; ================================================================
-; 2025-06-01  v1.0  Initial release
+; 2025-06-01  v1.0  Initial monitor release
+; 2025-10-18  v2.0  EhBASIC interpreter integration; D:/H: conversion commands
+; 2026-06-06  v2.1  Working BASIC (LIST/FOR-NEXT/launch fixes) + LOAD/SAVE
+;                   file I/O; monitor & CPU correctness fixes; test suites
 ;
 ; ================================================================
 
