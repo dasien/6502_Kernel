@@ -162,11 +162,31 @@ public:
      */
     [[nodiscard]] uint64_t getCycles() const;
 
+    /**
+     * @brief Latch a non-maskable interrupt to service before the next
+     *        instruction (edge-triggered / one-shot).
+     */
+    void requestNmi();
+
+    /**
+     * @brief Set/clear the IRQ line. While asserted and the I flag is clear,
+     *        an IRQ is serviced before each instruction; the handler must clear
+     *        the source (ack) to deassert the line.
+     */
+    void setIrqLine(bool asserted);
+
 private:
     Memory &mem_;
     uint64_t cycles_;
     using handlerFunction = std::function<void()>;
     std::map<uint8_t, handlerFunction> handlers_;
+
+    // Hardware interrupt lines
+    bool nmi_pending_ = false;  ///< edge-triggered NMI latch
+    bool irq_line_ = false;     ///< level-sensitive IRQ line
+
+    /// Push PC + status and vector through $FFFA (NMI) or $FFFE (IRQ).
+    void serviceInterrupt(uint16_t vector);
 
     void initializeInstructionHandlers();
 

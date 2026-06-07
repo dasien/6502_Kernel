@@ -15,6 +15,7 @@ MainWindow::MainWindow(QWidget* parent)
     , status_sidebar_(nullptr)
     , sidebar_layout_(nullptr)
     , reset_button_(nullptr)
+    , nmi_button_(nullptr)
     , status_label_(nullptr)
     , cpu_header_label_(nullptr)
     , current_byte_label_(nullptr)
@@ -59,8 +60,20 @@ void MainWindow::onResetClicked()
 {
     computer_->reset();
     execution_cycle_count_ = 0;
-    
+
     status_label_->setText("System reset - Running");
+}
+
+void MainWindow::onNmiClicked()
+{
+    // Trigger a non-maskable interrupt: BASIC handles it if ON NMI is enabled,
+    // otherwise the kernel ISR breaks back to the monitor (a "stop" key).
+    if (computer_)
+    {
+        computer_->getCpu()->requestNmi();
+        status_label_->setText("NMI");
+    }
+    display_widget_->setFocus();  // keep typing focus on the display
 }
 
 
@@ -171,13 +184,15 @@ void MainWindow::setupUI()
     
     // Create control buttons
     reset_button_ = new QPushButton("Reset", this);
-    
-    // Add reset button centered below the sidebar
+    nmi_button_ = new QPushButton("NMI", this);  // non-maskable "stop" key
+
+    // Add Reset and NMI buttons centered below the sidebar
     QHBoxLayout* reset_layout = new QHBoxLayout();
     reset_layout->addStretch();
     reset_layout->addWidget(reset_button_);
+    reset_layout->addWidget(nmi_button_);
     reset_layout->addStretch();
-    
+
     sidebar_container_layout->addLayout(reset_layout);
     
     // Add sidebar container to horizontal layout (display_widget already added above)
@@ -227,6 +242,7 @@ void MainWindow::setupMenus()
 void MainWindow::connectSignals()
 {
     connect(reset_button_, &QPushButton::clicked, this, &MainWindow::onResetClicked);
+    connect(nmi_button_, &QPushButton::clicked, this, &MainWindow::onNmiClicked);
     
     connect(status_timer_, &QTimer::timeout, this, &MainWindow::updateStatus);
     

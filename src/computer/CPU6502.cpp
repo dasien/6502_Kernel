@@ -71,8 +71,44 @@ uint8_t CPU6502::pullByte()
     return mem_.read(0x0100 + reg.SP);
 }
 
+void CPU6502::requestNmi()
+{
+    nmi_pending_ = true;
+}
+
+void CPU6502::setIrqLine(const bool asserted)
+{
+    irq_line_ = asserted;
+}
+
+void CPU6502::serviceInterrupt(const uint16_t vector)
+{
+    // Hardware interrupt sequence: push PC, push status with B clear (bit 4),
+    // set I, clear D (65C02 behavior), then vector through the handler address.
+    pushStack16(reg.PC);
+    pushByte((reg.P & ~kBreak) | kUnused);
+    setFlag(kInterrupt, true);
+    setFlag(kDecimal, false);
+    reg.PC = mem_.readWord(vector);
+    cycles_ += 7;
+}
+
 bool CPU6502::executeSingleInstruction()
 {
+    // Service pending hardware interrupts between instructions: NMI is
+    // non-maskable; IRQ only when the I flag is clear. Each counts as one step.
+    if (nmi_pending_)
+    {
+        nmi_pending_ = false;
+        serviceInterrupt(0xFFFA);
+        return true;
+    }
+    if (irq_line_ && !getFlag(kInterrupt))
+    {
+        serviceInterrupt(0xFFFE);
+        return true;
+    }
+
     const uint8_t opcode = readByte();
 
     const auto it = handlers_.find(opcode);

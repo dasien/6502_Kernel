@@ -20,6 +20,7 @@ public:
 
 private slots:
     void onResetClicked();
+    void onNmiClicked();
     void updateStatus();
     void onDisplayKeyPressed(uint8_t ascii_code);
 
@@ -40,7 +41,8 @@ private:
     QVBoxLayout* sidebar_layout_;
     
     QPushButton* reset_button_;
-    
+    QPushButton* nmi_button_;
+
     QLabel* status_label_;
     
     // Status sidebar labels

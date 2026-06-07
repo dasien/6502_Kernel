@@ -59,6 +59,10 @@ namespace Computer
         static constexpr uint8_t kPortBDdr = 0x04; // $DC04 - Port B DDR
         static constexpr uint8_t kPortBControl = 0x05; // $DC05 - Port B control
 
+        // Timer IRQ acknowledge: writing this register deasserts the periodic
+        // timer's IRQ line (the ISR writes it to clear the interrupt).
+        static constexpr uint8_t kTimerIrqAck = 0x0E; // $DC0E
+
         // File I/O interface (extended PIA)
         static constexpr uint8_t kFileCommand = 0x10; // $DC10 - File operation command
         static constexpr uint8_t kFileStatus = 0x11; // $DC11 - File operation status
@@ -178,6 +182,12 @@ namespace Computer
         void setMemoryInterface(class Memory *memory);
 
         /**
+         * @brief Set the CPU interface so the PIA can deassert the IRQ line
+         *        when the timer interrupt is acknowledged.
+         */
+        void setCpu(class CPU6502 *cpu);
+
+        /**
          * @brief Check if a file operation is pending
          * @return bool true if load or save operation is queued
          */
@@ -211,6 +221,7 @@ namespace Computer
         uint16_t file_end_address_;
         std::array<char, 12> filename_{};
         class Memory *memory_;
+        class CPU6502 *cpu_ = nullptr;
 
         // Byte-stream file state (BASIC LOAD/SAVE)
         uint8_t stream_mode_ = kStreamNone;  // none / read / write

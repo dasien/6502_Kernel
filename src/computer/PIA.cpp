@@ -1,5 +1,6 @@
 #include "PIA.h"
 #include "Memory.h"
+#include "CPU6502.h"
 #include <cstdio>
 #include <string>
 #ifdef QT_GUI
@@ -72,6 +73,12 @@ void PIA::writePia(const uint16_t address, const uint8_t value)
             break;
         case kPortBControl:
             port_b_control_ = value;
+            break;
+        case kTimerIrqAck:
+            // Acknowledge the periodic timer IRQ: deassert the CPU IRQ line.
+            if (cpu_) {
+                cpu_->setIrqLine(false);
+            }
             break;
         case kFileCommand:
             PIA_LOG("PIA: Received file command: 0x%02X\n", value);
@@ -280,6 +287,11 @@ void PIA::incrementBufferTail()
 void PIA::setMemoryInterface(Memory* memory)
 {
     memory_ = memory;
+}
+
+void PIA::setCpu(CPU6502* cpu)
+{
+    cpu_ = cpu;
 }
 
 bool PIA::hasFileOperation() const

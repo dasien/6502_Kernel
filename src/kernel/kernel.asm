@@ -3,8 +3,8 @@
 ; ================================================================
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
-; Date:         2026-06-06
-; Version:      2.1
+; Date:         2026-06-07
+; Version:      2.2
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -69,6 +69,9 @@
 ; 2025-10-18  v2.0  EhBASIC interpreter integration; D:/H: conversion commands
 ; 2026-06-06  v2.1  Working BASIC (LIST/FOR-NEXT/launch fixes) + LOAD/SAVE
 ;                   file I/O; monitor & CPU correctness fixes; test suites
+; 2026-06-07  v2.2  Hardware IRQ/NMI support: periodic timer IRQ (BASIC ON IRQ),
+;                   NMI stop key (BASIC ON NMI / break to monitor); removed dead
+;                   INIT_BASIC_IO
 ;
 ; ================================================================
 
@@ -199,6 +202,13 @@ FILE_IDLE          = $00           ; No operation
 FILE_IN_PROGRESS   = $01           ; Operation in progress
 FILE_SUCCESS       = $02           ; Operation completed successfully
 FILE_ERROR         = $FF           ; Operation failed
+
+; Interrupt-related addresses and bits
+TIMER_IRQ_ACK      = $DC0E         ; write to acknowledge the periodic timer IRQ
+BASIC_NMI_FLAGS    = $DC           ; EhBASIC NmiBase (zero page): b7=enabled, b5=happened
+BASIC_IRQ_FLAGS    = $DF           ; EhBASIC IrqBase (zero page): b7=enabled, b5=happened
+INT_ENABLED        = $80           ; "interrupt enabled" bit in the above
+INT_HAPPENED       = $20           ; "interrupt happened" bit (set by the ISR for BASIC)
 
 ; ================================================================
 ; KERNEL PROGRAM START
@@ -1897,41 +1907,6 @@ CLEAR_CMD_BUF_LOOP:
 
     RTS
 
-; ----------------------------------------------------------------
-; INIT_BASIC_IO
-; Initialize BASIC I/O vectors to use monitor routines
-; Input: None
-; Output: None
-; Preserves: None
-; ----------------------------------------------------------------
-INIT_BASIC_IO:
-    ; Set output vector to monitor PRINT_CHAR
-    LDA #<PRINT_CHAR
-    STA $0207               ; VEC_OUT low byte
-    LDA #>PRINT_CHAR
-    STA $0208               ; VEC_OUT high byte
-
-    ; Set input vector to monitor GET_KEYSTROKE
-    LDA #<GET_KEYSTROKE
-    STA $0205               ; VEC_IN low byte
-    LDA #>GET_KEYSTROKE
-    STA $0206               ; VEC_IN high byte
-
-    ; Set load/save vectors to stub routines (future enhancement)
-    ; For now, point to RTS instructions
-    LDA #<IO_STUB
-    STA $0209               ; VEC_LD low byte
-    STA $020B               ; VEC_SV low byte
-    LDA #>IO_STUB
-    STA $020A               ; VEC_LD high byte
-    STA $020C               ; VEC_SV high byte
-
-    RTS
-
-; Stub routine for unimplemented load/save
-IO_STUB:
-    RTS
-
 ; ================================================================
 ; MONITOR COMMAND IMPLEMENTATIONS
 ; ================================================================
@@ -1941,7 +1916,7 @@ IO_STUB:
 ; Input: None
 ; Output: Transfers control to BASIC (does not return until BYE)
 ; Modifies: A, X, Y
-; Note: Milestone 4 implementation - jumps to BASIC cold start at $C000
+; Note: jumps to BASIC cold start at $B000
 ; ----------------------------------------------------------------
 CMD_LAUNCH_BASIC:
     ; Check for BASIC ROM signature at $B000 (ROM base per basic_memory.cfg)
@@ -1959,11 +1934,8 @@ CMD_LAUNCH_BASIC:
     ; Clear screen for clean transition
     JSR CLEAR_SCREEN
 
-    ; Initialize BASIC I/O vectors
-    JSR INIT_BASIC_IO
-
-    ; Jump to BASIC cold start
-    ; LAB_COLD is at $B000 (first instruction in basic.rom)
+    ; Jump to BASIC cold start. LAB_COLD ($B000) installs the page-2 I/O
+    ; vectors itself (from PG2_TABS), so the monitor doesn't set them here.
     JMP $B000
 
 BASIC_NOT_FOUND:
@@ -1993,6 +1965,11 @@ BASIC_SIG_FAIL:
 RETURN_FROM_BASIC:
     ; Restore monitor state
     JSR RESTORE_MONITOR_STATE
+
+    ; Clear BASIC's interrupt-enable flags so a later NMI breaks to the monitor
+    ; instead of trying to dispatch a stale BASIC ON NMI/IRQ handler.
+    STZ BASIC_NMI_FLAGS
+    STZ BASIC_IRQ_FLAGS
 
     ; Reset stack pointer to clean state (must be done AFTER JSR returns)
     LDX #$FF
@@ -3398,12 +3375,42 @@ MONITOR_LOOP:
 MONITOR_SKIP_SAVE:
     JMP MONITOR_LOOP            ; Continue command loop
 
-; Interrupt service routines (minimal implementations)
+; Interrupt service routines
+;
+; IRQ: driven by the ~60Hz periodic timer. Always acknowledge the timer (or it
+; would re-fire immediately and storm); if BASIC has ON IRQ enabled, set the
+; "happened" bit so BASIC's interpreter loop dispatches the handler.
 IRQ_HANDLER:
-    RTI                         ; Return from interrupt
+    PHA                         ; preserve A (X/Y untouched)
+    STA TIMER_IRQ_ACK           ; acknowledge the timer (value ignored)
+    LDA BASIC_IRQ_FLAGS         ; is BASIC's ON IRQ enabled?
+    AND #INT_ENABLED
+    BEQ IRQ_HANDLER_DONE        ; no -> nothing more to do
+    LDA BASIC_IRQ_FLAGS
+    ORA #INT_HAPPENED           ; flag the interrupt for BASIC's poll
+    STA BASIC_IRQ_FLAGS
+IRQ_HANDLER_DONE:
+    PLA
+    RTI
 
+; NMI: the "stop" key. If BASIC has ON NMI enabled, flag it for BASIC; otherwise
+; abandon whatever is running and return to the monitor command loop.
 NMI_HANDLER:
-    RTI                         ; Return from interrupt
+    PHA
+    LDA BASIC_NMI_FLAGS         ; is BASIC's ON NMI enabled?
+    AND #INT_ENABLED
+    BEQ NMI_HANDLER_BREAK       ; no -> break to the monitor
+    LDA BASIC_NMI_FLAGS
+    ORA #INT_HAPPENED           ; flag the interrupt for BASIC's poll
+    STA BASIC_NMI_FLAGS
+    PLA
+    RTI
+
+NMI_HANDLER_BREAK:
+    LDX #STACK_TOP              ; reset the stack (discard interrupted context)
+    TXS
+    CLI                         ; monitor runs with interrupts enabled
+    JMP MONITOR_MAIN           ; back to a fresh monitor prompt
 
 ; ================================================================
 ; COMMAND JUMP TABLES - For fast command dispatch
