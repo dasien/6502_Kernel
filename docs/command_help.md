@@ -21,6 +21,13 @@ The 6502 Monitor provides a comprehensive set of commands for memory manipulatio
 - **[D: Decimal to Hex](decimal_to_hex_command.md)** - Convert decimal (0-65535) to hexadecimal
 - **[H: Hex to Decimal](hex_to_decimal_command.md)** - Convert hexadecimal (0000-FFFF) to decimal
 
+### BASIC Interpreter
+
+#### B: BASIC
+- **Purpose**: Launch the built-in EhBASIC interpreter
+- **Format**: `B:`
+- **Notes**: Transfers control to EhBASIC; exiting BASIC returns to the monitor. BASIC programs can be saved/loaded as human-readable `.bas` text via BASIC's own SAVE/LOAD.
+
 ### Display Commands
 
 #### C: Clear Screen
@@ -75,9 +82,9 @@ The 6502 Monitor provides a comprehensive set of commands for memory manipulatio
 - Case insensitive: `8000` same as `8000`
 
 ### Error Messages
-- `?ERROR` - Invalid command syntax or parameters
-- `?RANGE` - Invalid address range (end < start)
-- `?VALUE` - Invalid hexadecimal value or parameter
+- `ERROR?` - Invalid command syntax or parameters
+- `RANGE?` - Invalid address range (end < start)
+- `VALUE?` - Invalid hexadecimal value or parameter
 
 ## Universal Commands
 These commands work from any monitor mode:

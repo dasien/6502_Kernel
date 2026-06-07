@@ -43,9 +43,9 @@ The load operation uses memory-mapped file I/O:
 `LOADED`
 
 ## Error Messages
-- `?ERROR` - Invalid syntax, missing comma, or invalid address
+- `ERROR?` - Invalid syntax, missing comma, or invalid address
 - `?FILE` - File not found or read error
-- `?VALUE` - Invalid hexadecimal address
+- `VALUE?` - Invalid hexadecimal address
 
 ## Status Monitoring
 The command monitors `FILE_STATUS` register:

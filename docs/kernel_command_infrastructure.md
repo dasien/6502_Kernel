@@ -259,7 +259,7 @@ All messages are stored as null-terminated strings in the message data section (
 ```assembly
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 MSG_HELP_HEADER:     .BYTE "6502 MONITOR COMMANDS", 0
-MSG_SYNTAX_ERROR:    .BYTE "?ERROR", 0
+MSG_SYNTAX_ERROR:    .BYTE "ERROR?", 0
 MSG_SUCCESS:         .BYTE "OK", 0
 ```
 
@@ -270,7 +270,7 @@ MSG_SUCCESS:         .BYTE "OK", 0
 - Custom success messages for specific operations
 
 #### Error Messages  
-- `MSG_SYNTAX_ERROR` - "?ERROR" for invalid syntax
+- `MSG_SYNTAX_ERROR` - "ERROR?" for invalid syntax
 - Custom error messages for specific conditions
 
 ### Message Printing System
@@ -396,9 +396,9 @@ PARSE_CUSTOM_PARAM:
 When implementing a new command, verify:
 
 #### Parser Integration
-- [ ] Command character recognized (no "?ERROR")
+- [ ] Command character recognized (no "ERROR?")
 - [ ] Parameters parsed correctly
-- [ ] Invalid syntax shows "?ERROR" 
+- [ ] Invalid syntax shows "ERROR?" 
 - [ ] Command executes without crashing
 
 #### Jump Table Validation
@@ -504,12 +504,12 @@ Implement parameter validation appropriate to command complexity:
 Balance error message detail with memory usage:
 
 #### Generic Errors (Recommended)
-- `?ERROR` - General syntax/parameter error
-- `?RANGE` - Address range error  
+- `ERROR?` - General syntax/parameter error
+- `RANGE?` - Address range error  
 
 #### Specific Errors (Optional)
 - `?SYNTAX` - Syntax error
-- `?VALUE` - Parameter value error
+- `VALUE?` - Parameter value error
 - `?PROTECTED` - Attempting to modify protected memory
 
 ---

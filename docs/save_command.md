@@ -47,10 +47,10 @@ The save operation uses memory-mapped file I/O:
 `SAVED`
 
 ## Error Messages
-- `?ERROR` - Invalid syntax, missing comma, or parse error
-- `?RANGE` - End address less than start address
+- `ERROR?` - Invalid syntax, missing comma, or parse error
+- `RANGE?` - End address less than start address
 - `?FILE` - File write error or permission denied
-- `?VALUE` - Invalid hexadecimal address
+- `VALUE?` - Invalid hexadecimal address
 
 ## Status Monitoring
 The command monitors `FILE_STATUS` register:

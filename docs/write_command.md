@@ -47,8 +47,8 @@ Where:
 - Returns to command mode when ESC pressed
 
 ## Error Messages
-- `?ERROR` - Invalid syntax or hex address
-- `?VALUE` - Invalid hex byte entered during write mode
+- `ERROR?` - Invalid syntax or hex address
+- `VALUE?` - Invalid hex byte entered during write mode
 
 ## Notes
 - Write mode preserves command in history for dot recall

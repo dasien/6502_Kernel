@@ -36,7 +36,7 @@ Example output:
 Result displayed on next line
 
 ## Error Messages
-- `?VALUE` - Invalid hex digit (non-hexadecimal character entered)
+- `VALUE?` - Invalid hex digit (non-hexadecimal character entered)
 
 ## Command Behavior
 - **Read-only operation**: Does not modify memory or system state

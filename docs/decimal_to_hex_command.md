@@ -36,8 +36,8 @@ $04D2
 Result displayed on next line
 
 ## Error Messages
-- `?VALUE` - Invalid digit (non-numeric character entered)
-- `?RANGE` - Number exceeds 65535
+- `VALUE?` - Invalid digit (non-numeric character entered)
+- `RANGE?` - Number exceeds 65535
 
 ## Command Behavior
 - **Read-only operation**: Does not modify memory or system state

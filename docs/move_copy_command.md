@@ -41,10 +41,10 @@ No output during operation
 Where XXXX is the hexadecimal count of bytes processed
 
 ## Error Messages
-- `?ERROR` - Invalid syntax or parameters
-- `?RANGE` - Invalid address range
+- `ERROR?` - Invalid syntax or parameters
+- `RANGE?` - Invalid address range
 - `?OVERLAP` - Source and destination ranges overlap destructively
-- `?VALUE` - Invalid hex characters or copy/move bit (must be 0 or 1)
+- `VALUE?` - Invalid hex characters or copy/move bit (must be 0 or 1)
 
 ## Special Behavior
 - Handles overlapping operations correctly:

@@ -49,8 +49,8 @@ RTS    ; Return to monitor command prompt
 ```
 
 ## Error Messages
-- `?ERROR` - Invalid syntax or hex address
-- `?VALUE` - Invalid hexadecimal address format
+- `ERROR?` - Invalid syntax or hex address
+- `VALUE?` - Invalid hexadecimal address format
 
 ## Notes
 - One-shot command - does not enter a special run mode

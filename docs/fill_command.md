@@ -32,8 +32,8 @@ No output during operation (for performance)
 FILLED
 
 ## Error Messages
-- `?ERROR` - Invalid syntax or parameters
-- `?RANGE` - End address less than start address
+- `ERROR?` - Invalid syntax or parameters
+- `RANGE?` - End address less than start address
 - `?PROTECTED` - Attempt to fill ROM or I/O space (optional)
 
 ## Notes

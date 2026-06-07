@@ -13,7 +13,9 @@ This project implements a complete 6502-based computer system kernel for emulate
 
 **Key Features:**
 - Complete 6502 assembly language kernel optimized for emulated environments
-- Interactive monitor with comprehensive debugging tools  
+- Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
+- Interactive monitor with comprehensive debugging tools
+- Built-in EhBASIC interpreter, launched with the `B:` command (with human-readable `.bas` LOAD/SAVE)
 - Memory manipulation and program execution capabilities
 - Streamlined architecture with universal commands and simplified modes
 - File I/O operations for loading and saving programs
@@ -53,39 +55,52 @@ The command reference provides comprehensive documentation for all monitor comma
 |----------|----------|-------------|
 | **Memory Operations** | [R:](docs/read_command.md), [W:](docs/write_command.md), [F:](docs/fill_command.md), [M:](docs/move_copy_command.md), [X:](docs/search_command.md) | Read, write, fill, move/copy, and search memory |
 | **Program Operations** | [G:](docs/run_command.md), [L:](docs/load_command.md), [S:](docs/save_command.md) | Execute, load, and save programs |
+| **BASIC** | B: | Launch the built-in EhBASIC interpreter |
 | **Number Conversion** | [D:](docs/decimal_to_hex_command.md), [H:](docs/hex_to_decimal_command.md) | Convert between decimal and hexadecimal |
 | **Display Commands** | C:, T:, Z: | Clear screen, show stack, show zero page |
 | **System Commands** | ?, ESC, . | Help, exit mode, command recall |
 
 ### Key Command Features
 
-- **R: Read Memory** - Display bytes in memory, supports single addresses or ranges
-- **W: Write Memory** - Interactive hex editing with address advancement
-- **G: Go/Run** - Direct program execution with return to monitor
-- **L: Load File** - Immediate file loading: `L:8000,FILENAME`
-- **S: Save File** - Immediate file saving: `S:8000-8FFF,FILENAME`
-- **F: Fill Memory** - High-performance memory filling with progress feedback
-- **M: Move/Copy** - Smart memory operations with overlap detection
-- **X: Search Memory** - Multi-byte pattern search with paged output
+Commands are listed alphabetically by command letter (matching the on-screen `?` help):
+
+- **B: BASIC** - Launch the built-in EhBASIC interpreter (returns to the monitor on exit)
+- **C: Clear Screen** - Clear the display
 - **D: Decimal to Hex** - Convert decimal (0-65535) to hexadecimal format
+- **F: Fill Memory** - High-performance memory filling with progress feedback
+- **G: Go/Run** - Direct program execution with return to monitor
 - **H: Hex to Decimal** - Convert hexadecimal (0000-FFFF) to decimal format
+- **L: Load File** - Immediate file loading: `L:8000,FILENAME`
+- **M: Move/Copy** - Smart memory operations with overlap detection (`M:src-end,dest,B` where B: 0=copy, 1=move)
+- **R: Read Memory** - Display bytes in memory, supports single addresses or ranges
+- **S: Save File** - Immediate file saving: `S:8000-8FFF,FILENAME`
+- **T: Stack** - Display the stack page ($0100-$01FF), paged
+- **W: Write Memory** - Interactive hex editing with address advancement
+- **X: Search Memory** - Multi-byte pattern search with paged output
+- **Z: Zero Page** - Display zero page ($0000-$00FF), paged
+- **ESC** - Exit the current mode and return to the command prompt
 
 ### Error Handling
 
 The monitor provides clear, consistent error messages:
-- **`?ERROR`** - Invalid command syntax or parameters
-- **`?RANGE`** - Invalid or out-of-bounds address range  
-- **`?VALUE`** - Invalid hexadecimal characters in input
+- **`ERROR?`** - Invalid command syntax or parameters
+- **`RANGE?`** - Invalid or out-of-bounds address range
+- **`VALUE?`** - Invalid hexadecimal characters in input
 
 ### **📖 [Detailed Architecture Reference](docs/system_architecture.md)**
 
 ### Memory Layout
 
-- **$0000-$00FF**: Zero Page (system workspace and variables)
-- **$0100-$01FF**: Stack memory  
+- **$0000-$00FF**: Zero Page (system workspace; monitor uses $14-$39, EhBASIC uses the rest)
+- **$0100-$01FF**: Stack memory
 - **$0200-$03FF**: Monitor variables and command buffers
-- **$0400-$07FF**: Screen memory (display buffer)
-- **$F000-$FFFF**: Kernel ROM (3,834 bytes optimized)
+- **$0400-$07E7**: Screen memory (40x25 display buffer)
+- **$0800-$AFFF**: User RAM (EhBASIC program/variable space)
+- **$B000-$DFFF**: EhBASIC interpreter ROM (12 KB)
+- **$DC00-$DC22**: PIA registers (keyboard input, file I/O, timer IRQ)
+- **$E000-$FFFF**: Kernel ROM (8 KB window; ~3,962 bytes used, rest free for growth)
+
+See [docs/kernel_memory_map.md](docs/kernel_memory_map.md) for the full map.
 
 ### **📖 [Kernel Services Guide](docs/kernel_user_functions.md)**
 
@@ -100,6 +115,7 @@ User programs can access kernel services via the jump table at $FF00:
 | $FF09 | GET_KEYSTROKE | Wait for key press |
 | $FF0C | CLEAR_SCREEN | Clear display |
 | $FF0F | GET_RANDOM_NUMBER | Generate random byte |
+| $FF12 | RETURN_FROM_BASIC | BASIC exit point (return to monitor) |
 
 ### File I/O Interface
 
@@ -131,22 +147,23 @@ ninja
 
 # Build outputs:
 # - Executable: cmake-build-debug/bin/6502-kernel
-# - Kernel ROM: cmake-build-debug/kernel.rom
-# - Memory map: cmake-build-debug/kernel.map
+# - Kernel ROM: cmake-build-debug/kernel/kernel.rom
+# - BASIC ROM:  cmake-build-debug/kernel/basic.rom
+# - Memory map: cmake-build-debug/kernel/kernel.map
 ```
 
 ### Project Structure
 ```
 6502-kernel/
 ├── src/                    # C++ source files
-├── include/                # C++ header files  
-├── kernel/                 # 6502 assembly kernel
-│   ├── asm/               # Assembly source files
-│   └── config/            # Build configuration
+│   ├── computer/          # CPU, memory, VIC, PIA emulation
+│   ├── ui/                # Qt GUI
+│   └── kernel/            # 6502 assembly (kernel.asm, basic.asm) + ld65 configs
+├── include/                # C++ header files
 ├── docs/                  # Documentation
 ├── examples/              # Example 6502 programs
 ├── tools/cmake/           # CMake modules
-└── tests/                 # Unit tests
+└── tests/                 # Unit and integration tests
 ```
 
 For detailed development information and project context, see:

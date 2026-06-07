@@ -40,8 +40,8 @@ SEARCH COMPLETE - XXXX MATCHES
 Where XXXX is hexadecimal count
 
 ## Error Messages
-- `?ERROR` - Invalid syntax or parameters
-- `?RANGE` - Invalid address range
+- `ERROR?` - Invalid syntax or parameters
+- `RANGE?` - Invalid address range
 - `?PATTERN` - Invalid or empty search pattern
 
 ## Notes

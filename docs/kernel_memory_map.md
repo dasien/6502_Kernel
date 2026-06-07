@@ -132,10 +132,10 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 
 | Segment | Range | Purpose |
 |---------|-------|---------|
-| `CODE` | `$E000-$F051` (~4178 B) | Monitor code and data |
+| `CODE` | `$E000-$EF79` (3962 B) | Monitor code and data |
 | `JUMPS` | `$FF00-$FF14` (21 B) | Kernel API jump table |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
-| (free) | ~`$F052-$FEFF` | ~3.9 KB unused |
+| (free) | ~`$EF7A-$FEFF` | ~4.1 KB unused |
 
 ### Kernel API jump table (`$FF00`)
 

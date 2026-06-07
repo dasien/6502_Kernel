@@ -55,8 +55,8 @@ Where:
 - Always returns to previous mode after display
 
 ## Error Messages
-- `?ERROR` - Invalid syntax or hex address
-- `?RANGE` - End address less than start address
+- `ERROR?` - Invalid syntax or hex address
+- `RANGE?` - End address less than start address
 
 ## Notes
 - Always displays in 8-byte-per-line format for ranges

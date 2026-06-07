@@ -283,7 +283,7 @@ The kernel code follows these patterns:
 - Always use the null-terminated string system for new messages
 - Allocate monitor variables in the $0200-$03FF range per the memory map
 - Implement proper hex parsing for addresses and data input
-- Provide clear error messages and syntax validation (`?ERROR`, `?RANGE`, `?VALUE`)
+- Provide clear error messages and syntax validation (`ERROR?`, `RANGE?`, `VALUE?`)
 - Follow the 8-byte function pattern for message printing optimization
 - Use the existing PRINT_CHAR, PRINT_HEX_BYTE, and I/O routines
 - Implement paging support for commands that generate multiple output lines
