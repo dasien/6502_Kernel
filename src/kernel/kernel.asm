@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-07
-; Version:      2.2.4
+; Version:      2.2.5
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,16 +15,15 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~3909 bytes
-;   CODE segment:  $E000-$EF29 (3882 bytes)
+; ROM (Used):      ~3764 bytes
+;   CODE segment:  $E000-$EE98 (3737 bytes)
 ;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
-; Zero Page:    $14-$24 + $35-$39 (22 bytes used) - relocated to avoid the
-;               EhBASIC interpreter, which uses $00-$13 and ~$5B-$FF
-;   Monitor:    $14-$24 (17 bytes) - core variables
-;   (free):     $25-$34 (16 bytes) - was the hex lookup table; now computed
-;   DEC_*:      $35-$39 (5 bytes)  - decimal conversion workspace
+; Zero Page:    placed above EhBASIC's $00-$13 and below its ~$5B-$FF (~21 bytes used)
+;   Monitor:    $14-$1B core pointers; $21-$28 counters/flags/RNG + M: scratch;
+;               $35-$39 decimal workspace
+;   (free):     $1C-$20 (former scroll vars) and $29-$34 (former hex table)
 ;
 ; RAM Usage:    $0200-$02DD
 ;   Cmd buffer: $0200-$024F (80 bytes) - overlaps BASIC's page-2 area,
@@ -93,6 +92,12 @@
 ;                   register saves; INC A; (zp) zero-page-indirect on the fill,
 ;                   write, dump, and show-address paths; BRA for in-range jumps;
 ;                   and a complete STZ pass for zeroing memory/variables.
+; 2026-06-08  v2.2.5 Size/structure cleanup (behavior-preserving): 5 inline hex-print
+;                   idioms folded into PRINT_HEX_BYTE (dead BYTE_TO_HEX_PAIR removed);
+;                   message-printer wrappers and CMD_CLEAR_SCREEN/CMD_RUN_PROGRAM
+;                   collapsed to tail calls; shared SCROLL_AND_HOME_BOTTOM helper.
+;                   SCROLL_SCREEN rewritten as absolute,X page copies (~18 bytes
+;                   smaller, faster, frees the $1C-$20 scroll zero-page vars).
 ;
 ; ================================================================
 
@@ -117,11 +122,8 @@ MON_MSG_PTR_HI     = $17           ; Message pointer high byte (was $03)
 JUMP_VECTOR        = $18           ; Indirect jump vector (2 bytes: $18-$19) (was $04-$05)
 SCREEN_PTR_LO      = $1A           ; Current screen memory pointer low (was $06)
 SCREEN_PTR_HI      = $1B           ; Current screen memory pointer high (was $07)
-SCRL_SRC_ADDR_LO   = $1C           ; Scroll source address low byte (was $08)
-SCRL_SRC_ADDR_HI   = $1D           ; Scroll source address high byte (was $09)
-SCRL_DEST_ADDR_LO  = $1E           ; Scroll destination address low byte (was $0A)
-SCRL_DEST_ADDR_HI  = $1F           ; Scroll destination address high byte (was $0B)
-SCRL_BYTE_CNT      = $20           ; Scroll byte counter (was $0C)
+; $1C-$20 (5 bytes) free — were the scroll source/dest pointers and byte counter,
+; no longer needed now that SCROLL_SCREEN uses absolute,X page copies.
 CMD_LINE_COUNT     = $21           ; Lines printed by current command (was $0D)
 PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
 RNG_SEED           = $23           ; Random number generator seed (was $0F)
@@ -406,23 +408,6 @@ HEX_PAIR_TO_BYTE:
 HEX_PAIR_ERROR:
     RTS
 
-; Convert byte to two ASCII hex characters
-; Input: A = byte value (0-255)
-; Output: High nibble hex char in MON_HEX_TEMP, low nibble hex char in A
-; Modifies: A, MON_HEX_TEMP (preserves X, Y)
-; Note: uses NIBBLE_TO_ASCII; used by address/byte display routines
-BYTE_TO_HEX_PAIR:
-    PHA                         ; Save original byte
-    LSR A                       ; high nibble -> low 4 bits
-    LSR A
-    LSR A
-    LSR A
-    JSR NIBBLE_TO_ASCII         ; high-nibble hex char
-    STA MON_HEX_TEMP            ; store first character
-    PLA                         ; restore original byte
-    AND #$0F                    ; low nibble
-    JMP NIBBLE_TO_ASCII         ; tail call: low-nibble hex char returned in A
-
 ; Convert a nibble (A = 0-15) to its ASCII hex character ('0'-'9' or 'A'-'F').
 ; Replaces the old runtime HEX_LOOKUP_TABLE. Modifies A (and flags); preserves X, Y.
 NIBBLE_TO_ASCII:
@@ -471,49 +456,28 @@ HEX_QUAD_ERROR:
 ; MONITOR SCREEN OUTPUT AND INPUT ROUTINES
 ; ================================================================
 
-; Scroll screen up by one line (40 characters)
+; Scroll screen up by one line (40 characters).
+; Copies rows 1-24 over rows 0-23 with four absolute,X loops (one per screen
+; page), then blanks the bottom line. Faster than a byte-by-byte indirect copy
+; and needs no scroll pointer/counter variables. The copy runs the full 256
+; bytes of each page; the few bytes past row 24 ($07E8-$07FF) are off-screen
+; padding and the bottom line is overwritten with spaces immediately after.
 SCROLL_SCREEN:
-    ; Save registers (65C02 PHX/PHY; A is also preserved, harmless)
-    PHX
+    PHX                         ; Save registers (X is the copy index)
     PHY
 
-    ; Initialize source pointer to line 1 ($0428)
-    LDA #$28
-    STA SCRL_SRC_ADDR_LO
-    LDA #$04
-    STA SCRL_SRC_ADDR_HI
-
-    ; Initialize destination pointer to line 0 ($0400)
-    STZ SCRL_DEST_ADDR_LO
-    LDA #$04
-    STA SCRL_DEST_ADDR_HI
-
-    ; Copy 960 bytes using 16-bit counter
-    LDX #$03                    ; High byte of counter (960 = $03C0)
-    LDA #$C0                    ; Low byte of counter
-    STA SCRL_BYTE_CNT           ; Use dedicated scroll counter
-
+    LDX #$00
 SCROLL_LOOP:
-    LDA (SCRL_SRC_ADDR_LO)      ; Read from source (65C02 zero-page indirect)
-    STA (SCRL_DEST_ADDR_LO)     ; Write to destination
-
-    ; Increment both pointers
-    INC SCRL_SRC_ADDR_LO
-    BNE SCROLL_NO_SRC_CARRY
-    INC SCRL_SRC_ADDR_HI
-
-SCROLL_NO_SRC_CARRY:
-    INC SCRL_DEST_ADDR_LO
-    BNE SCROLL_NO_DEST_CARRY
-    INC SCRL_DEST_ADDR_HI
-
-SCROLL_NO_DEST_CARRY:
-    DEC SCRL_BYTE_CNT           ; Decrement 16-bit counter
-    LDA SCRL_BYTE_CNT
-    CMP #$FF
+    LDA $0428,X                 ; page 0: row 1 -> row 0
+    STA $0400,X
+    LDA $0528,X                 ; page 1
+    STA $0500,X
+    LDA $0628,X                 ; page 2
+    STA $0600,X
+    LDA $0728,X                 ; page 3
+    STA $0700,X
+    INX
     BNE SCROLL_LOOP
-    DEX                         ; Decrement high byte
-    BPL SCROLL_LOOP             ; Continue if not negative
 
     ; Clear line 24
     LDY #SCREEN_WIDTH-1
@@ -562,6 +526,18 @@ CLEAR_SCREEN_LOOP:
 
     RTS
 
+; Scroll up one line and re-home the cursor/screen pointer to the bottom line.
+; Shared by PRINT_CHAR's line-wrap and carriage-return scroll paths.
+SCROLL_AND_HOME_BOTTOM:
+    JSR SCROLL_SCREEN           ; Scroll everything up one line
+    LDA #SCREEN_HEIGHT-1        ; Stay on bottom line (Y = 24)
+    STA CURSOR_Y
+    LDA #<($0400 + 24 * 40)     ; Screen pointer to start of bottom line ($07C0)
+    STA SCREEN_PTR_LO
+    LDA #>($0400 + 24 * 40)
+    STA SCREEN_PTR_HI
+    RTS
+
 ; Print a single character to screen at current cursor position
 ; Input: A = character to print (ASCII value)
 ; Output: Character displayed on screen, cursor and screen pointer advanced
@@ -608,17 +584,7 @@ PRINT_CHAR_NO_CARRY:
     BCC PRINT_CHAR_DONE         ; If not, we're done
 
     ; Need to scroll
-    JSR SCROLL_SCREEN           ; Scroll everything up one line
-
-    ; Stay on bottom line
-    LDA #SCREEN_HEIGHT-1        ; Set Y to 24 (last line)
-    STA CURSOR_Y
-
-    ; Adjust screen pointer to start of bottom line
-    LDA #<($0400 + 24 * 40)     ; $07C0
-    STA SCREEN_PTR_LO
-    LDA #>($0400 + 24 * 40)
-    STA SCREEN_PTR_HI
+    JSR SCROLL_AND_HOME_BOTTOM  ; scroll up one line and re-home to the bottom line
 
 PRINT_CHAR_DONE:
     RTS
@@ -651,17 +617,7 @@ PRINT_CHAR_NEWLINE:
     BCC PRINT_CHAR_NEWLINE_DONE ; If not, we're done
 
     ; Need to scroll
-    JSR SCROLL_SCREEN           ; Scroll everything up one line
-
-    ; Stay on bottom line
-    LDA #SCREEN_HEIGHT-1        ; Set Y to 24 (last line)
-    STA CURSOR_Y
-
-    ; Adjust screen pointer to start of bottom line
-    LDA #<($0400 + 24 * 40)     ; $07C0
-    STA SCREEN_PTR_LO
-    LDA #>($0400 + 24 * 40)
-    STA SCREEN_PTR_HI
+    JSR SCROLL_AND_HOME_BOTTOM  ; scroll up one line and re-home to the bottom line
 
 PRINT_CHAR_NEWLINE_DONE:
     PLA                         ; Pull Y register from stack
@@ -1015,21 +971,11 @@ SAVE_CMD_SKIP:
 PRINT_CURRENT_ADDRESS:
     ; Print high byte
     LDA MON_CURRADDR_HI         ; Load high byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
-    PHA                         ; Save second character
-    LDA MON_HEX_TEMP            ; Get first hex character
-    JSR PRINT_CHAR              ; Print it
-    PLA                         ; Restore second character
-    JSR PRINT_CHAR              ; Print it
+    JSR PRINT_HEX_BYTE          ; Print byte as two hex digits
 
     ; Print low byte
     LDA MON_CURRADDR_LO         ; Load low byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
-    PHA                         ; Save second character
-    LDA MON_HEX_TEMP            ; Get first hex character
-    JSR PRINT_CHAR              ; Print it
-    PLA                         ; Restore second character
-    JSR PRINT_CHAR              ; Print it
+    JSR PRINT_HEX_BYTE          ; Print byte as two hex digits
     RTS
 
 ; Unified monitor prompt printing routine
@@ -1645,8 +1591,7 @@ PRINT_ERROR_MSG:
     ; Print syntax error message
     LDA #<MSG_SYNTAX_ERROR
     LDY #>MSG_SYNTAX_ERROR
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Print value error message for invalid hex values
 ; Modifies: A, X, Y
@@ -1654,8 +1599,7 @@ PRINT_VALUE_ERROR:
     ; Print value error message
     LDA #<MSG_VALUE_ERROR
     LDY #>MSG_VALUE_ERROR
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Print range error message for invalid address ranges
 ; Modifies: A, X, Y
@@ -1663,8 +1607,7 @@ PRINT_RANGE_ERROR:
     ; Print range error message
     LDA #<MSG_RANGE_ERROR
     LDY #>MSG_RANGE_ERROR
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Validate address range (start <= end)
 ; Input: MON_CURRADDR_HI/LO (start address), MON_ENDADDR_HI/LO (end address)
@@ -1792,14 +1735,12 @@ CMD_LAUNCH_BASIC:
 BASIC_NOT_FOUND:
     LDA #<MSG_NO_BASIC
     LDY #>MSG_NO_BASIC
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 BASIC_SIG_FAIL:
     LDA #<MSG_BASIC_SIG_FAIL
     LDY #>MSG_BASIC_SIG_FAIL
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; ----------------------------------------------------------------
 ; RETURN_FROM_BASIC
@@ -1834,18 +1775,9 @@ RETURN_FROM_BASIC:
 ; Modifies: A, X
 ; Note: This is a one-shot command that returns to command prompt
 CMD_CLEAR_SCREEN:
-    JSR CLEAR_SCREEN            ; Call the unrolled clear screen routine
-
-    ; Reset cursor position to top-left
-    STZ CURSOR_X                ; Reset cursor X to 0
-    STZ CURSOR_Y                ; Reset cursor Y to 0
-
-    ; Reset screen pointer to start of screen memory
-    LDA #<SCREEN_START          ; Load low byte of screen start ($00)
-    STA SCREEN_PTR_LO           ; Store in screen pointer
-    LDA #>SCREEN_START          ; Load high byte of screen start ($04)
-    STA SCREEN_PTR_HI           ; Store in screen pointer
-    RTS
+    ; CLEAR_SCREEN already resets the cursor and screen pointer before its RTS,
+    ; so just tail-call it (its RTS returns to the parser).
+    JMP CLEAR_SCREEN
 
 ; Stack dump command - Display complete stack memory with paging support
 ; Input: None (dumps entire stack page $0100-$01FF regardless of current address)
@@ -1949,20 +1881,10 @@ CMD_DECIMAL_TO_HEX:
 
     ; Display result in hex
     LDA DEC_RESULT_HI
-    JSR BYTE_TO_HEX_PAIR
-    PHA
-    LDA MON_HEX_TEMP
-    JSR PRINT_CHAR
-    PLA
-    JSR PRINT_CHAR
+    JSR PRINT_HEX_BYTE
 
     LDA DEC_RESULT_LO
-    JSR BYTE_TO_HEX_PAIR
-    PHA
-    LDA MON_HEX_TEMP
-    JSR PRINT_CHAR
-    PLA
-    JSR PRINT_CHAR
+    JSR PRINT_HEX_BYTE
 
     JSR PRINT_NEWLINE
     RTS
@@ -2239,8 +2161,7 @@ CMD_SHOW_HELP:
 PRINT_HELP_HEADER:
     LDA #<MSG_HELP_HEADER
     LDY #>MSG_HELP_HEADER
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Print the help body text
 ; Modifies X
@@ -2325,13 +2246,10 @@ CMD_READ_SINGLE:
 ; Modifies: A, and all registers depending on user program
 ; Note: Uses JSR so user program can RTS to return to monitor
 CMD_RUN_PROGRAM:
-    ; Call user program (this pushes return address)
-    JSR RUN_USER_PROGRAM
-
-    ; User program returns here
-    RTS
-
-RUN_USER_PROGRAM:
+    ; Jump straight to the user program. CMD_RUN_PROGRAM is entered via the
+    ; parser's JMP dispatch (it has no return address of its own on the stack),
+    ; so the user program's RTS returns directly to the monitor — one fewer
+    ; stack level than the old JSR-wrapper indirection.
     JMP (MON_CURRADDR_LO)       ; Jump to user program
 
 ; Load file command - Load binary file from host system to specified memory address
@@ -2371,8 +2289,7 @@ LOAD_CMD_SUCCESS:
     ; Show success message
     LDA #<MSG_SUCCESS
     LDY #>MSG_SUCCESS
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Save file command - Save memory range to binary file on host system
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, filename in FILE_NAME_BUF
@@ -2431,8 +2348,7 @@ SAVE_CMD_SUCCESS:
     ; Show success message
     LDA #<MSG_SUCCESS
     LDY #>MSG_SUCCESS
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 
 ; Dump memory range in formatted hex display with paging support
@@ -2545,12 +2461,7 @@ SHOW_WRITE_ADDRESS:
 
 ; Print the current byte value at address
     LDA (MON_CURRADDR_LO)       ; Load byte (65C02 zero-page indirect)
-    JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
-    PHA                         ; Save second character (in A)
-    LDA MON_HEX_TEMP            ; Get first hex character
-    JSR PRINT_CHAR              ; Print it
-    PLA                         ; Restore second character
-    JSR PRINT_CHAR              ; Print it
+    JSR PRINT_HEX_BYTE          ; Print byte as two hex digits
 
     JSR PRINT_NEWLINE_PAGED     ; End with newline
     RTS
@@ -2731,8 +2642,7 @@ FILL_DONE:
     ; Print success message
     LDA #<MSG_SUCCESS
     LDY #>MSG_SUCCESS
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Move/Copy memory command - Copy or move memory block between addresses
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, destination in MON_DEST_ADDR_HI/LO, mode in MON_COPY_MODE (0=copy, 1=move)
@@ -3005,8 +2915,7 @@ MOVE_SUCCESS:
     ; distinct "COPIED/MOVED N BYTES" output was never implemented.)
     LDA #<MSG_SUCCESS
     LDY #>MSG_SUCCESS
-    JSR PRINT_MSG_AY
-    RTS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Search memory command - Search for multi-byte hex pattern within memory range
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, search pattern in MON_SEARCH_PATTERN, pattern length in MON_PATTERN_LEN
