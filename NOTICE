@@ -1,0 +1,37 @@
+Derived from EhBASIC
+====================
+
+The BASIC interpreter in this project -- "MFC BASIC" (src/kernel/basic.asm,
+built into basic.rom) -- is Derived from EhBASIC (Enhanced BASIC) by Lee
+Davison. This work started from EhBASIC version 2.22p5.
+
+This NOTICE, and the "Derived from EhBASIC" string embedded in the BASIC
+sign-on banner, are provided to satisfy the EhBASIC distribution terms below.
+
+
+Original EhBASIC license (applies to the original EhBASIC code)
+---------------------------------------------------------------
+
+  EhBASIC is free but not copyright free. For non commercial use there is only
+  one restriction, any derivative work should include, in any binary image
+  distributed, the string "Derived from EhBASIC" and in any distribution that
+  includes human readable files a file that includes the above string in a
+  human readable form e.g. not as a comment in an HTML file.
+
+  For commercial use please contact me, Lee Davison, at
+  leeedavison@googlemail.com for conditions.
+
+Lee Davison has since passed away. The original EhBASIC code retains its
+original license as stated above.
+
+
+Modifications
+-------------
+
+Modifications made in this repository (patches, the kernel/host integration,
+human-readable .bas LOAD/SAVE support, and any further changes) are distributed
+under the GNU General Public License, version 3 (GPLv3). See the GPLv3 text at
+https://www.gnu.org/licenses/gpl-3.0.txt.
+
+Note: this project's history begins from EhBASIC 2.22p5 (an already-patched
+release), not a pristine 2.22 source tree.

@@ -8217,7 +8217,8 @@ LAB_MSZM:
 
 LAB_SMSG:
       .byte " Bytes free",$0D,$0A,$0A
-      .byte "Enhanced BASIC 2.22p5",$0A,$00
+      .byte "MFC BASIC v1.0",$0D,$0A
+      .byte "Derived from EhBASIC 2.22p5",$0A,$00
 
 ; numeric constants and series
 

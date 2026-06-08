@@ -24,7 +24,7 @@ The 6502 Monitor provides a comprehensive set of commands for memory manipulatio
 ### BASIC Interpreter
 
 #### B: BASIC
-- **Purpose**: Launch the built-in EhBASIC interpreter
+- **Purpose**: Launch the built-in MFC BASIC interpreter (derived from EhBASIC)
 - **Format**: `B:`
 - **Notes**: Transfers control to EhBASIC; exiting BASIC returns to the monitor. BASIC programs can be saved/loaded as human-readable `.bas` text via BASIC's own SAVE/LOAD.
 

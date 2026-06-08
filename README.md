@@ -15,7 +15,7 @@ This project implements a complete 6502-based computer system kernel for emulate
 - Complete 6502 assembly language kernel optimized for emulated environments
 - Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
 - Interactive monitor with comprehensive debugging tools
-- Built-in EhBASIC interpreter, launched with the `B:` command (with human-readable `.bas` LOAD/SAVE)
+- Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched with the `B:` command (with human-readable `.bas` LOAD/SAVE)
 - Memory manipulation and program execution capabilities
 - Streamlined architecture with universal commands and simplified modes
 - File I/O operations for loading and saving programs
@@ -55,7 +55,7 @@ The command reference provides comprehensive documentation for all monitor comma
 |----------|----------|-------------|
 | **Memory Operations** | [R:](docs/read_command.md), [W:](docs/write_command.md), [F:](docs/fill_command.md), [M:](docs/move_copy_command.md), [X:](docs/search_command.md) | Read, write, fill, move/copy, and search memory |
 | **Program Operations** | [G:](docs/run_command.md), [L:](docs/load_command.md), [S:](docs/save_command.md) | Execute, load, and save programs |
-| **BASIC** | B: | Launch the built-in EhBASIC interpreter |
+| **BASIC** | B: | Launch the built-in MFC BASIC interpreter |
 | **Number Conversion** | [D:](docs/decimal_to_hex_command.md), [H:](docs/hex_to_decimal_command.md) | Convert between decimal and hexadecimal |
 | **Display Commands** | C:, T:, Z: | Clear screen, show stack, show zero page |
 | **System Commands** | ?, ESC, . | Help, exit mode, command recall |
@@ -64,7 +64,7 @@ The command reference provides comprehensive documentation for all monitor comma
 
 Commands are listed alphabetically by command letter (matching the on-screen `?` help):
 
-- **B: BASIC** - Launch the built-in EhBASIC interpreter (returns to the monitor on exit)
+- **B: BASIC** - Launch the built-in MFC BASIC interpreter (returns to the monitor on exit)
 - **C: Clear Screen** - Clear the display
 - **D: Decimal to Hex** - Convert decimal (0-65535) to hexadecimal format
 - **F: Fill Memory** - High-performance memory filling with progress feedback
@@ -96,7 +96,7 @@ The monitor provides clear, consistent error messages:
 - **$0200-$03FF**: Monitor variables and command buffers
 - **$0400-$07E7**: Screen memory (40x25 display buffer)
 - **$0800-$AFFF**: User RAM (EhBASIC program/variable space)
-- **$B000-$DFFF**: EhBASIC interpreter ROM (12 KB)
+- **$B000-$DFFF**: MFC BASIC interpreter ROM (12 KB; derived from EhBASIC)
 - **$DC00-$DC22**: PIA registers (keyboard input, file I/O, timer IRQ)
 - **$E000-$FFFF**: Kernel ROM (8 KB window; ~3,962 bytes used, rest free for growth)
 
