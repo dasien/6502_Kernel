@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-07
-; Version:      2.2.3
+; Version:      2.2.4
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -89,6 +89,10 @@
 ;                   replacing the runtime hex table with computed NIBBLE_TO_ASCII;
 ;                   removed dead ADDR_TO_HEX_QUAD; used 65C02 (zp) indirect on the
 ;                   PRINT_CHAR / scroll hot paths; moved cursor-save slots to RAM.
+; 2026-06-08  v2.2.4 65C02 idiom modernization (behavior-preserving): PHX/PHY/PLX/PLY
+;                   register saves; INC A; (zp) zero-page-indirect on the fill,
+;                   write, dump, and show-address paths; BRA for in-range jumps;
+;                   and a complete STZ pass for zeroing memory/variables.
 ;
 ; ================================================================
 
@@ -311,8 +315,7 @@ RANDOM_RETRY:
     CMP RNG_MAX             ; Compare to max
     BCS RANDOM_RETRY        ; If >= max, try again
 
-    CLC
-    ADC #$01                ; Make it 1-based (1 to RNG_MAX)
+    INC A                   ; Make it 1-based (1 to RNG_MAX) — 65C02 INC accumulator
 
     PLY
     PLX
@@ -470,11 +473,9 @@ HEX_QUAD_ERROR:
 
 ; Scroll screen up by one line (40 characters)
 SCROLL_SCREEN:
-    ; Save registers
-    TXA
-    PHA
-    TYA
-    PHA
+    ; Save registers (65C02 PHX/PHY; A is also preserved, harmless)
+    PHX
+    PHY
 
     ; Initialize source pointer to line 1 ($0428)
     LDA #$28
@@ -483,8 +484,7 @@ SCROLL_SCREEN:
     STA SCRL_SRC_ADDR_HI
 
     ; Initialize destination pointer to line 0 ($0400)
-    LDA #$00
-    STA SCRL_DEST_ADDR_LO
+    STZ SCRL_DEST_ADDR_LO
     LDA #$04
     STA SCRL_DEST_ADDR_HI
 
@@ -525,10 +525,8 @@ CLEAR_BOTTOM:
     BPL CLEAR_BOTTOM
 
     ; Restore registers
-    PLA
-    TAY
-    PLA
-    TAX
+    PLY
+    PLX
     RTS
 
 ; Clears all 1024 bytes of screen memory (4 pages of 256 bytes each)
@@ -559,9 +557,8 @@ CLEAR_SCREEN_LOOP:
     STA SCREEN_PTR_HI
 
     ; Reset cursor position to (0, 0)
-    LDA #$00
-    STA CURSOR_X
-    STA CURSOR_Y
+    STZ CURSOR_X
+    STZ CURSOR_Y
 
     RTS
 
@@ -602,8 +599,7 @@ PRINT_CHAR_NO_CARRY:
     BCC PRINT_CHAR_DONE         ; If not, we're done
 
     ; Handle line wrap: reset X to 0, increment Y
-    LDA #$00
-    STA CURSOR_X                ; Reset X to 0
+    STZ CURSOR_X                ; Reset X to 0
     INC CURSOR_Y                ; Move to next line
 
     ; Check if we need to scroll screen
@@ -646,8 +642,7 @@ PRINT_CHAR_NEWLINE:
     STA SCREEN_PTR_HI           ; Store result
 
     ; Update cursor position
-    LDA #$00                    ; Reset X to beginning of line
-    STA CURSOR_X
+    STZ CURSOR_X                ; Reset X to beginning of line
     INC CURSOR_Y                ; Move to next line
 
     ; Check if we need to scroll screen
@@ -741,8 +736,7 @@ PRINT_NEWLINE_PAGED:
     JSR HANDLE_PAGE_BREAK
 
     ; Reset counter for next page
-    LDA #0
-    STA CMD_LINE_COUNT
+    STZ CMD_LINE_COUNT
 
 PRINT_NEWLINE_PAGED_DONE:
     RTS
@@ -849,8 +843,7 @@ GET_NO_KEY:
 ; Modifies: A, X, Y, MON_CMDBUF, MON_CMDLEN
 ; Note: Supports backspace editing, 80 char limit, lowercase to uppercase conversion, '.' recall
 READ_COMMAND_LINE:
-    LDA #$00                    ; Clear accumulator
-    STA MON_CMDLEN              ; Reset command length
+    STZ MON_CMDLEN              ; Reset command length
     LDX #$00                    ; Reset buffer index
 
 READ_CMD_LOOP:
@@ -905,8 +898,7 @@ READ_CMD_BACKSPACE:
     BEQ READ_CMD_LOOP           ; If empty, ignore backspace
     DEX                         ; Move back one position
     STX MON_CMDLEN              ; Update command length
-    LDA #$00                    ; Load null character
-    STA MON_CMDBUF,X            ; Clear the character in buffer
+    STZ MON_CMDBUF,X            ; Clear the character in buffer
     LDA #ASCII_BACKSPACE        ; Print backspace
     JSR PRINT_CHAR              ; PRINT_CHAR now handles backspace correctly
     JMP READ_CMD_LOOP           ; Continue reading
@@ -923,8 +915,7 @@ READ_CMD_ESCAPE:
     RTS
 
 READ_CMD_CANCEL:
-    LDA #$00                    ; Clear accumulator
-    STA MON_CMDLEN              ; Reset command length
+    STZ MON_CMDLEN              ; Reset command length
     LDX #$00                    ; Reset buffer index
 
 READ_CMD_CLEAR_LOOP:
@@ -938,8 +929,7 @@ READ_CMD_CLEAR_LOOP:
 
 READ_CMD_DONE_CR:
     ; Command is complete - null terminate it
-    LDA #$00                    ; Load null terminator
-    STA MON_CMDBUF,X            ; Null terminate the command
+    STZ MON_CMDBUF,X            ; Null terminate the command
     JSR PRINT_NEWLINE           ; Move to next line on screen
     RTS
 
@@ -957,10 +947,9 @@ RECALL_LAST_COMMAND:
 
     ; Clear current command buffer first
     LDX #$00
-    LDA #$00
 
 RECALL_CLEAR_LOOP:
-    STA MON_CMDBUF,X            ; Clear buffer position
+    STZ MON_CMDBUF,X            ; Clear buffer position
     INX
     CPX #MON_CMDBUF_LEN         ; Check if we've cleared enough
     BNE RECALL_CLEAR_LOOP
@@ -976,7 +965,7 @@ RECALL_COPY_LOOP:
     STA MON_CMDBUF,X            ; Store in current command buffer
     JSR PRINT_CHAR              ; Echo character to screen
     INX                         ; Move to next character
-    JMP RECALL_COPY_LOOP        ; Continue copying
+    BRA RECALL_COPY_LOOP        ; Continue copying
 
 RECALL_COPY_DONE:
     ; Update current command length
@@ -1008,7 +997,7 @@ SAVE_CMD_COPY_LOOP:
     LDA MON_CMDBUF,X            ; Load character from current command buffer
     STA MON_LAST_CMD_BUF,X      ; Store in last command buffer
     INX                         ; Move to next character
-    JMP SAVE_CMD_COPY_LOOP      ; Continue copying
+    BRA SAVE_CMD_COPY_LOOP      ; Continue copying
 
 SAVE_CMD_COPY_DONE:
     ; Update last command length
@@ -1076,9 +1065,8 @@ PRINT_ADDRESS_ONLY:
 ; Note: Uses jump table for command dispatch, validates command syntax and parameters
 PARSE_COMMAND:
     ; Initialize parser state
-    LDA #$00
-    STA MON_PARSE_PTR
-    STA MON_ERROR_FLAG
+    STZ MON_PARSE_PTR
+    STZ MON_ERROR_FLAG
     LDA MON_CMDLEN
     STA MON_PARSE_LEN
 
@@ -1351,9 +1339,8 @@ PARSE_COLON_COMMAND:
     PHA
 
     ; Clear end address to ensure single address commands work correctly
-    LDA #$00
-    STA MON_ENDADDR_LO
-    STA MON_ENDADDR_HI
+    STZ MON_ENDADDR_LO
+    STZ MON_ENDADDR_HI
 
     LDX #$01                    ; Position after command character
     LDA MON_CMDBUF,X            ; Load second character
@@ -1532,8 +1519,7 @@ PARSE_MOVE_GET_MODE:
     JMP PARSE_MOVE_ERROR_JMP    ; Neither, error
 
 PARSE_MOVE_MODE_COPY:
-    LDA #$00                    ; Copy mode
-    STA MON_COPY_MODE
+    STZ MON_COPY_MODE           ; Copy mode (0)
     CLC                         ; Clear carry for success
     RTS
 
@@ -1569,8 +1555,7 @@ PARSE_SEARCH_PARAMS:
 
 PARSE_SEARCH_GET_PATTERN:
     ; Parse hex pattern bytes (1-16 bytes)
-    LDA #$00                    ; Initialize pattern length
-    STA MON_PATTERN_LEN
+    STZ MON_PATTERN_LEN         ; Initialize pattern length
     LDY #$00                    ; Pattern buffer index
 
 PARSE_SEARCH_PATTERN_LOOP:
@@ -1633,7 +1618,7 @@ PARSE_FILENAME_COPY_LOOP:
     STA FILE_NAME_BUF,Y         ; Store in file name buffer
     INX                         ; Move to next source character
     INY                         ; Move to next destination character
-    JMP PARSE_FILENAME_COPY_LOOP ; Continue copying
+    BRA PARSE_FILENAME_COPY_LOOP ; Continue copying
 
 PARSE_FILENAME_COPIED:
     ; Check if we have at least one character
@@ -1725,10 +1710,8 @@ RANGE_VALID:
 ; ----------------------------------------------------------------
 SAVE_MONITOR_STATE:
     PHA                     ; Preserve A
-    TXA
-    PHA                     ; Preserve X
-    TYA
-    PHA                     ; Preserve Y
+    PHX                     ; Preserve X (65C02)
+    PHY                     ; Preserve Y (65C02)
 
     ; Save cursor position (restored after BASIC returns)
     LDA CURSOR_X
@@ -1737,10 +1720,8 @@ SAVE_MONITOR_STATE:
     STA MON_SCRN_Y_SAVE
 
     ; Restore registers
-    PLA
-    TAY
-    PLA
-    TAX
+    PLY                     ; (65C02) pull in reverse order: Y, X, A
+    PLX
     PLA
     RTS
 
@@ -1756,13 +1737,12 @@ RESTORE_MONITOR_STATE:
     ; (Can't restore old SP because it contains stale return address)
 
     ; Clear monitor command buffer (CRITICAL!)
-    LDA #$00
-    STA MON_CMDPTR
-    STA MON_CMDLEN
+    STZ MON_CMDPTR
+    STZ MON_CMDLEN
 
     LDX #MON_CMDBUF_LEN-1
 CLEAR_CMD_BUF_LOOP:
-    STA MON_CMDBUF,X
+    STZ MON_CMDBUF,X
     DEX
     BPL CLEAR_CMD_BUF_LOOP
 
@@ -1857,9 +1837,8 @@ CMD_CLEAR_SCREEN:
     JSR CLEAR_SCREEN            ; Call the unrolled clear screen routine
 
     ; Reset cursor position to top-left
-    LDA #$00
-    STA CURSOR_X                ; Reset cursor X to 0
-    STA CURSOR_Y                ; Reset cursor Y to 0
+    STZ CURSOR_X                ; Reset cursor X to 0
+    STZ CURSOR_Y                ; Reset cursor Y to 0
 
     ; Reset screen pointer to start of screen memory
     LDA #<SCREEN_START          ; Load low byte of screen start ($00)
@@ -1887,13 +1866,11 @@ CMD_DUMP_STACK:
     LDA MON_CURRADDR_HI
     STA MON_DEST_ADDR_HI
 
-    LDA #0
-    STA CMD_LINE_COUNT          ; Reset command line counter
-    STA PAGE_ABORT_FLAG         ; Reset abort flag
+    STZ CMD_LINE_COUNT          ; Reset command line counter
+    STZ PAGE_ABORT_FLAG         ; Reset abort flag
 
     ; Set up for memory dump of stack area
-    LDA #$00                    ; Start address low byte
-    STA MON_STARTADDR_LO
+    STZ MON_STARTADDR_LO        ; Start address low byte
     LDA #$01                    ; Start address high byte
     STA MON_STARTADDR_HI
     LDA #$FF                    ; End address low byte
@@ -1923,19 +1900,15 @@ CMD_DUMP_ZERO_PAGE:
     LDA MON_CURRADDR_HI
     PHA
 
-    LDA #0
-    STA CMD_LINE_COUNT          ; Reset command line counter
-    STA PAGE_ABORT_FLAG         ; Reset abort flag
+    STZ CMD_LINE_COUNT          ; Reset command line counter
+    STZ PAGE_ABORT_FLAG         ; Reset abort flag
 
     ; Set up for memory dump of zero page
-    LDA #$00                    ; Start address low byte
-    STA MON_STARTADDR_LO
-    LDA #$00                    ; Start address high byte
-    STA MON_STARTADDR_HI
+    STZ MON_STARTADDR_LO        ; Start address low byte
+    STZ MON_STARTADDR_HI        ; Start address high byte
     LDA #$FF                    ; End address low byte
     STA MON_ENDADDR_LO
-    LDA #$00                    ; End address high byte
-    STA MON_ENDADDR_HI
+    STZ MON_ENDADDR_HI          ; End address high byte
     JSR DUMP_MEMORY_RANGE       ; Use common memory dump routine
 
     ; Restore current address
@@ -2250,9 +2223,8 @@ PRINT_DEC_DIGIT:
 ; Note: Uses paging - user can press ESC to abort or ENTER to continue pages
 CMD_SHOW_HELP:
     ; Reset line counter for paging
-    LDA #0
-    STA CMD_LINE_COUNT          ; Reset command line counter
-    STA PAGE_ABORT_FLAG         ; Reset abort flag
+    STZ CMD_LINE_COUNT          ; Reset command line counter
+    STZ PAGE_ABORT_FLAG         ; Reset abort flag
 
     ; Print comprehensive help for all monitor commands
     JSR PRINT_HELP_HEADER       ; Print "6502 MONITOR COMMANDS"
@@ -2321,9 +2293,8 @@ CMD_WRITE_MODE:
 ; Note: Single address shows "XXXX: YY" format, range shows 8-byte lines with paging
 CMD_READ_MEMORY:
 
-    LDA #0
-    STA CMD_LINE_COUNT          ; Reset command line counter
-    STA PAGE_ABORT_FLAG         ; Reset abort flag
+    STZ CMD_LINE_COUNT          ; Reset command line counter
+    STZ PAGE_ABORT_FLAG         ; Reset abort flag
 
     ; Check if we have end address (range operation)
     LDA MON_ENDADDR_HI          ; Check if end address is set
@@ -2471,8 +2442,7 @@ SAVE_CMD_SUCCESS:
 ; Note: Supports paging - user can ESC to abort, shows address: data format
 DUMP_MEMORY_RANGE:
     ; Initialize line counter
-    LDA #$00
-    STA MON_LINE_COUNT
+    STZ MON_LINE_COUNT
 
     ; Copy start address to current address
     LDA MON_STARTADDR_LO
@@ -2499,9 +2469,7 @@ CONTINUE_DUMP:
     LDA #ASCII_SPACE
     JSR PRINT_CHAR
 
-    LDY #$00                    ; Byte counter for this line
-    TYA
-    STA MON_BYTE_COUNT          ; Initialize byte counter for this line
+    STZ MON_BYTE_COUNT          ; Initialize byte counter for this line
 
 DUMP_PRINT_BYTES:
     ; Check if we've gone past end address
@@ -2518,8 +2486,8 @@ DUMP_PRINT_BYTES:
     JMP DUMP_RANGE_DONE         ; We're past the end, done
 
 DUMP_PRINT_BYTE:
-    ; Load byte from memory (Y=0) and print as two hex digits
-    LDA (MON_CURRADDR_LO),Y
+    ; Load byte from memory and print as two hex digits (65C02 zp indirect)
+    LDA (MON_CURRADDR_LO)
     JSR PRINT_HEX_BYTE
 
     ; Check if this is the last byte
@@ -2576,8 +2544,7 @@ SHOW_WRITE_ADDRESS:
     JSR PRINT_CHAR
 
 ; Print the current byte value at address
-    LDY #$00                    ; Use Y=0 for indirect addressing
-    LDA (MON_CURRADDR_LO),Y     ; Load byte from current address
+    LDA (MON_CURRADDR_LO)       ; Load byte (65C02 zero-page indirect)
     JSR BYTE_TO_HEX_PAIR        ; Convert to hex pair
     PHA                         ; Save second character (in A)
     LDA MON_HEX_TEMP            ; Get first hex character
@@ -2593,8 +2560,7 @@ SHOW_WRITE_ADDRESS:
 ; Modifies: A, X, Y
 WRITE_MODE_LOOP:
     ; Initialize byte count for this write operation
-    LDA #$00                    ; Clear byte count
-    STA MON_BYTE_COUNT
+    STZ MON_BYTE_COUNT          ; Clear byte count
 
     ; Save starting address for old/new value display
     LDA MON_CURRADDR_LO         ; Save current address as start
@@ -2631,7 +2597,7 @@ WRITE_MODE_PARSE_LOOP:
     CMP #ASCII_SPACE            ; Is it a space?
     BNE WRITE_MODE_PARSE_BYTE   ; If not, try to parse byte
     INX                         ; Skip space
-    JMP WRITE_MODE_PARSE_LOOP   ; Continue
+    BRA WRITE_MODE_PARSE_LOOP   ; Continue
 
 WRITE_MODE_PARSE_BYTE:
     ; Parse two-character hex byte
@@ -2639,8 +2605,7 @@ WRITE_MODE_PARSE_BYTE:
     BCS WRITE_MODE_ERROR        ; If error, show error message
 
     ; Store the byte at current address
-    LDY #$00                    ; Use Y=0 for indirect addressing
-    STA (MON_CURRADDR_LO),Y     ; Store byte at current address
+    STA (MON_CURRADDR_LO)       ; Store byte (65C02 zero-page indirect)
 
     ; Increment byte count and current address
     INC MON_BYTE_COUNT          ; Increment byte count
@@ -2650,7 +2615,7 @@ WRITE_MODE_PARSE_BYTE:
 
 WRITE_MODE_NO_CARRY:
     ; Continue parsing more bytes in the same input line
-    JMP WRITE_MODE_PARSE_LOOP
+    BRA WRITE_MODE_PARSE_LOOP
 
 WRITE_MODE_SHOW_RESULT:
     ; Display old and new values if any bytes were written
@@ -2729,7 +2694,7 @@ CMD_FILL_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS FILL_RANGE_ERROR        ; If invalid range, show error
-    JMP FILL_RANGE_VALID        ; Continue with valid range
+    BRA FILL_RANGE_VALID        ; Continue with valid range
 
 FILL_RANGE_ERROR:
     JSR PRINT_RANGE_ERROR       ; Print range error message
@@ -2737,12 +2702,11 @@ FILL_RANGE_ERROR:
 
 FILL_RANGE_VALID:
     ; Perform fill operation
-    LDY #$00                    ; Initialize Y index
     LDA MON_FILL_VALUE          ; Load fill value
 
 FILL_LOOP:
     ; Fill byte at current address
-    STA (MON_CURRADDR_LO),Y     ; Store fill value at current address
+    STA (MON_CURRADDR_LO)       ; Store fill value (65C02 zero-page indirect)
 
     ; Check if we've reached end address
     LDA MON_CURRADDR_HI
@@ -2761,7 +2725,7 @@ FILL_CONTINUE:
 
 FILL_NO_CARRY:
     LDA MON_FILL_VALUE         ; Reload fill value
-    JMP FILL_LOOP              ; Continue filling
+    BRA FILL_LOOP              ; Continue filling
 
 FILL_DONE:
     ; Print success message
@@ -2779,7 +2743,7 @@ CMD_MOVE_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS MOVE_RANGE_ERROR        ; If invalid range, show error
-    JMP MOVE_RANGE_VALID        ; Continue with valid range
+    BRA MOVE_RANGE_VALID        ; Continue with valid range
 
 MOVE_RANGE_ERROR:
     JSR PRINT_RANGE_ERROR       ; Print range error message
@@ -3017,7 +2981,7 @@ MOVE_CLEAR_CONTINUE:
     INC MON_CURRADDR_LO
     BNE MOVE_CLEAR_LOOP
     INC MON_CURRADDR_HI
-    JMP MOVE_CLEAR_LOOP
+    BRA MOVE_CLEAR_LOOP
 
 MOVE_CLEAR_DONE:
     JMP MOVE_SUCCESS            ; Show success message
@@ -3057,14 +3021,13 @@ CMD_SEARCH_MEMORY:
     PHA
 
     ; Initialize line counter and abort flag for paging
-    LDA #0
-    STA CMD_LINE_COUNT          ; Reset command line counter
-    STA PAGE_ABORT_FLAG         ; Reset abort flag
+    STZ CMD_LINE_COUNT          ; Reset command line counter
+    STZ PAGE_ABORT_FLAG         ; Reset abort flag
 
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS SEARCH_RANGE_ERROR      ; If invalid range, show error
-    JMP SEARCH_RANGE_VALID      ; Continue with valid range
+    BRA SEARCH_RANGE_VALID      ; Continue with valid range
 
 SEARCH_RANGE_ERROR:
     ; Restore original current address before error exit
