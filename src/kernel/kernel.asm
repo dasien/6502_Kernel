@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-07
-; Version:      2.2.2
+; Version:      2.2.3
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,15 +15,15 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~3989 bytes
-;   CODE segment:  $E000-$EF79 (3962 bytes)
+; ROM (Used):      ~3909 bytes
+;   CODE segment:  $E000-$EF29 (3882 bytes)
 ;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
-; Zero Page:    $14-$39 (38 bytes used) - relocated to avoid the EhBASIC
-;               interpreter, which uses $00-$13 and ~$5B-$FF
+; Zero Page:    $14-$24 + $35-$39 (22 bytes used) - relocated to avoid the
+;               EhBASIC interpreter, which uses $00-$13 and ~$5B-$FF
 ;   Monitor:    $14-$24 (17 bytes) - core variables
-;   HEX_LOOKUP: $25-$34 (16 bytes) - hex digit lookup table
+;   (free):     $25-$34 (16 bytes) - was the hex lookup table; now computed
 ;   DEC_*:      $35-$39 (5 bytes)  - decimal conversion workspace
 ;
 ; RAM Usage:    $0200-$02DD
@@ -81,6 +81,14 @@
 ;                   binary->BCD algorithm using the CPU's decimal mode (fixed
 ;                   16 iterations) instead of repeated DIVIDE_BY_10 subtraction
 ;                   (up to ~7300 passes for $FFFF); removed the dead DIVIDE_BY_10.
+; 2026-06-08  v2.2.3 Bug fixes: D: decimal overflow no longer corrupts the stack
+;                   (unbalanced PLA); M: now copies AND clears correctly when the
+;                   destination overlaps the source (incl. dest == source-end) so
+;                   no bytes are lost; bare ESC at the prompt is a clean no-op.
+;                   Optimizations: reclaimed 16 zero-page bytes ($25-$34) by
+;                   replacing the runtime hex table with computed NIBBLE_TO_ASCII;
+;                   removed dead ADDR_TO_HEX_QUAD; used 65C02 (zp) indirect on the
+;                   PRINT_CHAR / scroll hot paths; moved cursor-save slots to RAM.
 ;
 ; ================================================================
 
@@ -114,7 +122,12 @@ CMD_LINE_COUNT     = $21           ; Lines printed by current command (was $0D)
 PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
 RNG_SEED           = $23           ; Random number generator seed (was $0F)
 RNG_MAX            = $24           ; Maximum value for random number (was $10)
-HEX_LOOKUP_TABLE   = $25           ; Hex lookup table (16 bytes: $25-$34) (was $F0-$FF)
+; $25-$34 was the runtime hex lookup table; now reclaimed (NIBBLE_TO_ASCII
+; computes hex digits). $25-$28 reused as M: move scratch; $29-$34 free.
+MOVE_DEST_LO       = $25           ; M: captured original destination low (copy mutates MON_DEST_ADDR)
+MOVE_DEST_HI       = $26           ; M: captured original destination high
+MOVE_DEND_LO       = $27           ; M: destination end = dest + (end - start), low
+MOVE_DEND_HI       = $28           ; M: destination end high
 DEC_TEMP_LO        = $35           ; Decimal conversion temporary low byte
 DEC_TEMP_HI        = $36           ; Decimal conversion temporary high byte
 DEC_DIGIT_IDX      = $37           ; Decimal digit index/counter
@@ -155,6 +168,8 @@ MON_SEARCH_PATTERN = $027D         ; Search pattern buffer (16 bytes: $027D-$028
 MON_PATTERN_LEN    = $028D         ; Search pattern length (1-16 bytes) (was $0274)
 MON_LAST_CMD_BUF   = $028E         ; Last command buffer (80 bytes: $028E-$02DD) (was $0275-$02C4)
 MON_LAST_CMD_LEN   = $02DE         ; Last command length (1 byte) (was $02C5)
+MON_SCRN_X_SAVE    = $02DF         ; Saved cursor X across a BASIC session (RAM, not ROM)
+MON_SCRN_Y_SAVE    = $02E0         ; Saved cursor Y across a BASIC session (RAM, not ROM)
 
 ; Monitor Mode Constants
 MON_MODE_CMD       = 0             ; Command mode
@@ -231,36 +246,8 @@ RESET:
 ZP_CLEAR_LOOP:
     STZ $00,X               ; Clear zero page location
     INX                     ; Increment address
-    CPX #$F0                ; Stop before hex table (and prevent wrap)
+    CPX #$F0                ; Stop at $F0 to leave BASIC's high zero page ($F0-$FF) alone
     BNE ZP_CLEAR_LOOP       ; Loop until done
-
-; Initialize hex lookup table with "0123456789ABCDEF" at $F0-$FF
-; Modifies: A, X
-INIT_HEX_LOOKUP:
-    LDX #$00                    ; Start with 0
-
-INIT_HEX_DIGIT_LOOP:
-    TXA                         ; Get current index (0-15)
-    CMP #$0A                    ; Is it 0-9?
-    BCS INIT_HEX_LETTER         ; No, it's A-F
-
-    ; Handle 0-9
-    CLC
-    ADC #'0'                    ; Add ASCII '0' ($30)
-    JMP STORE_HEX_CHAR
-
-INIT_HEX_LETTER:
-    ; Handle A-F (index 10-15)
-    SEC
-    SBC #$0A                    ; Subtract 10 (gives 0-5)
-    CLC
-    ADC #'A'                    ; Add ASCII 'A' ($41)
-
-STORE_HEX_CHAR:
-    STA HEX_LOOKUP_TABLE,X      ; Store at $F0+X
-    INX
-    CPX #$10                    ; Done all 16?
-    BNE INIT_HEX_DIGIT_LOOP
 
 ; ================================================================
 ; RAM INITIALIZATION
@@ -416,30 +403,31 @@ HEX_PAIR_TO_BYTE:
 HEX_PAIR_ERROR:
     RTS
 
-; Convert byte to two ASCII hex characters using lookup table
+; Convert byte to two ASCII hex characters
 ; Input: A = byte value (0-255)
 ; Output: High nibble hex char in MON_HEX_TEMP, low nibble hex char in A
-; Modifies: A, X, MON_HEX_TEMP
-; Note: Uses HEX_LOOKUP_TABLE for fast conversion, used by address display routines
+; Modifies: A, MON_HEX_TEMP (preserves X, Y)
+; Note: uses NIBBLE_TO_ASCII; used by address/byte display routines
 BYTE_TO_HEX_PAIR:
-    PHX                         ; Push X to stack
     PHA                         ; Save original byte
+    LSR A                       ; high nibble -> low 4 bits
+    LSR A
+    LSR A
+    LSR A
+    JSR NIBBLE_TO_ASCII         ; high-nibble hex char
+    STA MON_HEX_TEMP            ; store first character
+    PLA                         ; restore original byte
+    AND #$0F                    ; low nibble
+    JMP NIBBLE_TO_ASCII         ; tail call: low-nibble hex char returned in A
 
-    ; Convert high nibble
-    LSR A                       ; Shift right 4 times
-    LSR A
-    LSR A
-    LSR A
-    TAX                         ; Use as index
-    LDA HEX_LOOKUP_TABLE,X      ; Get hex char from lookup
-    STA MON_HEX_TEMP            ; Store first character
-
-    ; Convert low nibble
-    PLA                         ; Restore original byte
-    AND #$0F                    ; Keep only low nibble
-    TAX                         ; Use as index
-    LDA HEX_LOOKUP_TABLE,X      ; Get hex char from lookup
-    PLX                         ; Restore X
+; Convert a nibble (A = 0-15) to its ASCII hex character ('0'-'9' or 'A'-'F').
+; Replaces the old runtime HEX_LOOKUP_TABLE. Modifies A (and flags); preserves X, Y.
+NIBBLE_TO_ASCII:
+    CMP #$0A                    ; 0-9 or A-F?
+    BCC NIBBLE_IS_DIGIT
+    ADC #$06                    ; carry set => +7 total, maps $0A-$0F to $11-$16
+NIBBLE_IS_DIGIT:
+    ADC #'0'                    ; +$30 => '0'-'9' or 'A'-'F'
     RTS
 
 ; Print the byte in A as two ASCII hex digits directly to the screen.
@@ -450,13 +438,11 @@ PRINT_HEX_BYTE:
     LSR A
     LSR A
     LSR A
-    TAX
-    LDA HEX_LOOKUP_TABLE,X      ; High-nibble hex char
+    JSR NIBBLE_TO_ASCII         ; High-nibble hex char
     JSR PRINT_CHAR
     PLA                         ; Restore the byte
     AND #$0F                    ; Low nibble
-    TAX
-    LDA HEX_LOOKUP_TABLE,X      ; Low-nibble hex char
+    JSR NIBBLE_TO_ASCII         ; Low-nibble hex char
     JMP PRINT_CHAR              ; Tail call: PRINT_CHAR's RTS returns to caller
 
 ; Convert four ASCII hex characters to 16-bit address
@@ -477,30 +463,6 @@ HEX_QUAD_TO_ADDR:
 HEX_QUAD_ERROR:
     RTS
 
-; Convert 16-bit address to four ASCII hex characters
-; Input: MON_CURRADDR_HI/LO = 16-bit address
-; Output: Four characters stored starting at MON_CMDBUF,X
-;         X = X + 4 (points to position after the four characters)
-ADDR_TO_HEX_QUAD:
-    LDA MON_CURRADDR_HI         ; Load high byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to two hex chars
-    PHA                         ; Save second character (in A)
-    LDA MON_HEX_TEMP            ; Get first character
-    STA MON_CMDBUF,X            ; Store in buffer
-    INX                         ; Move to next position
-    PLA                         ; Restore second character
-    STA MON_CMDBUF,X            ; Store in buffer
-    INX                         ; Move to next position
-    LDA MON_CURRADDR_LO         ; Load low byte
-    JSR BYTE_TO_HEX_PAIR        ; Convert to two hex chars
-    PHA                         ; Save second character (in A)
-    LDA MON_HEX_TEMP            ; Get first character
-    STA MON_CMDBUF,X            ; Store in buffer
-    INX                         ; Move to next position
-    PLA                         ; Restore second character
-    STA MON_CMDBUF,X            ; Store in buffer
-    INX                         ; Move to next position
-    RTS
 
 ; ================================================================
 ; MONITOR SCREEN OUTPUT AND INPUT ROUTINES
@@ -532,9 +494,8 @@ SCROLL_SCREEN:
     STA SCRL_BYTE_CNT           ; Use dedicated scroll counter
 
 SCROLL_LOOP:
-    LDY #$00                    ; Y must be 0 for indirect addressing
-    LDA (SCRL_SRC_ADDR_LO),Y    ; Read from source
-    STA (SCRL_DEST_ADDR_LO),Y   ; Write to destination
+    LDA (SCRL_SRC_ADDR_LO)      ; Read from source (65C02 zero-page indirect)
+    STA (SCRL_DEST_ADDR_LO)     ; Write to destination
 
     ; Increment both pointers
     INC SCRL_SRC_ADDR_LO
@@ -623,10 +584,7 @@ PRINT_CHAR_CHECK_BS:
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ PRINT_CHAR_BACKSPACE    ; Handle backspace
 
-    STY MON_MSG_TMP_POS         ; Save Y register to memory
-    LDY #$00                    ; Y=0 for indirect addressing
-    STA (SCREEN_PTR_LO),Y       ; Store character (A still has the character!)
-    LDY MON_MSG_TMP_POS         ; Restore Y from memory
+    STA (SCREEN_PTR_LO)         ; Store character (65C02 zero-page indirect; Y untouched)
 
     ; Advance screen pointer
     INC SCREEN_PTR_LO           ; Increment low byte
@@ -752,16 +710,9 @@ PRINT_BACKSPACE_NO_BORROW:
     DEC SCREEN_PTR_LO           ; Decrement low byte
 
 PRINT_BACKSPACE_CLEAR_CHAR:
-    ; Save Y register to memory variable (like normal character printing)
-    STY MON_MSG_TMP_POS         ; Save Y register to memory
-
-    ; Clear the character at new position by writing space
-    LDY #$00                    ; Y=0 for indirect addressing
+    ; Clear the character at the new position by writing a space.
     LDA #ASCII_SPACE            ; Load space character
-    STA (SCREEN_PTR_LO),Y       ; Store space at previous position
-
-    ; Restore Y register
-    LDY MON_MSG_TMP_POS         ; Restore Y from memory
+    STA (SCREEN_PTR_LO)         ; Store space (65C02 zero-page indirect; Y untouched)
     RTS                         ; Done with backspace
 
 ; Print a newline (carriage return)
@@ -1144,6 +1095,10 @@ PARSE_CMD_START:
     CMP #'?'                    ; ASCII $3F
     BEQ PARSE_CMD_HELP_DIRECT   ; Jump directly to help
 
+    ; ESC at the command prompt is a clean exit/no-op, not a syntax error
+    CMP #ASCII_ESC
+    BEQ PARSE_CMD_EXIT_DIRECT
+
     ; Quick range check - is it between 'B' and 'Z'?
     CMP #$42                    ; 'B'
     BCC PARSE_CMD_ERROR_JMP     ; Less than 'B' - jump to local error handler
@@ -1169,6 +1124,10 @@ PARSE_CMD_START:
 PARSE_CMD_HELP_DIRECT:
     ; Direct jump to help for '?' character
     JMP PARSE_CMD_HELP
+
+PARSE_CMD_EXIT_DIRECT:
+    ; Direct jump to the clean-exit handler for a bare ESC
+    JMP PARSE_CMD_EXIT
 
 ; Local error handler for range check jumps (within branch range)
 PARSE_CMD_ERROR_JMP:
@@ -1751,11 +1710,11 @@ RANGE_VALID:
 ; BASIC INTEGRATION - STATE MANAGEMENT
 ; ================================================================
 
-; Monitor state save area (stores state during BASIC execution)
-MONITOR_SP_SAVE:        .RES 1     ; Stack pointer
-MONITOR_SCREEN_X_SAVE:  .RES 1     ; Cursor X position
-MONITOR_SCREEN_Y_SAVE:  .RES 1     ; Cursor Y position
-MONITOR_MODE_SAVE:      .RES 1     ; Monitor mode
+; The monitor's saved cursor position lives in page-2 RAM (MON_SCRN_X/Y_SAVE),
+; not in the ROM, so the writes below actually persist on real hardware. Only
+; the cursor is saved: SP is reset by the caller after BASIC returns (the old SP
+; would hold a stale return address), and the mode is forced back to command
+; mode on restore, so neither needs saving.
 
 ; ----------------------------------------------------------------
 ; SAVE_MONITOR_STATE
@@ -1771,19 +1730,11 @@ SAVE_MONITOR_STATE:
     TYA
     PHA                     ; Preserve Y
 
-    ; Save stack pointer
-    TSX
-    STX MONITOR_SP_SAVE
-
-    ; Save cursor position
+    ; Save cursor position (restored after BASIC returns)
     LDA CURSOR_X
-    STA MONITOR_SCREEN_X_SAVE
+    STA MON_SCRN_X_SAVE
     LDA CURSOR_Y
-    STA MONITOR_SCREEN_Y_SAVE
-
-    ; Save monitor mode
-    LDA MON_MODE
-    STA MONITOR_MODE_SAVE
+    STA MON_SCRN_Y_SAVE
 
     ; Restore registers
     PLA
@@ -1816,9 +1767,9 @@ CLEAR_CMD_BUF_LOOP:
     BPL CLEAR_CMD_BUF_LOOP
 
     ; Restore cursor position
-    LDA MONITOR_SCREEN_X_SAVE
+    LDA MON_SCRN_X_SAVE
     STA CURSOR_X
-    LDA MONITOR_SCREEN_Y_SAVE
+    LDA MON_SCRN_Y_SAVE
     STA CURSOR_Y
 
     ; Restore monitor mode to command mode
@@ -2093,7 +2044,7 @@ PARSE_DEC_LOOP:
 
     ; Handle carry to high byte
     INC DEC_RESULT_HI
-    BEQ PARSE_DEC_OVERFLOW      ; If wrapped to 0, overflow
+    BEQ PARSE_DEC_RANGE_ERR     ; If wrapped to 0, overflow (digit already popped)
 
 PARSE_DEC_NO_CARRY:
     INX
@@ -2109,8 +2060,11 @@ PARSE_DEC_INVALID:
     RTS
 
 PARSE_DEC_OVERFLOW:
-    ; Overflow detected - this is a range error
-    PLA
+    ; Reached from the MULTIPLY_BY_10 overflow path with the digit still pushed.
+    PLA                         ; discard the pushed digit to balance the stack
+PARSE_DEC_RANGE_ERR:
+    ; Overflow detected - this is a range error. Entered directly (no PLA) from
+    ; the high-byte-carry path, where the digit has already been pulled.
     LDA #$01
     STA MON_ERROR_FLAG
     JSR PRINT_RANGE_ERROR       ; Use standard error printer
@@ -2852,6 +2806,28 @@ MOVE_RANGE_VALID:
     LDA MON_CURRADDR_HI
     STA MON_STARTADDR_HI
 
+    ; Capture the original destination range now, before the copy loops mutate
+    ; MON_DEST_ADDR. The move-mode source clear uses it to avoid zeroing bytes
+    ; that overlap the destination. dest_end = dest + (end - start).
+    LDA MON_DEST_ADDR_LO
+    STA MOVE_DEST_LO
+    LDA MON_DEST_ADDR_HI
+    STA MOVE_DEST_HI
+    SEC                         ; delta = end - start (into MOVE_DEND)
+    LDA MON_ENDADDR_LO
+    SBC MON_STARTADDR_LO
+    STA MOVE_DEND_LO
+    LDA MON_ENDADDR_HI
+    SBC MON_STARTADDR_HI
+    STA MOVE_DEND_HI
+    CLC                         ; dest_end = dest + delta
+    LDA MOVE_DEND_LO
+    ADC MOVE_DEST_LO
+    STA MOVE_DEND_LO
+    LDA MOVE_DEND_HI
+    ADC MOVE_DEST_HI
+    STA MOVE_DEND_HI
+
     ; Check for overlapping memory regions
     ; If destination is between source start and end, we need backward copy
     LDA MON_DEST_ADDR_HI        ; Compare dest with source start
@@ -2870,7 +2846,8 @@ MOVE_CHECK_OVERLAP:
     BNE MOVE_FORWARD            ; dest > end, no overlap
     LDA MON_DEST_ADDR_LO
     CMP MON_ENDADDR_LO
-    BCC MOVE_BACKWARD           ; dest <= end, overlaps, need backward copy
+    BCC MOVE_BACKWARD           ; dest < end, overlaps, need backward copy
+    BEQ MOVE_BACKWARD           ; dest == end, still overlaps (forward would clobber)
 
 MOVE_FORWARD:
     ; Forward copy: copy from start to end
@@ -2993,21 +2970,41 @@ MOVE_CLEAR_CHECK:
     LDA MON_COPY_MODE
     BEQ MOVE_SUCCESS            ; Copy mode (0), skip clearing
 
-    ; Move mode (1): clear source memory
-    ; Restore original source range
+    ; Move mode (1): clear only the VACATED source bytes. Bytes that now fall
+    ; within the destination [MOVE_DEST, MOVE_DEND] hold the moved data and must
+    ; not be zeroed (this is what makes an overlapping move preserve all bytes).
     LDA MON_STARTADDR_LO
     STA MON_CURRADDR_LO
     LDA MON_STARTADDR_HI
     STA MON_CURRADDR_HI
 
-    LDY #$00                    ; Initialize Y index
-    LDA #$00                    ; Clear value
-
 MOVE_CLEAR_LOOP:
-    ; Clear byte at current source address
-    STA (MON_CURRADDR_LO),Y     ; Store zero at source address
+    ; Clear the current byte unless it lies within [MOVE_DEST, MOVE_DEND].
+    LDA MON_CURRADDR_HI         ; cur < dest -> vacated, clear
+    CMP MOVE_DEST_HI
+    BCC MOVE_CLEAR_DO
+    BNE MOVE_CLEAR_CHK_END      ; cur_hi > dest_hi -> cur >= dest
+    LDA MON_CURRADDR_LO
+    CMP MOVE_DEST_LO
+    BCC MOVE_CLEAR_DO           ; cur < dest -> clear
 
-    ; Check if we've reached end address
+MOVE_CLEAR_CHK_END:
+    ; cur >= dest: clear only if cur > dest_end
+    LDA MOVE_DEND_HI
+    CMP MON_CURRADDR_HI
+    BCC MOVE_CLEAR_DO           ; dest_end < cur -> clear
+    BNE MOVE_CLEAR_NEXT         ; dest_end_hi > cur_hi -> within -> keep
+    LDA MOVE_DEND_LO
+    CMP MON_CURRADDR_LO
+    BCC MOVE_CLEAR_DO           ; dest_end < cur -> clear
+    BCS MOVE_CLEAR_NEXT         ; dest_end >= cur -> within -> keep
+
+MOVE_CLEAR_DO:
+    LDA #$00
+    STA (MON_CURRADDR_LO)       ; clear source byte (65C02 zero-page indirect)
+
+MOVE_CLEAR_NEXT:
+    ; Reached the end of the source range?
     LDA MON_CURRADDR_HI
     CMP MON_ENDADDR_HI
     BCC MOVE_CLEAR_CONTINUE     ; Current < end (high), continue
@@ -3017,14 +3014,10 @@ MOVE_CLEAR_LOOP:
     BCS MOVE_CLEAR_DONE         ; Current >= end (low), done
 
 MOVE_CLEAR_CONTINUE:
-    ; Increment current address
     INC MON_CURRADDR_LO
-    BNE MOVE_CLEAR_NO_CARRY
+    BNE MOVE_CLEAR_LOOP
     INC MON_CURRADDR_HI
-
-MOVE_CLEAR_NO_CARRY:
-    LDA #$00                    ; Reload clear value
-    JMP MOVE_CLEAR_LOOP         ; Continue clearing
+    JMP MOVE_CLEAR_LOOP
 
 MOVE_CLEAR_DONE:
     JMP MOVE_SUCCESS            ; Show success message

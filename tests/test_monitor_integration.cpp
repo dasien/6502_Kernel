@@ -42,6 +42,10 @@ public:
         testZeroPageCommand();
         testHexToDecimal();
         testDecimalToHex();
+        testDecimalOverflowNoCorruption();
+        testMoveDestEqualsEnd();
+        testMoveOverlapClearKeepsData();
+        testEscAtPromptNoError();
 
         // Print summary
         printSummary();
@@ -131,6 +135,21 @@ private:
         }
         std::cout << std::endl;
         return ok;
+    }
+
+    // Verify the screen does NOT contain a given substring (e.g. an error msg).
+    bool verifyAbsent(const std::string& unwanted, const std::string& test_name) {
+        bool found = getScreenText().find(unwanted) != std::string::npos;
+        std::cout << std::left << std::setw(30) << test_name << ": "
+                  << (found ? "FAIL" : "PASS");
+        if (found) {
+            std::cout << " (unexpected '" << unwanted << "')";
+            tests_failed++;
+        } else {
+            tests_passed++;
+        }
+        std::cout << std::endl;
+        return !found;
     }
 
     // Verify a command did NOT produce a range error on a freshly cleared screen.
@@ -334,6 +353,55 @@ private:
         clearScreen();
         sendCommand("D:258");
         verifyResponse("$0102", "Dec->Hex 258");
+    }
+
+    // Regression: D: overflow must not corrupt the stack. "D:65536" drives the
+    // high-byte-carry overflow path (65530 + 6) that previously did an unbalanced
+    // PLA and trashed the return address. The monitor must survive: a following
+    // command still produces its expected output.
+    void testDecimalOverflowNoCorruption() {
+        clearScreen();
+        sendCommand("D:65536");          // overflow -> RANGE? but must NOT crash
+        clearScreen();
+        sendCommand("H:00FF");           // if the stack was corrupted, this never runs
+        verifyResponse("#255", "D: overflow does not corrupt stack");
+    }
+
+    // Regression: M: with dest == source-end must use the backward copy. Forward
+    // copy would clobber source[end] before reading it. Set $0900-$0902 = AA BB CC,
+    // copy that 3-byte range to dest $0902 (== end); $0904 must end up CC.
+    void testMoveDestEqualsEnd() {
+        computer.getMemory()->write(0x0900, 0xAA);
+        computer.getMemory()->write(0x0901, 0xBB);
+        computer.getMemory()->write(0x0902, 0xCC);
+        clearScreen();
+        sendCommand("M:0900-0902,0902,0");   // copy, dest == end
+        verifyMemEquals(0x0904, 0xCC, "M: dest==end uses backward copy");
+        verifyMemEquals(0x0903, 0xBB, "M: dest==end middle byte");
+        verifyMemEquals(0x0902, 0xAA, "M: dest==end overlap byte");
+    }
+
+    // Regression: an overlapping MOVE (mode 1) must clear only the VACATED
+    // source bytes, not the bytes that now hold moved data. Mirrors the reported
+    // case: fill $0900-$0907 with FF, move to $0907 (dest == source-end). All 8
+    // bytes must survive at $0907-$090E; only $0900-$0906 are cleared.
+    void testMoveOverlapClearKeepsData() {
+        for (uint16_t a = 0x0900; a <= 0x0907; ++a)
+            computer.getMemory()->write(a, 0xFF);
+        clearScreen();
+        sendCommand("M:0900-0907,0907,1");        // move, dest == end (overlap)
+        verifyMemEquals(0x0906, 0x00, "M: overlap move clears vacated byte");
+        verifyMemEquals(0x0907, 0xFF, "M: overlap move keeps dest-start byte");
+        verifyMemEquals(0x090E, 0xFF, "M: overlap move keeps dest-end byte");
+        verifyMemEquals(0x090F, 0x00, "M: overlap move leaves past-dest clear");
+    }
+
+    // Regression: a bare ESC at the command prompt is a clean no-op, not ERROR?.
+    void testEscAtPromptNoError() {
+        clearScreen();
+        computer.getPia()->addKeypress(27);   // ESC at an empty prompt
+        computer.run(20000);
+        verifyAbsent("ERROR", "ESC at prompt is a no-op (no ERROR?)");
     }
 
     void printSummary() {
