@@ -188,6 +188,8 @@ private:
         clearScreen();
         sendCommand("?");
         verifyResponse("MONITOR COMMANDS", "Help Command Display");
+        // The '?' and '.' meta-commands are now listed too (v2.2.6).
+        verifyResponse("RECALL LAST COMMAND", "Help lists the . recall command");
     }
 
     void testFillCommand() {

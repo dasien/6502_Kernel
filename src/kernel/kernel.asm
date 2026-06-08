@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-07
-; Version:      2.2.5
+; Version:      2.2.6
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,8 +15,8 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~3764 bytes
-;   CODE segment:  $E000-$EE98 (3737 bytes)
+; ROM (Used):      ~3807 bytes
+;   CODE segment:  $E000-$EEC3 (3780 bytes)
 ;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
@@ -98,6 +98,10 @@
 ;                   collapsed to tail calls; shared SCROLL_AND_HOME_BOTTOM helper.
 ;                   SCROLL_SCREEN rewritten as absolute,X page copies (~18 bytes
 ;                   smaller, faster, frees the $1C-$20 scroll zero-page vars).
+; 2026-06-08  v2.2.6 Maintainability: the ? help now also lists the ? and .
+;                   commands; named ASCII_COMMA and the '>'/'W' literals; fixed
+;                   stale MON_MODE / jump-table / FILL+MOVE comments; inlined the
+;                   READ_MEMORY_RANGE / SHOW_READ_ADDRESS pass-through wrappers.
 ;
 ; ================================================================
 
@@ -152,7 +156,7 @@ MON_CMDBUF_LEN     = 80            ; Maximum command buffer length
 ; BASIC uses $0200-$0268, Monitor command buffer $0200-$024F overlaps but is inactive during BASIC mode
 MON_CMDPTR         = $0269         ; Pointer to current position in command buffer (was $0250)
 MON_CMDLEN         = $026A         ; Current length of command in buffer (was $0251)
-MON_MODE           = $026B         ; Current monitor mode (0=Command, 1=Write, 2=Read, 3=Run) (was $0252)
+MON_MODE           = $026B         ; Current monitor mode (0=Command, 1=Write) (was $0252)
 MON_STARTADDR_LO   = $026C         ; Start address for range operations (low) (was $0253)
 MON_STARTADDR_HI   = $026D         ; Start address for range operations (high) (was $0254)
 MON_ENDADDR_LO     = $026E         ; End address for range operations (low) (was $0255)
@@ -195,6 +199,7 @@ ASCII_CR           = $0D           ; Carriage return
 ASCII_LF           = $0A           ; Line feed
 ASCII_SPACE        = $20           ; Space
 ASCII_COLON        = $3A           ; Colon ':'
+ASCII_COMMA        = $2C           ; Comma ',' (field separator)
 ASCII_DASH         = $2D           ; Dash '-'
 ASCII_BACKSPACE    = $08           ; Backspace character
 ASCII_DELETE       = $7F           ; Delete character
@@ -994,7 +999,7 @@ PRINT_MONITOR_PROMPT:
 
 PRINT_ADDRESS_ONLY:
     JSR PRINT_CURRENT_ADDRESS   ; Print current address
-    LDA #$3E                    ; '>' character
+    LDA #'>'                    ; Prompt character
     JSR PRINT_CHAR
     LDA #ASCII_SPACE            ; Space after prompt
     JSR PRINT_CHAR
@@ -1309,7 +1314,7 @@ PARSE_COLON_COMMAND:
     LDA MON_CMDBUF,X            ; Load next character
     CMP #ASCII_DASH             ; Is it a dash?
     BEQ PARSE_RANGE             ; If dash, parse range
-    CMP #$2C                    ; Is it a comma?
+    CMP #ASCII_COMMA                    ; Is it a comma?
     BEQ PARSE_COLON_SUCCESS     ; If comma, single address with parameters
 
     ; Check if we're at end of command (valid single address)
@@ -1393,7 +1398,7 @@ SKIP_SPACES_END:
 EXPECT_COMMA:
     JSR SKIP_SPACES
     BCS EXPECT_COMMA_FAIL       ; ran off the end before a comma
-    CMP #$2C                    ; comma separator?
+    CMP #ASCII_COMMA                    ; comma separator?
     BNE EXPECT_COMMA_FAIL
     INX                         ; consume the comma
     JMP SKIP_SPACES             ; tail call: skip trailing spaces, return its carry
@@ -2227,18 +2232,16 @@ CMD_READ_MEMORY:
     BCS CMD_READ_RANGE_ERROR    ; If invalid range, show error
 
 CMD_READ_RANGE_VALID:
-    ; Display memory range with 8-byte formatting
-    JSR READ_MEMORY_RANGE       ; Display the range with read-specific formatting
-    RTS
+    ; Display memory range with 8-byte hex line formatting
+    JMP DUMP_MEMORY_RANGE       ; tail call (RTS returns to the parser)
 
 CMD_READ_RANGE_ERROR:
-    JSR PRINT_RANGE_ERROR       ; Print ?RANGE message
+    JSR PRINT_RANGE_ERROR       ; Print RANGE? message
     RTS
 
 CMD_READ_SINGLE:
     ; Single address - show single byte in format "xxxx: bb"
-    JSR SHOW_READ_ADDRESS       ; Use read-specific display routine
-    RTS
+    JMP SHOW_WRITE_ADDRESS      ; tail call: same address+byte display as write mode
 
 ; Run program command - Transfer control to user program at specified address
 ; Input: Execution address in MON_CURRADDR_HI/LO (parsed from G:xxxx command)
@@ -2571,34 +2574,10 @@ WRITE_MODE_DONE:
     STA MON_MODE                ; Update mode
     RTS
 
-; ================================================================
-; MONITOR READ MODE IMPLEMENTATION
-; ================================================================
-
-; Display single address and value for read mode
-; Input: Address in MON_CURRADDR_HI/LO
-; Modifies: A, X, Y
-SHOW_READ_ADDRESS:
-    ; Display current address in XXXX: YY format (same as write mode)
-    JSR SHOW_WRITE_ADDRESS      ; Reuse write mode display logic
-    RTS
-
-; Read mode memory range display with 8-byte line formatting
-; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
-; Modifies: A, X, Y
-READ_MEMORY_RANGE:
-    ; This is essentially the same as DUMP_MEMORY_RANGE but could be
-    ; customized for read-specific formatting in the future
-    JSR DUMP_MEMORY_RANGE       ; Use common memory dump with 8-byte formatting
-    RTS
-
-
-
-
 
 ; Fill memory command - Fill specified memory range with a single byte value
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, fill value in MON_FILL_VALUE
-; Output: Memory range filled with specified byte, success message with byte count
+; Output: Memory range filled with specified byte; prints OK on success
 ; Modifies: A, X, Y, and memory in specified range
 ; Note: Validates address range, uses forward-fill algorithm, displays progress
 CMD_FILL_MEMORY:
@@ -2646,7 +2625,7 @@ FILL_DONE:
 
 ; Move/Copy memory command - Copy or move memory block between addresses
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, destination in MON_DEST_ADDR_HI/LO, mode in MON_COPY_MODE (0=copy, 1=move)
-; Output: Memory block copied/moved to destination, source optionally cleared if move, success message with byte count
+; Output: Memory block copied/moved to destination, source cleared if move; prints OK on success
 ; Modifies: A, X, Y, and memory at destination and optionally source
 ; Note: Handles overlapping regions correctly, validates ranges, clears source if move mode
 CMD_MOVE_MEMORY:
@@ -3122,21 +3101,23 @@ NMI_HANDLER_BREAK:
 ; COMMAND JUMP TABLES - For fast command dispatch
 ; ================================================================
 
-; Compact jump table - only valid commands
-; Maps B,C,F,G,H,L,M,R,S,T,W,X,Z to indices 0-12
+; Compact jump table of command handler addresses, indexed by the slot number
+; that CMD_INDEX_MAP assigns to each command letter. Slots 4 and 11 are not
+; produced by CMD_INDEX_MAP (the '?' help and ESC commands are handled before
+; this table is consulted), so those two entries are unused.
 CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_BASIC      ; 0 - 'B'
     .BYTE <PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE <PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE <PARSE_CMD_GO_CHECK   ; 3 - 'G'
-    .BYTE <PARSE_CMD_HELP       ; 4 - 'H' (old help, kept for compatibility)
+    .BYTE <PARSE_CMD_HELP       ; 4 - unused (help is the '?' command, handled earlier)
     .BYTE <PARSE_CMD_LOAD_CHECK ; 5 - 'L'
     .BYTE <PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE <PARSE_CMD_READ_CHECK ; 7 - 'R'
     .BYTE <PARSE_CMD_SAVE_CHECK ; 8 - 'S'
     .BYTE <PARSE_CMD_STACK      ; 9 - 'T'
     .BYTE <PARSE_CMD_WRITE_CHECK; 10 - 'W'
-    .BYTE <PARSE_CMD_EXIT       ; 11 - 'X'
+    .BYTE <PARSE_CMD_EXIT       ; 11 - unused (ESC handled earlier)
     .BYTE <PARSE_CMD_ZERO       ; 12 - 'Z'
     .BYTE <PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
     .BYTE <PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
@@ -3147,14 +3128,14 @@ CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE >PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE >PARSE_CMD_GO_CHECK   ; 3 - 'G'
-    .BYTE >PARSE_CMD_HELP       ; 4 - 'H' (old help, kept for compatibility)
+    .BYTE >PARSE_CMD_HELP       ; 4 - unused (help is the '?' command, handled earlier)
     .BYTE >PARSE_CMD_LOAD_CHECK ; 5 - 'L'
     .BYTE >PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE >PARSE_CMD_READ_CHECK ; 7 - 'R'
     .BYTE >PARSE_CMD_SAVE_CHECK ; 8 - 'S'
     .BYTE >PARSE_CMD_STACK      ; 9 - 'T'
     .BYTE >PARSE_CMD_WRITE_CHECK; 10 - 'W'
-    .BYTE >PARSE_CMD_EXIT       ; 11 - 'ESC' (keep existing)
+    .BYTE >PARSE_CMD_EXIT       ; 11 - unused (ESC handled earlier)
     .BYTE >PARSE_CMD_ZERO       ; 12 - 'Z'
     .BYTE >PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
     .BYTE >PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
@@ -3195,7 +3176,7 @@ CMD_INDEX_MAP:
 ; ================================================================
 MODE_PREFIX_TABLE:
     .BYTE 0         ; MON_MODE_CMD = 0: No prefix (just address>)
-    .BYTE $57       ; MON_MODE_WRITE = 1: 'W' (W:address>)
+    .BYTE 'W'       ; MON_MODE_WRITE = 1: 'W' (W:address>)
 
 ; ================================================================
 ; HELP MESSAGE TABLE - Addresses of help messages for display
@@ -3218,8 +3199,10 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_SEARCH       ; X
     .WORD MSG_HELP_ZERO         ; Z
     .WORD MSG_HELP_EXIT         ; ESC
+    .WORD MSG_HELP_HELP         ; ?
+    .WORD MSG_HELP_RECALL       ; .
 
-HELP_MSG_COUNT = 15              ; Number of help messages
+HELP_MSG_COUNT = 17              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
@@ -3240,6 +3223,8 @@ MSG_HELP_FILL:       .BYTE "F:XXXX-YYYY,ZZ FILL MEMORY", 0
 MSG_HELP_MOVE:       .BYTE "M:XXXX-YYYY,ZZZZ,B (B:0=COPY 1=MOVE)", 0
 MSG_HELP_SEARCH:     .BYTE "X:XXXX-YYYY,PATTERN SEARCH MEMORY", 0
 MSG_HELP_EXIT:       .BYTE "ESC    EXIT CURRENT MODE", 0
+MSG_HELP_HELP:       .BYTE "?      SHOW THIS HELP", 0
+MSG_HELP_RECALL:     .BYTE ".      RECALL LAST COMMAND", 0
 MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
