@@ -125,3 +125,16 @@ add_test(NAME validate_memory_layout
     COMMAND ${CMAKE_COMMAND}
     -DMAP_FILE=${CMAKE_BINARY_DIR}/kernel/kernel.map
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/validate_memory_layout.cmake)
+
+# Drift guard: the canonical 65C02 opcode table (docs/opcode_table_65c02.md and
+# src/kernel/devtools/opcodes_65c02.inc) is generated from CPU6502's handler map.
+# This test regenerates in --check mode and fails if the committed table is stale,
+# so the assembler/disassembler table can never silently diverge from the CPU.
+find_program(PYTHON3_EXECUTABLE NAMES python3 python)
+if(PYTHON3_EXECUTABLE)
+    add_test(NAME opcode_table_current
+        COMMAND ${PYTHON3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tools/gen_opcode_table.py --check)
+else()
+    message(WARNING "python3 not found - skipping opcode_table_current test")
+endif()
