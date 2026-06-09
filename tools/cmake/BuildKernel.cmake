@@ -65,6 +65,30 @@ if(CA65_FOUND AND LD65_FOUND)
         VERBATIM
     )
 
+    # ================================================================
+    # DEV TOOLS Module ROM Build Target (module bank 2)
+    # ================================================================
+
+    set(DEVTOOLS_DIR ${CMAKE_SOURCE_DIR}/src/kernel/devtools)
+    set(DEVTOOLS_ASM_SOURCE ${DEVTOOLS_DIR}/devtools.asm)
+    set(DEVTOOLS_CONFIG ${DEVTOOLS_DIR}/devtools_memory.cfg)
+    set(DEVTOOLS_INC ${DEVTOOLS_DIR}/opcodes_65c02.inc)
+
+    set(DEVTOOLS_OBJECT ${CMAKE_BINARY_DIR}/kernel/devtools.o)
+    set(DEVTOOLS_ROM ${CMAKE_BINARY_DIR}/kernel/devtools.rom)
+    set(DEVTOOLS_MAP ${CMAKE_BINARY_DIR}/kernel/devtools.map)
+
+    # -I DEVTOOLS_DIR so .include "opcodes_65c02.inc" resolves.
+    add_custom_target(devtools_rom ALL
+        COMMAND ca65 ${DEVTOOLS_ASM_SOURCE} -I ${DEVTOOLS_DIR} -o ${DEVTOOLS_OBJECT}
+        COMMAND ld65 -C ${DEVTOOLS_CONFIG} ${DEVTOOLS_OBJECT} -o ${DEVTOOLS_ROM} -m ${DEVTOOLS_MAP}
+        COMMAND ${CMAKE_COMMAND} -E echo "DEV TOOLS module ROM built (bank 2)"
+        COMMENT "Building DEV TOOLS module ROM"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+        DEPENDS ${DEVTOOLS_ASM_SOURCE} ${DEVTOOLS_CONFIG} ${DEVTOOLS_INC}
+        VERBATIM
+    )
+
 else()
     message(WARNING "cc65 toolchain not found. Please install ca65 and ld65 to build kernel ROM automatically.")
     message(STATUS "You can manually build the kernel ROM with:")

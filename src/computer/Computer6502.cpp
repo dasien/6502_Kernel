@@ -145,34 +145,32 @@ namespace Computer
             vecsSegment->start
         );
 
-        // Module bank table: register module ROMs as switchable banks in the
-        // $B000-$DFFF window (pre-loaded at startup; MODULE_BANK selects one).
-        // BASIC is bank 1 - the kernel's B: menu maps it on demand. Additional
-        // modules (e.g. a dev-tools ROM) get their own bank number here.
-        const std::string basic_rom_path = "../kernel/basic.rom";
-        std::ifstream basic_rom_file(basic_rom_path, std::ios::binary | std::ios::ate);
-
-        if (basic_rom_file.is_open())
+        // Module bank table: pre-load each module ROM into a switchable bank in
+        // the $B000-$DFFF window (MODULE_BANK selects one; the kernel B: menu maps
+        // them on demand). Banks must match the kernel's MODULE_DIR: 1 = BASIC,
+        // 2 = dev tools. Add new modules here and in MODULE_DIR together.
+        auto installBank = [this](uint8_t bank, const std::string &path, const char *name)
         {
-            // Get BASIC ROM size
-            std::streamsize basic_size = basic_rom_file.tellg();
-            basic_rom_file.seekg(0, std::ios::beg);
-
-            // Read BASIC ROM
-            std::vector<uint8_t> basic_rom(basic_size);
-            if (basic_rom_file.read(reinterpret_cast<char *>(basic_rom.data()), basic_size))
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (!file.is_open())
             {
-                // Install BASIC as module bank 1 (not flat RAM): the window stays
-                // RAM until the user selects it from the B: menu.
-                memory.loadBank(1, basic_rom);
-                std::cout << "BASIC ROM installed as module bank 1 (" << basic_size << " bytes)\n";
+                std::cout << "Warning: " << name << " ROM not found at " << path
+                          << " - bank " << static_cast<int>(bank) << " will be empty\n";
+                return;
             }
-            basic_rom_file.close();
-        }
-        else
-        {
-            std::cout << "Warning: BASIC ROM not found at " << basic_rom_path << " - bank 1 (BASIC) will be empty\n";
-        }
+            std::streamsize size = file.tellg();
+            file.seekg(0, std::ios::beg);
+            std::vector<uint8_t> image(size);
+            if (file.read(reinterpret_cast<char *>(image.data()), size))
+            {
+                memory.loadBank(bank, image);
+                std::cout << name << " ROM installed as module bank "
+                          << static_cast<int>(bank) << " (" << size << " bytes)\n";
+            }
+        };
+
+        installBank(1, "../kernel/basic.rom", "BASIC");
+        installBank(2, "../kernel/devtools.rom", "DEV TOOLS");
 
         // Power-on reset
         reset_circuit.powerOnReset();

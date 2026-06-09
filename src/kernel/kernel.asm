@@ -3364,9 +3364,13 @@ MODULE_DIR:
     .BYTE 1                     ; bank 1
     .WORD $B000                 ; entry (BASIC LAB_COLD at the window base)
     .WORD NAME_BASIC
+    .BYTE 2                     ; bank 2
+    .WORD $B000                 ; entry (DEVT_MAIN at the window base)
+    .WORD NAME_DEVTOOLS
 MODULE_DIR_COUNT = (* - MODULE_DIR) / MODULE_DIR_RECSIZE
 
 NAME_BASIC:          .BYTE "BASIC", 0
+NAME_DEVTOOLS:       .BYTE "ASSEMBLER / DISASSEMBLER", 0
 
 ; ================================================================
 ; RESERVED I/O PAGE ($FE00-$FEFF)

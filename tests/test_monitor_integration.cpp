@@ -37,6 +37,7 @@ public:
         testHelpCommand();
         testScrollIntegrity();
         testBankMenu();
+        testDevtoolsModule();
         testFillCommand();
         testReadCommand();
         testMoveCommand();
@@ -237,12 +238,13 @@ private:
     }
 
     // B: opens the module bank menu (Phase 3). It lists MODULE_DIR (BASIC = bank
-    // 1) and waits for a single-key selection; ESC cancels back to the monitor.
+    // 1, dev tools = bank 2) and waits for a single-key selection; ESC cancels.
     void testBankMenu() {
         clearScreen();
         sendCommand("B:");
         verifyResponse("MODULE BANKS", "Bank menu header shown");
         verifyResponse("BASIC", "Bank menu lists BASIC");
+        verifyResponse("ASSEMBLER", "Bank menu lists the dev tools module");
         verifyResponse("SELECT", "Bank menu shows the selection prompt");
 
         // ESC cancels; the monitor must be responsive again afterward.
@@ -250,6 +252,24 @@ private:
         clearScreen();
         sendCommand("R:8000");
         verifyResponse("8000:", "Monitor responsive after bank-menu ESC");
+    }
+
+    // End-to-end round-trip through the dev-tools module (bank 2): B: -> 2 maps
+    // the bank and jumps in (banner prints), then ESC makes the module JMP $FF12,
+    // which unmaps the bank (window back to RAM) and returns to the monitor.
+    // Unlike BASIC, the module returns cleanly, so this can run mid-suite.
+    void testDevtoolsModule() {
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);    // select dev tools -> module banner
+        verifyMemEquals(0xFE23, 0x02, "B: select maps bank 2 (MODULE_BANK)");
+        verifyResponse("DEV TOOLS", "Dev tools module launches from bank 2");
+
+        sendKey(0x1B, 200000);   // ESC -> module returns via $FF12
+        verifyMemEquals(0xFE23, 0x00, "Module return unmaps bank (window = RAM)");
+        clearScreen();
+        sendCommand("R:8000");
+        verifyResponse("8000:", "Monitor responsive after module return");
     }
 
     // End-to-end: selecting BASIC from the menu maps bank 1 into the window and
