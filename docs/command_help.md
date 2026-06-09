@@ -21,12 +21,13 @@ The 6502 Monitor provides a comprehensive set of commands for memory manipulatio
 - **[D: Decimal to Hex](decimal_to_hex_command.md)** - Convert decimal (0-65535) to hexadecimal
 - **[H: Hex to Decimal](hex_to_decimal_command.md)** - Convert hexadecimal (0000-FFFF) to decimal
 
-### BASIC Interpreter
+### Module Bank Menu
 
-#### B: BASIC
-- **Purpose**: Launch the built-in MFC BASIC interpreter (derived from EhBASIC)
+#### B: Module Bank Menu
+- **Purpose**: List the available ROM modules and map/run one in the `$B000-$DFFF` module window
 - **Format**: `B:`
-- **Notes**: Transfers control to EhBASIC; exiting BASIC returns to the monitor. BASIC programs can be saved/loaded as human-readable `.bas` text via BASIC's own SAVE/LOAD.
+- **Usage**: `B:` shows the menu (e.g. `1  BASIC`); press the selection number to map that module's bank and run it, or ESC to cancel
+- **Notes**: BASIC is module bank 1 — built-in MFC BASIC, derived from EhBASIC; its programs save/load as human-readable `.bas` text via BASIC's own SAVE/LOAD. A module returns to the monitor by jumping to `$FF12` (e.g. BASIC `BYE`), which unmaps the bank (window back to RAM). See [module_slot_design.md](module_slot_design.md).
 
 ### Display Commands
 

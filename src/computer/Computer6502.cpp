@@ -145,7 +145,10 @@ namespace Computer
             vecsSegment->start
         );
 
-        // Load BASIC ROM at $B000-$DFFF
+        // Module bank table: register module ROMs as switchable banks in the
+        // $B000-$DFFF window (pre-loaded at startup; MODULE_BANK selects one).
+        // BASIC is bank 1 - the kernel's B: menu maps it on demand. Additional
+        // modules (e.g. a dev-tools ROM) get their own bank number here.
         const std::string basic_rom_path = "../kernel/basic.rom";
         std::ifstream basic_rom_file(basic_rom_path, std::ios::binary | std::ios::ate);
 
@@ -159,15 +162,16 @@ namespace Computer
             std::vector<uint8_t> basic_rom(basic_size);
             if (basic_rom_file.read(reinterpret_cast<char *>(basic_rom.data()), basic_size))
             {
-                // Load BASIC ROM into memory at $B000
-                memory.loadProgram(basic_rom, 0xB000);
-                std::cout << "BASIC ROM loaded successfully at $B000 (" << basic_size << " bytes)\n";
+                // Install BASIC as module bank 1 (not flat RAM): the window stays
+                // RAM until the user selects it from the B: menu.
+                memory.loadBank(1, basic_rom);
+                std::cout << "BASIC ROM installed as module bank 1 (" << basic_size << " bytes)\n";
             }
             basic_rom_file.close();
         }
         else
         {
-            std::cout << "Warning: BASIC ROM not found at " << basic_rom_path << " - B: command will show error\n";
+            std::cout << "Warning: BASIC ROM not found at " << basic_rom_path << " - bank 1 (BASIC) will be empty\n";
         }
 
         // Power-on reset

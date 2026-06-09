@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      2.2.9
+; Version:      3.0
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,8 +15,8 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~3807 bytes
-;   CODE segment:  $E000-$EEC3 (3780 bytes)
+; ROM (Used):      ~3929 bytes
+;   CODE segment:  $E000-$EF3D (3902 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
 ;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
@@ -47,12 +47,13 @@
 ; - Hex<->decimal conversion (D/H)
 ; - Screen scrolling with paging
 ; - Built-in help system
-; - EhBASIC integration (B launches the BASIC ROM at $B000)
-; - Kernel API at $FF00 for user programs
+; - Bankable module slot: B: is a menu that maps a ROM module (BASIC = bank 1)
+;   into the $B000-$DFFF window and runs it; modules return via $FF12
+; - Kernel API at $FF00 for user programs (the module ABI)
 ;
 ; Commands:     R:(read) W:(write) F:(fill) M:(move/copy) X:(search)
 ;               G:(go) L:(load) S:(save) D:(dec->hex) H:(hex->dec)
-;               C:(clear) T:(stack) Z:(zero page) B:(BASIC) ?:(help)
+;               C:(clear) T:(stack) Z:(zero page) B:(bank menu) ?:(help)
 ;               ESC (exit current mode)
 ;
 ; ================================================================
@@ -124,6 +125,16 @@
 ;                   Memory routes the window per the selected bank and provides a host
 ;                   bank table (loadBank). No behavior change yet: BASIC still loads
 ;                   into bank-0 RAM at $B000; conversion to a real bank is Phase 3.
+; 2026-06-09  v3.0  Phase 3 of the module slot: BASIC becomes module bank 1 (the host
+;                   installs basic.rom as a bank instead of flat RAM). B: is now the
+;                   module bank menu - it lists MODULE_DIR (kernel-side catalog of
+;                   bank#/entry/name), and a selection maps the bank and JMPs in.
+;                   RETURN_FROM_BASIC -> RETURN_FROM_MODULE ($FF12) now unmaps the
+;                   bank (window back to RAM) on exit. RESET zeroes the $B000-$DFFF
+;                   window so bank 0 boots clean. Factored FILL_RANGE_CORE out of the
+;                   F: command and reused it for the window clear. Folded the three
+;                   duplicate command-buffer clears (ESC-cancel, '.' recall, module
+;                   return) into one CLEAR_CMD_BUFFER routine.
 ;
 ; ================================================================
 
@@ -249,6 +260,8 @@ FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 ; the current bank. Lives in the always-mapped I/O page (see module_slot_design.md).
 MODULE_BANK        = $FE23         ; bank-select register for the $B000-$DFFF window
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
+MODULE_WINDOW_START = $B000        ; base of the bankable module window
+MODULE_WINDOW_END  = $DFFF         ; last byte of the bankable module window
 
 ; File command codes
 FILE_LOAD_CMD      = $01           ; Load file command
@@ -297,6 +310,26 @@ ZP_CLEAR_LOOP:
 ; ================================================================
 
     JSR CLEAR_SCREEN            ; Clear screen memory ($0400-$07FF)
+
+    ; Clear the module window ($B000-$DFFF) so bank 0 boots as clean scratch RAM,
+    ; reusing the F: fill engine. MODULE_BANK was set to 0 above, so these writes
+    ; land in the window RAM (not any module ROM); modules live in separate banks.
+    ; The monitor variables used here are scratch at this point - they get cleared
+    ; in the monitor-init step just below.
+    LDA #<MODULE_WINDOW_START
+    STA MON_CURRADDR_LO
+    LDA #>MODULE_WINDOW_START
+    STA MON_CURRADDR_HI
+    LDA #<MODULE_WINDOW_END
+    STA MON_ENDADDR_LO
+    LDA #>MODULE_WINDOW_END
+    STA MON_ENDADDR_HI
+    STZ MON_FILL_VALUE          ; fill with $00
+    JSR FILL_RANGE_CORE
+    ; FILL_RANGE_CORE left MON_CURRADDR at the window end; the ZP clear already
+    ; ran, so reset it here to $0000 for the initial prompt address.
+    STZ MON_CURRADDR_LO
+    STZ MON_CURRADDR_HI
 
 ; ================================================================
 ; MONITOR INITIALIZATION
@@ -925,14 +958,7 @@ READ_CMD_ESCAPE:
     RTS
 
 READ_CMD_CANCEL:
-    STZ MON_CMDLEN              ; Reset command length
-    LDX #$00                    ; Reset buffer index
-
-READ_CMD_CLEAR_LOOP:
-    STA MON_CMDBUF,X            ; Clear buffer position
-    INX                         ; Move to next position
-    CPX #MON_CMDBUF_LEN         ; Have we cleared entire buffer?
-    BNE READ_CMD_CLEAR_LOOP     ; Continue if not done
+    JSR CLEAR_CMD_BUFFER        ; Reset buffer bytes, length, and pointer
     JSR PRINT_NEWLINE           ; Start new line
     LDX #$00                    ; Reset buffer index
     JMP READ_CMD_LOOP           ; Start over
@@ -956,13 +982,7 @@ RECALL_LAST_COMMAND:
     BEQ RECALL_NOTHING          ; If zero, nothing to recall
 
     ; Clear current command buffer first
-    LDX #$00
-
-RECALL_CLEAR_LOOP:
-    STZ MON_CMDBUF,X            ; Clear buffer position
-    INX
-    CPX #MON_CMDBUF_LEN         ; Check if we've cleared enough
-    BNE RECALL_CLEAR_LOOP
+    JSR CLEAR_CMD_BUFFER
 
     ; Copy last command to current command buffer
     LDX #$00                    ; Initialize copy index
@@ -1129,10 +1149,10 @@ PARSE_CMD_BASIC:
     JSR PARSE_COLON_COMMAND     ; Parse B: format
     BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
 
-    ; Save monitor state BEFORE launching BASIC (ensures clean stack)
-    JSR SAVE_MONITOR_STATE
-
-    JMP CMD_LAUNCH_BASIC        ; Jump (not JSR) to BASIC launch - never returns
+    ; B: is the module bank menu. It returns here only when the user cancels
+    ; (ESC); selecting a module maps its bank and JMPs into it (never returns).
+    JSR CMD_BANK_MENU
+    JMP PARSE_CMD_DONE
 
 PARSE_CMD_CLEAR:
     JSR PARSE_COLON_COMMAND     ; Parse C: format
@@ -1637,6 +1657,24 @@ RANGE_VALID:
     CLC                         ; Clear carry for valid range
     RTS
 
+; ----------------------------------------------------------------
+; CLEAR_CMD_BUFFER - Reset the command input buffer to empty
+; Input: None
+; Output: MON_CMDBUF[0..MON_CMDBUF_LEN-1] zeroed; MON_CMDPTR = MON_CMDLEN = 0
+; Modifies: A is preserved; X = $FF on return
+; Note: Single source of truth for clearing the command buffer - shared by the
+;       ESC-cancel, '.' recall, and module-return (RESTORE_MONITOR_STATE) paths.
+; ----------------------------------------------------------------
+CLEAR_CMD_BUFFER:
+    STZ MON_CMDPTR              ; buffer position
+    STZ MON_CMDLEN              ; command length
+    LDX #MON_CMDBUF_LEN-1
+CLEAR_CMD_BUFFER_LOOP:
+    STZ MON_CMDBUF,X
+    DEX
+    BPL CLEAR_CMD_BUFFER_LOOP
+    RTS
+
 ; ================================================================
 ; BASIC INTEGRATION - STATE MANAGEMENT
 ; ================================================================
@@ -1683,14 +1721,7 @@ RESTORE_MONITOR_STATE:
     ; (Can't restore old SP because it contains stale return address)
 
     ; Clear monitor command buffer (CRITICAL!)
-    STZ MON_CMDPTR
-    STZ MON_CMDLEN
-
-    LDX #MON_CMDBUF_LEN-1
-CLEAR_CMD_BUF_LOOP:
-    STZ MON_CMDBUF,X
-    DEX
-    BPL CLEAR_CMD_BUF_LOOP
+    JSR CLEAR_CMD_BUFFER
 
     ; Restore cursor position
     LDA MON_SCRN_X_SAVE
@@ -1709,51 +1740,123 @@ CLEAR_CMD_BUF_LOOP:
 ; ================================================================
 
 ; ----------------------------------------------------------------
-; CMD_LAUNCH_BASIC - Launch BASIC interpreter
+; CMD_BANK_MENU - Show the module-slot menu and launch a selected module
 ; Input: None
-; Output: Transfers control to BASIC (does not return until BYE)
+; Output: Cancels (RTS) on ESC; on a valid selection maps the module's bank and
+;         JMPs into it (does not return). Returns to the monitor on cancel or on
+;         a not-loaded bank.
+; Modifies: A, X, Y, MON_HEX_TEMP, JUMP_VECTOR, MON_MSG_PTR
+; Note: Walks MODULE_DIR (5-byte records: bank#, entry word, name pointer word).
+;       The displayed selection number is the 1-based directory index, not the
+;       bank number (the directory is the source of truth, like the $FF00 table).
+; ----------------------------------------------------------------
+CMD_BANK_MENU:
+    LDA #<MSG_BANK_HEADER
+    LDY #>MSG_BANK_HEADER
+    JSR PRINT_MSG_AY
+    JSR PRINT_NEWLINE
+
+    LDA #'1'                    ; ASCII of the first menu selection number
+    STA MON_HEX_TEMP            ; running menu-number (PRINT_* don't touch it)
+    LDX #$00                    ; byte offset into MODULE_DIR
+
+BANK_MENU_ROW:
+    LDA #ASCII_SPACE
+    JSR PRINT_CHAR
+    JSR PRINT_CHAR
+    LDA MON_HEX_TEMP            ; menu selection digit
+    JSR PRINT_CHAR
+    LDA #ASCII_SPACE
+    JSR PRINT_CHAR
+    JSR PRINT_CHAR
+
+    LDA MODULE_DIR+3,X          ; name pointer low
+    STA MON_MSG_PTR_LO
+    LDA MODULE_DIR+4,X          ; name pointer high
+    STA MON_MSG_PTR_HI
+    JSR PRINT_MESSAGE
+    JSR PRINT_NEWLINE
+
+    INC MON_HEX_TEMP            ; next menu number
+    TXA
+    CLC
+    ADC #MODULE_DIR_RECSIZE     ; advance to next record
+    TAX
+    CPX #(MODULE_DIR_COUNT * MODULE_DIR_RECSIZE)
+    BNE BANK_MENU_ROW
+
+    LDA #<MSG_BANK_PROMPT
+    LDY #>MSG_BANK_PROMPT
+    JSR PRINT_MSG_AY
+
+BANK_MENU_WAIT:
+    JSR GET_KEYSTROKE
+    BCC BANK_MENU_WAIT          ; no key yet
+    CMP #ASCII_ESC
+    BEQ BANK_MENU_CANCEL
+    SEC
+    SBC #'1'                    ; A = 0-based selection index
+    BCC BANK_MENU_WAIT          ; below '1' -> ignore
+    CMP #MODULE_DIR_COUNT
+    BCS BANK_MENU_WAIT          ; out of range -> ignore
+    JMP BANK_LAUNCH             ; A = selection index
+
+BANK_MENU_CANCEL:
+    JMP PRINT_NEWLINE           ; tail call: newline, then RTS to the parser
+
+; ----------------------------------------------------------------
+; BANK_LAUNCH - Map a directory entry's bank and jump into the module
+; Input: A = 0-based MODULE_DIR index
+; Output: Maps the bank and JMPs to the module entry (does not return). On a
+;         not-loaded bank, unmaps and returns to the monitor with an error.
+; Modifies: A, X, Y, MODULE_BANK, JUMP_VECTOR
+; ----------------------------------------------------------------
+BANK_LAUNCH:
+    PHA                         ; save index
+    ASL A
+    ASL A                       ; index * 4
+    STA JUMP_VECTOR             ; scratch (overwritten with entry below)
+    PLA
+    CLC
+    ADC JUMP_VECTOR             ; index*4 + index = index*5
+    TAX                         ; X = byte offset into MODULE_DIR
+
+    ; Save monitor state before handing control to the module (clean return).
+    JSR SAVE_MONITOR_STATE
+
+    LDA MODULE_DIR,X            ; bank number
+    STA MODULE_BANK             ; map the module into $B000-$DFFF
+    LDA MODULE_DIR+1,X          ; entry address low
+    STA JUMP_VECTOR
+    LDA MODULE_DIR+2,X          ; entry address high
+    STA JUMP_VECTOR+1
+
+    ; Generic not-loaded guard: an unpopulated bank reads as $00 (BRK). A real
+    ; module never starts with BRK, so treat a $00 entry byte as "not loaded".
+    LDA (JUMP_VECTOR)           ; first opcode at the entry (65C02 zp indirect)
+    BEQ BANK_NOT_LOADED
+
+    JSR CLEAR_SCREEN            ; clean transition
+    JMP (JUMP_VECTOR)           ; run the module (returns via $FF12)
+
+BANK_NOT_LOADED:
+    STZ MODULE_BANK             ; unmap -> window back to RAM
+    LDA #<MSG_MODULE_FAIL
+    LDY #>MSG_MODULE_FAIL
+    JMP PRINT_MSG_AY            ; tail call: error, then RTS to the parser
+
+; ----------------------------------------------------------------
+; RETURN_FROM_MODULE
+; Return handler a module jumps to when it exits (e.g. BASIC's BYE).
+; Entry point: $FF12 (kernel API jump table). Reachable from any bank because
+; the kernel ROM ($E000-$FFFF) is always mapped regardless of MODULE_BANK.
+; Input: None (called via JMP from the module)
+; Output: Returns to monitor prompt with the window unmapped (bank 0 = RAM)
 ; Modifies: A, X, Y
-; Note: jumps to BASIC cold start at $B000
 ; ----------------------------------------------------------------
-CMD_LAUNCH_BASIC:
-    ; Check for BASIC ROM signature at $B000 (ROM base per basic_memory.cfg)
-    ; Expecting LDY immediate opcode sequence ($A0 $0C) at start of BASIC (LAB_COLD)
-    ; LAB_COLD starts with: LDY #PG2_TABE-PG2_TABS-1 which is LDY #$0C
-    LDA $B000
-    CMP #$A0                ; LDY immediate opcode
-    BNE BASIC_NOT_FOUND
+RETURN_FROM_MODULE:
+    STZ MODULE_BANK             ; unmap the module -> window back to RAM
 
-    ; Verify second byte is $0C (LDY #$0C)
-    LDA $B001
-    CMP #$0C                ; Expected immediate value (actual value from ROM)
-    BNE BASIC_SIG_FAIL
-
-    ; Clear screen for clean transition
-    JSR CLEAR_SCREEN
-
-    ; Jump to BASIC cold start. LAB_COLD ($B000) installs the page-2 I/O
-    ; vectors itself (from PG2_TABS), so the monitor doesn't set them here.
-    JMP $B000
-
-BASIC_NOT_FOUND:
-    LDA #<MSG_NO_BASIC
-    LDY #>MSG_NO_BASIC
-    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
-
-BASIC_SIG_FAIL:
-    LDA #<MSG_BASIC_SIG_FAIL
-    LDY #>MSG_BASIC_SIG_FAIL
-    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
-
-; ----------------------------------------------------------------
-; RETURN_FROM_BASIC
-; Return handler called when user exits BASIC with BYE command
-; Entry point: $FF12 (called from BASIC CMD_BYE)
-; Input: None (called via JMP from BASIC)
-; Output: Returns to monitor prompt
-; Modifies: A, X, Y
-; ----------------------------------------------------------------
-RETURN_FROM_BASIC:
     ; Restore monitor state
     JSR RESTORE_MONITOR_STATE
 
@@ -2586,14 +2689,26 @@ CMD_FILL_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS FILL_RANGE_ERROR        ; If invalid range, show error
-    BRA FILL_RANGE_VALID        ; Continue with valid range
+
+    JSR FILL_RANGE_CORE         ; Fill [MON_CURRADDR..MON_ENDADDR] with MON_FILL_VALUE
+
+    ; Print success message
+    LDA #<MSG_SUCCESS
+    LDY #>MSG_SUCCESS
+    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 FILL_RANGE_ERROR:
     JSR PRINT_RANGE_ERROR       ; Print range error message
     RTS
 
-FILL_RANGE_VALID:
-    ; Perform fill operation
+; ----------------------------------------------------------------
+; FILL_RANGE_CORE - Fill an inclusive address range with a byte (no output)
+; Input: MON_CURRADDR_LO/HI = start, MON_ENDADDR_LO/HI = end, MON_FILL_VALUE = byte
+; Output: Range filled; MON_CURRADDR advanced to the end. Assumes start <= end
+;         (caller validates). Shared by the F: command and the RESET window clear.
+; Modifies: A, MON_CURRADDR_LO/HI
+; ----------------------------------------------------------------
+FILL_RANGE_CORE:
     LDA MON_FILL_VALUE          ; Load fill value
 
 FILL_LOOP:
@@ -2620,10 +2735,7 @@ FILL_NO_CARRY:
     BRA FILL_LOOP              ; Continue filling
 
 FILL_DONE:
-    ; Print success message
-    LDA #<MSG_SUCCESS
-    LDY #>MSG_SUCCESS
-    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
+    RTS
 
 ; Move/Copy memory command - Copy or move memory block between addresses
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, destination in MON_DEST_ADDR_HI/LO, mode in MON_COPY_MODE (0=copy, 1=move)
@@ -3210,7 +3322,7 @@ HELP_MSG_COUNT = 17              ; Number of help messages
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
 MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
-MSG_HELP_BASIC:      .BYTE "B:     BASIC INTERPRETER", 0
+MSG_HELP_BASIC:      .BYTE "B:     MODULE BANK MENU", 0
 MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
 MSG_HELP_DECIMAL:    .BYTE "D:NNNNN DECIMAL TO HEX", 0
 MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
@@ -3233,8 +3345,28 @@ MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
 MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
 MSG_WELCOME:         .BYTE "       -=MFC 6502 OPERATIONAL=-", $0D, $0A, 0
 MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
-MSG_NO_BASIC:        .BYTE "BASIC ROM NOT FOUND", $0D, $0A, 0
-MSG_BASIC_SIG_FAIL:  .BYTE "BASIC ROM INVALID", $0D, $0A, 0
+MSG_BANK_HEADER:     .BYTE "MODULE BANKS:", 0
+MSG_BANK_PROMPT:     .BYTE "SELECT (ESC=CANCEL): ", 0
+MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
+
+; ----------------------------------------------------------------
+; Module directory: one 5-byte record per launchable module, walked by the B:
+; bank menu. The displayed selection number is the 1-based index here; the bank
+; number is stored per-record so the menu order is independent of bank layout.
+;   byte 0      bank number (written to MODULE_BANK to map the module)
+;   bytes 1-2   entry address (little-endian) - JMP target after mapping
+;   bytes 3-4   pointer to the null-terminated display name
+; Adding a module = add a record + name string here and register its ROM image
+; as that bank in the host bank table (Computer6502). See module_slot_design.md.
+; ----------------------------------------------------------------
+MODULE_DIR_RECSIZE = 5
+MODULE_DIR:
+    .BYTE 1                     ; bank 1
+    .WORD $B000                 ; entry (BASIC LAB_COLD at the window base)
+    .WORD NAME_BASIC
+MODULE_DIR_COUNT = (* - MODULE_DIR) / MODULE_DIR_RECSIZE
+
+NAME_BASIC:          .BYTE "BASIC", 0
 
 ; ================================================================
 ; RESERVED I/O PAGE ($FE00-$FEFF)
@@ -3257,7 +3389,7 @@ K_PRINT_NEWLINE: JMP PRINT_NEWLINE      ; $FF06
 K_GET_KEYSTROKE: JMP GET_KEYSTROKE      ; $FF09
 K_CLEAR_SCREEN:  JMP CLEAR_SCREEN       ; $FF0C
 K_GET_RAND_NUM:  JMP GET_RANDOM_NUMBER  ; $FF0F
-K_RETURN_BASIC:  JMP RETURN_FROM_BASIC  ; $FF12 - BASIC exit point
+K_RETURN_MODULE: JMP RETURN_FROM_MODULE ; $FF12 - module exit point (BASIC BYE, etc.)
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

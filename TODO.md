@@ -32,7 +32,7 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
 ### Bankable module slot (docs/module_slot_design.md)
 - [x] Phase 1 (v2.2.7/8): relocate I/O $DC00 -> $FE00, reserve the I/O page (IORESV), clean the $B000-$DFFF window.
 - [x] Phase 2 (v2.2.9): banking infrastructure - MODULE_BANK register ($FE23), emulator Memory window routing (bank 0=RAM, 1..255=ROM), host bank table (Memory::loadBank), RESET maps window to RAM. Behavior-preserving; BASIC still in bank-0 RAM. Covered by tests/test_memory_banking.cpp.
-- [ ] Phase 3: convert BASIC to bank 1 (register basic.rom as a bank instead of loading into flat RAM), add the kernel MODULE_DIR table, repurpose B: as the bank menu/launcher, and add RETURN_FROM_MODULE ($FF12) that resets the bank to 0. Once BASIC is out of flat RAM, have RESET zero the $B000-$DFFF window so bank 0 boots as a clean scratch slot (deferred from Phase 2 - doing it earlier would wipe BASIC, which still lives in that RAM). **Major version bump (v3.0) when this feature set lands.**
+- [x] Phase 3 (v3.0): BASIC is now module bank 1 (host installs basic.rom as a bank, not flat RAM). Added the kernel MODULE_DIR catalog + the B: bank menu/launcher; RETURN_FROM_BASIC -> RETURN_FROM_MODULE ($FF12) unmaps the bank on exit; RESET zeroes the $B000-$DFFF window so bank 0 boots clean. Factored FILL_RANGE_CORE out of F: and reused it. Covered by testBankMenu/testBankLaunch; integration harness now returns non-zero on failure so ctest catches regressions.
 - [ ] Phase 4: first new module - combined assembler + disassembler in bank 2.
 
 ### Memory map (future, not urgent)

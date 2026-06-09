@@ -15,13 +15,16 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0200-$03FF` | 512 B | **System variables** — BASIC page-2 vars + monitor variables/buffers |
 | `$0400-$07E7` | 1000 B | **Screen RAM** — 40×25 text (`$07E8-$07FF` is unused padding) |
 | `$0800-$AFFF` | ~42 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs |
-| `$B000-$DFFF` | 12 KB | **EhBASIC ROM** (loaded by the host) |
+| `$B000-$DFFF` | 12 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
 | `$E000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
-| `$FE00-$FE22` | — | **PIA** I/O — within the kernel region; keyboard + file I/O registers |
+| `$FE00-$FE23` | — | **PIA** I/O + `MODULE_BANK` ($FE23) — within the kernel region |
 
-There is **no** VIC-II / SID / CIA / color memory / cartridge / banking. The
-screen is plain RAM at `$0400` rendered by the host display; the keyboard and
-file I/O are exposed through a small PIA-style register block at `$FE00`.
+There is **no** VIC-II / SID / CIA / color memory. The screen is plain RAM at
+`$0400` rendered by the host display; the keyboard and file I/O are exposed
+through a small PIA-style register block at `$FE00`. The `$B000-$DFFF` window is
+a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
+RAM (bank 0) or one of up to 255 pre-loaded ROM modules. See
+`module_slot_design.md`.
 
 ## Zero Page
 
@@ -109,12 +112,12 @@ the D:/H: and X: commands never run at the same time.
 | `$0400-$07E7` | 1000 bytes — 40×25 character display (written as ASCII) |
 | `$07E8-$07FF` | 24 bytes — unused padding to the page boundary |
 
-## I/O — PIA (`$FE00-$FE22`)
+## I/O — PIA (`$FE00-$FE23`)
 
 The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region (the kernel just
 avoids placing code there). It was moved here from the old `$DC00` so the
-`$B000-$DFFF` region is a clean, I/O-free window — groundwork for making it a
-bank-switched module slot (see `module_slot_design.md`).
+`$B000-$DFFF` region is a clean, I/O-free, bank-switched module slot (see
+`module_slot_design.md`).
 
 A single PIA-style device provides keyboard input and host file I/O. There are
 two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
@@ -130,6 +133,7 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 | `$FE14-$FE1F` | `FILE_NAME_BUF` | Filename buffer (12 bytes) |
 | `$FE20-$FE21` | `FILE_END_ADDR_LO/HI` | Block save end address |
 | `$FE22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
+| `$FE23` | `MODULE_BANK` | Module bank select: 0 = RAM, 1..255 = ROM module mapped at `$B000-$DFFF` |
 
 ## ROM Layout
 
@@ -152,14 +156,25 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 | `$FF09` | `K_GET_KEYSTROKE` | `GET_KEYSTROKE` |
 | `$FF0C` | `K_CLEAR_SCREEN` | `CLEAR_SCREEN` |
 | `$FF0F` | `K_GET_RAND_NUM` | `GET_RANDOM_NUMBER` |
-| `$FF12` | `K_RETURN_BASIC` | `RETURN_FROM_BASIC` (BASIC `BYE` exit point) |
+| `$FF12` | `K_RETURN_MODULE` | `RETURN_FROM_MODULE` — unmaps the bank, returns to monitor (BASIC `BYE`) |
 
-### EhBASIC ROM (`$B000-$DFFF`, 12 KB)
+The jump table is also the **module ABI**: a ROM module reaches kernel services
+only through these entries, so it is independent of where the kernel's internal
+routines live.
 
-EhBASIC 2.22p5 with project additions. Cold start (`LAB_COLD`) is at `$B000`;
-the kernel's `B:` command checks the `$A0 $0C` signature there and jumps to it.
-BASIC I/O is routed through the kernel via the page-2 vectors (`VEC_IN`/`OUT`
-→ keyboard/screen; `VEC_LD`/`SV` → the file-stream LOAD/SAVE routines).
+### Module window (`$B000-$DFFF`, 12 KB)
+
+A bank-switched slot selected by `MODULE_BANK` (`$FE23`). Bank 0 is RAM (the
+boot/default state, zeroed by `RESET`); banks 1..255 are read-only ROM modules
+pre-loaded by the host. The kernel owns a `MODULE_DIR` catalog (bank #, entry
+address, name); the `B:` menu lists it and, on selection, writes `MODULE_BANK`
+and `JMP`s to the module entry. A module exits with `JMP $FF12`, which unmaps
+the bank.
+
+**BASIC is module bank 1.** EhBASIC 2.22p5 with project additions; cold start
+(`LAB_COLD`) is at `$B000`. BASIC I/O is routed through the kernel via the
+page-2 vectors (`VEC_IN`/`OUT` → keyboard/screen; `VEC_LD`/`SV` → the
+file-stream LOAD/SAVE routines).
 
 ## Interrupt Vectors (`$FFFA-$FFFF`)
 

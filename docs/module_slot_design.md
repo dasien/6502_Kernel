@@ -1,9 +1,11 @@
 # Bankable Module Slot — Design
 
-**Status:** Phases 1–2 implemented (kernel v2.2.9). I/O relocated to `$FE00`, the
-module window is clean, and the bank-switching mechanism (`MODULE_BANK` register +
-emulator window routing + host bank table) is in place. BASIC still lives in bank-0
-RAM at `$B000`; converting it to a real ROM bank and adding the `B:` menu is Phase 3.
+**Status:** Phases 1–3 implemented (kernel v3.0). I/O is at `$FE00`, the module
+window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), and **BASIC is module
+bank 1** — the host installs `basic.rom` as a bank, `B:` is the module bank menu
+(driven by the kernel `MODULE_DIR` catalog), modules return via `$FF12`
+(`RETURN_FROM_MODULE`, which unmaps the bank), and `RESET` zeroes the window so
+bank 0 boots clean. Phase 4 (a first new module: assembler + disassembler) is open.
 
 ## Goal
 
@@ -230,9 +232,11 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
    (`Memory::loadBank`). `RESET` maps the window to RAM. Behavior-preserving: BASIC
    still loads into bank-0 RAM at `$B000`. Covered by `tests/test_memory_banking.cpp`
    (11 cases) and the unchanged integration suite.
-3. **Convert BASIC to bank 1**; stop auto-loading into flat RAM (register `basic.rom`
-   as bank 1 in the host bank table); add `MODULE_DIR` + the `B:` menu/launcher and
-   `RETURN_FROM_MODULE` (`$FF12`) resetting the bank to 0. Once BASIC no longer lives
-   in the bank-0 RAM, have `RESET` zero `$B000–$DFFF` so the slot boots clean (deferred
-   from Phase 2: clearing it earlier would wipe the BASIC image still held in that RAM).
+3. **[DONE, v3.0]** **Convert BASIC to bank 1**: the host installs `basic.rom` as a
+   bank (`Memory::loadBank(1, …)`) instead of flat RAM. Added the kernel `MODULE_DIR`
+   catalog + the `B:` bank menu/launcher; `RETURN_FROM_BASIC` became
+   `RETURN_FROM_MODULE` (`$FF12`) and now unmaps the bank on exit. `RESET` zeroes
+   `$B000–$DFFF` so bank 0 boots clean (safe now that BASIC is a ROM bank). Factored
+   `FILL_RANGE_CORE` out of `F:` and reused it for the window clear. Covered by
+   `testBankMenu`/`testBankLaunch` in the integration suite.
 4. **First new module**: combined assembler + disassembler in bank 2.

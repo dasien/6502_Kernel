@@ -20,7 +20,10 @@ public:
     MonitorIntegrationTester() : tests_passed(0), tests_failed(0) {
         // Power on the system and let it initialize
         computer.power_on();
-        computer.run(3000);  // Allow kernel initialization
+        // Allow kernel initialization. RESET now also zeroes the 12KB module
+        // window ($B000-$DFFF), which is ~90K cycles, so give boot enough room
+        // to reach the command prompt before the first test runs.
+        computer.run(200000);
 
         std::cout << "6502 Monitor Integration Test Suite" << std::endl;
         std::cout << "===================================" << std::endl;
@@ -33,6 +36,7 @@ public:
         testClearScreen();
         testHelpCommand();
         testScrollIntegrity();
+        testBankMenu();
         testFillCommand();
         testReadCommand();
         testMoveCommand();
@@ -48,9 +52,17 @@ public:
         testMoveOverlapClearKeepsData();
         testEscAtPromptNoError();
 
+        // Must run last: it launches BASIC (bank 1), which keeps running and
+        // would otherwise consume the keystrokes of any following test.
+        testBankLaunch();
+
         // Print summary
         printSummary();
     }
+
+    // Number of failed assertions (0 = all passed). Lets main() return a
+    // non-zero exit code so ctest actually flags integration regressions.
+    int failureCount() const { return tests_failed; }
 
 private:
     Computer::Computer6502 computer;
@@ -215,6 +227,43 @@ private:
                        "Scroll: Z: help line intact");
         verifyResponse(".      RECALL LAST COMMAND",
                        "Scroll: . help line intact");
+    }
+
+    // Deliver a single keystroke (no trailing CR) and run, for the bank menu's
+    // single-key selection prompt.
+    void sendKey(uint8_t key, int cycles = 60000) {
+        computer.getPia()->addKeypress(key);
+        computer.run(cycles);
+    }
+
+    // B: opens the module bank menu (Phase 3). It lists MODULE_DIR (BASIC = bank
+    // 1) and waits for a single-key selection; ESC cancels back to the monitor.
+    void testBankMenu() {
+        clearScreen();
+        sendCommand("B:");
+        verifyResponse("MODULE BANKS", "Bank menu header shown");
+        verifyResponse("BASIC", "Bank menu lists BASIC");
+        verifyResponse("SELECT", "Bank menu shows the selection prompt");
+
+        // ESC cancels; the monitor must be responsive again afterward.
+        sendKey(0x1B);
+        clearScreen();
+        sendCommand("R:8000");
+        verifyResponse("8000:", "Monitor responsive after bank-menu ESC");
+    }
+
+    // End-to-end: selecting BASIC from the menu maps bank 1 into the window and
+    // jumps into the module. Verifies the bank register, that the window now
+    // shows bank-1 ROM (LAB_COLD opcode $A0), and that BASIC's banner prints.
+    // Runs LAST (BASIC keeps running afterward), so it can't disturb other tests.
+    void testBankLaunch() {
+        clearScreen();
+        sendCommand("B:");
+        sendKey('1', 200000);    // select BASIC -> EhBASIC "Memory size ?" prompt
+        verifyMemEquals(0xFE23, 0x01, "B: select maps bank 1 (MODULE_BANK)");
+        verifyMemEquals(0xB000, 0xA0, "Window shows bank-1 ROM (LAB_COLD opcode)");
+        sendKey('\r', 2000000);  // accept default memory size -> sign-on banner
+        verifyResponse("MFC BASIC", "BASIC launches from bank 1");
     }
 
     void testFillCommand() {
@@ -450,7 +499,7 @@ int main() {
     try {
         MonitorIntegrationTester tester;
         tester.runAllTests();
-        return 0;
+        return tester.failureCount() == 0 ? 0 : 1;
     } catch (const std::exception& e) {
         std::cerr << "Test suite failed: " << e.what() << std::endl;
         return 1;

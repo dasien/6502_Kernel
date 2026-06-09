@@ -55,7 +55,7 @@ The command reference provides comprehensive documentation for all monitor comma
 |----------|----------|-------------|
 | **Memory Operations** | [R:](docs/read_command.md), [W:](docs/write_command.md), [F:](docs/fill_command.md), [M:](docs/move_copy_command.md), [X:](docs/search_command.md) | Read, write, fill, move/copy, and search memory |
 | **Program Operations** | [G:](docs/run_command.md), [L:](docs/load_command.md), [S:](docs/save_command.md) | Execute, load, and save programs |
-| **BASIC** | B: | Launch the built-in MFC BASIC interpreter |
+| **Modules** | B: | Module bank menu — map and run a ROM module (BASIC is bank 1) |
 | **Number Conversion** | [D:](docs/decimal_to_hex_command.md), [H:](docs/hex_to_decimal_command.md) | Convert between decimal and hexadecimal |
 | **Display Commands** | C:, T:, Z: | Clear screen, show stack, show zero page |
 | **System Commands** | ?, ESC, . | Help, exit mode, command recall |
@@ -64,7 +64,7 @@ The command reference provides comprehensive documentation for all monitor comma
 
 Commands are listed alphabetically by command letter (matching the on-screen `?` help):
 
-- **B: BASIC** - Launch the built-in MFC BASIC interpreter (returns to the monitor on exit)
+- **B: Module Bank Menu** - List the available ROM modules and map/run one in the `$B000-$DFFF` window; BASIC is module bank 1 (modules return to the monitor on exit). See [docs/module_slot_design.md](docs/module_slot_design.md)
 - **C: Clear Screen** - Clear the display
 - **D: Decimal to Hex** - Convert decimal (0-65535) to hexadecimal format
 - **F: Fill Memory** - High-performance memory filling with progress feedback
@@ -95,9 +95,9 @@ The monitor provides clear, consistent error messages:
 - **$0100-$01FF**: Stack memory
 - **$0200-$03FF**: Monitor variables and command buffers
 - **$0400-$07E7**: Screen memory (40x25 display buffer)
-- **$0800-$AFFF**: User RAM (EhBASIC program/variable space)
-- **$B000-$DFFF**: MFC BASIC interpreter ROM (12 KB; derived from EhBASIC)
-- **$E000-$FFFF**: Kernel ROM (8 KB; CODE ~3,780 bytes, rest free for growth)
+- **$0800-$AFFF**: User RAM (module working RAM; EhBASIC program/variable space)
+- **$B000-$DFFF**: Module window (12 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC is bank 1)
+- **$E000-$FFFF**: Kernel ROM (8 KB; CODE ~3,900 bytes, rest free for growth)
 - **$FE00-$FE22**: PIA registers (keyboard, file I/O, timer) — an I/O page reserved within the kernel region
 
 See [docs/kernel_memory_map.md](docs/kernel_memory_map.md) for the full map.
@@ -115,7 +115,7 @@ User programs can access kernel services via the jump table at $FF00:
 | $FF09 | GET_KEYSTROKE | Wait for key press |
 | $FF0C | CLEAR_SCREEN | Clear display |
 | $FF0F | GET_RANDOM_NUMBER | Generate random byte |
-| $FF12 | RETURN_FROM_BASIC | BASIC exit point (return to monitor) |
+| $FF12 | RETURN_FROM_MODULE | Module exit point — unmaps the bank, returns to monitor (BASIC `BYE`) |
 
 ### File I/O Interface
 
