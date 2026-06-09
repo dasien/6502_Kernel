@@ -27,6 +27,7 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
 
 ### Documentation
 - [x] docs/kernel_memory_map.md and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
+- [ ] Update or rewrite docs/system_architecture.md. It is stale well beyond the I/O relocation: it still describes a C64-style $D000 I/O area with VIC-II/SID/CIA/color memory and ROM/RAM banking this system does not have, the old $DC00 PIA addresses (now $FE00), a $DC14 filename buffer (L:/S: no longer take a filename — the host dialog owns the path), and "$0800-$CFFF user RAM" (BASIC lives at $B000-$DFFF). Reconcile it with kernel_memory_map.md (the authoritative map) — keep any still-accurate emulator-component description, drop/fix the rest.
 
 ### Memory map (future, not urgent)
 - [ ] Reclaim ROM address space for user RAM by a *coordinated* relocation: shrink the kernel from 8KB ($E000-$FFFF) to a 4KB window ($F000-$FFFF) AND move the BASIC ROM up (e.g. $B000-$DFFF -> $C000-$EFFF). Done together, the reclaimed 4KB lands contiguous with the user RAM below BASIC, growing one usable block (shrinking the kernel alone just strands an isolated 4KB island between BASIC and the kernel — not worth it).

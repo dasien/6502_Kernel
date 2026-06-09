@@ -32,6 +32,7 @@ public:
         // Test basic commands
         testClearScreen();
         testHelpCommand();
+        testScrollIntegrity();
         testFillCommand();
         testReadCommand();
         testMoveCommand();
@@ -190,6 +191,30 @@ private:
         verifyResponse("MONITOR COMMANDS", "Help Command Display");
         // The '?' and '.' meta-commands are now listed too (v2.2.6).
         verifyResponse("RECALL LAST COMMAND", "Help lists the . recall command");
+    }
+
+    // Regression: SCROLL_SCREEN once interleaved its four page-copies, which
+    // corrupted every byte spanning a screen page boundary (a line printed
+    // across $04FF/$0500 etc. would come out blended, e.g. "ZERO PAGE" -> "ZERO
+    // PAGE MORY"). The help listing is 18 lines; two consecutive '?' (no clear
+    // between them) prints 36 lines and forces ~11 scrolls. After that the most
+    // recent help must still be on screen with every line intact. We assert the
+    // full text of several lines, including long ones whose bytes straddle a
+    // page boundary after scrolling - a cross-page scroll bug would split them.
+    void testScrollIntegrity() {
+        clearScreen();
+        sendCommand("?");
+        sendCommand("?");   // second help without clearing -> forces scrolling
+        verifyResponse("M:XXXX-YYYY,ZZZZ,B (B:0=COPY 1=MOVE)",
+                       "Scroll: M: help line intact");
+        verifyResponse("X:XXXX-YYYY,PATTERN SEARCH MEMORY",
+                       "Scroll: X: help line intact");
+        verifyResponse("R:XXXX(-YYYY) READ FROM MEMORY",
+                       "Scroll: R: help line intact");
+        verifyResponse("Z:     PRINT ZERO PAGE",
+                       "Scroll: Z: help line intact");
+        verifyResponse(".      RECALL LAST COMMAND",
+                       "Scroll: . help line intact");
     }
 
     void testFillCommand() {

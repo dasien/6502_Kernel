@@ -8019,9 +8019,9 @@ V_SAVE:
 ; PG2_TABS (VEC_LD / VEC_SV) below. These live here, not in the kernel ROM,
 ; because they use BASIC internals (LAB_LIST, VEC_OUT, LAB_GBYT).
 ; ================================================================
-FIO_COMMAND = $DC10           ; file command register
-FIO_STATUS  = $DC11           ; file status register
-FIO_DATA    = $DC22           ; byte-stream data register
+FIO_COMMAND = $FE10           ; file command register
+FIO_STATUS  = $FE11           ; file status register
+FIO_DATA    = $FE22           ; byte-stream data register
 FIO_OPEN_RD = $03             ; command: open stream for read
 FIO_OPEN_WR = $04             ; command: open stream for write
 FIO_CLOSE   = $05             ; command: close stream

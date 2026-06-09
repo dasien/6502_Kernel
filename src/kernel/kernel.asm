@@ -3,8 +3,8 @@
 ; ================================================================
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
-; Date:         2026-06-07
-; Version:      2.2.6
+; Date:         2026-06-08
+; Version:      2.2.8
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -17,6 +17,7 @@
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
 ; ROM (Used):      ~3807 bytes
 ;   CODE segment:  $E000-$EEC3 (3780 bytes)
+;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
 ;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
@@ -33,6 +34,8 @@
 ;
 ; Stack:        $0100-$01FF (256 bytes)
 ; Screen RAM:   $0400-$07E7 (1000 bytes, 40x25 text)
+; I/O page:     $FE00-$FE22 (PIA: keyboard, file I/O, timer). Moved here from the
+;               old $DC00 so $B000-$DFFF is a clean window (see module_slot_design.md).
 ;
 ; ================================================================
 ; FEATURES
@@ -102,6 +105,17 @@
 ;                   commands; named ASCII_COMMA and the '>'/'W' literals; fixed
 ;                   stale MON_MODE / jump-table / FILL+MOVE comments; inlined the
 ;                   READ_MEMORY_RANGE / SHOW_READ_ADDRESS pass-through wrappers.
+; 2026-06-08  v2.2.7 Relocated memory-mapped I/O from $DC00 to a reserved page at
+;                   $FE00-$FEFF (inside the kernel region) so $B000-$DFFF is a
+;                   clean, I/O-free window. Phase 1 of the bankable module-slot
+;                   plan (docs/module_slot_design.md). Behavior-preserving.
+; 2026-06-08  v2.2.8 SCROLL_SCREEN page copies made strictly sequential (P0..P3):
+;                   the interleaved form corrupted bytes spanning a screen page
+;                   boundary on every scroll (seen via Z:/T:/repeat-? scrolling).
+;                   Added a scroll-integrity regression test. L:/S: no longer take
+;                   a filename (L:XXXX / S:XXXX-YYYY): the host file dialog owns the
+;                   filesystem path, so the kernel name was ignored anyway; removed
+;                   the now-dead PARSE_FILENAME routine.
 ;
 ; ================================================================
 
@@ -207,20 +221,20 @@ ASCII_ESC          = $1B           ; Escape character
 ASCII_DOT          = $2E           ; Dot '.' character
 
 ; Hardware I/O addresses for keyboard input
-PIA_DATA           = $DC00         ; PIA data register for keyboard
-PIA_CONTROL        = $DC02         ; PIA control register for keyboard
+PIA_DATA           = $FE00         ; PIA data register for keyboard
+PIA_CONTROL        = $FE02         ; PIA control register for keyboard
 PIA_DATA_AVAIL     = $01           ; Bit mask for data available flag
 
 ; File I/O interface addresses
-FILE_COMMAND       = $DC10         ; File operation command
-FILE_STATUS        = $DC11         ; File operation status
-FILE_ADDR_LO       = $DC12         ; Target address low byte
-FILE_ADDR_HI       = $DC13         ; Target address high byte
-FILE_NAME_BUF      = $DC14         ; Filename buffer start ($DC14-$DC1F)
+FILE_COMMAND       = $FE10         ; File operation command
+FILE_STATUS        = $FE11         ; File operation status
+FILE_ADDR_LO       = $FE12         ; Target address low byte
+FILE_ADDR_HI       = $FE13         ; Target address high byte
+FILE_NAME_BUF      = $FE14         ; Filename buffer start ($FE14-$FE1F)
 
 ; Additional file I/O registers for save operations
-FILE_END_ADDR_LO   = $DC20         ; End address low byte for save range
-FILE_END_ADDR_HI   = $DC21         ; End address high byte for save range
+FILE_END_ADDR_LO   = $FE20         ; End address low byte for save range
+FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 
 ; File command codes
 FILE_LOAD_CMD      = $01           ; Load file command
@@ -231,7 +245,7 @@ FILE_IN_PROGRESS   = $01           ; Operation in progress
 FILE_SUCCESS       = $02           ; Operation completed successfully
 
 ; Interrupt-related addresses and bits
-TIMER_IRQ_ACK      = $DC0E         ; write to acknowledge the periodic timer IRQ
+TIMER_IRQ_ACK      = $FE0E         ; write to acknowledge the periodic timer IRQ
 BASIC_NMI_FLAGS    = $DC           ; EhBASIC NmiBase (zero page): b7=enabled, b5=happened
 BASIC_IRQ_FLAGS    = $DF           ; EhBASIC IrqBase (zero page): b7=enabled, b5=happened
 INT_ENABLED        = $80           ; "interrupt enabled" bit in the above
@@ -471,18 +485,35 @@ SCROLL_SCREEN:
     PHX                         ; Save registers (X is the copy index)
     PHY
 
+    ; Shift each screen page up by one row ($28). The four pages MUST be copied
+    ; sequentially (not interleaved): each page reads the first row of the next
+    ; page as its source, so that page must still hold its original bytes. An
+    ; interleaved loop overwrites the next page's first row before this page reads
+    ; it, corrupting every byte that spans a page boundary.
     LDX #$00
-SCROLL_LOOP:
-    LDA $0428,X                 ; page 0: row 1 -> row 0
+SCROLL_P0:
+    LDA $0428,X                 ; page 0: $0400 <- $0428
     STA $0400,X
+    INX
+    BNE SCROLL_P0
+    LDX #$00
+SCROLL_P1:
     LDA $0528,X                 ; page 1
     STA $0500,X
+    INX
+    BNE SCROLL_P1
+    LDX #$00
+SCROLL_P2:
     LDA $0628,X                 ; page 2
     STA $0600,X
+    INX
+    BNE SCROLL_P2
+    LDX #$00
+SCROLL_P3:
     LDA $0728,X                 ; page 3
     STA $0700,X
     INX
-    BNE SCROLL_LOOP
+    BNE SCROLL_P3
 
     ; Clear line 24
     LDY #SCREEN_WIDTH-1
@@ -1214,19 +1245,15 @@ PARSE_CMD_GO_CHECK:
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_LOAD_CHECK:
-    JSR PARSE_COLON_COMMAND     ; Parse L:xxxx format
+    JSR PARSE_COLON_COMMAND     ; Parse L:xxxx format (address only)
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR PARSE_FILENAME          ; Parse comma and filename
-    BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_LOAD_FILE           ; Execute load file command
+    JSR CMD_LOAD_FILE           ; Execute load file command (host picks the file)
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_SAVE_CHECK:
-    JSR PARSE_COLON_COMMAND     ; Parse S:xxxx-yyyy format
+    JSR PARSE_COLON_COMMAND     ; Parse S:xxxx-yyyy format (range only)
     BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR PARSE_FILENAME          ; Parse comma and filename
-    BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_SAVE_FILE           ; Execute save file command
+    JSR CMD_SAVE_FILE           ; Execute save file command (host picks the file)
     JMP PARSE_CMD_DONE
 
 PARSE_CMD_FILL_CHECK:
@@ -1541,53 +1568,6 @@ PARSE_SEARCH_PATTERN_DONE:
     RTS
 
 PARSE_SEARCH_ERROR:
-    RTS
-
-; Parse filename parameter (expects comma followed by filename)
-; Input: Command buffer positioned after address
-; Output: Filename copied to FILE_NAME_BUF, Carry clear if success
-; Modifies: A, X, Y
-PARSE_FILENAME:
-    JSR EXPECT_COMMA            ; skip spaces, require comma, skip spaces
-    BCS PARSE_FILENAME_ERROR
-
-PARSE_FILENAME_GET_NAME:
-    ; Copy filename from command buffer to file interface (max 12 chars)
-    LDY #$00                    ; Destination index (file name buffer)
-
-PARSE_FILENAME_COPY_LOOP:
-    CPX MON_CMDLEN              ; Check if we've reached end of command
-    BCS PARSE_FILENAME_COPIED   ; If so, we're done
-    CPY #$0C                    ; Check if file buffer is full (12 bytes max)
-    BCS PARSE_FILENAME_COPIED   ; If so, we're done
-
-    LDA MON_CMDBUF,X            ; Load character from command buffer
-    ; Check for valid filename characters (no spaces allowed)
-    CMP #$20                    ; Is it a space?
-    BEQ PARSE_FILENAME_COPIED   ; If space, end of filename
-
-    STA FILE_NAME_BUF,Y         ; Store in file name buffer
-    INX                         ; Move to next source character
-    INY                         ; Move to next destination character
-    BRA PARSE_FILENAME_COPY_LOOP ; Continue copying
-
-PARSE_FILENAME_COPIED:
-    ; Check if we have at least one character
-    CPY #$00                    ; Check if we copied any characters
-    BEQ PARSE_FILENAME_ERROR    ; If no characters, error
-
-    ; Null-terminate filename if there's room
-    CPY #$0C                    ; Check if buffer is full
-    BCS PARSE_FILENAME_FULL     ; If full, skip null termination
-    LDA #$00                    ; Load null terminator
-    STA FILE_NAME_BUF,Y         ; Store null terminator
-
-PARSE_FILENAME_FULL:
-    CLC                         ; Clear carry for success
-    RTS
-
-PARSE_FILENAME_ERROR:
-    SEC                         ; Set carry for error
     RTS
 
 ; Print error message for invalid commands
@@ -2256,10 +2236,12 @@ CMD_RUN_PROGRAM:
     JMP (MON_CURRADDR_LO)       ; Jump to user program
 
 ; Load file command - Load binary file from host system to specified memory address
-; Input: Target address in MON_CURRADDR_HI/LO, filename in FILE_NAME_BUF (parsed from L:xxxx,filename)
+; Input: Target address in MON_CURRADDR_HI/LO (L:xxxx)
 ; Output: File contents loaded to memory, success/error message displayed
 ; Modifies: A, X, Y, and memory at target address
-; Note: Communicates with C++ host via file I/O interface, one-shot operation
+; Note: Communicates with C++ host via file I/O interface, one-shot operation.
+;       The host presents a file-open dialog (it owns the host filesystem path),
+;       so the kernel supplies only the load address - no filename.
 CMD_LOAD_FILE:
     ; Set up file I/O communication with C++ host
     ; Store target address in file I/O interface
@@ -2268,7 +2250,7 @@ CMD_LOAD_FILE:
     LDA MON_CURRADDR_HI         ; Get load address high byte
     STA FILE_ADDR_HI            ; Store in file interface
 
-    ; Filename is already in FILE_NAME_BUF from PARSE_FILENAME
+    ; No filename: the host file-open dialog selects the source file.
 
     ; Issue load command to C++ host
     LDA #FILE_LOAD_CMD          ; Load command code
@@ -2295,10 +2277,12 @@ LOAD_CMD_SUCCESS:
     JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
 
 ; Save file command - Save memory range to binary file on host system
-; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO, filename in FILE_NAME_BUF
+; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO (S:xxxx-yyyy)
 ; Output: Memory range written to file, success/error message displayed
 ; Modifies: A, X, Y
-; Note: Validates address range, communicates with C++ host via file I/O interface
+; Note: Validates address range, communicates with C++ host via file I/O interface.
+;       The host presents a file-save dialog (it owns the host filesystem path),
+;       so the kernel supplies only the address range - no filename.
 CMD_SAVE_FILE:
     ; Check if we have a valid address range (end address must be non-zero)
     LDA MON_ENDADDR_LO          ; Check end address low byte
@@ -2327,7 +2311,7 @@ SAVE_MODE_VALID_RANGE:
     LDA MON_ENDADDR_HI          ; Get end address high byte
     STA FILE_END_ADDR_HI        ; Store in file end address high
 
-    ; Filename is already in FILE_NAME_BUF from PARSE_FILENAME
+    ; No filename: the host file-save dialog selects the destination file.
 
     ; Issue save command to C++ host
     LDA #FILE_SAVE_CMD          ; Save command code
@@ -3213,7 +3197,7 @@ MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
 MSG_HELP_DECIMAL:    .BYTE "D:NNNNN DECIMAL TO HEX", 0
 MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
 MSG_HELP_HEX_TO_DEC: .BYTE "H:XXXX HEX TO DECIMAL", 0
-MSG_HELP_LOAD:       .BYTE "L:XXXX,FILENAME LOAD FILE", 0
+MSG_HELP_LOAD:       .BYTE "L:XXXX LOAD FILE", 0
 MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY) READ FROM MEMORY", 0
 MSG_HELP_SAVE:       .BYTE "S:XXXX-YYYY   SAVE MEMORY RANGE", 0
 MSG_HELP_STACK:      .BYTE "T:     PRINT STACK", 0
@@ -3233,6 +3217,14 @@ MSG_WELCOME:         .BYTE "       -=MFC 6502 OPERATIONAL=-", $0D, $0A, 0
 MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
 MSG_NO_BASIC:        .BYTE "BASIC ROM NOT FOUND", $0D, $0A, 0
 MSG_BASIC_SIG_FAIL:  .BYTE "BASIC ROM INVALID", $0D, $0A, 0
+
+; ================================================================
+; RESERVED I/O PAGE ($FE00-$FEFF)
+; ================================================================
+; Memory-mapped I/O (keyboard, file I/O, timer, bank select) is shadowed here by
+; the emulator. Reserve the page so the linker errors if CODE ever grows into it.
+.segment "IORESV"
+.res $100
 
 ; ================================================================
 ; KERNEL API JUMP TABLE

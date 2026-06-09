@@ -47,8 +47,8 @@ namespace Computer
     class PIA
     {
     public:
-        static constexpr uint16_t kPiaMemoryStart = 0xDC00;
-        static constexpr uint16_t kPiaMemoryEnd = 0xDC22; // Through the stream data register
+        static constexpr uint16_t kPiaMemoryStart = 0xFE00;
+        static constexpr uint16_t kPiaMemoryEnd = 0xFE22; // Through the stream data register
         static constexpr uint8_t kKeyboardBufferSize = 32;
 
         // PIA Register offsets

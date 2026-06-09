@@ -1,11 +1,11 @@
 # S: Save Memory Command
 
 ## Purpose
-Save a range of memory to a binary file.
+Save a range of memory to a binary file on the host.
 
 ## Activation
 - Command letter: `S`
-- Format: `S:start-end,filename`
+- Format: `S:start-end`
 
 ## Input Requirements
 
@@ -15,54 +15,52 @@ Save a range of memory to a binary file.
 - End address must be greater than or equal to start address
 - Addresses separated by dash (`-`)
 
-### Filename
-- Must be preceded by comma (`,`)
-- Filename specification depends on host system
-- No spaces allowed in filename
-- Case-sensitive on most systems
+### File selection
+- No filename is given on the command line. When the save is issued the host
+  presents a file-save dialog and the user chooses the destination there.
+- The host owns the filesystem path, so naming the file in the monitor would be
+  meaningless - the kernel cannot choose where on the host the file is written.
 
 ## File I/O Interface
-The save operation uses memory-mapped file I/O:
-- `FILE_COMMAND` ($DC10) - Set to `FILE_SAVE_CMD` ($02)
-- `FILE_ADDR` ($DC12-$DC13) - Start address
-- `FILE_END_ADDR` ($DC20-$DC21) - End address  
-- `FILE_NAME_BUF` ($DC14-$DC1F) - Filename buffer
-- `FILE_STATUS` ($DC11) - Operation status
+The save operation uses memory-mapped file I/O (PIA page at `$FE00`):
+- `FILE_COMMAND` ($FE10) - Set to `FILE_SAVE_CMD` ($02)
+- `FILE_ADDR` ($FE12-$FE13) - Start address
+- `FILE_END_ADDR` ($FE20-$FE21) - End address
+- `FILE_STATUS` ($FE11) - Operation status
 
 ## Examples
-- `S:8000-8FFF,PROGRAM.BIN` - Save 4KB program to file
-- `S:0400-07FF,SCREEN.DAT` - Save screen memory to file
-- `S:1000-1000,BYTE.DAT` - Save single byte to file
-- `S:2000-2FFF,DATA` - Save 4KB data block
+- `S:8000-8FFF` - Save a 4KB range to a host-selected file
+- `S:0400-07FF` - Save screen memory to a host-selected file
+- `S:1000-1000` - Save a single byte
+- `S:2000-2FFF` - Save a 4KB data block
 
 ## Operation Sequence
-1. Parse command syntax and extract range/filename
+1. Parse command syntax and extract the range
 2. Validate address range (end >= start)
 3. Set up file I/O registers
-4. Initiate save operation
+4. Initiate save operation (host shows the file-save dialog)
 5. Wait for completion
 6. Display success or error message
 
 ## Success Message
-`SAVED`
+`OK`
 
 ## Error Messages
-- `ERROR?` - Invalid syntax, missing comma, or parse error
+- `ERROR?` - Invalid syntax/address, or the save failed (file error, or the
+  user cancelled the host dialog)
 - `RANGE?` - End address less than start address
-- `?FILE` - File write error or permission denied
 - `VALUE?` - Invalid hexadecimal address
 
 ## Status Monitoring
-The command monitors `FILE_STATUS` register:
-- `FILE_IDLE` ($00) - No operation
-- `FILE_IN_PROGRESS` ($01) - Save in progress
-- `FILE_SUCCESS` ($02) - Save completed successfully  
-- `FILE_ERROR` ($FF) - Save failed
+The command monitors the `FILE_STATUS` register:
+- in-progress ($01) - save running
+- success ($02) - save completed successfully
+- any other value - save failed
 
 ## Notes
 - One-shot command - returns to command mode after completion
-- Includes both start and end addresses in saved range
+- Includes both start and end addresses in the saved range
 - File size = (end - start + 1) bytes
-- Creates new file or overwrites existing file
+- Creates a new file or overwrites the host-selected file
 - No progress indication during save
 - Memory contents are not modified during save

@@ -16,12 +16,12 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0400-$07E7` | 1000 B | **Screen RAM** — 40×25 text (`$07E8-$07FF` is unused padding) |
 | `$0800-$AFFF` | ~42 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs |
 | `$B000-$DFFF` | 12 KB | **EhBASIC ROM** (loaded by the host) |
-| `$DC00-$DC22` | — | **PIA** — keyboard input and file I/O registers |
 | `$E000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
+| `$FE00-$FE22` | — | **PIA** I/O — within the kernel region; keyboard + file I/O registers |
 
 There is **no** VIC-II / SID / CIA / color memory / cartridge / banking. The
 screen is plain RAM at `$0400` rendered by the host display; the keyboard and
-file I/O are exposed through a small PIA-style register block at `$DC00`.
+file I/O are exposed through a small PIA-style register block at `$FE00`.
 
 ## Zero Page
 
@@ -109,7 +109,12 @@ the D:/H: and X: commands never run at the same time.
 | `$0400-$07E7` | 1000 bytes — 40×25 character display (written as ASCII) |
 | `$07E8-$07FF` | 24 bytes — unused padding to the page boundary |
 
-## I/O — PIA (`$DC00-$DC22`)
+## I/O — PIA (`$FE00-$FE22`)
+
+The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region (the kernel just
+avoids placing code there). It was moved here from the old `$DC00` so the
+`$B000-$DFFF` region is a clean, I/O-free window — groundwork for making it a
+bank-switched module slot (see `module_slot_design.md`).
 
 A single PIA-style device provides keyboard input and host file I/O. There are
 two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
@@ -117,14 +122,14 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 
 | Address | Register | Purpose |
 |---------|----------|---------|
-| `$DC00` | `PIA_DATA` | Keyboard data (read consumes a key) |
-| `$DC02` | `PIA_CONTROL` | Status flags (bit 0 = data available) |
-| `$DC10` | `FILE_COMMAND` | File op: load/save (block), open-read/open-write/close (stream) |
-| `$DC11` | `FILE_STATUS` | Idle / in-progress / success / stream-open / EOF / error |
-| `$DC12-$DC13` | `FILE_ADDR_LO/HI` | Block load/save target/start address |
-| `$DC14-$DC1F` | `FILE_NAME_BUF` | Filename buffer (12 bytes) |
-| `$DC20-$DC21` | `FILE_END_ADDR_LO/HI` | Block save end address |
-| `$DC22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
+| `$FE00` | `PIA_DATA` | Keyboard data (read consumes a key) |
+| `$FE02` | `PIA_CONTROL` | Status flags (bit 0 = data available) |
+| `$FE10` | `FILE_COMMAND` | File op: load/save (block), open-read/open-write/close (stream) |
+| `$FE11` | `FILE_STATUS` | Idle / in-progress / success / stream-open / EOF / error |
+| `$FE12-$FE13` | `FILE_ADDR_LO/HI` | Block load/save target/start address |
+| `$FE14-$FE1F` | `FILE_NAME_BUF` | Filename buffer (12 bytes) |
+| `$FE20-$FE21` | `FILE_END_ADDR_LO/HI` | Block save end address |
+| `$FE22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
 
 ## ROM Layout
 

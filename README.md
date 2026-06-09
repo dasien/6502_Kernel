@@ -70,10 +70,10 @@ Commands are listed alphabetically by command letter (matching the on-screen `?`
 - **F: Fill Memory** - High-performance memory filling with progress feedback
 - **G: Go/Run** - Direct program execution with return to monitor
 - **H: Hex to Decimal** - Convert hexadecimal (0000-FFFF) to decimal format
-- **L: Load File** - Immediate file loading: `L:8000,FILENAME`
+- **L: Load File** - Load a host-selected file to an address: `L:8000` (host shows a file dialog)
 - **M: Move/Copy** - Smart memory operations with overlap detection (`M:src-end,dest,B` where B: 0=copy, 1=move)
 - **R: Read Memory** - Display bytes in memory, supports single addresses or ranges
-- **S: Save File** - Immediate file saving: `S:8000-8FFF,FILENAME`
+- **S: Save File** - Save a memory range to a host-selected file: `S:8000-8FFF` (host shows a file dialog)
 - **T: Stack** - Display the stack page ($0100-$01FF), paged
 - **W: Write Memory** - Interactive hex editing with address advancement
 - **X: Search Memory** - Multi-byte pattern search with paged output
@@ -97,8 +97,8 @@ The monitor provides clear, consistent error messages:
 - **$0400-$07E7**: Screen memory (40x25 display buffer)
 - **$0800-$AFFF**: User RAM (EhBASIC program/variable space)
 - **$B000-$DFFF**: MFC BASIC interpreter ROM (12 KB; derived from EhBASIC)
-- **$DC00-$DC22**: PIA registers (keyboard input, file I/O, timer IRQ)
-- **$E000-$FFFF**: Kernel ROM (8 KB window; ~3,962 bytes used, rest free for growth)
+- **$E000-$FFFF**: Kernel ROM (8 KB; CODE ~3,780 bytes, rest free for growth)
+- **$FE00-$FE22**: PIA registers (keyboard, file I/O, timer) — an I/O page reserved within the kernel region
 
 See [docs/kernel_memory_map.md](docs/kernel_memory_map.md) for the full map.
 
@@ -120,11 +120,11 @@ User programs can access kernel services via the jump table at $FF00:
 ### File I/O Interface
 
 The kernel provides memory-mapped file I/O at:
-- **$DC10**: File command register
-- **$DC11**: File status register  
-- **$DC12-$DC13**: Address registers
-- **$DC14-$DC1F**: Filename buffer
-- **$DC20-$DC21**: End address (for save operations)
+- **$FE10**: File command register
+- **$FE11**: File status register  
+- **$FE12-$FE13**: Address registers
+- **$FE14-$FE1F**: Filename buffer
+- **$FE20-$FE21**: End address (for save operations)
 
 ## Building and Development
 
@@ -174,7 +174,7 @@ For detailed development information and project context, see:
 
 1. **Start with Help**: Use `?` to see all available commands
 2. **Use Command Recall**: The `.` command saves time when refining commands
-3. **File Operations**: Use immediate syntax `L:8000,FILE` and `S:8000-8FFF,FILE`
+3. **File Operations**: `L:8000` loads and `S:8000-8FFF` saves; the host shows a file dialog to pick the file
 4. **Search Effectively**: Use X: with multiple byte patterns for precise matching
 5. **Number Conversion**: Use D: and H: commands to convert between decimal and hex
 6. **Program Development**: Load programs with L:, test with G:, save modifications with S:
