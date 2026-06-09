@@ -26,15 +26,28 @@ namespace Computer
      * Memory Layout:
      * - $0000-$03FF: System RAM (1KB) - Zero page, stack, and system variables
      * - $0400-$07FF: Screen memory (1KB) - Character display data
-     * - $0800-$CFFF: User RAM (51KB) - Available for programs
-     * - $D000-$DFFF: I/O area (4KB) - Hardware registers (VIC, SID, CIA)
-     * - $E000-$FFFF: ROM area (8KB) - Kernel and BASIC ROM
+     * - $0800-$AFFF: User RAM (~42KB) - Available for programs / module working RAM
+     * - $B000-$DFFF: Module window (12KB) - bank 0 = RAM, banks 1..255 = ROM modules
+     * - $E000-$FFFF: ROM area (8KB) - Kernel ROM (I/O page at $FE00, bank reg $FE23)
      *
      * @see VIC, PIA, CPU6502
      */
     class Memory
     {
     public:
+        /// Bankable module window ($B000-$DFFF, 12KB). Backed by RAM when the
+        /// selected bank is 0, or by a read-only module ROM for banks 1..255.
+        static constexpr uint16_t kModuleWindowStart = 0xB000;
+        static constexpr uint16_t kModuleWindowEnd = 0xDFFF;
+        static constexpr size_t kModuleWindowSize = 0x3000; // 12 KB
+
+        /// MODULE_BANK select register. Write n to map bank n into the window;
+        /// read returns the current bank. Lives in the always-mapped I/O page.
+        static constexpr uint16_t kModuleBankRegister = 0xFE23;
+
+        /// Number of selectable banks (one byte of bank index: 0..255).
+        static constexpr int kBankCount = 256;
+
         /**
          * @brief Construct a new Memory system
          * @param video_chip Pointer to VIC chip for memory-mapped video I/O
@@ -94,10 +107,41 @@ namespace Computer
          */
         void setPia(PIA *pia);
 
+        /**
+         * @brief Install a module ROM image into a bank (host bank table)
+         * @param bank Bank index 1..255 (bank 0 is RAM and cannot be loaded)
+         * @param image Module ROM image; truncated/zero-padded to 12KB
+         * @note Pre-loaded once at startup; bank switching is just a pointer change.
+         */
+        void loadBank(uint8_t bank, const std::vector<uint8_t> &image);
+
+        /**
+         * @brief Map a bank into the module window (same effect as writing MODULE_BANK)
+         * @param bank 0 = RAM, 1..255 = ROM module
+         */
+        void selectBank(uint8_t bank);
+
+        /**
+         * @brief Get the currently mapped bank
+         * @return uint8_t Current bank (0 = RAM)
+         */
+        [[nodiscard]] uint8_t currentBank() const;
+
+        /**
+         * @brief Whether a ROM image has been installed for a bank
+         * @param bank Bank index (bank 0 is RAM, always returns false)
+         */
+        [[nodiscard]] bool isBankLoaded(uint8_t bank) const;
+
     private:
         std::vector<uint8_t> ram_;    ///< 64KB system RAM storage
         VIC *video_chip_;             ///< Pointer to VIC for memory-mapped video I/O
         PIA *pia_;                    ///< Pointer to PIA for memory-mapped peripheral I/O
+
+        /// Module ROM images, indexed by bank (1..255). Each entry is either
+        /// empty (no module installed) or exactly kModuleWindowSize bytes.
+        std::vector<std::vector<uint8_t>> bank_rom_;
+        uint8_t current_bank_ = 0;    ///< Bank mapped into $B000-$DFFF (0 = RAM)
     };
 } // namespace Computer
 

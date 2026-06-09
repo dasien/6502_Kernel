@@ -1,6 +1,9 @@
 # Bankable Module Slot — Design
 
-**Status:** design locked; pre-implementation. No code written against this yet.
+**Status:** Phases 1–2 implemented (kernel v2.2.9). I/O relocated to `$FE00`, the
+module window is clean, and the bank-switching mechanism (`MODULE_BANK` register +
+emulator window routing + host bank table) is in place. BASIC still lives in bank-0
+RAM at `$B000`; converting it to a real ROM bank and adding the `B:` menu is Phase 3.
 
 ## Goal
 
@@ -219,9 +222,17 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
 
 ## Implementation phases
 
-1. **Relocate I/O** `$DC00` → `$FE00` (kernel + basic + emulator), bound `CODE` at
-   `$FDFF`. Re-test (integration suite + BASIC LOAD/SAVE). Window is now clean.
-2. **Banking infrastructure**: `MODULE_BANK` register + `Memory` window routing + host
-   bank table.
-3. **Convert BASIC to bank 1**; stop auto-loading; add `MODULE_DIR` + the `B:` menu.
+1. **[DONE, v2.2.7/8]** **Relocate I/O** `$DC00` → `$FE00` (kernel + basic + emulator),
+   reserve the I/O page via an `IORESV` segment so the linker errors if `CODE` grows
+   into it. Re-tested (integration suite + BASIC LOAD/SAVE). Window is now clean.
+2. **[DONE, v2.2.9]** **Banking infrastructure**: `MODULE_BANK` register (`$FE23`) +
+   `Memory` window routing (bank 0 = RAM, 1..255 = read-only ROM) + host bank table
+   (`Memory::loadBank`). `RESET` maps the window to RAM. Behavior-preserving: BASIC
+   still loads into bank-0 RAM at `$B000`. Covered by `tests/test_memory_banking.cpp`
+   (11 cases) and the unchanged integration suite.
+3. **Convert BASIC to bank 1**; stop auto-loading into flat RAM (register `basic.rom`
+   as bank 1 in the host bank table); add `MODULE_DIR` + the `B:` menu/launcher and
+   `RETURN_FROM_MODULE` (`$FF12`) resetting the bank to 0. Once BASIC no longer lives
+   in the bank-0 RAM, have `RESET` zero `$B000–$DFFF` so the slot boots clean (deferred
+   from Phase 2: clearing it earlier would wipe the BASIC image still held in that RAM).
 4. **First new module**: combined assembler + disassembler in bank 2.

@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      2.2.8
+; Version:      2.2.9
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -34,8 +34,9 @@
 ;
 ; Stack:        $0100-$01FF (256 bytes)
 ; Screen RAM:   $0400-$07E7 (1000 bytes, 40x25 text)
-; I/O page:     $FE00-$FE22 (PIA: keyboard, file I/O, timer). Moved here from the
-;               old $DC00 so $B000-$DFFF is a clean window (see module_slot_design.md).
+; I/O page:     $FE00-$FE23 (PIA: keyboard, file I/O, timer; $FE23 MODULE_BANK).
+;               Moved here from the old $DC00 so $B000-$DFFF is a clean, bankable
+;               module window (see module_slot_design.md).
 ;
 ; ================================================================
 ; FEATURES
@@ -116,6 +117,13 @@
 ;                   a filename (L:XXXX / S:XXXX-YYYY): the host file dialog owns the
 ;                   filesystem path, so the kernel name was ignored anyway; removed
 ;                   the now-dead PARSE_FILENAME routine.
+; 2026-06-08  v2.2.9 Phase 2 of the module slot: bank-switching infrastructure.
+;                   Added the MODULE_BANK register ($FE23) - write n to map bank n
+;                   into the $B000-$DFFF window (0=RAM, 1..255=ROM modules), read to
+;                   query. RESET maps the window to RAM (slot starts empty). Emulator
+;                   Memory routes the window per the selected bank and provides a host
+;                   bank table (loadBank). No behavior change yet: BASIC still loads
+;                   into bank-0 RAM at $B000; conversion to a real bank is Phase 3.
 ;
 ; ================================================================
 
@@ -236,6 +244,12 @@ FILE_NAME_BUF      = $FE14         ; Filename buffer start ($FE14-$FE1F)
 FILE_END_ADDR_LO   = $FE20         ; End address low byte for save range
 FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 
+; Module-slot bank select. Writing n maps bank n into the $B000-$DFFF module
+; window: 0 = RAM (boot/default), 1..255 = read-only ROM modules. Reading returns
+; the current bank. Lives in the always-mapped I/O page (see module_slot_design.md).
+MODULE_BANK        = $FE23         ; bank-select register for the $B000-$DFFF window
+MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
+
 ; File command codes
 FILE_LOAD_CMD      = $01           ; Load file command
 FILE_SAVE_CMD      = $02           ; Save file command
@@ -261,6 +275,10 @@ RESET:
     SEI                         ; Set interrupt disable flag
     LDX #STACK_TOP              ; Initialize stack pointer to top of stack page
     TXS                         ; Transfer X to stack pointer
+
+    ; Map the module window ($B000-$DFFF) to RAM at boot. The slot starts empty
+    ; (no module auto-loaded); modules are mapped in later via the bank register.
+    STZ MODULE_BANK
 
 ; ================================================================
 ; ZERO PAGE INITIALIZATION

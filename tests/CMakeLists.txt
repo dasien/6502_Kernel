@@ -53,6 +53,28 @@ target_include_directories(cpu_alu_tests PRIVATE
 
 target_compile_features(cpu_alu_tests PRIVATE cxx_std_20)
 
+# Create unit test executable for the bankable module slot (Memory bank routing)
+add_executable(memory_banking_tests
+    test_memory_banking.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+)
+
+target_link_libraries(memory_banking_tests
+    gtest_main
+    gtest
+)
+
+target_include_directories(memory_banking_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(memory_banking_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -83,6 +105,10 @@ add_test(NAME kernel_unit_tests
 # Add CPU ALU unit tests to CTest
 add_test(NAME cpu_alu_unit_tests
     COMMAND cpu_alu_tests)
+
+# Add module-slot bank-routing unit tests to CTest
+add_test(NAME memory_banking_unit_tests
+    COMMAND memory_banking_tests)
 
 # Add integration test to CTest
 add_test(NAME monitor_integration
