@@ -141,10 +141,11 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 
 | Segment | Range | Purpose |
 |---------|-------|---------|
-| `CODE` | `$E000-$EF79` (3962 B) | Monitor code and data |
-| `JUMPS` | `$FF00-$FF14` (21 B) | Kernel API jump table |
+| `CODE` | `$E000-$EF62` (3939 B) | Monitor code and data |
+| `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK`) |
+| `JUMPS` | `$FF00-$FF1D` (30 B) | Kernel API jump table (10 entries) |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
-| (free) | ~`$EF7A-$FEFF` | ~4.1 KB unused |
+| (free) | ~`$EF63-$FDFF` | ~3.6 KB unused |
 
 ### Kernel API jump table (`$FF00`)
 
@@ -157,10 +158,15 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 | `$FF0C` | `K_CLEAR_SCREEN` | `CLEAR_SCREEN` |
 | `$FF0F` | `K_GET_RAND_NUM` | `GET_RANDOM_NUMBER` |
 | `$FF12` | `K_RETURN_MODULE` | `RETURN_FROM_MODULE` — unmaps the bank, returns to monitor (BASIC `BYE`) |
+| `$FF15` | `K_READ_LINE` | `READ_COMMAND_LINE` — edited line input (backspace/ESC) → `MON_CMDBUF`/`MON_CMDLEN` |
+| `$FF18` | `K_PARSE_HEX` | `HEX_QUAD_TO_ADDR` — X = offset in `MON_CMDBUF` → `MON_CURRADDR`, carry set if invalid |
+| `$FF1B` | `K_PRINT_HEX_BYTE` | `PRINT_HEX_BYTE` — print A as two hex digits |
 
 The jump table is also the **module ABI**: a ROM module reaches kernel services
 only through these entries, so it is independent of where the kernel's internal
-routines live.
+routines live. The `$FF15`/`$FF18` services share the monitor's command buffer
+(`MON_CMDBUF`) and `MON_CURRADDR` as scratch — safe because the monitor is
+suspended while a module runs and that state is saved/restored across the launch.
 
 ### Module window (`$B000-$DFFF`, 12 KB)
 

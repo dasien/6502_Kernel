@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.0
+; Version:      3.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,10 +15,10 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~3929 bytes
-;   CODE segment:  $E000-$EF3D (3902 bytes)
+; ROM (Used):      ~3975 bytes
+;   CODE segment:  $E000-$EF62 (3939 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
-;   JUMPS segment: $FF00-$FF14 (21 bytes) - kernel API jump table
+;   JUMPS segment: $FF00-$FF1D (30 bytes) - kernel API jump table (10 entries)
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
 ; Zero Page:    placed above EhBASIC's $00-$13 and below its ~$5B-$FF (~21 bytes used)
@@ -135,6 +135,13 @@
 ;                   F: command and reused it for the window clear. Folded the three
 ;                   duplicate command-buffer clears (ESC-cancel, '.' recall, module
 ;                   return) into one CLEAR_CMD_BUFFER routine.
+; 2026-06-09  v3.1  Phase 4: dev-tools module (bank 2) with a disassembler. Extended
+;                   the module ABI with three services so modules reuse the kernel
+;                   instead of duplicating it: K_READ_LINE ($FF15, edited line input),
+;                   K_PARSE_HEX ($FF18), K_PRINT_HEX_BYTE ($FF1B). These share the
+;                   monitor's command buffer and MON_CURRADDR as scratch; the launch
+;                   save/restore now also preserves MON_CURRADDR so a module's use of
+;                   it is invisible to the monitor on return.
 ;
 ; ================================================================
 
@@ -213,6 +220,8 @@ MON_LAST_CMD_BUF   = $028E         ; Last command buffer (80 bytes: $028E-$02DD)
 MON_LAST_CMD_LEN   = $02DE         ; Last command length (1 byte) (was $02C5)
 MON_SCRN_X_SAVE    = $02DF         ; Saved cursor X across a BASIC session (RAM, not ROM)
 MON_SCRN_Y_SAVE    = $02E0         ; Saved cursor Y across a BASIC session (RAM, not ROM)
+MON_CURRADDR_SAVE_LO = $02E1       ; Saved current-address low across a module session
+MON_CURRADDR_SAVE_HI = $02E2       ; Saved current-address high across a module session
 
 ; Monitor Mode Constants
 MON_MODE_CMD       = 0             ; Command mode
@@ -958,10 +967,21 @@ READ_CMD_ESCAPE:
     RTS
 
 READ_CMD_CANCEL:
-    JSR CLEAR_CMD_BUFFER        ; Reset buffer bytes, length, and pointer
-    JSR PRINT_NEWLINE           ; Start new line
-    LDX #$00                    ; Reset buffer index
-    JMP READ_CMD_LOOP           ; Start over
+    ; Abandon the line in place: destructively backspace over the characters
+    ; typed (X of them) so the line collapses back to just the prompt, then keep
+    ; reading on the same line. The prompt itself was printed by the caller and
+    ; is left intact, so ESC clears your input and leaves you at a fresh prompt.
+READ_CMD_CANCEL_ERASE:
+    CPX #$00                    ; any typed characters left to erase?
+    BEQ READ_CMD_CANCEL_DONE
+    LDA #ASCII_BACKSPACE        ; destructive backspace (PRINT_CHAR clears the char)
+    JSR PRINT_CHAR
+    DEX
+    BRA READ_CMD_CANCEL_ERASE
+READ_CMD_CANCEL_DONE:
+    JSR CLEAR_CMD_BUFFER        ; reset buffer bytes, length, and pointer
+    LDX #$00                    ; buffer index back to start
+    JMP READ_CMD_LOOP           ; keep reading on the same line
 
 READ_CMD_DONE_CR:
     ; Command is complete - null terminate it
@@ -1697,11 +1717,18 @@ SAVE_MONITOR_STATE:
     PHX                     ; Preserve X (65C02)
     PHY                     ; Preserve Y (65C02)
 
-    ; Save cursor position (restored after BASIC returns)
+    ; Save cursor position (restored after the module returns)
     LDA CURSOR_X
     STA MON_SCRN_X_SAVE
     LDA CURSOR_Y
     STA MON_SCRN_Y_SAVE
+
+    ; Save the current address: modules may use MON_CURRADDR as scratch (via the
+    ; K_PARSE_HEX service), so preserve the monitor's prompt address across them.
+    LDA MON_CURRADDR_LO
+    STA MON_CURRADDR_SAVE_LO
+    LDA MON_CURRADDR_HI
+    STA MON_CURRADDR_SAVE_HI
 
     ; Restore registers
     PLY                     ; (65C02) pull in reverse order: Y, X, A
@@ -1728,6 +1755,12 @@ RESTORE_MONITOR_STATE:
     STA CURSOR_X
     LDA MON_SCRN_Y_SAVE
     STA CURSOR_Y
+
+    ; Restore the current address (a module may have used it as scratch)
+    LDA MON_CURRADDR_SAVE_LO
+    STA MON_CURRADDR_LO
+    LDA MON_CURRADDR_SAVE_HI
+    STA MON_CURRADDR_HI
 
     ; Restore monitor mode to command mode
     LDA #MON_MODE_CMD
@@ -3394,6 +3427,9 @@ K_GET_KEYSTROKE: JMP GET_KEYSTROKE      ; $FF09
 K_CLEAR_SCREEN:  JMP CLEAR_SCREEN       ; $FF0C
 K_GET_RAND_NUM:  JMP GET_RANDOM_NUMBER  ; $FF0F
 K_RETURN_MODULE: JMP RETURN_FROM_MODULE ; $FF12 - module exit point (BASIC BYE, etc.)
+K_READ_LINE:     JMP READ_COMMAND_LINE  ; $FF15
+K_PARSE_HEX:     JMP HEX_QUAD_TO_ADDR   ; $FF18
+K_PRINT_HEX_BYTE:JMP PRINT_HEX_BYTE     ; $FF1B
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

@@ -38,6 +38,10 @@ public:
         testScrollIntegrity();
         testBankMenu();
         testDevtoolsModule();
+        testDisassembler();
+        testDisassemblerBackspace();
+        testDisassemblerEscMidline();
+        testModuleStatePreservedAcrossLaunch();
         testFillCommand();
         testReadCommand();
         testMoveCommand();
@@ -270,6 +274,119 @@ private:
         clearScreen();
         sendCommand("R:8000");
         verifyResponse("8000:", "Monitor responsive after module return");
+    }
+
+    // The dev-tools disassembler (D xxxx). Poke a known 65C02 sequence into RAM
+    // at $0800 (below the module window, so it stays RAM whatever bank is mapped),
+    // launch the module, disassemble it, and check the decoded text - including a
+    // 65C02-only mode and a computed branch target.
+    void testDisassembler() {
+        Computer::Memory *mem = computer.getMemory();
+        const uint8_t code[] = {
+            0xA9, 0x05,        // LDA #$05      immediate
+            0x8D, 0x00, 0x04,  // STA $0400     absolute
+            0xB2, 0xFB,        // LDA ($FB)     zero-page indirect (65C02)
+            0x80, 0xF7         // BRA $0800     relative (target = $0809 - 9)
+        };
+        for (size_t i = 0; i < sizeof(code); ++i)
+            mem->write(static_cast<uint16_t>(0x0800 + i), code[i]);
+
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);            // launch dev tools (bank 2)
+
+        for (char c : std::string("D0800"))
+            computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress('\r');
+        computer.run(500000);
+
+        verifyResponse("LDA #$05",  "Disasm: immediate operand");
+        verifyResponse("STA $0400", "Disasm: absolute operand");
+        verifyResponse("LDA ($FB)", "Disasm: zero-page indirect (65C02)");
+        verifyResponse("BRA $0800", "Disasm: relative branch target");
+
+        sendKey(0x1B, 200000);           // ESC -> return to monitor
+        verifyMemEquals(0xFE23, 0x00, "Disasm: module returned (bank unmapped)");
+    }
+
+    // Backspace in the address entry: type a wrong digit, erase it, finish, and
+    // confirm the corrected address ($0800) is what gets disassembled.
+    void testDisassemblerBackspace() {
+        Computer::Memory *mem = computer.getMemory();
+        mem->write(0x0800, 0xA9);        // LDA #$05 marker at $0800
+        mem->write(0x0801, 0x05);
+
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);            // launch dev tools
+
+        // "D085" then backspace (drops the 5 -> $0008) then "00" -> $0800.
+        for (char c : std::string("D085"))
+            computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress(0x08);   // backspace
+        for (char c : std::string("00"))
+            computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress('\r');
+        computer.run(500000);
+
+        verifyResponse("0800: A9 05", "Disasm: backspace corrected the address");
+
+        sendKey(0x1B, 200000);
+    }
+
+    // Mid-line ESC cancels the entry and the module reprompts and stays usable
+    // (regression: ESC-cancel used to restart the read loop without reprinting
+    // the prompt, leaving the module on a blank line).
+    void testDisassemblerEscMidline() {
+        computer.getMemory()->write(0x0800, 0xEA);   // NOP marker
+
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);
+
+        for (char c : std::string("D08"))            // partial address...
+            computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress(0x1B);        // ...ESC cancels the line
+        computer.run(200000);
+
+        // The typed text is erased in place (not left on a stale line above).
+        verifyAbsent("D08", "Disasm: ESC erases the typed line in place");
+
+        // Module must accept a fresh command afterward.
+        for (char c : std::string("D0800"))
+            computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress('\r');
+        computer.run(500000);
+        verifyResponse("0800: EA", "Disasm: usable after mid-line ESC cancel");
+
+        sendKey(0x1B, 200000);
+    }
+
+    // Edge case of reusing the monitor's scratch via the extended ABI: a module's
+    // disassemble (K_PARSE_HEX) overwrites MON_CURRADDR ($14/$15), but the launch
+    // save/restore must leave the monitor's current address intact on return.
+    void testModuleStatePreservedAcrossLaunch() {
+        clearScreen();
+        sendCommand("R:1234");                   // set the monitor's current address
+        const uint8_t pre_lo = readMem(0x14);
+        const uint8_t pre_hi = readMem(0x15);
+
+        sendCommand("B:");
+        sendKey('2', 200000);                    // launch dev tools
+        for (char c : std::string("D0400"))      // module sets MON_CURRADDR := $0400
+            computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress('\r');
+        computer.run(500000);
+        sendKey(0x1B, 200000);                   // exit back to the monitor
+
+        verifyMemEquals(0x14, pre_lo, "MON_CURRADDR lo restored after module");
+        verifyMemEquals(0x15, pre_hi, "MON_CURRADDR hi restored after module");
+
+        // And the monitor's command buffer is usable again (it was the module's
+        // line-input scratch via K_READ_LINE).
+        clearScreen();
+        sendCommand("R:8000");
+        verifyResponse("8000:", "Monitor command input works after module reuse");
     }
 
     // End-to-end: selecting BASIC from the menu maps bank 1 into the window and
