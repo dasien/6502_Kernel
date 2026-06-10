@@ -38,7 +38,7 @@ Defined opcodes: **212** of 256 (the remaining 44 are deterministic multi-byte N
 | `$1D` | ORA | ABX | 3 |
 | `$1E` | ASL | ABX | 3 |
 | `$1F` | BBR1 | ZPR | 3 |
-| `$20` | JSR | IMP | 1 |
+| `$20` | JSR | ABS | 3 |
 | `$21` | AND | IZX | 2 |
 | `$22` | ??? | UN2 | 2 |
 | `$23` | ??? | UN1 | 1 |

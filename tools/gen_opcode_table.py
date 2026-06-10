@@ -90,7 +90,14 @@ def build_table():
         if mode_info is None:
             if suffix != "":
                 raise SystemExit(f"Unknown mode suffix '{suffix}' in handle{name}")
-            mode_info = MODE_REL if mnem in BRANCHES else MODE_IMP
+            # No mode suffix: branches are relative, JSR is the one absolute op
+            # whose handler carries no suffix (handleJsr), everything else implied.
+            if mnem in BRANCHES:
+                mode_info = MODE_REL
+            elif mnem == "JSR":
+                mode_info = MODE_SUFFIX["Absolute"]
+            else:
+                mode_info = MODE_IMP
         table[opcode] = (mnem, mode_info[0])
 
     # 2) Rockwell/WDC bit ops, registered in a loop in CPU6502.cpp:

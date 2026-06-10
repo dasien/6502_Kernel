@@ -42,6 +42,7 @@ public:
         testDisassemblerBackspace();
         testDisassemblerEscMidline();
         testModuleStatePreservedAcrossLaunch();
+        testAssembler();
         testFillCommand();
         testReadCommand();
         testMoveCommand();
@@ -401,6 +402,53 @@ private:
         verifyMemEquals(0xB000, 0xA0, "Window shows bank-1 ROM (LAB_COLD opcode)");
         sendKey('\r', 2000000);  // accept default memory size -> sign-on banner
         verifyResponse("MFC BASIC", "BASIC launches from bank 1");
+    }
+
+    // The dev-tools line assembler (A xxxx). Assembles a sequence covering many
+    // addressing modes (incl. 65C02 (zp), accumulator, and a computed branch)
+    // and verifies the emitted bytes straight from memory.
+    void testAssembler() {
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);            // launch dev tools
+
+        sendCommand("A0800");            // assemble mode at $0800
+        sendCommand("LDA #$05");         // A9 05      immediate
+        sendCommand("STA $0400");        // 8D 00 04   absolute
+        sendCommand("NOP");              // EA         implied
+        sendCommand("ASL A");            // 0A         accumulator
+        sendCommand("LDA ($40)");        // B2 40      zp indirect (65C02)
+        sendCommand("STA $10,X");        // 95 10      zp,X
+        sendCommand("LDA ($30,X)");      // A1 30      (zp,X)
+        sendCommand("LDA ($20),Y");      // B1 20      (zp),Y
+        sendCommand("BEQ $080F");        // F0 FE      relative (to self -> -2)
+        sendCommand("JSR $FF00");        // 20 00 FF   absolute (JSR: no-suffix handler)
+        sendCommand("JMP $1234");        // 4C 34 12   absolute
+        sendCommand("");                 // empty line exits assemble mode
+
+        verifyMemEquals(0x0800, 0xA9, "ASM: LDA #imm opcode");
+        verifyMemEquals(0x0801, 0x05, "ASM: LDA #imm operand");
+        verifyMemEquals(0x0802, 0x8D, "ASM: STA abs opcode");
+        verifyMemEquals(0x0803, 0x00, "ASM: STA abs lo");
+        verifyMemEquals(0x0804, 0x04, "ASM: STA abs hi");
+        verifyMemEquals(0x0805, 0xEA, "ASM: NOP");
+        verifyMemEquals(0x0806, 0x0A, "ASM: ASL A (accumulator)");
+        verifyMemEquals(0x0807, 0xB2, "ASM: LDA (zp) 65C02 opcode");
+        verifyMemEquals(0x0808, 0x40, "ASM: LDA (zp) operand");
+        verifyMemEquals(0x0809, 0x95, "ASM: STA zp,X");
+        verifyMemEquals(0x080B, 0xA1, "ASM: LDA (zp,X)");
+        verifyMemEquals(0x080D, 0xB1, "ASM: LDA (zp),Y");
+        verifyMemEquals(0x080F, 0xF0, "ASM: BEQ opcode");
+        verifyMemEquals(0x0810, 0xFE, "ASM: BEQ offset (target-PC-2)");
+        verifyMemEquals(0x0811, 0x20, "ASM: JSR abs opcode");
+        verifyMemEquals(0x0812, 0x00, "ASM: JSR abs lo");
+        verifyMemEquals(0x0813, 0xFF, "ASM: JSR abs hi");
+        verifyMemEquals(0x0814, 0x4C, "ASM: JMP abs opcode");
+        verifyMemEquals(0x0815, 0x34, "ASM: JMP abs lo");
+        verifyMemEquals(0x0816, 0x12, "ASM: JMP abs hi");
+
+        sendKey(0x1B, 200000);           // exit the module back to the monitor
+        verifyMemEquals(0xFE23, 0x00, "ASM: module returned (bank unmapped)");
     }
 
     void testFillCommand() {

@@ -3,7 +3,7 @@
 ; ================================================================
 ; Filename:     devtools.asm
 ; Author:       Brian Gentry
-; Version:      0.3 (Phase 4 sub-step 3: disassembler, on the extended ABI)
+; Version:      0.4 (Phase 4 sub-step 4: line assembler + disassembler)
 ; Assembler:    ca65  (-I src/kernel/devtools for opcodes_65c02.inc)
 ;
 ; A bank-switched ROM module for the $B000-$DFFF window (module bank 2; see
@@ -63,6 +63,34 @@ DA_TGT           = $F5              ; branch target / multiply temp ($F5-$F6)
 MNE_PTR          = $FB              ; mnemonic string pointer ($FB-$FC)
 DA_ADDR          = $FD              ; current disassembly address ($FD-$FE)
 
+; ---- Assembler scratch ($E0-$EF; the assembler and disassembler are separate
+;      commands, so this block is independent of the DA_* zero page above) -----
+ASM_MNE_BUF      = $E0              ; parsed mnemonic, 4 bytes space-padded ($E0-$E3)
+ASM_DLO          = $E0              ; (reused after parsing) relative-offset diff lo
+ASM_DHI          = $E1              ; relative-offset diff hi
+ASM_PC           = $E4              ; assembly program counter ($E4-$E5)
+ASM_VAL          = $E6              ; parsed operand value ($E6-$E7)
+ASM_MNEM_ID      = $E8              ; mnemonic id
+ASM_MODE         = $E9              ; resolved addressing-mode id
+ASM_OPCODE       = $EA              ; resolved opcode
+ASM_LEN          = $EB              ; instruction length
+ASM_CLASS        = $EC              ; operand syntax class (CL_*)
+ASM_IDX          = $ED              ; parse index into MON_CMDBUF
+ASM_TMP          = $EE              ; FIND_OPCODE mode / scratch
+ASM_TMP2         = $EF              ; hex-parse nibble scratch
+ASM_PTR          = MNE_PTR          ; mnemonic-table search pointer (shared)
+
+; Operand syntax classes (from PARSE_OPERAND; resolved to a mode by ASM_RESOLVE)
+CL_IMP           = 0                ; (no operand)
+CL_ACC           = 1                ; A
+CL_IMM           = 2                ; #$nn
+CL_DIR           = 3                ; $h        (-> ZP/ABS/REL)
+CL_DIRX          = 4                ; $h,X      (-> ZPX/ABX)
+CL_DIRY          = 5                ; $h,Y      (-> ZPY/ABY)
+CL_IND           = 6                ; ($h)      (-> ZPI/IND)
+CL_INDX          = 7                ; ($h,X)    (-> IZX/AIX)
+CL_INDY          = 8                ; ($h),Y    (-> IZY)
+
 .segment "CODE"
 
 ; ----------------------------------------------------------------
@@ -92,6 +120,8 @@ DEVT_LOOP:
     BEQ DEVT_EXIT
     CMP #'D'
     BEQ CMD_DISASM
+    CMP #'A'
+    BEQ CMD_ASM
     BRA DEVT_ERROR                  ; unknown command
 DEVT_EXIT:
     JMP K_RETURN_MODULE             ; unmaps bank 2, returns to the monitor
@@ -129,6 +159,54 @@ CD_LOOP:
     DEX
     BNE CD_LOOP
     BRA DEVT_LOOP
+
+; ----------------------------------------------------------------
+; CMD_ASM - "A xxxx": interactive line assembler from xxxx. Prompts with the
+; current address; each line is one instruction assembled to memory; an empty
+; line or ESC exits assemble mode.
+; ----------------------------------------------------------------
+CMD_ASM:
+    LDX #$01                        ; skip the command letter
+CA_SKIP:
+    CPX MON_CMDLEN
+    BCS CA_ERR
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BNE CA_PARSE
+    INX
+    BRA CA_SKIP
+CA_PARSE:
+    JSR K_PARSE_HEX                 ; start address -> MON_CURRADDR
+    BCS CA_ERR
+    LDA MON_CURRADDR_LO
+    STA ASM_PC
+    LDA MON_CURRADDR_HI
+    STA ASM_PC+1
+CA_LINE:
+    LDA ASM_PC+1                    ; address prompt "xxxx: "
+    JSR K_PRINT_HEX_BYTE
+    LDA ASM_PC
+    JSR K_PRINT_HEX_BYTE
+    LDA #':'
+    JSR K_PRINT_CHAR
+    LDA #' '
+    JSR K_PRINT_CHAR
+    JSR K_READ_LINE                 ; instruction line -> MON_CMDBUF
+    LDA MON_CMDLEN
+    BEQ CA_DONE                     ; empty line -> leave assemble mode
+    LDA MON_CMDBUF
+    CMP #ASCII_ESC
+    BEQ CA_DONE                     ; ESC -> leave assemble mode
+    JSR ASM_ONE                     ; assemble; carry set on error
+    BCC CA_LINE
+    LDA #'?'                        ; error: report and retry the same address
+    JSR K_PRINT_CHAR
+    JSR K_PRINT_NEWLINE
+    BRA CA_LINE
+CA_DONE:
+    JMP DEVT_LOOP
+CA_ERR:
+    JMP DEVT_ERROR
 
 ; ----------------------------------------------------------------
 ; DISASM_ONE - decode and print one instruction at (DA_ADDR), advance DA_ADDR
@@ -321,6 +399,516 @@ COMPUTE_TARGET:
 CT_DONE:
     RTS
 
+; ================================================================
+; ASSEMBLER (line-at-a-time, numeric operands; no labels/expressions yet)
+; ================================================================
+
+; ----------------------------------------------------------------
+; ASM_ONE - assemble the instruction line in MON_CMDBUF to (ASM_PC), advance PC
+; Output: carry clear on success (bytes written, ASM_PC advanced); carry set on
+;         any error (bad mnemonic, operand syntax, illegal mode, branch range).
+; ----------------------------------------------------------------
+ASM_ONE:
+    STZ ASM_IDX
+    JSR ASM_PARSE_MNEM
+    BCS AO_ERR
+    JSR ASM_PARSE_OPERAND
+    BCS AO_ERR
+    JSR ASM_RESOLVE
+    BCS AO_ERR
+    JMP ASM_EMIT                    ; tail: emits and returns carry clear (or set on range)
+AO_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM_PARSE_MNEM - read the mnemonic from MON_CMDBUF[ASM_IDX], find its id
+; Output: ASM_MNEM_ID set, ASM_IDX past the mnemonic; carry set if not found
+; ----------------------------------------------------------------
+ASM_PARSE_MNEM:
+    LDX ASM_IDX
+APM_SKIP:
+    CPX MON_CMDLEN
+    BCS APM_ERR                     ; nothing here
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BNE APM_COLLECT
+    INX
+    BRA APM_SKIP
+APM_COLLECT:
+    LDY #$00                        ; copy up to 4 chars into ASM_MNE_BUF
+APM_COPY:
+    CPX MON_CMDLEN
+    BCS APM_PAD
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BEQ APM_PAD
+    CPY #$04
+    BCS APM_ERR                     ; mnemonic too long
+    STA ASM_MNE_BUF,Y
+    INX
+    INY
+    BRA APM_COPY
+APM_PAD:
+    CPY #$04                        ; space-pad to 4 bytes
+    BCS APM_STORED
+    LDA #' '
+    STA ASM_MNE_BUF,Y
+    INY
+    BRA APM_PAD
+APM_STORED:
+    STX ASM_IDX                     ; advance past the mnemonic
+    LDA #<MNEM_STR
+    STA ASM_PTR
+    LDA #>MNEM_STR
+    STA ASM_PTR+1
+    LDX #$00                        ; mnemonic id
+APM_SEARCH:
+    LDY #$00
+APM_CMP:
+    LDA (ASM_PTR),Y
+    CMP ASM_MNE_BUF,Y
+    BNE APM_NEXT
+    INY
+    CPY #$04
+    BCC APM_CMP
+    STX ASM_MNEM_ID                 ; matched
+    CLC
+    RTS
+APM_NEXT:
+    LDA ASM_PTR                     ; ASM_PTR += MNEM_WIDTH (4)
+    CLC
+    ADC #$04
+    STA ASM_PTR
+    BCC APM_NOC
+    INC ASM_PTR+1
+APM_NOC:
+    INX
+    CPX #MNEM_COUNT
+    BCC APM_SEARCH
+APM_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM_PARSE_OPERAND - classify the operand from MON_CMDBUF[ASM_IDX]
+; Output: ASM_CLASS set, ASM_VAL = parsed value; carry set on syntax error
+; ----------------------------------------------------------------
+ASM_PARSE_OPERAND:
+    LDX ASM_IDX
+APO_SKIP:
+    CPX MON_CMDLEN
+    BCS APO_NONE
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BNE APO_HAVE
+    INX
+    BRA APO_SKIP
+APO_NONE:
+    LDA #CL_IMP
+    STA ASM_CLASS
+    CLC
+    RTS
+APO_HAVE:
+    CMP #'A'
+    BEQ APO_ACC
+    CMP #'#'
+    BEQ APO_IMM
+    CMP #'('
+    BEQ APO_IND
+    CMP #'$'
+    BEQ APO_DIR
+    SEC                             ; unrecognized operand
+    RTS
+APO_ACC:                            ; must be exactly "A" (end or space after)
+    INX
+    CPX MON_CMDLEN
+    BCS APO_ACC_OK
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BNE APO_ERR
+APO_ACC_OK:
+    LDA #CL_ACC
+    STA ASM_CLASS
+    CLC
+    RTS
+APO_IMM:
+    INX                             ; skip '#'
+    CPX MON_CMDLEN
+    BCS APO_ERR
+    LDA MON_CMDBUF,X
+    CMP #'$'
+    BNE APO_ERR
+    INX                             ; skip '$'
+    JSR ASM_HEX
+    BCS APO_ERR
+    LDA #CL_IMM
+    STA ASM_CLASS
+    CLC
+    RTS
+APO_DIR:
+    INX                             ; skip '$'
+    JSR ASM_HEX
+    BCS APO_ERR
+    CPX MON_CMDLEN
+    BCS APO_DIR_PLAIN
+    LDA MON_CMDBUF,X
+    CMP #','
+    BNE APO_DIR_PLAIN
+    INX                             ; skip ','
+    CPX MON_CMDLEN
+    BCS APO_ERR
+    LDA MON_CMDBUF,X
+    CMP #'X'
+    BEQ APO_DIRX
+    CMP #'Y'
+    BEQ APO_DIRY
+    SEC                             ; "$h,$..." (BBRn/BBSn) not supported yet
+    RTS
+APO_DIR_PLAIN:
+    LDA #CL_DIR
+    STA ASM_CLASS
+    CLC
+    RTS
+APO_DIRX:
+    LDA #CL_DIRX
+    STA ASM_CLASS
+    CLC
+    RTS
+APO_DIRY:
+    LDA #CL_DIRY
+    STA ASM_CLASS
+    CLC
+    RTS
+; Error exit placed mid-routine so every branch above and below is in range.
+APO_ERR:
+    SEC
+    RTS
+APO_IND:
+    INX                             ; skip '('
+    CPX MON_CMDLEN
+    BCS APO_ERR
+    LDA MON_CMDBUF,X
+    CMP #'$'
+    BNE APO_ERR
+    INX                             ; skip '$'
+    JSR ASM_HEX
+    BCS APO_ERR
+    CPX MON_CMDLEN
+    BCS APO_ERR
+    LDA MON_CMDBUF,X
+    CMP #')'
+    BEQ APO_IND_CLOSE
+    CMP #','
+    BNE APO_ERR
+    INX                             ; skip ','
+    CPX MON_CMDLEN
+    BCS APO_ERR
+    LDA MON_CMDBUF,X
+    CMP #'X'
+    BNE APO_ERR
+    INX                             ; skip 'X'
+    CPX MON_CMDLEN
+    BCS APO_ERR
+    LDA MON_CMDBUF,X
+    CMP #')'
+    BNE APO_ERR
+    LDA #CL_INDX                    ; ($h,X)
+    STA ASM_CLASS
+    CLC
+    RTS
+APO_IND_CLOSE:                      ; saw ')' -> ($h) or ($h),Y
+    INX                             ; skip ')'
+    CPX MON_CMDLEN
+    BCS APO_IND_PLAIN
+    LDA MON_CMDBUF,X
+    CMP #','
+    BNE APO_IND_PLAIN
+    INX                             ; skip ','
+    CPX MON_CMDLEN
+    BCS APO_ERR
+    LDA MON_CMDBUF,X
+    CMP #'Y'
+    BNE APO_ERR
+    LDA #CL_INDY                    ; ($h),Y
+    STA ASM_CLASS
+    CLC
+    RTS
+APO_IND_PLAIN:
+    LDA #CL_IND                     ; ($h)
+    STA ASM_CLASS
+    CLC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM_HEX - parse 1-4 hex digits at MON_CMDBUF[X] into ASM_VAL, advance X
+; (The kernel only parses fixed 2-/4-digit fields; assembler operands are
+;  variable length and must stop at the first non-hex character.)
+; Output: ASM_VAL = value, X past the digits; carry set if no digits
+; ----------------------------------------------------------------
+ASM_HEX:
+    STZ ASM_VAL
+    STZ ASM_VAL+1
+    LDY #$00                        ; digit count
+AH_LOOP:
+    CPX MON_CMDLEN
+    BCS AH_DONE
+    LDA MON_CMDBUF,X
+    JSR ASM_NIBBLE
+    BCC AH_DONE                     ; not a hex digit -> stop
+    STA ASM_TMP2                    ; nibble
+    ASL ASM_VAL
+    ROL ASM_VAL+1
+    ASL ASM_VAL
+    ROL ASM_VAL+1
+    ASL ASM_VAL
+    ROL ASM_VAL+1
+    ASL ASM_VAL
+    ROL ASM_VAL+1
+    LDA ASM_VAL
+    ORA ASM_TMP2
+    STA ASM_VAL
+    INX
+    INY
+    BRA AH_LOOP
+AH_DONE:
+    CPY #$00
+    BEQ AH_ERR                      ; no digits parsed
+    CLC
+    RTS
+AH_ERR:
+    SEC
+    RTS
+
+; ASM_NIBBLE - ASCII hex digit (A) -> nibble (A), carry set if valid
+ASM_NIBBLE:
+    CMP #'0'
+    BCC AN_NO
+    CMP #'9'+1
+    BCC AN_DIGIT
+    CMP #'A'
+    BCC AN_NO
+    CMP #'F'+1
+    BCC AN_ALPHA
+AN_NO:
+    CLC
+    RTS
+AN_DIGIT:
+    SEC
+    SBC #'0'
+    SEC
+    RTS
+AN_ALPHA:
+    SEC
+    SBC #('A'-10)
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; FIND_OPCODE - find an opcode for (ASM_MNEM_ID, mode in A)
+; Output: carry clear + A = opcode if found; carry set if no such combo.
+;         Stores the searched mode in ASM_TMP (used by ASM_RESOLVE).
+; ----------------------------------------------------------------
+FIND_OPCODE:
+    STA ASM_TMP
+    LDX #$00
+FO_LOOP:
+    LDA OPC_MNEM,X
+    CMP ASM_MNEM_ID
+    BNE FO_NEXT
+    LDA OPC_MODE,X
+    CMP ASM_TMP
+    BNE FO_NEXT
+    TXA                             ; opcode = X
+    CLC
+    RTS
+FO_NEXT:
+    INX
+    BNE FO_LOOP                     ; scan all 256 opcodes
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM_RESOLVE - pick the concrete mode + opcode for (ASM_CLASS, ASM_VAL, mnem)
+; Output: ASM_OPCODE, ASM_MODE, ASM_LEN; carry set if the combo is illegal.
+; ----------------------------------------------------------------
+ASM_RESOLVE:
+    LDA ASM_CLASS
+    CMP #CL_IMP
+    BEQ R_IMP
+    CMP #CL_ACC
+    BEQ R_ACC
+    CMP #CL_IMM
+    BEQ R_IMM
+    CMP #CL_DIR
+    BEQ R_DIR
+    CMP #CL_DIRX
+    BEQ R_DIRX
+    CMP #CL_DIRY
+    BEQ R_DIRY
+    CMP #CL_IND
+    BEQ R_IND
+    CMP #CL_INDX
+    BEQ R_INDX
+    LDA #MODE_IZY                   ; CL_INDY
+    JMP R_FIND
+R_IMP:
+    LDA #MODE_IMP
+    JSR FIND_OPCODE
+    BCC RES_STORE
+    LDA #MODE_ACC                   ; fallback (e.g. "ASL" -> ASL A)
+    JMP R_FIND
+R_ACC:
+    LDA #MODE_ACC
+    JMP R_FIND
+R_IMM:
+    LDA #MODE_IMM
+    JMP R_FIND
+R_DIR:
+    LDA #MODE_REL                   ; branches take a target address
+    JSR FIND_OPCODE
+    BCC RES_STORE
+    LDA ASM_VAL+1
+    BNE R_DIR_ABS                   ; value > $FF -> must be absolute
+    LDA #MODE_ZP
+    JSR FIND_OPCODE
+    BCC RES_STORE
+R_DIR_ABS:
+    LDA #MODE_ABS
+    JMP R_FIND
+R_DIRX:
+    LDA ASM_VAL+1
+    BNE R_DIRX_ABS
+    LDA #MODE_ZPX
+    JSR FIND_OPCODE
+    BCC RES_STORE
+R_DIRX_ABS:
+    LDA #MODE_ABX
+    JMP R_FIND
+R_DIRY:
+    LDA ASM_VAL+1
+    BNE R_DIRY_ABS
+    LDA #MODE_ZPY
+    JSR FIND_OPCODE
+    BCC RES_STORE
+R_DIRY_ABS:
+    LDA #MODE_ABY
+    JMP R_FIND
+R_IND:
+    LDA ASM_VAL+1
+    BNE R_IND_ABS
+    LDA #MODE_ZPI
+    JSR FIND_OPCODE
+    BCC RES_STORE
+R_IND_ABS:
+    LDA #MODE_IND
+    JMP R_FIND
+R_INDX:
+    LDA ASM_VAL+1
+    BNE R_INDX_ABS
+    LDA #MODE_IZX
+    JSR FIND_OPCODE
+    BCC RES_STORE
+R_INDX_ABS:
+    LDA #MODE_AIX
+    JMP R_FIND
+R_FIND:
+    JSR FIND_OPCODE
+    BCS R_ERR
+RES_STORE:                          ; A = opcode, ASM_TMP = searched mode
+    STA ASM_OPCODE
+    LDA ASM_TMP
+    STA ASM_MODE
+    TAX
+    LDA MODE_LEN,X
+    STA ASM_LEN
+    CLC
+    RTS
+R_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM_EMIT - write the instruction to (ASM_PC) and advance ASM_PC by ASM_LEN
+; Output: carry clear on success; carry set if a relative branch is out of range
+; ----------------------------------------------------------------
+ASM_EMIT:
+    LDA ASM_MODE
+    CMP #MODE_REL
+    BEQ AE_REL
+    LDA ASM_OPCODE                  ; opcode byte
+    LDY #$00
+    STA (ASM_PC),Y
+    LDA ASM_LEN
+    CMP #$02
+    BCC AE_ADV                      ; 1-byte instruction
+    LDA ASM_VAL                     ; operand low byte
+    LDY #$01
+    STA (ASM_PC),Y
+    LDA ASM_LEN
+    CMP #$03
+    BCC AE_ADV                      ; 2-byte instruction
+    LDA ASM_VAL+1                   ; operand high byte
+    LDY #$02
+    STA (ASM_PC),Y
+AE_ADV:
+    LDA ASM_PC
+    CLC
+    ADC ASM_LEN
+    STA ASM_PC
+    BCC AE_OK
+    INC ASM_PC+1
+AE_OK:
+    CLC
+    RTS
+AE_REL:
+    ; offset = ASM_VAL - (ASM_PC + 2); must fit signed 8-bit
+    LDA ASM_VAL
+    SEC
+    SBC ASM_PC
+    STA ASM_DLO
+    LDA ASM_VAL+1
+    SBC ASM_PC+1
+    STA ASM_DHI                     ; diff = target - PC
+    LDA ASM_DLO
+    SEC
+    SBC #$02
+    STA ASM_DLO
+    LDA ASM_DHI
+    SBC #$00
+    STA ASM_DHI                     ; diff = target - (PC + 2)
+    LDA ASM_DHI
+    BEQ AE_REL_POS                  ; diff $00xx -> need xx <= $7F
+    CMP #$FF
+    BNE AE_REL_RANGE                ; not $00xx or $FFxx -> out of range
+    LDA ASM_DLO
+    CMP #$80
+    BCC AE_REL_RANGE                ; $FFxx -> need xx >= $80
+    BRA AE_REL_EMIT
+AE_REL_POS:
+    LDA ASM_DLO
+    CMP #$80
+    BCS AE_REL_RANGE
+AE_REL_EMIT:
+    LDA ASM_OPCODE
+    LDY #$00
+    STA (ASM_PC),Y
+    LDA ASM_DLO
+    LDY #$01
+    STA (ASM_PC),Y
+    LDA ASM_PC                      ; branches are always 2 bytes
+    CLC
+    ADC #$02
+    STA ASM_PC
+    BCC AE_REL_OK
+    INC ASM_PC+1
+AE_REL_OK:
+    CLC
+    RTS
+AE_REL_RANGE:
+    SEC
+    RTS
+
 ; ----------------------------------------------------------------
 ; PUTS - print a null-terminated string via the kernel (A=ptr lo, Y=ptr hi)
 ; ----------------------------------------------------------------
@@ -335,10 +923,11 @@ PUTS:
 .segment "DATA"
 
 MSG_BANNER:
-    .byte "MFC DEV TOOLS v0.3", $0D, $0A
-    .byte "DISASSEMBLER", $0D, $0A, $0A, $00
+    .byte "MFC DEV TOOLS v0.4", $0D, $0A
+    .byte "ASSEMBLER / DISASSEMBLER", $0D, $0A, $0A, $00
 MSG_PROMPT:
-    .byte "D XXXX = DISASSEMBLE   ESC = EXIT", $0D, $0A, $00
+    .byte "A XXXX=ASSEMBLE  D XXXX=DISASSEMBLE", $0D, $0A
+    .byte "ESC=EXIT", $0D, $0A, $00
 
 ; Operand-rendering tables, indexed by addressing-mode id (must match the
 ; MODE_* order in opcodes_65c02.inc: IMP,ACC,IMM,ZP,ZPX,ZPY,ZPI,IZX,IZY,REL,
