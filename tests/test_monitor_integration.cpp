@@ -43,6 +43,8 @@ public:
         testDisassemblerEscMidline();
         testModuleStatePreservedAcrossLaunch();
         testAssembler();
+        testTwoPassAssembler();
+        testTwoPassDirectives();
         testFillCommand();
         testReadCommand();
         testMoveCommand();
@@ -449,6 +451,86 @@ private:
 
         sendKey(0x1B, 200000);           // exit the module back to the monitor
         verifyMemEquals(0xFE23, 0x00, "ASM: module returned (bank unmapped)");
+    }
+
+    // The two-pass assembler (B = build the source buffer at $A000). Pokes a
+    // small program with labels, a forward branch (BEQ DONE), a backward branch
+    // (BNE LOOP), and an absolute label ref (JMP START) into the source buffer,
+    // builds it, and verifies the emitted bytes (so labels + forward refs work).
+    void testTwoPassAssembler() {
+        Computer::Memory *mem = computer.getMemory();
+        const char *src =
+            ".ORG $0800\n"
+            "START: LDA #$00\n"
+            "BEQ DONE\n"
+            "LOOP: INX\n"
+            "BNE LOOP\n"
+            "NOP\n"
+            "DONE: JMP START\n"
+            ".END\n";
+        uint16_t a = 0xA000;
+        for (const char *p = src; *p; ++p)
+            mem->write(a++, static_cast<uint8_t>(*p));
+        mem->write(a, 0x00);             // source terminator
+
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);            // launch dev tools
+        sendCommand("B", 300000);        // build
+
+        verifyMemEquals(0x0800, 0xA9, "2pass: LDA #imm");
+        verifyMemEquals(0x0801, 0x00, "2pass: imm operand");
+        verifyMemEquals(0x0802, 0xF0, "2pass: BEQ opcode");
+        verifyMemEquals(0x0803, 0x04, "2pass: BEQ forward offset");
+        verifyMemEquals(0x0804, 0xE8, "2pass: INX (LOOP)");
+        verifyMemEquals(0x0805, 0xD0, "2pass: BNE opcode");
+        verifyMemEquals(0x0806, 0xFD, "2pass: BNE backward offset");
+        verifyMemEquals(0x0807, 0xEA, "2pass: NOP");
+        verifyMemEquals(0x0808, 0x4C, "2pass: JMP opcode");
+        verifyMemEquals(0x0809, 0x00, "2pass: JMP target lo (label)");
+        verifyMemEquals(0x080A, 0x08, "2pass: JMP target hi (label)");
+
+        sendKey(0x1B, 200000);           // exit the module
+    }
+
+    // Two-pass directives + expressions: NAME = expr assignment, .ASCII, .BYTE,
+    // .WORD (with a label and a literal), and #<MSG / #>MSG / #COUNT+1 operand
+    // expressions. Verifies the emitted bytes.
+    void testTwoPassDirectives() {
+        Computer::Memory *mem = computer.getMemory();
+        const char *src =
+            ".ORG $0900\n"
+            "COUNT = 3\n"
+            "MSG: .ASCII \"HI\"\n"
+            ".BYTE COUNT,$FF\n"
+            ".WORD MSG,$1234\n"
+            "LDA #<MSG\n"
+            "LDA #>MSG\n"
+            "LDX #COUNT+1\n"
+            ".END\n";
+        uint16_t a = 0xA000;
+        for (const char *p = src; *p; ++p)
+            mem->write(a++, static_cast<uint8_t>(*p));
+        mem->write(a, 0x00);
+
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);
+        sendCommand("B", 300000);
+
+        verifyMemEquals(0x0900, 0x48, "dir: .ASCII 'H'");
+        verifyMemEquals(0x0901, 0x49, "dir: .ASCII 'I'");
+        verifyMemEquals(0x0902, 0x03, "dir: .BYTE COUNT (=3)");
+        verifyMemEquals(0x0903, 0xFF, "dir: .BYTE $FF");
+        verifyMemEquals(0x0904, 0x00, "dir: .WORD MSG lo");
+        verifyMemEquals(0x0905, 0x09, "dir: .WORD MSG hi");
+        verifyMemEquals(0x0906, 0x34, "dir: .WORD $1234 lo");
+        verifyMemEquals(0x0907, 0x12, "dir: .WORD $1234 hi");
+        verifyMemEquals(0x0909, 0x00, "expr: #<MSG (low byte)");
+        verifyMemEquals(0x090B, 0x09, "expr: #>MSG (high byte)");
+        verifyMemEquals(0x090D, 0x04, "expr: #COUNT+1");
+
+        sendKey(0x1B, 200000);
     }
 
     void testFillCommand() {

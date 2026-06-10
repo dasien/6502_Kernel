@@ -3,7 +3,7 @@
 ; ================================================================
 ; Filename:     devtools.asm
 ; Author:       Brian Gentry
-; Version:      0.4 (Phase 4 sub-step 4: line assembler + disassembler)
+; Version:      0.5 (Phase 4 sub-step 5: two-pass assembler w/ labels)
 ; Assembler:    ca65  (-I src/kernel/devtools for opcodes_65c02.inc)
 ;
 ; A bank-switched ROM module for the $B000-$DFFF window (module bank 2; see
@@ -40,6 +40,7 @@ MON_CURRADDR_HI  = $15
 MON_MSG_PTR_LO   = $16
 MON_MSG_PTR_HI   = $17
 MON_CMDBUF       = $0200            ; command input buffer (filled by K_READ_LINE)
+MON_CMDBUF_LEN   = 80               ; kernel command-buffer capacity
 MON_CMDLEN       = $026A            ; length of the line in MON_CMDBUF
 
 ASCII_ESC        = $1B
@@ -78,6 +79,29 @@ ASM_CLASS        = $EC              ; operand syntax class (CL_*)
 ASM_IDX          = $ED              ; parse index into MON_CMDBUF
 ASM_TMP          = $EE              ; FIND_OPCODE mode / scratch
 ASM_TMP2         = $EF              ; hex-parse nibble scratch
+ASM_FORCE_ABS    = $D0              ; non-zero -> ASM_RESOLVE must use absolute
+
+; ---- Two-pass assembler scratch ($C0-$DF; free while the module runs) -------
+ASM2_PASS        = $D1              ; current pass (1 or 2)
+ASM2_SRC         = $D2              ; source read pointer ($D2-$D3)
+ASM2_LINENO      = $D4              ; source line number, for errors ($D4-$D5)
+SYM_COUNT        = $D6              ; number of symbols defined
+SYM_PTR          = $D7              ; symbol-table walk pointer ($D7-$D8)
+ASM_HAS_SYM      = $D9              ; EVAL set this if the expr referenced a symbol
+ASM2_TMP         = $DA              ; two-pass scratch
+ASM2_HANDLED     = $DB              ; ASM2_TRYASSIGN: non-zero if it handled the line
+ASM2_END         = $DC              ; set when .END seen (stop the pass)
+EVAL_ACC         = $DD              ; expression accumulator ($DD-$DE)
+ASM_BYTESEL      = $DF              ; 0=none, 1=low byte (<), 2=high byte (>)
+ASM_LBL_BUF      = $C0              ; parsed identifier, 8 bytes space-padded ($C0-$C7)
+ASM_NAME_BUF     = $C8              ; saved assignment name across EVAL ($C8-$CF)
+
+; Two-pass memory layout (in user RAM; reserved while assembling)
+SRC_BUF          = $A000            ; source text buffer ($A000-$AFFF, $00-terminated)
+SYM_TBL          = $9E00            ; symbol table ($9E00-$9FFF)
+SYM_NAME_LEN     = 8                ; characters stored per symbol name
+SYM_ENTRY_LEN    = 10               ; 8-byte name + 2-byte value
+SYM_MAX          = 51               ; 512 bytes / 10
 ASM_PTR          = MNE_PTR          ; mnemonic-table search pointer (shared)
 
 ; Operand syntax classes (from PARSE_OPERAND; resolved to a mode by ASM_RESOLVE)
@@ -122,7 +146,9 @@ DEVT_LOOP:
     BEQ CMD_DISASM
     CMP #'A'
     BEQ CMD_ASM
-    BRA DEVT_ERROR                  ; unknown command
+    CMP #'B'
+    BNE DEVT_ERROR                  ; unknown command
+    JMP CMD_BUILD                   ; (out of branch range -> jump)
 DEVT_EXIT:
     JMP K_RETURN_MODULE             ; unmaps bank 2, returns to the monitor
 DEVT_ERROR:
@@ -207,6 +233,18 @@ CA_DONE:
     JMP DEVT_LOOP
 CA_ERR:
     JMP DEVT_ERROR
+
+; ----------------------------------------------------------------
+; CMD_BUILD - "B": two-pass assemble the source buffer at $A000
+; ----------------------------------------------------------------
+CMD_BUILD:
+    JSR ASM2_RUN                    ; carry set on error (message already printed)
+    BCS CB_DONE
+    LDA #<MSG_ASM_OK
+    LDY #>MSG_ASM_OK
+    JSR PUTS
+CB_DONE:
+    JMP DEVT_LOOP
 
 ; ----------------------------------------------------------------
 ; DISASM_ONE - decode and print one instruction at (DA_ADDR), advance DA_ADDR
@@ -414,6 +452,10 @@ ASM_ONE:
     BCS AO_ERR
     JSR ASM_PARSE_OPERAND
     BCS AO_ERR
+    ; Line-assembler policy: force absolute only when the value exceeds a byte.
+    STZ ASM_FORCE_ABS
+    LDA ASM_VAL+1
+    STA ASM_FORCE_ABS               ; non-zero high byte -> absolute
     JSR ASM_RESOLVE
     BCS AO_ERR
     JMP ASM_EMIT                    ; tail: emits and returns carry clear (or set on range)
@@ -768,8 +810,8 @@ R_DIR:
     LDA #MODE_REL                   ; branches take a target address
     JSR FIND_OPCODE
     BCC RES_STORE
-    LDA ASM_VAL+1
-    BNE R_DIR_ABS                   ; value > $FF -> must be absolute
+    LDA ASM_FORCE_ABS
+    BNE R_DIR_ABS                   ; force absolute (value > $FF, or a symbol ref)
     LDA #MODE_ZP
     JSR FIND_OPCODE
     BCC RES_STORE
@@ -777,7 +819,7 @@ R_DIR_ABS:
     LDA #MODE_ABS
     JMP R_FIND
 R_DIRX:
-    LDA ASM_VAL+1
+    LDA ASM_FORCE_ABS
     BNE R_DIRX_ABS
     LDA #MODE_ZPX
     JSR FIND_OPCODE
@@ -786,7 +828,7 @@ R_DIRX_ABS:
     LDA #MODE_ABX
     JMP R_FIND
 R_DIRY:
-    LDA ASM_VAL+1
+    LDA ASM_FORCE_ABS
     BNE R_DIRY_ABS
     LDA #MODE_ZPY
     JSR FIND_OPCODE
@@ -795,7 +837,7 @@ R_DIRY_ABS:
     LDA #MODE_ABY
     JMP R_FIND
 R_IND:
-    LDA ASM_VAL+1
+    LDA ASM_FORCE_ABS
     BNE R_IND_ABS
     LDA #MODE_ZPI
     JSR FIND_OPCODE
@@ -804,7 +846,7 @@ R_IND_ABS:
     LDA #MODE_IND
     JMP R_FIND
 R_INDX:
-    LDA ASM_VAL+1
+    LDA ASM_FORCE_ABS
     BNE R_INDX_ABS
     LDA #MODE_IZX
     JSR FIND_OPCODE
@@ -909,6 +951,1030 @@ AE_REL_RANGE:
     SEC
     RTS
 
+; ================================================================
+; TWO-PASS ASSEMBLER (labels, .ORG/*=, .END; source pre-loaded at $A000)
+; ================================================================
+
+; ----------------------------------------------------------------
+; ASM2_RUN - two passes over the source buffer. Pass 1 collects labels and sizes
+; the code; pass 2 emits. Carry set on error (message already printed).
+; ----------------------------------------------------------------
+ASM2_RUN:
+    STZ SYM_COUNT                   ; fresh symbol table; pass 1 fills it
+    LDA #$01
+    STA ASM2_PASS
+    JSR ASM2_PASS_RUN
+    BCS A2R_FAIL
+    LDA #$02
+    STA ASM2_PASS
+    JSR ASM2_PASS_RUN
+    BCS A2R_FAIL
+    CLC
+    RTS
+A2R_FAIL:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_PASS_RUN - run one pass over the whole source buffer
+; ----------------------------------------------------------------
+ASM2_PASS_RUN:
+    LDA #<SRC_BUF
+    STA ASM2_SRC
+    LDA #>SRC_BUF
+    STA ASM2_SRC+1
+    STZ ASM2_LINENO
+    STZ ASM2_LINENO+1
+    STZ ASM2_END
+    STZ ASM_PC                      ; default origin; .ORG/*= overrides
+    STZ ASM_PC+1
+APR_LOOP:
+    JSR ASM2_NEXTLINE
+    BCS APR_DONE                    ; end of source
+    INC ASM2_LINENO
+    BNE APR_NOHI
+    INC ASM2_LINENO+1
+APR_NOHI:
+    JSR ASM2_LINE
+    BCS APR_ERR
+    LDA ASM2_END
+    BNE APR_DONE                    ; .END stops the pass
+    BRA APR_LOOP
+APR_DONE:
+    CLC
+    RTS
+APR_ERR:
+    JSR ASM2_PRINT_ERR
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_NEXTLINE - copy the next source line into MON_CMDBUF, advance ASM2_SRC.
+; Carry clear if a line was read (MON_CMDLEN set); carry set at end of source.
+; ----------------------------------------------------------------
+ASM2_NEXTLINE:
+    LDY #$00                        ; offset from ASM2_SRC
+    LDX #$00                        ; chars stored
+ANL_LOOP:
+    LDA (ASM2_SRC),Y
+    BEQ ANL_EOF
+    CMP #$0D
+    BEQ ANL_EOL
+    CMP #$0A
+    BEQ ANL_EOL
+    CPX #MON_CMDBUF_LEN-1
+    BCS ANL_NOSTORE                 ; line too long: keep scanning, stop storing
+    STA MON_CMDBUF,X
+    INX
+ANL_NOSTORE:
+    INY
+    BRA ANL_LOOP
+ANL_EOL:
+    INY                             ; consume this terminator
+    LDA (ASM2_SRC),Y                ; consume a paired CR/LF
+    CMP #$0A
+    BEQ ANL_EOL2
+    CMP #$0D
+    BNE ANL_FINISH
+ANL_EOL2:
+    INY
+ANL_FINISH:
+    STX MON_CMDLEN
+    TYA                             ; ASM2_SRC += Y
+    CLC
+    ADC ASM2_SRC
+    STA ASM2_SRC
+    BCC ANL_OK
+    INC ASM2_SRC+1
+ANL_OK:
+    CLC
+    RTS
+ANL_EOF:
+    CPX #$00
+    BEQ ANL_END                     ; nothing left
+    STX MON_CMDLEN                  ; final line without a terminator
+    TYA
+    CLC
+    ADC ASM2_SRC
+    STA ASM2_SRC
+    BCC ANL_OK2
+    INC ASM2_SRC+1
+ANL_OK2:
+    CLC
+    RTS
+ANL_END:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_LINE - assemble one source line (in MON_CMDBUF) for the current pass.
+; Carry set on error.
+; ----------------------------------------------------------------
+ASM2_LINE:
+    JSR ASM2_STRIP_COMMENT
+    STZ ASM_IDX
+    JSR ASM2_SKIPSPC
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS AL_OK                       ; blank line
+    JSR ASM2_TRYLABEL               ; defines a leading LABEL: (pass 1)
+    BCS AL_ERR
+    JSR ASM2_SKIPSPC
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS AL_OK                       ; label-only line
+    LDA MON_CMDBUF,X
+    CMP #'.'
+    BEQ AL_PSEUDO
+    CMP #'*'
+    BEQ AL_PSEUDO
+    JSR ASM2_TRYASSIGN              ; "NAME = expr"?
+    BCS AL_ERR
+    LDA ASM2_HANDLED
+    BNE AL_OK                       ; assignment handled
+    JMP ASM2_INSTR                  ; otherwise a mnemonic (tail)
+AL_PSEUDO:
+    JMP ASM2_PSEUDO                 ; tail
+AL_OK:
+    CLC
+    RTS
+AL_ERR:
+    SEC
+    RTS
+
+; ASM2_STRIP_COMMENT - truncate MON_CMDLEN at the first ';'
+ASM2_STRIP_COMMENT:
+    LDX #$00
+ASC_LOOP:
+    CPX MON_CMDLEN
+    BCS ASC_DONE
+    LDA MON_CMDBUF,X
+    CMP #';'
+    BEQ ASC_CUT
+    INX
+    BRA ASC_LOOP
+ASC_CUT:
+    STX MON_CMDLEN
+ASC_DONE:
+    RTS
+
+; ASM2_SKIPSPC - advance ASM_IDX past spaces in MON_CMDBUF
+ASM2_SKIPSPC:
+    LDX ASM_IDX
+ASS_LOOP:
+    CPX MON_CMDLEN
+    BCS ASS_DONE
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BNE ASS_DONE
+    INX
+    BRA ASS_LOOP
+ASS_DONE:
+    STX ASM_IDX
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_TRYLABEL - if the line begins with "IDENT:", define it (pass 1) and
+; advance past ':'. If not, leave ASM_IDX unchanged. Carry set on error.
+; ----------------------------------------------------------------
+ASM2_TRYLABEL:
+    LDA ASM_IDX
+    STA ASM2_TMP                    ; remember the start (to rewind)
+    LDX ASM_IDX
+    LDA MON_CMDBUF,X
+    JSR IS_ALPHA
+    BCC TL_NO                       ; not a letter -> not a label
+    JSR ASM2_PARSE_IDENT            ; -> ASM_LBL_BUF, ASM_IDX advanced
+    BCS TL_ERR
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS TL_REWIND
+    LDA MON_CMDBUF,X
+    CMP #':'
+    BNE TL_REWIND
+    INC ASM_IDX                     ; consume ':'
+    LDA ASM2_PASS
+    CMP #$01
+    BNE TL_OK                       ; pass 2: already defined
+    LDA ASM_PC                      ; pass 1: define LABEL = current PC
+    STA ASM_VAL
+    LDA ASM_PC+1
+    STA ASM_VAL+1
+    JSR SYM_ADD
+    BCS TL_ERR
+TL_OK:
+    CLC
+    RTS
+TL_REWIND:
+    LDA ASM2_TMP                    ; the identifier was a mnemonic, not a label
+    STA ASM_IDX
+TL_NO:
+    CLC
+    RTS
+TL_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_TRYASSIGN - if the line is "NAME = expr", define NAME (pass 1) and set
+; ASM2_HANDLED. If not an assignment, rewind ASM_IDX (ASM2_HANDLED = 0). Carry
+; set on error.
+; ----------------------------------------------------------------
+ASM2_TRYASSIGN:
+    STZ ASM2_HANDLED
+    LDA ASM_IDX
+    STA ASM2_TMP                    ; rewind point
+    LDX ASM_IDX
+    LDA MON_CMDBUF,X
+    JSR IS_ALPHA
+    BCC TA_NO
+    JSR ASM2_PARSE_IDENT            ; name -> ASM_LBL_BUF
+    BCS TA_ERR
+    JSR ASM2_SKIPSPC
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS TA_REWIND
+    LDA MON_CMDBUF,X
+    CMP #'='
+    BNE TA_REWIND
+    INC ASM_IDX                     ; consume '='
+    LDX #SYM_NAME_LEN-1             ; save name (EVAL may reuse ASM_LBL_BUF)
+TA_SAVE:
+    LDA ASM_LBL_BUF,X
+    STA ASM_NAME_BUF,X
+    DEX
+    BPL TA_SAVE
+    JSR ASM2_SKIPSPC
+    JSR EVAL_EXPR
+    BCS TA_ERR
+    LDX #SYM_NAME_LEN-1             ; restore name for SYM_ADD
+TA_REST:
+    LDA ASM_NAME_BUF,X
+    STA ASM_LBL_BUF,X
+    DEX
+    BPL TA_REST
+    LDA ASM2_PASS
+    CMP #$01
+    BNE TA_HANDLED                  ; pass 2: already defined in pass 1
+    JSR SYM_ADD
+    BCS TA_ERR
+TA_HANDLED:
+    INC ASM2_HANDLED
+    CLC
+    RTS
+TA_REWIND:
+    LDA ASM2_TMP
+    STA ASM_IDX
+TA_NO:
+    CLC
+    RTS
+TA_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_PARSE_IDENT - parse an identifier at MON_CMDBUF[ASM_IDX] into ASM_LBL_BUF
+; (8 bytes, space-padded), advance ASM_IDX. Carry set if empty or too long.
+; ----------------------------------------------------------------
+ASM2_PARSE_IDENT:
+    LDX ASM_IDX
+    LDY #$00
+API_COPY:
+    CPX MON_CMDLEN
+    BCS API_PAD
+    LDA MON_CMDBUF,X
+    JSR IS_ALNUM
+    BCC API_PAD
+    CPY #SYM_NAME_LEN
+    BCS API_ERR                     ; identifier too long
+    STA ASM_LBL_BUF,Y
+    INX
+    INY
+    BRA API_COPY
+API_PAD:
+    CPY #$00
+    BEQ API_ERR                     ; empty
+API_PAD_LOOP:
+    CPY #SYM_NAME_LEN
+    BCS API_OK
+    LDA #' '
+    STA ASM_LBL_BUF,Y
+    INY
+    BRA API_PAD_LOOP
+API_OK:
+    STX ASM_IDX
+    CLC
+    RTS
+API_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_INSTR - assemble a mnemonic + operand for the current pass
+; ----------------------------------------------------------------
+ASM2_INSTR:
+    JSR ASM_PARSE_MNEM
+    BCS AI2_ERR
+    JSR ASM2_OPERAND
+    BCS AI2_ERR
+    LDA ASM_HAS_SYM                 ; force absolute for symbol refs or > $FF
+    ORA ASM_VAL+1
+    STA ASM_FORCE_ABS
+    JSR ASM_RESOLVE
+    BCS AI2_ERR
+    LDA ASM2_PASS
+    CMP #$02
+    BEQ AI2_EMIT
+    LDA ASM_PC                      ; pass 1: just advance PC by length
+    CLC
+    ADC ASM_LEN
+    STA ASM_PC
+    BCC AI2_OK
+    INC ASM_PC+1
+AI2_OK:
+    CLC
+    RTS
+AI2_EMIT:
+    JMP ASM_EMIT                    ; pass 2: emit (and advance ASM_PC); tail
+AI2_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_OPERAND - classify the operand (with expression values via EVAL_EXPR)
+; into ASM_CLASS + ASM_VAL (+ ASM_HAS_SYM). Carry set on syntax error.
+; ----------------------------------------------------------------
+ASM2_OPERAND:
+    STZ ASM_HAS_SYM
+    LDX ASM_IDX
+AO2_SKIP:
+    CPX MON_CMDLEN
+    BCS AO2_NONE
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BNE AO2_HAVE
+    INX
+    BRA AO2_SKIP
+AO2_NONE:
+    STX ASM_IDX
+    LDA #CL_IMP
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_ERRJ:
+    JMP AO2_ERR
+AO2_HAVE:
+    CMP #'#'
+    BEQ AO2_IMM
+    CMP #'('
+    BEQ AO2_IND
+    CMP #'A'
+    BNE AO2_DIR
+    INX                             ; maybe accumulator "A"
+    CPX MON_CMDLEN
+    BCS AO2_ACC
+    LDA MON_CMDBUF,X
+    CMP #' '
+    BEQ AO2_ACC
+    DEX                             ; "A..." -> a label; treat as direct
+    BRA AO2_DIR
+AO2_ACC:
+    STX ASM_IDX
+    LDA #CL_ACC
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_IMM:
+    INX                             ; consume '#'
+    STX ASM_IDX
+    JSR EVAL_EXPR
+    BCS AO2_ERRJ
+    LDA #CL_IMM
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_DIR:
+    STX ASM_IDX
+    JSR EVAL_EXPR
+    BCS AO2_ERRJ
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS AO2_DIR_PLAIN
+    LDA MON_CMDBUF,X
+    CMP #','
+    BNE AO2_DIR_PLAIN
+    INX
+    CPX MON_CMDLEN
+    BCS AO2_ERRJ
+    LDA MON_CMDBUF,X
+    CMP #'X'
+    BEQ AO2_DIRX
+    CMP #'Y'
+    BEQ AO2_DIRY
+    BRA AO2_ERRJ
+AO2_DIR_PLAIN:
+    STX ASM_IDX
+    LDA #CL_DIR
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_DIRX:
+    INX
+    STX ASM_IDX
+    LDA #CL_DIRX
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_DIRY:
+    INX
+    STX ASM_IDX
+    LDA #CL_DIRY
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_IND:
+    INX                             ; consume '('
+    STX ASM_IDX
+    JSR EVAL_EXPR
+    BCS AO2_ERR
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS AO2_ERR
+    LDA MON_CMDBUF,X
+    CMP #')'
+    BEQ AO2_IND_CLOSE
+    CMP #','
+    BNE AO2_ERR
+    INX
+    CPX MON_CMDLEN
+    BCS AO2_ERR
+    LDA MON_CMDBUF,X
+    CMP #'X'
+    BNE AO2_ERR
+    INX
+    CPX MON_CMDLEN
+    BCS AO2_ERR
+    LDA MON_CMDBUF,X
+    CMP #')'
+    BNE AO2_ERR
+    INX
+    STX ASM_IDX
+    LDA #CL_INDX
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_IND_CLOSE:
+    INX                             ; consume ')'
+    CPX MON_CMDLEN
+    BCS AO2_IND_PLAIN
+    LDA MON_CMDBUF,X
+    CMP #','
+    BNE AO2_IND_PLAIN
+    INX
+    CPX MON_CMDLEN
+    BCS AO2_ERR
+    LDA MON_CMDBUF,X
+    CMP #'Y'
+    BNE AO2_ERR
+    INX
+    STX ASM_IDX
+    LDA #CL_INDY
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_IND_PLAIN:
+    STX ASM_IDX
+    LDA #CL_IND
+    STA ASM_CLASS
+    CLC
+    RTS
+AO2_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_PSEUDO - handle .ORG / *= / .END  (more directives in sub-step 5c)
+; ----------------------------------------------------------------
+ASM2_PSEUDO:
+    LDX ASM_IDX
+    LDA MON_CMDBUF,X
+    CMP #'*'
+    BEQ AP_STAR
+    INC ASM_IDX                     ; consume '.'
+    JSR ASM2_PARSE_IDENT            ; directive word -> ASM_LBL_BUF
+    BCS AP_ERR
+    LDA #<D_ORG
+    LDY #>D_ORG
+    JSR STREQ_LBL
+    BCS AP_DO_ORG
+    LDA #<D_END
+    LDY #>D_END
+    JSR STREQ_LBL
+    BCS AP_DO_END
+    LDA #<D_BYTE
+    LDY #>D_BYTE
+    JSR STREQ_LBL
+    BCS AP_BYTE_J
+    LDA #<D_DB
+    LDY #>D_DB
+    JSR STREQ_LBL
+    BCS AP_BYTE_J
+    LDA #<D_WORD
+    LDY #>D_WORD
+    JSR STREQ_LBL
+    BCS AP_WORD_J
+    LDA #<D_DW
+    LDY #>D_DW
+    JSR STREQ_LBL
+    BCS AP_WORD_J
+    LDA #<D_ASCII
+    LDY #>D_ASCII
+    JSR STREQ_LBL
+    BCS AP_ASCII_J
+    LDA #<D_TX
+    LDY #>D_TX
+    JSR STREQ_LBL
+    BCS AP_ASCII_J
+    BRA AP_ERR
+AP_BYTE_J:
+    JMP AP_DO_BYTE
+AP_WORD_J:
+    JMP AP_DO_WORD
+AP_ASCII_J:
+    JMP AP_DO_ASCII
+AP_DO_END:
+    INC ASM2_END
+    CLC
+    RTS
+AP_STAR:
+    INX                             ; consume '*'
+    CPX MON_CMDLEN
+    BCS AP_ERR
+    LDA MON_CMDBUF,X
+    CMP #'='
+    BNE AP_ERR
+    INX
+    STX ASM_IDX
+AP_DO_ORG:
+    JSR ASM2_SKIPSPC
+    JSR EVAL_EXPR
+    BCS AP_ERR
+    LDA ASM_VAL
+    STA ASM_PC
+    LDA ASM_VAL+1
+    STA ASM_PC+1
+    CLC
+    RTS
+AP_ERR:
+    SEC
+    RTS
+
+; .BYTE/.DB - emit a comma-separated list of bytes
+AP_DO_BYTE:
+    JSR ASM2_SKIPSPC
+    JSR EVAL_EXPR
+    BCS ADB_ERR
+    LDA ASM2_PASS
+    CMP #$02
+    BNE ADB_ADV
+    LDA ASM_VAL
+    LDY #$00
+    STA (ASM_PC),Y
+ADB_ADV:
+    INC ASM_PC
+    BNE ADB_COMMA
+    INC ASM_PC+1
+ADB_COMMA:
+    JSR ASM2_SKIPSPC
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS ADB_DONE
+    LDA MON_CMDBUF,X
+    CMP #','
+    BNE ADB_DONE
+    INC ASM_IDX
+    BRA AP_DO_BYTE
+ADB_DONE:
+    CLC
+    RTS
+ADB_ERR:
+    SEC
+    RTS
+
+; .WORD/.DW - emit a comma-separated list of words (lo, hi)
+AP_DO_WORD:
+    JSR ASM2_SKIPSPC
+    JSR EVAL_EXPR
+    BCS ADB_ERR
+    LDA ASM2_PASS
+    CMP #$02
+    BNE ADW_ADV
+    LDA ASM_VAL
+    LDY #$00
+    STA (ASM_PC),Y
+    LDA ASM_VAL+1
+    LDY #$01
+    STA (ASM_PC),Y
+ADW_ADV:
+    LDA ASM_PC
+    CLC
+    ADC #$02
+    STA ASM_PC
+    BCC ADW_COMMA
+    INC ASM_PC+1
+ADW_COMMA:
+    JSR ASM2_SKIPSPC
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS ADW_DONE
+    LDA MON_CMDBUF,X
+    CMP #','
+    BNE ADW_DONE
+    INC ASM_IDX
+    BRA AP_DO_WORD
+ADW_DONE:
+    CLC
+    RTS
+
+; .ASCII/.TX - emit the bytes of a "quoted" string
+AP_DO_ASCII:
+    JSR ASM2_SKIPSPC
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS ADB_ERR
+    LDA MON_CMDBUF,X
+    CMP #'"'
+    BNE ADB_ERR
+    INX                             ; skip opening quote
+ADA_LOOP:
+    CPX MON_CMDLEN
+    BCS ADB_ERR                     ; unterminated string
+    LDA MON_CMDBUF,X
+    CMP #'"'
+    BEQ ADA_END
+    STA ASM2_TMP
+    LDA ASM2_PASS
+    CMP #$02
+    BNE ADA_ADV
+    LDA ASM2_TMP
+    LDY #$00
+    STA (ASM_PC),Y
+ADA_ADV:
+    INC ASM_PC
+    BNE ADA_NEXT
+    INC ASM_PC+1
+ADA_NEXT:
+    INX
+    BRA ADA_LOOP
+ADA_END:
+    INX                             ; skip closing quote
+    STX ASM_IDX
+    CLC
+    RTS
+
+; STREQ_LBL - compare ASM_LBL_BUF (8 bytes) to the const string at A/Y.
+; Carry set if equal, clear if not. (Uses MNE_PTR as scratch - free here.)
+STREQ_LBL:
+    STA MNE_PTR
+    STY MNE_PTR+1
+    LDY #$00
+SEQ_LOOP:
+    LDA (MNE_PTR),Y
+    CMP ASM_LBL_BUF,Y
+    BNE SEQ_NO
+    INY
+    CPY #SYM_NAME_LEN
+    BCC SEQ_LOOP
+    SEC
+    RTS
+SEQ_NO:
+    CLC
+    RTS
+
+; ----------------------------------------------------------------
+; EVAL_EXPR - evaluate an expression at MON_CMDBUF[ASM_IDX] -> ASM_VAL.
+; Grammar: ['<'|'>'] term {('+'|'-') term}.  '<'/'>' select the low/high byte of
+; the whole expression. Sets ASM_HAS_SYM if any symbol/PC was referenced. Advances
+; ASM_IDX. Carry set on error (bad token / undefined symbol in pass 2).
+; ----------------------------------------------------------------
+EVAL_EXPR:
+    STZ ASM_HAS_SYM
+    STZ ASM_BYTESEL
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCC EX_START
+EX_ERR:
+    SEC
+    RTS
+EX_START:
+    LDA MON_CMDBUF,X
+    CMP #'<'
+    BEQ EX_LOW
+    CMP #'>'
+    BEQ EX_HIGH
+    BRA EX_FIRST
+EX_LOW:
+    LDA #$01
+    STA ASM_BYTESEL
+    INC ASM_IDX
+    BRA EX_FIRST
+EX_HIGH:
+    LDA #$02
+    STA ASM_BYTESEL
+    INC ASM_IDX
+EX_FIRST:
+    JSR EVAL_TERM
+    BCS EX_ERR
+    LDA ASM_VAL
+    STA EVAL_ACC
+    LDA ASM_VAL+1
+    STA EVAL_ACC+1
+EX_OPLOOP:
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS EX_FINISH
+    LDA MON_CMDBUF,X
+    CMP #'+'
+    BEQ EX_ADD
+    CMP #'-'
+    BEQ EX_SUB
+    BRA EX_FINISH
+EX_ADD:
+    INC ASM_IDX
+    JSR EVAL_TERM
+    BCS EX_ERR
+    LDA EVAL_ACC
+    CLC
+    ADC ASM_VAL
+    STA EVAL_ACC
+    LDA EVAL_ACC+1
+    ADC ASM_VAL+1
+    STA EVAL_ACC+1
+    BRA EX_OPLOOP
+EX_SUB:
+    INC ASM_IDX
+    JSR EVAL_TERM
+    BCS EX_ERR
+    LDA EVAL_ACC
+    SEC
+    SBC ASM_VAL
+    STA EVAL_ACC
+    LDA EVAL_ACC+1
+    SBC ASM_VAL+1
+    STA EVAL_ACC+1
+    BRA EX_OPLOOP
+EX_FINISH:
+    LDA EVAL_ACC
+    STA ASM_VAL
+    LDA EVAL_ACC+1
+    STA ASM_VAL+1
+    LDA ASM_BYTESEL
+    BEQ EX_DONE
+    CMP #$02
+    BEQ EX_HISEL
+    STZ ASM_VAL+1                   ; '<' low byte
+    BRA EX_DONE
+EX_HISEL:
+    LDA ASM_VAL+1                   ; '>' high byte
+    STA ASM_VAL
+    STZ ASM_VAL+1
+EX_DONE:
+    CLC
+    RTS
+
+; EVAL_TERM - one term -> ASM_VAL; advances ASM_IDX; INC ASM_HAS_SYM for symbol/PC.
+EVAL_TERM:
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS ET_ERR
+    LDA MON_CMDBUF,X
+    CMP #'$'
+    BEQ ET_HEX
+    CMP #'*'
+    BEQ ET_STAR
+    JSR IS_DIGIT
+    BCS ET_DEC
+    LDA MON_CMDBUF,X
+    JSR IS_ALPHA
+    BCS ET_LABEL
+ET_ERR:
+    SEC
+    RTS
+ET_HEX:
+    INX                             ; consume '$'
+    JSR ASM_HEX
+    BCS ET_ERR
+    STX ASM_IDX
+    CLC
+    RTS
+ET_DEC:
+    JSR ASM_DECIMAL
+    BCS ET_ERR
+    STX ASM_IDX
+    CLC
+    RTS
+ET_STAR:
+    INX
+    STX ASM_IDX
+    LDA ASM_PC
+    STA ASM_VAL
+    LDA ASM_PC+1
+    STA ASM_VAL+1
+    INC ASM_HAS_SYM                 ; '*' is an address -> force absolute
+    CLC
+    RTS
+ET_LABEL:
+    JSR ASM2_PARSE_IDENT            ; -> ASM_LBL_BUF, ASM_IDX advanced
+    BCS ET_ERR
+    INC ASM_HAS_SYM
+    JSR SYM_LOOKUP                  ; ASM_LBL_BUF -> ASM_VAL; carry set if not found
+    BCC ET_OK
+    LDA ASM2_PASS                   ; undefined: ok (0) in pass 1, error in pass 2
+    CMP #$01
+    BNE ET_ERR
+    STZ ASM_VAL
+    STZ ASM_VAL+1
+ET_OK:
+    CLC
+    RTS
+
+; ----------------------------------------------------------------
+; ASM_DECIMAL - parse decimal digits at MON_CMDBUF[X] -> ASM_VAL, advance X
+; Carry set if no digits.
+; ----------------------------------------------------------------
+ASM_DECIMAL:
+    STZ ASM_VAL
+    STZ ASM_VAL+1
+    LDY #$00
+AD_LOOP:
+    CPX MON_CMDLEN
+    BCS AD_DONE
+    LDA MON_CMDBUF,X
+    JSR IS_DIGIT
+    BCC AD_DONE
+    ; ASM_VAL = ASM_VAL * 10 + (digit)
+    LDA ASM_VAL
+    STA ASM_DLO
+    LDA ASM_VAL+1
+    STA ASM_DHI                     ; t = ASM_VAL
+    ASL ASM_VAL
+    ROL ASM_VAL+1                   ; *2
+    ASL ASM_VAL
+    ROL ASM_VAL+1                   ; *4
+    LDA ASM_VAL
+    CLC
+    ADC ASM_DLO
+    STA ASM_VAL
+    LDA ASM_VAL+1
+    ADC ASM_DHI
+    STA ASM_VAL+1                   ; *5
+    ASL ASM_VAL
+    ROL ASM_VAL+1                   ; *10
+    LDA MON_CMDBUF,X
+    SEC
+    SBC #'0'
+    CLC
+    ADC ASM_VAL
+    STA ASM_VAL
+    BCC AD_NOC
+    INC ASM_VAL+1
+AD_NOC:
+    INX
+    INY
+    BRA AD_LOOP
+AD_DONE:
+    CPY #$00
+    BEQ AD_ERR
+    CLC
+    RTS
+AD_ERR:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; Symbol table (name = 8 bytes, value = 2 bytes) at SYM_TBL.
+; ----------------------------------------------------------------
+; SYM_ADD - add ASM_LBL_BUF = ASM_VAL. Carry set if duplicate or table full.
+SYM_ADD:
+    LDA SYM_COUNT
+    CMP #SYM_MAX
+    BCS SA_ERR                      ; table full
+    JSR SYM_LOOKUP                  ; duplicate?
+    BCC SA_ERR                      ; found -> redefinition
+    LDA SYM_COUNT
+    JSR SYM_SET_PTR                 ; SYM_PTR = new entry
+    LDY #$00
+SA_NAME:
+    LDA ASM_LBL_BUF,Y
+    STA (SYM_PTR),Y
+    INY
+    CPY #SYM_NAME_LEN
+    BCC SA_NAME
+    LDA ASM_VAL
+    STA (SYM_PTR),Y
+    INY
+    LDA ASM_VAL+1
+    STA (SYM_PTR),Y
+    INC SYM_COUNT
+    CLC
+    RTS
+SA_ERR:
+    SEC
+    RTS
+
+; SYM_LOOKUP - find ASM_LBL_BUF -> ASM_VAL. Carry clear if found, set if not.
+SYM_LOOKUP:
+    LDX #$00
+SL_LOOP:
+    CPX SYM_COUNT
+    BCS SL_NO
+    TXA
+    JSR SYM_SET_PTR                 ; preserves X
+    LDY #$00
+SL_CMP:
+    LDA (SYM_PTR),Y
+    CMP ASM_LBL_BUF,Y
+    BNE SL_NEXT
+    INY
+    CPY #SYM_NAME_LEN
+    BCC SL_CMP
+    LDY #SYM_NAME_LEN               ; matched -> read value
+    LDA (SYM_PTR),Y
+    STA ASM_VAL
+    INY
+    LDA (SYM_PTR),Y
+    STA ASM_VAL+1
+    CLC
+    RTS
+SL_NEXT:
+    INX
+    BRA SL_LOOP
+SL_NO:
+    SEC
+    RTS
+
+; SYM_SET_PTR - SYM_PTR = SYM_TBL + A*SYM_ENTRY_LEN. Preserves X.
+SYM_SET_PTR:
+    TAY
+    LDA #<SYM_TBL
+    STA SYM_PTR
+    LDA #>SYM_TBL
+    STA SYM_PTR+1
+    CPY #$00
+    BEQ SSP_DONE
+SSP_LOOP:
+    LDA SYM_PTR
+    CLC
+    ADC #SYM_ENTRY_LEN
+    STA SYM_PTR
+    BCC SSP_NC
+    INC SYM_PTR+1
+SSP_NC:
+    DEY
+    BNE SSP_LOOP
+SSP_DONE:
+    RTS
+
+; ----------------------------------------------------------------
+; Character classifiers (carry set if the char in A matches).
+; ----------------------------------------------------------------
+IS_DIGIT:
+    CMP #'0'
+    BCC ICL_NO
+    CMP #'9'+1
+    BCC ICL_YES
+    CLC
+    RTS
+IS_ALPHA:
+    CMP #'A'
+    BCC ICL_NO
+    CMP #'Z'+1
+    BCC ICL_YES
+ICL_NO:
+    CLC
+    RTS
+ICL_YES:
+    SEC
+    RTS
+IS_ALNUM:
+    JSR IS_ALPHA
+    BCS ICL_YES
+    JSR IS_DIGIT
+    RTS
+
+; ----------------------------------------------------------------
+; ASM2_PRINT_ERR - "? LINE nnnn" (line number in hex) + newline
+; ----------------------------------------------------------------
+ASM2_PRINT_ERR:
+    LDA #<MSG_ASM_ERR
+    LDY #>MSG_ASM_ERR
+    JSR PUTS
+    LDA ASM2_LINENO+1
+    JSR K_PRINT_HEX_BYTE
+    LDA ASM2_LINENO
+    JSR K_PRINT_HEX_BYTE
+    JMP K_PRINT_NEWLINE
+
 ; ----------------------------------------------------------------
 ; PUTS - print a null-terminated string via the kernel (A=ptr lo, Y=ptr hi)
 ; ----------------------------------------------------------------
@@ -926,8 +1992,22 @@ MSG_BANNER:
     .byte "MFC DEV TOOLS v0.4", $0D, $0A
     .byte "ASSEMBLER / DISASSEMBLER", $0D, $0A, $0A, $00
 MSG_PROMPT:
-    .byte "A XXXX=ASSEMBLE  D XXXX=DISASSEMBLE", $0D, $0A
-    .byte "ESC=EXIT", $0D, $0A, $00
+    .byte "A XXXX=ASM LINE  B=BUILD SOURCE", $0D, $0A
+    .byte "D XXXX=DISASSEMBLE  ESC=EXIT", $0D, $0A, $00
+MSG_ASM_OK:
+    .byte "OK", $0D, $0A, $00
+MSG_ASM_ERR:
+    .byte "? LINE ", $00
+
+; Directive names, 8 bytes space-padded (compared against ASM_LBL_BUF).
+D_ORG:   .byte "ORG     "
+D_END:   .byte "END     "
+D_BYTE:  .byte "BYTE    "
+D_DB:    .byte "DB      "
+D_WORD:  .byte "WORD    "
+D_DW:    .byte "DW      "
+D_ASCII: .byte "ASCII   "
+D_TX:    .byte "TX      "
 
 ; Operand-rendering tables, indexed by addressing-mode id (must match the
 ; MODE_* order in opcodes_65c02.inc: IMP,ACC,IMM,ZP,ZPX,ZPY,ZPI,IZX,IZY,REL,
