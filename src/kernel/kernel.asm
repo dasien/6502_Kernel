@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.1
+; Version:      3.1.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -142,6 +142,11 @@
 ;                   monitor's command buffer and MON_CURRADDR as scratch; the launch
 ;                   save/restore now also preserves MON_CURRADDR so a module's use of
 ;                   it is invisible to the monitor on return.
+; 2026-06-11  v3.1.1 Monitor prompt starts at the left margin: PRINT_MONITOR_PROMPT
+;                   emits a newline first when the cursor is mid-line (e.g. after a
+;                   G:-run program left output without a trailing CR), so the prompt
+;                   no longer trails program output. No blank line when already at
+;                   column 0.
 ;
 ; ================================================================
 
@@ -1076,6 +1081,13 @@ PRINT_CURRENT_ADDRESS:
 ; Prints: [mode:]address> (e.g., "W:8000> " or "8000> ")
 ; Modifies: A, X, Y
 PRINT_MONITOR_PROMPT:
+    ; Ensure the prompt starts at the left margin. A program run via G: (or any
+    ; output) may leave the cursor mid-line; emit a newline first, but only when
+    ; not already at column 0 so ordinary commands don't get a blank line.
+    LDA CURSOR_X
+    BEQ PROMPT_AT_MARGIN
+    JSR PRINT_NEWLINE
+PROMPT_AT_MARGIN:
     LDA MON_MODE                ; Load current mode
     TAX                         ; Use as index
     LDA MODE_PREFIX_TABLE,X     ; Get prefix character
