@@ -483,13 +483,14 @@ void PIA::processFileOperations()
         file_status_ = kFileSuccess;
     }
     else if (file_command_ == kFileOpenReadCommand) {
-        // Open a file for streaming read (BASIC LOAD). Buffer the whole file;
-        // the 6502 then reads it a byte at a time via the data register.
+        // Open a file for streaming read. The stream is generic text, used by
+        // BASIC LOAD (.bas) and the assembler's source load (.s), so default to
+        // an inclusive source/text filter rather than BASIC-only.
         std::string filename;
 #ifdef QT_GUI
         QString qfilename = QFileDialog::getOpenFileName(
-            nullptr, "Load BASIC Program", QString(),
-            "BASIC Programs (*.bas);;Text Files (*.txt);;All Files (*.*)");
+            nullptr, "Load Source File", QString(),
+            "Source & Text Files (*.s *.asm *.bas *.txt);;All Files (*.*)");
         if (qfilename.isEmpty()) {
             PIA_LOG("PIA: Stream open(read) cancelled by user\n");
             file_command_ = kFileIdle;
