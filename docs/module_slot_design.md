@@ -1,11 +1,25 @@
 # Bankable Module Slot — Design
 
-**Status:** Phases 1–3 implemented (kernel v3.0). I/O is at `$FE00`, the module
-window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), and **BASIC is module
-bank 1** — the host installs `basic.rom` as a bank, `B:` is the module bank menu
-(driven by the kernel `MODULE_DIR` catalog), modules return via `$FF12`
-(`RETURN_FROM_MODULE`, which unmaps the bank), and `RESET` zeroes the window so
-bank 0 boots clean. Phase 4 (a first new module: assembler + disassembler) is open.
+**Status:** Phases 1–4 implemented (kernel v3.1.1). I/O is at `$FE00`, the module
+window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
+bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/devtools/`,
+`devtools.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
+catalog), modules return via `$FF12` (`RETURN_FROM_MODULE`, which unmaps the bank),
+and `RESET` zeroes the window so bank 0 boots clean.
+
+The dev-tools module (v0.6) provides:
+- **Disassembler** (`D xxxx`) — decodes via the canonical 65C02 table generated
+  from the CPU emulator (`tools/gen_opcode_table.py` → `opcodes_65c02.inc`).
+- **Line assembler** (`A xxxx`) — immediate, no-file, numeric operands; quick patches.
+- **Two-pass assembler** (`B`) — labels, `NAME = expr`, expressions (`+`/`-`,
+  `<`/`>`), pseudo-ops `.ORG`/`*=`, `.END`, `.BYTE`/`.DB`, `.WORD`/`.DW`,
+  `.ASCII`/`.TX`; build listing; `? LINE nnnn` errors.
+- **Source load** (`L`) — reads a host `.s` file into the `$A000` source buffer via
+  the byte-stream file interface; symbol table at `$9E00`.
+
+It reaches the system only through the `$FF00` jump table (extended in Phase 4 with
+`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`). Source authoring is on the host for
+now; an in-machine editor + resident filesystem remain a future enhancement.
 
 ## Goal
 
@@ -239,4 +253,13 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
    `$B000–$DFFF` so bank 0 boots clean (safe now that BASIC is a ROM bank). Factored
    `FILL_RANGE_CORE` out of `F:` and reused it for the window clear. Covered by
    `testBankMenu`/`testBankLaunch` in the integration suite.
-4. **First new module**: combined assembler + disassembler in bank 2.
+4. **[DONE, v3.1/3.1.1]** **First new module**: combined assembler + disassembler
+   in bank 2 (`devtools.rom`). Disassembler, line assembler, and a two-pass
+   assembler (labels, expressions, `.ORG`/`.END`/`.BYTE`/`.WORD`/`.ASCII`, `=`),
+   with host `.s` source load and a build listing. The module ABI was extended
+   (`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`) so the module reuses the kernel
+   instead of duplicating input/parsing/printing.
+
+Future (post-Phase-4): in-machine generic text editor + resident filesystem (so
+source can be authored and saved on the machine instead of host-loaded); richer
+assembler (macros, more directives); more modules.
