@@ -45,6 +45,8 @@ public:
         testAssembler();
         testTwoPassAssembler();
         testTwoPassDirectives();
+        testAssemblerListing();
+        testGoPromptNewline();
         testFillCommand();
         testReadCommand();
         testMoveCommand();
@@ -531,6 +533,52 @@ private:
         verifyMemEquals(0x090D, 0x04, "expr: #COUNT+1");
 
         sendKey(0x1B, 200000);
+    }
+
+    // Build listing (sub-step 6): pass 2 echoes each line as "AAAA: <source>".
+    // (The L host-file load needs the GUI open-dialog, so it's smoke-tested by
+    // hand, not here; the engine is exercised via the poked source buffer.)
+    void testAssemblerListing() {
+        Computer::Memory *mem = computer.getMemory();
+        const char *src =
+            ".ORG $0800\n"
+            "LDA #$2A\n"
+            "RTS\n"
+            ".END\n";
+        uint16_t a = 0xA000;
+        for (const char *p = src; *p; ++p)
+            mem->write(a++, static_cast<uint8_t>(*p));
+        mem->write(a, 0x00);
+
+        clearScreen();
+        sendCommand("B:");
+        sendKey('2', 200000);
+        sendCommand("B", 300000);
+
+        verifyResponse("0800: LDA #$2A", "listing: address + source line");
+        verifyResponse("0802: RTS", "listing: second line address");
+        verifyMemEquals(0x0800, 0xA9, "listing build emitted LDA");
+        verifyMemEquals(0x0802, 0x60, "listing build emitted RTS");
+
+        sendKey(0x1B, 200000);
+    }
+
+    // Regression: a G:-run program that prints without a trailing CR must not
+    // leave the monitor prompt trailing its output ("*0820>"). The prompt now
+    // starts on a fresh line when the cursor was mid-line.
+    void testGoPromptNewline() {
+        Computer::Memory *mem = computer.getMemory();
+        mem->write(0x0820, 0xA9);  // LDA #$2A  ('*')
+        mem->write(0x0821, 0x2A);
+        mem->write(0x0822, 0x20);  // JSR $FF00 (kernel print-char)
+        mem->write(0x0823, 0x00);
+        mem->write(0x0824, 0xFF);
+        mem->write(0x0825, 0x60);  // RTS
+
+        clearScreen();
+        sendCommand("G:0820");
+        verifyResponse("*", "G: program output present");
+        verifyAbsent("*0820>", "G: prompt starts on a new line after output");
     }
 
     void testFillCommand() {

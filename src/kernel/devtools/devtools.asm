@@ -3,7 +3,7 @@
 ; ================================================================
 ; Filename:     devtools.asm
 ; Author:       Brian Gentry
-; Version:      0.5 (Phase 4 sub-step 5: two-pass assembler w/ labels)
+; Version:      0.6 (Phase 4 sub-step 6: host source load + listing)
 ; Assembler:    ca65  (-I src/kernel/devtools for opcodes_65c02.inc)
 ;
 ; A bank-switched ROM module for the $B000-$DFFF window (module bank 2; see
@@ -45,6 +45,16 @@ MON_CMDLEN       = $026A            ; length of the line in MON_CMDBUF
 
 ASCII_ESC        = $1B
 DISASM_COUNT     = 16               ; instructions disassembled per D command
+
+; Byte-stream file I/O (host), same registers/protocol BASIC's LOAD uses.
+FIO_COMMAND      = $FE10
+FIO_STATUS       = $FE11
+FIO_DATA         = $FE22
+FIO_OPEN_RD      = $03              ; command: open input stream (host open dialog)
+FIO_CLOSE        = $05              ; command: close stream
+FIO_INPROG       = $01              ; status: operation in progress
+FIO_EOF          = $04              ; status: no more bytes
+FIO_ERROR        = $FF             ; status: error / cancelled
 
 ; ---- Operand "kind" codes (how PRINT_OPERAND renders a mode) ---
 KIND_NONE        = 0                ; no operand (implied, undefined/NOP)
@@ -147,10 +157,16 @@ DEVT_LOOP:
     CMP #'A'
     BEQ CMD_ASM
     CMP #'B'
-    BNE DEVT_ERROR                  ; unknown command
-    JMP CMD_BUILD                   ; (out of branch range -> jump)
+    BEQ CMD_BUILD_T
+    CMP #'L'
+    BEQ CMD_LOAD_T
+    BRA DEVT_ERROR                  ; unknown command
 DEVT_EXIT:
     JMP K_RETURN_MODULE             ; unmaps bank 2, returns to the monitor
+CMD_BUILD_T:                        ; trampolines (handlers are out of branch range)
+    JMP CMD_BUILD
+CMD_LOAD_T:
+    JMP CMD_LOAD
 DEVT_ERROR:
     LDA #'?'
     JSR K_PRINT_CHAR
@@ -244,6 +260,65 @@ CMD_BUILD:
     LDY #>MSG_ASM_OK
     JSR PUTS
 CB_DONE:
+    JMP DEVT_LOOP
+
+; ----------------------------------------------------------------
+; CMD_LOAD - "L": load a host source file into the source buffer ($A000) via the
+; byte-stream file interface (the host shows an open dialog). Then "B" builds it.
+; ----------------------------------------------------------------
+CMD_LOAD:
+    LDA #FIO_OPEN_RD
+    STA FIO_COMMAND
+CL_WAIT:
+    LDA FIO_STATUS                  ; wait for the host to open the file
+    CMP #FIO_INPROG
+    BEQ CL_WAIT
+    CMP #FIO_ERROR                  ; cancelled / failed
+    BEQ CL_ERR
+    LDA #<SRC_BUF                   ; write pointer = start of the source buffer
+    STA ASM2_SRC
+    LDA #>SRC_BUF
+    STA ASM2_SRC+1
+CL_READ:
+    LDA FIO_STATUS
+    CMP #FIO_EOF
+    BEQ CL_EOF
+    ; bounds: keep one byte for the terminator (stop at $AFFF)
+    LDA ASM2_SRC+1
+    CMP #$AF
+    BCC CL_STORE
+    BNE CL_OVERFLOW                 ; >= $B000
+    LDA ASM2_SRC
+    CMP #$FF
+    BCS CL_OVERFLOW                 ; at $AFFF -> reserve for terminator
+CL_STORE:
+    LDA FIO_DATA                    ; next byte from the stream
+    LDY #$00
+    STA (ASM2_SRC),Y
+    INC ASM2_SRC
+    BNE CL_READ
+    INC ASM2_SRC+1
+    BRA CL_READ
+CL_EOF:
+    LDA #$00                        ; terminate the source
+    LDY #$00
+    STA (ASM2_SRC),Y
+    LDA #FIO_CLOSE
+    STA FIO_COMMAND
+    LDA #<MSG_LOADED
+    LDY #>MSG_LOADED
+    JSR PUTS
+    JMP DEVT_LOOP
+CL_OVERFLOW:
+    LDA #$00                        ; terminate what we have, then report
+    LDY #$00
+    STA (ASM2_SRC),Y
+CL_ERR:
+    LDA #FIO_CLOSE
+    STA FIO_COMMAND
+    LDA #'?'
+    JSR K_PRINT_CHAR
+    JSR K_PRINT_NEWLINE
     JMP DEVT_LOOP
 
 ; ----------------------------------------------------------------
@@ -995,8 +1070,25 @@ APR_LOOP:
     BNE APR_NOHI
     INC ASM2_LINENO+1
 APR_NOHI:
+    LDA ASM2_PASS                   ; pass 2: list "AAAA: " (PC at line start)
+    CMP #$02
+    BNE APR_NOLIST
+    LDA ASM_PC+1
+    JSR K_PRINT_HEX_BYTE
+    LDA ASM_PC
+    JSR K_PRINT_HEX_BYTE
+    LDA #':'
+    JSR K_PRINT_CHAR
+    LDA #' '
+    JSR K_PRINT_CHAR
+APR_NOLIST:
     JSR ASM2_LINE
     BCS APR_ERR
+    LDA ASM2_PASS                   ; pass 2: list the source line text
+    CMP #$02
+    BNE APR_NOLIST2
+    JSR LIST_LINE
+APR_NOLIST2:
     LDA ASM2_END
     BNE APR_DONE                    ; .END stops the pass
     BRA APR_LOOP
@@ -1976,6 +2068,21 @@ ASM2_PRINT_ERR:
     JMP K_PRINT_NEWLINE
 
 ; ----------------------------------------------------------------
+; LIST_LINE - echo MON_CMDBUF (the current source line) + newline, for listings
+; ----------------------------------------------------------------
+LIST_LINE:
+    LDX #$00
+LL_LOOP:
+    CPX MON_CMDLEN
+    BCS LL_DONE
+    LDA MON_CMDBUF,X
+    JSR K_PRINT_CHAR                ; preserves X
+    INX
+    BRA LL_LOOP
+LL_DONE:
+    JMP K_PRINT_NEWLINE
+
+; ----------------------------------------------------------------
 ; PUTS - print a null-terminated string via the kernel (A=ptr lo, Y=ptr hi)
 ; ----------------------------------------------------------------
 PUTS:
@@ -1992,12 +2099,14 @@ MSG_BANNER:
     .byte "MFC DEV TOOLS v0.4", $0D, $0A
     .byte "ASSEMBLER / DISASSEMBLER", $0D, $0A, $0A, $00
 MSG_PROMPT:
-    .byte "A XXXX=ASM LINE  B=BUILD SOURCE", $0D, $0A
+    .byte "A XXXX=ASM LINE  L=LOAD  B=BUILD", $0D, $0A
     .byte "D XXXX=DISASSEMBLE  ESC=EXIT", $0D, $0A, $00
 MSG_ASM_OK:
     .byte "OK", $0D, $0A, $00
 MSG_ASM_ERR:
     .byte "? LINE ", $00
+MSG_LOADED:
+    .byte "LOADED", $0D, $0A, $00
 
 ; Directive names, 8 bytes space-padded (compared against ASM_LBL_BUF).
 D_ORG:   .byte "ORG     "
