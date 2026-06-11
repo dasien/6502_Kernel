@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.1.1
+; Version:      3.2
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -147,6 +147,12 @@
 ;                   G:-run program left output without a trailing CR), so the prompt
 ;                   no longer trails program output. No blank line when already at
 ;                   column 0.
+; 2026-06-11  v3.2  Release: the bankable module slot is feature-complete. The DEV
+;                   TOOLS module (bank 2, devtools.rom) adds a native 65C02
+;                   disassembler and a line + two-pass assembler (labels, expressions,
+;                   .ORG/.END/.BYTE/.WORD/.ASCII/=, host .s load, listing). The kernel
+;                   ROM is unchanged from v3.1.1; v3.2 is the system version for the
+;                   release that includes the module.
 ;
 ; ================================================================
 
