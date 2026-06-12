@@ -36,6 +36,7 @@ add_executable(cpu_alu_tests
     test_cpu_alu.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
 )
@@ -57,6 +58,7 @@ target_compile_features(cpu_alu_tests PRIVATE cxx_std_20)
 add_executable(memory_banking_tests
     test_memory_banking.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
@@ -75,12 +77,37 @@ target_include_directories(memory_banking_tests PRIVATE
 
 target_compile_features(memory_banking_tests PRIVATE cxx_std_20)
 
+# Create unit test executable for the block device (MFC-DOS storage foundation:
+# $FE24-$FE28 registers + host disk.img sector read/write)
+add_executable(block_device_tests
+    test_block_device.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+)
+
+target_link_libraries(block_device_tests
+    gtest_main
+    gtest
+)
+
+target_include_directories(block_device_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(block_device_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -109,6 +136,10 @@ add_test(NAME cpu_alu_unit_tests
 # Add module-slot bank-routing unit tests to CTest
 add_test(NAME memory_banking_unit_tests
     COMMAND memory_banking_tests)
+
+# Add block-device unit tests to CTest
+add_test(NAME block_device_unit_tests
+    COMMAND block_device_tests)
 
 # Add integration test to CTest
 add_test(NAME monitor_integration

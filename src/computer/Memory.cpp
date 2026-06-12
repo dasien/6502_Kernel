@@ -1,6 +1,7 @@
 #include "Memory.h"
 #include "VIC.h"
 #include "PIA.h"
+#include "BlockDevice.h"
 
 #include <algorithm>
 
@@ -24,6 +25,12 @@ namespace Computer
         if (pia_ && pia_->isPiaAddress(address))
         {
             return pia_->readPia(address);
+        }
+
+        // Check if this is a block-device register read ($FE24-$FE28)
+        if (block_device_ && BlockDevice::isBlockAddress(address))
+        {
+            return block_device_->read(address);
         }
 
         // Check if this is a video memory read
@@ -57,6 +64,13 @@ namespace Computer
         if (pia_ && pia_->isPiaAddress(address))
         {
             pia_->writePia(address, value);
+            return;
+        }
+
+        // Check if this is a block-device register write ($FE24-$FE28)
+        if (block_device_ && BlockDevice::isBlockAddress(address))
+        {
+            block_device_->write(address, value);
             return;
         }
 
@@ -106,6 +120,11 @@ namespace Computer
     void Memory::setPia(PIA *pia)
     {
         pia_ = pia;
+    }
+
+    void Memory::setBlockDevice(BlockDevice *block_device)
+    {
+        block_device_ = block_device;
     }
 
     void Memory::loadBank(uint8_t bank, const std::vector<uint8_t> &image)

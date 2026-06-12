@@ -14,6 +14,7 @@ namespace Computer
 {
     class VIC;
     class PIA;
+    class BlockDevice;
 
     /**
      * @class Memory
@@ -28,7 +29,8 @@ namespace Computer
      * - $0400-$07FF: Screen memory (1KB) - Character display data
      * - $0800-$AFFF: User RAM (~42KB) - Available for programs / module working RAM
      * - $B000-$DFFF: Module window (12KB) - bank 0 = RAM, banks 1..255 = ROM modules
-     * - $E000-$FFFF: ROM area (8KB) - Kernel ROM (I/O page at $FE00, bank reg $FE23)
+     * - $E000-$FFFF: ROM area (8KB) - Kernel ROM (I/O page at $FE00, bank reg $FE23,
+     *                block-device registers $FE24-$FE28)
      *
      * @see VIC, PIA, CPU6502
      */
@@ -108,6 +110,12 @@ namespace Computer
         void setPia(PIA *pia);
 
         /**
+         * @brief Set or update the block device for memory-mapped I/O
+         * @param block_device Pointer to BlockDevice instance ($FE24-$FE28)
+         */
+        void setBlockDevice(BlockDevice *block_device);
+
+        /**
          * @brief Install a module ROM image into a bank (host bank table)
          * @param bank Bank index 1..255 (bank 0 is RAM and cannot be loaded)
          * @param image Module ROM image; truncated/zero-padded to 12KB
@@ -137,6 +145,7 @@ namespace Computer
         std::vector<uint8_t> ram_;    ///< 64KB system RAM storage
         VIC *video_chip_;             ///< Pointer to VIC for memory-mapped video I/O
         PIA *pia_;                    ///< Pointer to PIA for memory-mapped peripheral I/O
+        BlockDevice *block_device_ = nullptr; ///< Block device ($FE24-$FE28), or null
 
         /// Module ROM images, indexed by bank (1..255). Each entry is either
         /// empty (no module installed) or exactly kModuleWindowSize bytes.

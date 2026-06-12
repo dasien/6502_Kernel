@@ -41,6 +41,10 @@ kernel.map
 kernel.rom
 kernel.o
 
+# Block-device backing image (runtime data; created on first write)
+disk.img
+*.img
+
 # Qt auto-generated files and directories
 *_autogen/
 **/moc_*.cpp

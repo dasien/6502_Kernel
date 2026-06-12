@@ -13,6 +13,7 @@
 #include "TimingCircuit.h"
 #include "VIC.h"
 #include "PIA.h"
+#include "BlockDevice.h"
 
 namespace Computer
 {
@@ -91,6 +92,16 @@ namespace Computer
         }
 
         /**
+         * @brief Get pointer to the block device
+         * @return BlockDevice* Pointer to the $FE24-$FE28 block device
+         * @note Used primarily for testing (e.g. pointing it at a temp image)
+         */
+        BlockDevice *getBlockDevice()
+        {
+            return &block_device;
+        }
+
+        /**
          * @brief Get pointer to the peripheral interface adapter (PIA)
          * @return PIA* Pointer to the PIA for keyboard and file operations
          * @note Used primarily for testing and input simulation
@@ -130,6 +141,7 @@ namespace Computer
 
         VIC video_chip; ///< VIC-II video chip for screen output
         PIA pia; ///< Peripheral Interface Adapter for I/O
+        BlockDevice block_device; ///< Block device backing the FAT16 disk image
         Memory memory; ///< 64KB system memory with memory-mapped I/O
         CPU6502 cpu; ///< MOS 65C02 microprocessor
         ResetCircuit reset_circuit; ///< Reset circuit for system initialization

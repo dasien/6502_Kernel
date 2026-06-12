@@ -20,6 +20,10 @@ namespace Computer
         // Let the PIA acknowledge (deassert) the CPU IRQ line when the timer
         // interrupt is serviced.
         pia.setCpu(&cpu);
+
+        // Route the block-device registers ($FE24-$FE28) through memory. The
+        // image is created on first write, so a missing disk.img is harmless.
+        memory.setBlockDevice(&block_device);
     }
 
     void Computer6502::showFatalError(const std::string& message)

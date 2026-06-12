@@ -32,6 +32,7 @@ emulator exposes vs. the current per-op host file dialogs.)
 https://mike42.me/blog/2021-12-adding-an-sd-card-reader-to-my-6502-computer
 https://mike42.me/blog/2021-12-implementing-the-xmodem-protocol-for-file-transfer
 https://6502.org/forum/viewtopic.php?f=2&t=5824
+https://github.com/x16community/x16-emulator
 
 ## Assemblers and language implementations
 Examples of assembler/disassembler programs or other langage interpreters/compilers
