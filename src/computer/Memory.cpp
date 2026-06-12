@@ -39,6 +39,13 @@ namespace Computer
             return video_chip_->readScreen(address);
         }
 
+        // DOS ROM: always-mapped read-only region. Falls through to RAM when no
+        // image is installed (the pre-DOS default).
+        if (!dos_rom_.empty() && address >= kDosRomStart && address <= kDosRomEnd)
+        {
+            return dos_rom_[address - kDosRomStart];
+        }
+
         // Module window: a non-zero bank maps a read-only ROM module here.
         // Bank 0 falls through to RAM (the default/boot state).
         if (current_bank_ != 0 && address >= kModuleWindowStart && address <= kModuleWindowEnd)
@@ -78,6 +85,12 @@ namespace Computer
         if (video_chip_ && video_chip_->isScreenAddress(address))
         {
             video_chip_->writeScreen(address, value);
+            return;
+        }
+
+        // DOS ROM is read-only: ignore writes when an image is installed.
+        if (!dos_rom_.empty() && address >= kDosRomStart && address <= kDosRomEnd)
+        {
             return;
         }
 
@@ -139,6 +152,23 @@ namespace Computer
         dst.assign(kModuleWindowSize, 0x00);
         const size_t n = std::min(image.size(), kModuleWindowSize);
         std::copy_n(image.begin(), n, dst.begin());
+    }
+
+    void Memory::loadDosRom(const std::vector<uint8_t> &image)
+    {
+        if (image.empty())
+        {
+            dos_rom_.clear(); // leaves the region as RAM
+            return;
+        }
+        dos_rom_.assign(kDosRomSize, 0x00);
+        const size_t n = std::min(image.size(), kDosRomSize);
+        std::copy_n(image.begin(), n, dos_rom_.begin());
+    }
+
+    bool Memory::isDosRomLoaded() const
+    {
+        return !dos_rom_.empty();
     }
 
     void Memory::selectBank(uint8_t bank)

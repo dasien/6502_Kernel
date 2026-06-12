@@ -15,7 +15,7 @@
 ; kernel's line input, hex parsing, and hex printing rather than duplicating
 ; them; per the ABI those share the monitor's command buffer (MON_CMDBUF) and
 ; MON_CURRADDR as scratch (the monitor is suspended and that state is saved and
-; restored across the launch). Working RAM is $0800-$AFFF.
+; restored across the launch). Working RAM is $0800-$8FFF.
 ;
 ; Commands (ENTER to run; ESC on an empty line returns to the monitor):
 ;   D xxxx   disassemble from hex address xxxx (one screen of instructions)
@@ -106,9 +106,11 @@ ASM_BYTESEL      = $DF              ; 0=none, 1=low byte (<), 2=high byte (>)
 ASM_LBL_BUF      = $C0              ; parsed identifier, 8 bytes space-padded ($C0-$C7)
 ASM_NAME_BUF     = $C8              ; saved assignment name across EVAL ($C8-$CF)
 
-; Two-pass memory layout (in user RAM; reserved while assembling)
-SRC_BUF          = $A000            ; source text buffer ($A000-$AFFF, $00-terminated)
-SYM_TBL          = $9E00            ; symbol table ($9E00-$9FFF)
+; Two-pass memory layout (in user RAM; reserved while assembling). Lives just
+; below the always-mapped DOS ROM at $9000 (user RAM tops out at $8FFF).
+SRC_BUF          = $8000            ; source text buffer ($8000-$8FFF, $00-terminated)
+SRC_BUF_END      = $8FFF            ; last buffer byte (reserved for the terminator)
+SYM_TBL          = $7E00            ; symbol table ($7E00-$7FFF)
 SYM_NAME_LEN     = 8                ; characters stored per symbol name
 SYM_ENTRY_LEN    = 10               ; 8-byte name + 2-byte value
 SYM_MAX          = 51               ; 512 bytes / 10
@@ -251,7 +253,7 @@ CA_ERR:
     JMP DEVT_ERROR
 
 ; ----------------------------------------------------------------
-; CMD_BUILD - "B": two-pass assemble the source buffer at $A000
+; CMD_BUILD - "B": two-pass assemble the source buffer at $8000
 ; ----------------------------------------------------------------
 CMD_BUILD:
     JSR ASM2_RUN                    ; carry set on error (message already printed)
@@ -263,7 +265,7 @@ CB_DONE:
     JMP DEVT_LOOP
 
 ; ----------------------------------------------------------------
-; CMD_LOAD - "L": load a host source file into the source buffer ($A000) via the
+; CMD_LOAD - "L": load a host source file into the source buffer ($8000) via the
 ; byte-stream file interface (the host shows an open dialog). Then "B" builds it.
 ; ----------------------------------------------------------------
 CMD_LOAD:
@@ -283,14 +285,14 @@ CL_READ:
     LDA FIO_STATUS
     CMP #FIO_EOF
     BEQ CL_EOF
-    ; bounds: keep one byte for the terminator (stop at $AFFF)
+    ; bounds: keep one byte for the terminator (stop at SRC_BUF_END = $8FFF)
     LDA ASM2_SRC+1
-    CMP #$AF
+    CMP #>SRC_BUF_END
     BCC CL_STORE
-    BNE CL_OVERFLOW                 ; >= $B000
+    BNE CL_OVERFLOW                 ; past the source buffer
     LDA ASM2_SRC
-    CMP #$FF
-    BCS CL_OVERFLOW                 ; at $AFFF -> reserve for terminator
+    CMP #<SRC_BUF_END
+    BCS CL_OVERFLOW                 ; at SRC_BUF_END -> reserve for terminator
 CL_STORE:
     LDA FIO_DATA                    ; next byte from the stream
     LDY #$00
@@ -1027,7 +1029,7 @@ AE_REL_RANGE:
     RTS
 
 ; ================================================================
-; TWO-PASS ASSEMBLER (labels, .ORG/*=, .END; source pre-loaded at $A000)
+; TWO-PASS ASSEMBLER (labels, .ORG/*=, .END; source pre-loaded at $8000)
 ; ================================================================
 
 ; ----------------------------------------------------------------

@@ -27,7 +27,8 @@ namespace Computer
      * Memory Layout:
      * - $0000-$03FF: System RAM (1KB) - Zero page, stack, and system variables
      * - $0400-$07FF: Screen memory (1KB) - Character display data
-     * - $0800-$AFFF: User RAM (~42KB) - Available for programs / module working RAM
+     * - $0800-$8FFF: User RAM (~34KB) - Available for programs / module working RAM
+     * - $9000-$AFFF: DOS ROM (8KB) - always-mapped FAT16 filesystem / DOS shell
      * - $B000-$DFFF: Module window (12KB) - bank 0 = RAM, banks 1..255 = ROM modules
      * - $E000-$FFFF: ROM area (8KB) - Kernel ROM (I/O page at $FE00, bank reg $FE23,
      *                block-device registers $FE24-$FE28)
@@ -37,6 +38,14 @@ namespace Computer
     class Memory
     {
     public:
+        /// DOS ROM ($9000-$AFFF, 8KB). Always-mapped, read-only ROM holding the
+        /// resident FAT16 filesystem (and later the DOS shell). Unlike the module
+        /// window it is never banked. When no image is installed the region falls
+        /// through to RAM, preserving the pre-DOS memory map.
+        static constexpr uint16_t kDosRomStart = 0x9000;
+        static constexpr uint16_t kDosRomEnd = 0xAFFF;
+        static constexpr size_t kDosRomSize = 0x2000; // 8 KB
+
         /// Bankable module window ($B000-$DFFF, 12KB). Backed by RAM when the
         /// selected bank is 0, or by a read-only module ROM for banks 1..255.
         static constexpr uint16_t kModuleWindowStart = 0xB000;
@@ -116,6 +125,19 @@ namespace Computer
         void setBlockDevice(BlockDevice *block_device);
 
         /**
+         * @brief Install the always-mapped DOS ROM image ($9000-$AFFF)
+         * @param image DOS ROM image; truncated/zero-padded to 8KB
+         * @note Once installed the region is read-only (writes ignored). Passing
+         *       an empty image leaves the region as RAM (the pre-DOS default).
+         */
+        void loadDosRom(const std::vector<uint8_t> &image);
+
+        /**
+         * @brief Whether a DOS ROM image has been installed
+         */
+        [[nodiscard]] bool isDosRomLoaded() const;
+
+        /**
          * @brief Install a module ROM image into a bank (host bank table)
          * @param bank Bank index 1..255 (bank 0 is RAM and cannot be loaded)
          * @param image Module ROM image; truncated/zero-padded to 12KB
@@ -151,6 +173,10 @@ namespace Computer
         /// empty (no module installed) or exactly kModuleWindowSize bytes.
         std::vector<std::vector<uint8_t>> bank_rom_;
         uint8_t current_bank_ = 0;    ///< Bank mapped into $B000-$DFFF (0 = RAM)
+
+        /// Always-mapped DOS ROM image ($9000-$AFFF). Empty = not installed
+        /// (region behaves as RAM); otherwise exactly kDosRomSize bytes.
+        std::vector<uint8_t> dos_rom_;
     };
 } // namespace Computer
 

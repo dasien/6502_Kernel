@@ -148,6 +148,71 @@ TEST_F(MemoryBankingTest, LoadBankZeroIsIgnored) {
     EXPECT_EQ(mem.read(kWinStart), 0x77);
 }
 
+// --- Always-mapped DOS ROM ($9000-$AFFF) ----------------------------------
+
+constexpr uint16_t kDosStart = Memory::kDosRomStart; // $9000
+constexpr uint16_t kDosEnd = Memory::kDosRomEnd;     // $AFFF
+constexpr size_t kDosSize = Memory::kDosRomSize;     // 8 KB
+
+// An 8KB DOS image: byte i = (i & 0xFF) ^ tag, so it differs from RAM patterns.
+static std::vector<uint8_t> makeDosImage(uint8_t tag) {
+    std::vector<uint8_t> img(kDosSize);
+    for (size_t i = 0; i < kDosSize; ++i) {
+        img[i] = static_cast<uint8_t>((i & 0xFF) ^ tag);
+    }
+    return img;
+}
+
+TEST_F(MemoryBankingTest, DosRomNotLoadedRegionIsRam) {
+    // The default (pre-DOS) state: $9000-$AFFF is ordinary read/write RAM.
+    EXPECT_FALSE(mem.isDosRomLoaded());
+    mem.write(kDosStart, 0xAA);
+    mem.write(0xA000, 0xBB);
+    mem.write(kDosEnd, 0xCC);
+    EXPECT_EQ(mem.read(kDosStart), 0xAA);
+    EXPECT_EQ(mem.read(0xA000), 0xBB);
+    EXPECT_EQ(mem.read(kDosEnd), 0xCC);
+}
+
+TEST_F(MemoryBankingTest, DosRomLoadedReadsImageIgnoresWrites) {
+    mem.loadDosRom(makeDosImage(0x5A));
+    EXPECT_TRUE(mem.isDosRomLoaded());
+
+    EXPECT_EQ(mem.read(kDosStart), static_cast<uint8_t>(0x00 ^ 0x5A));
+    EXPECT_EQ(mem.read(kDosStart + 0x123),
+              static_cast<uint8_t>((0x123 & 0xFF) ^ 0x5A));
+    EXPECT_EQ(mem.read(kDosEnd),
+              static_cast<uint8_t>(((kDosSize - 1) & 0xFF) ^ 0x5A));
+
+    // Writes into the DOS ROM are ignored.
+    const uint8_t before = mem.read(kDosStart);
+    mem.write(kDosStart, static_cast<uint8_t>(~before));
+    EXPECT_EQ(mem.read(kDosStart), before);
+}
+
+TEST_F(MemoryBankingTest, DosRomBoundariesExact) {
+    mem.loadDosRom(makeDosImage(0x11));
+
+    // Just below the DOS ROM is plain RAM; the window above (bank 0) is RAM too.
+    mem.write(kDosStart - 1, 0x5C); // $8FFF
+    EXPECT_EQ(mem.read(kDosStart - 1), 0x5C);
+    mem.write(kDosEnd + 1, 0x6D);   // $B000 (module window, bank 0 = RAM)
+    EXPECT_EQ(mem.read(kDosEnd + 1), 0x6D);
+
+    // First and last ROM bytes come from the image (writes there are ignored).
+    EXPECT_EQ(mem.read(kDosStart), static_cast<uint8_t>(0x00 ^ 0x11));
+    EXPECT_EQ(mem.read(kDosEnd),
+              static_cast<uint8_t>(((kDosSize - 1) & 0xFF) ^ 0x11));
+}
+
+TEST_F(MemoryBankingTest, DosRomEmptyImageLeavesRegionAsRam) {
+    // Loading an empty image is a no-op: the region stays RAM.
+    mem.loadDosRom(std::vector<uint8_t>{});
+    EXPECT_FALSE(mem.isDosRomLoaded());
+    mem.write(kDosStart, 0x42);
+    EXPECT_EQ(mem.read(kDosStart), 0x42);
+}
+
 TEST_F(MemoryBankingTest, ShortImageIsZeroPadded) {
     std::vector<uint8_t> tiny{0xDE, 0xAD, 0xBE, 0xEF};
     mem.loadBank(3, tiny);

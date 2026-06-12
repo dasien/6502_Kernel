@@ -470,7 +470,7 @@ private:
             "NOP\n"
             "DONE: JMP START\n"
             ".END\n";
-        uint16_t a = 0xA000;
+        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);             // source terminator
@@ -510,7 +510,7 @@ private:
             "LDA #>MSG\n"
             "LDX #COUNT+1\n"
             ".END\n";
-        uint16_t a = 0xA000;
+        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
@@ -545,7 +545,7 @@ private:
             "LDA #$2A\n"
             "RTS\n"
             ".END\n";
-        uint16_t a = 0xA000;
+        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);

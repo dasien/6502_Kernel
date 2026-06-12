@@ -14,17 +14,19 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0100-$01FF` | 256 B | **Stack** — grows down from `$01FF` |
 | `$0200-$03FF` | 512 B | **System variables** — BASIC page-2 vars + monitor variables/buffers |
 | `$0400-$07E7` | 1000 B | **Screen RAM** — 40×25 text (`$07E8-$07FF` is unused padding) |
-| `$0800-$AFFF` | ~42 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs |
+| `$0800-$8FFF` | ~34 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$8000-$8FFF` (source) and `$7E00-$7FFF` (symbols) while building |
+| `$9000-$AFFF` | 8 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem; DOS shell later) |
 | `$B000-$DFFF` | 12 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
 | `$E000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
-| `$FE00-$FE23` | — | **PIA** I/O + `MODULE_BANK` ($FE23) — within the kernel region |
+| `$FE00-$FE28` | — | **PIA** I/O + `MODULE_BANK` ($FE23) + block-device registers ($FE24-$FE28) — within the kernel region |
 
 There is **no** VIC-II / SID / CIA / color memory. The screen is plain RAM at
 `$0400` rendered by the host display; the keyboard and file I/O are exposed
 through a small PIA-style register block at `$FE00`. The `$B000-$DFFF` window is
 a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
 RAM (bank 0) or one of up to 255 pre-loaded ROM modules. See
-`module_slot_design.md`.
+`module_slot_design.md`. The `$9000-$AFFF` **DOS ROM** is an always-mapped (never
+banked) read-only region holding the resident filesystem; see `dos_design.md`.
 
 ## Zero Page
 
@@ -122,6 +124,9 @@ avoids placing code there). It was moved here from the old `$DC00` so the
 A single PIA-style device provides keyboard input and host file I/O. There are
 two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 **byte stream** (BASIC `LOAD`/`SAVE` — one byte at a time via the data register).
+Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
+512-byte sectors — the storage layer beneath the MFC-DOS FAT16 filesystem (see
+`dos_design.md`); it is independent of the PIA file models above.
 
 | Address | Register | Purpose |
 |---------|----------|---------|
@@ -134,6 +139,10 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 | `$FE20-$FE21` | `FILE_END_ADDR_LO/HI` | Block save end address |
 | `$FE22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
 | `$FE23` | `MODULE_BANK` | Module bank select: 0 = RAM, 1..255 = ROM module mapped at `$B000-$DFFF` |
+| `$FE24-$FE25` | `BLK_LBA` | Block device: 16-bit sector number (little-endian) |
+| `$FE26` | `BLK_CMD` | Block device: 1 = read sector, 2 = write sector |
+| `$FE27` | `BLK_STATUS` | Block device: 0 = ready, $FF = error |
+| `$FE28` | `BLK_DATA` | Block device: 512-byte sector data port (auto-incrementing) |
 
 ## ROM Layout
 
@@ -194,9 +203,10 @@ file-stream LOAD/SAVE routines).
 
 - `$3A-$5A` — small free zero-page gap (fast addressing) when BASIC is not in use.
 - `$02DE-$03FF` — leftover system-variable space.
-- `$0800-$AFFF` — main user RAM (~42 KB). Avoid `$0400-$07E7` (screen). When
-  BASIC is active this is its program/variable/string space (`Ram_base=$0800`,
-  `Ram_top=$B000`).
+- `$0800-$8FFF` — main user RAM (~34 KB). Avoid `$0400-$07E7` (screen) and
+  `$9000-$AFFF` (DOS ROM). When BASIC is active this is its program/variable/string
+  space (`Ram_base=$0800`, `Ram_top=$9000`). The assembler reserves the top of this
+  region while building (`$8000-$8FFF` source, `$7E00-$7FFF` symbols).
 
 ## Key Constants (from `kernel.asm`)
 

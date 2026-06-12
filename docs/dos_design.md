@@ -1,7 +1,8 @@
 # MFC-DOS — BIOS + DOS + Filesystem Design
 
-**Status:** in progress (the major arc after v3.2). Phase 1 (block device) is built
-and tested; phases 2-5 remain. *("MFC-DOS" and the boot prompt are provisional — see
+**Status:** in progress (the major arc after v3.2). Phase 1 (block device) done;
+Phase 2 underway — sub-step 2.1 (memory-map shift: DOS ROM region at `$9000-$AFFF`)
+built and tested. *("MFC-DOS" and the boot prompt are provisional — see
 [Identity](#identity).)*
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
@@ -182,12 +183,23 @@ letters), or a plain `MFC>`/`>`. **TBD.**
    `Memory` routes `$FE24-$FE28` to it; `Computer6502` owns it (default image
    `../disk.img`). Covered by `tests/test_block_device.cpp` (`block_device_unit_tests`).
 2. **FAT16 mount + read** — mount, `CATALOG`, read a file by name; the FS ABI. (At
-   this point, mount-on-Mac authoring already works.)
+   this point, mount-on-Mac authoring already works.) Sub-steps:
+   - **2.1 Memory-map shift — DONE.** The always-mapped **DOS ROM at `$9000-$AFFF`**
+     was pulled forward to here (rather than phase 4) so the FS has its permanent
+     home from the start. Emulator routes `$9000-$AFFF` to a `dos.rom` image (writes
+     ignored; falls through to RAM if absent); user RAM is now `$0800-$8FFF`; BASIC
+     `Ram_top → $9000`; the assembler's buffers moved to `$8000` (source) / `$7E00`
+     (symbols). Stub `src/kernel/dos/dos.asm` (signature only) builds `dos.rom`.
+     Covered by DOS-ROM cases in `tests/test_memory_banking.cpp`.
+   - **2.2** block-device equates + a 512-byte sector read primitive + FS ABI stubs.
+   - **2.3** FAT16 mount (BPB) + root-dir walk by 8.3 name + cluster-chain read.
+   - **2.4** FAT16 image generator + temporary monitor `catalog`/read command + C++
+     integration test.
 3. **FAT16 write** — create / `ERASE` / `SAVE`; full round-trip on the machine.
-4. **DOS ROM + shell as boot target** — the pivot: add the `$9000-$AFFF` DOS ROM,
-   boot into the DOS prompt, the command set above, launch-by-name (command → ROM
-   module → file), program-file loader. `MON`/`BASIC`/`ASM` launch their banks; the
-   monitor is entered as a tool and returns to DOS.
+4. **DOS shell as boot target** — the pivot: fill the (already-present) `$9000-$AFFF`
+   DOS ROM with the command shell, boot into the DOS prompt, the command set above,
+   launch-by-name (command → ROM module → file), program-file loader. `MON`/`BASIC`/
+   `ASM` launch their banks; the monitor is entered as a tool and returns to DOS.
 5. **Editor** (module, bank) — full-screen, generic; edit/save FS files → full
    in-machine self-hosting (edit → assemble → run, all at the DOS).
 6. *(Later/optional)* relocate the monitor to a bank; kernel ROM becomes a lean BIOS.

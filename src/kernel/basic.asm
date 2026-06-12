@@ -468,7 +468,7 @@ Ibuffs            = VEC_SV+$16
 Ibuffe            = Ibuffs+$47; end of input buffer
 
 Ram_base          = $0800     ; start of user RAM (above screen RAM $0400-$07FF; below it is system/monitor RAM and screen)
-Ram_top           = $B000     ; end of user RAM+1 (before BASIC ROM at $B000-$DFFF)
+Ram_top           = $9000     ; end of user RAM+1 (before the always-mapped DOS ROM at $9000-$AFFF). The cold-start RAM probe also stops here on its own, since $9000 is ROM and fails the write/read-back test.
 
 Stack_floor       = 16        ; bytes left free on stack for background interrupts
 
