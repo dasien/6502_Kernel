@@ -1,10 +1,11 @@
 # MFC-DOS — BIOS + DOS + Filesystem Design
 
 **Status:** in progress (the major arc after v3.2). Phase 1 (block device) done;
-Phase 2 underway — sub-steps 2.1 (memory-map shift: DOS ROM at `$9000-$AFFF`) and 2.2
-(block-device equates + sector read/write primitives + DOS ABI jump table at `$AF00` +
-FS stubs) built and tested; next is 2.3 (FAT16 mount + read). *("MFC-DOS" and the boot
-prompt are provisional — see [Identity](#identity).)*
+Phase 2 underway — sub-steps 2.1 (memory-map shift), 2.2 (block primitives + `$AF00`
+DOS ABI table), and 2.3 (FAT16 read: mount + directory enumeration + open/read by
+following the cluster chain) built and tested; next is 2.4 (image generator tool +
+a `catalog`/read surface). *("MFC-DOS" and the boot prompt are provisional — see
+[Identity](#identity).)*
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -200,9 +201,20 @@ letters), or a plain `MFC>`/`>`. **TBD.**
      `BLK_READ_SECTOR` (`$AF15`), `BLK_WRITE_SECTOR` (`$AF18`). DOS zero page uses the
      free `$3A-$5A` gap (`BLK_BUF_PTR=$3A`). Covered by `tests/test_dos_blockio.cpp`
      (`dos_blockio_tests`) which runs the real `dos.rom` routines.
-   - **2.3** FAT16 mount (BPB) + root-dir walk by 8.3 name + cluster-chain read.
-   - **2.4** FAT16 image generator + temporary monitor `catalog`/read command + C++
-     integration test.
+   - **2.3 — DONE.** FAT16 read driver in `src/kernel/dos/dos.asm`, validated by
+     `tests/test_dos_fat16.cpp` against host-built images (`tests/support/fat16_image.h`).
+     - *2.3a:* auto-mount (parse boot-sector BPB → sectors/cluster, FAT/root/data
+       start, root entry count, cached in the `$0300` DOS state block) +
+       `FS_DIR_FIRST`/`FS_DIR_NEXT` (root-dir walk, skipping deleted/LFN/volume
+       entries, leaving the 32-byte entry in `DOS_ENTRY`).
+     - *2.3b:* `FS_OPEN` (parse 8.3 name, scan dir, arm the open-file cursor),
+       `FS_GETB` (stream bytes across sector boundaries, following the FAT16
+       cluster chain at cluster boundaries; carry=EOF), `FS_CLOSE`. Reads stream
+       through the block device's sector buffer (no 512B RAM buffer); FAT lookups
+       and dir scans use bounded skip-reads. `FS_PUTB` remains a stub (phase 3).
+   - **2.4** FAT16 image generator (graduate `fat16_image.h` into a `tools/`
+     program) + temporary monitor `catalog`/read command + wire FS into the kernel
+     `$FF00` ABI as needed.
 3. **FAT16 write** — create / `ERASE` / `SAVE`; full round-trip on the machine.
 4. **DOS shell as boot target** — the pivot: fill the (already-present) `$9000-$AFFF`
    DOS ROM with the command shell, boot into the DOS prompt, the command set above,

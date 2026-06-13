@@ -1,0 +1,295 @@
+/**
+ * @file test_dos_fat16.cpp
+ * @brief Exercises the MFC-DOS FAT16 driver (phase 2, step 2.3) against a built
+ *        FAT16 image, by running the real dos.rom 6502 routines.
+ *
+ * 2.3a covers mount (BPB parse) + directory enumeration: FS_DIR_FIRST ($AF0F)
+ * and FS_DIR_NEXT ($AF12) walk the root directory, leaving each 32-byte entry in
+ * the DOS state block at DOS_ENTRY ($0320). The image is constructed by the
+ * host-side Fat16ImageBuilder, so a match validates the driver end-to-end.
+ */
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include "computer/BlockDevice.h"
+#include "computer/Computer6502.h"
+#include "computer/CPU6502.h"
+#include "computer/Memory.h"
+#include "support/fat16_image.h"
+
+using Computer::BlockDevice;
+using Computer::Computer6502;
+using Computer::CPU6502;
+using Computer::Memory;
+using mfcdos_test::Fat16File;
+using mfcdos_test::Fat16ImageBuilder;
+
+namespace {
+
+// DOS ABI jump-table entry points (fixed addresses; see dos.asm).
+constexpr uint16_t kFsOpen = 0xAF03;
+constexpr uint16_t kFsGetb = 0xAF06;
+constexpr uint16_t kFsClose = 0xAF0C;
+constexpr uint16_t kFsDirFirst = 0xAF0F;
+constexpr uint16_t kFsDirNext = 0xAF12;
+
+// A RAM scratch address (in user RAM, untouched by the FS) for filename strings.
+constexpr uint16_t kNameAddr = 0x0800;
+
+// DOS state block.
+constexpr uint16_t kDosEntry = 0x0320;     // 32-byte current directory entry
+constexpr uint16_t kDirSizeOff = 0x1C;     // size field within the entry
+
+struct DirEntry {
+    std::string name; // decoded "NAME.EXT"
+    uint32_t size;
+};
+
+// Decode an 11-byte 8.3 directory name (space-padded) into "NAME.EXT".
+std::string decode83(const std::array<uint8_t, 11> &raw) {
+    std::string base, ext;
+    for (int i = 0; i < 8; ++i)
+        if (raw[i] != ' ') base.push_back(static_cast<char>(raw[i]));
+    for (int i = 8; i < 11; ++i)
+        if (raw[i] != ' ') ext.push_back(static_cast<char>(raw[i]));
+    return ext.empty() ? base : base + "." + ext;
+}
+
+class DosFat16Test : public ::testing::Test {
+protected:
+    void SetUp() override {
+        static int counter = 0;
+        image_path_ = (std::filesystem::temp_directory_path() /
+                       ("mfcdos_fat16_test_" + std::to_string(++counter) + ".img"))
+                          .string();
+        computer.power_on();
+        mem_ = computer.getMemory();
+        cpu_ = computer.getCpu();
+        computer.getBlockDevice()->setImagePath(image_path_);
+    }
+
+    void TearDown() override {
+        std::error_code ec;
+        std::filesystem::remove(image_path_, ec);
+    }
+
+    void writeImage(const std::vector<Fat16File> &files) {
+        const std::vector<uint8_t> img = Fat16ImageBuilder::build(files);
+        std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char *>(img.data()),
+                static_cast<std::streamsize>(img.size()));
+    }
+
+    // Run a DOS routine to completion (RTS leaves the DOS ROM). Returns carry.
+    bool callRoutine(uint16_t entry, bool &carry_out, uint8_t a = 0, uint8_t x = 0) {
+        cpu_->reg.SP = 0xFF;
+        cpu_->pushByte(0xFF);
+        cpu_->pushByte(0xFF); // return address $FFFF -> RTS to $0000
+        cpu_->reg.PC = entry;
+        cpu_->reg.A = a;
+        cpu_->reg.X = x;
+        for (int i = 0; i < 2000000; ++i) {
+            const uint16_t pc = cpu_->reg.PC;
+            if (pc < Memory::kDosRomStart || pc > Memory::kDosRomEnd) {
+                carry_out = cpu_->getFlag(CPU6502::kCarry);
+                return true;
+            }
+            if (!cpu_->executeSingleInstruction()) return false;
+        }
+        return false;
+    }
+
+    DirEntry readEntry() {
+        std::array<uint8_t, 11> raw{};
+        for (int i = 0; i < 11; ++i) raw[i] = mem_->read(kDosEntry + i);
+        uint32_t size = 0;
+        for (int i = 0; i < 4; ++i)
+            size |= static_cast<uint32_t>(mem_->read(kDosEntry + kDirSizeOff + i)) << (8 * i);
+        return {decode83(raw), size};
+    }
+
+    // Enumerate the whole directory via FS_DIR_FIRST / FS_DIR_NEXT.
+    std::vector<DirEntry> enumerate() {
+        std::vector<DirEntry> out;
+        bool carry = true;
+        if (!callRoutine(kFsDirFirst, carry) || carry) return out; // empty
+        out.push_back(readEntry());
+        for (;;) {
+            if (!callRoutine(kFsDirNext, carry) || carry) break;
+            out.push_back(readEntry());
+        }
+        return out;
+    }
+
+    // Open a file by name, read it to EOF via FS_GETB, then FS_CLOSE.
+    // Returns true if FS_OPEN succeeded; the contents are returned in `out`.
+    bool openReadClose(const std::string &name, std::vector<uint8_t> &out) {
+        out.clear();
+        for (size_t i = 0; i < name.size(); ++i)
+            mem_->write(kNameAddr + i, static_cast<uint8_t>(name[i]));
+        mem_->write(kNameAddr + name.size(), 0); // null terminator
+
+        bool carry = true;
+        if (!callRoutine(kFsOpen, carry, kNameAddr & 0xFF, kNameAddr >> 8) || carry)
+            return false; // not found / not mounted
+
+        for (;;) {
+            if (!callRoutine(kFsGetb, carry)) break; // runaway guard
+            if (carry) break;                        // EOF
+            out.push_back(cpu_->reg.A);
+        }
+        callRoutine(kFsClose, carry);
+        return true;
+    }
+
+    Computer6502 computer;
+    Memory *mem_ = nullptr;
+    CPU6502 *cpu_ = nullptr;
+    std::string image_path_;
+};
+
+TEST_F(DosFat16Test, EnumeratesAllFilesWithSizes) {
+    writeImage({
+        {"HELLO.TXT", std::vector<uint8_t>(15, 'H')},
+        {"README", std::vector<uint8_t>(40, 'R')},
+        {"DATA.BIN", std::vector<uint8_t>(600, 0xAB)}, // spans 2 clusters
+        {"EMPTY.TXT", {}},
+    });
+
+    const auto entries = enumerate();
+    ASSERT_EQ(entries.size(), 4u);
+    EXPECT_EQ(entries[0].name, "HELLO.TXT");
+    EXPECT_EQ(entries[0].size, 15u);
+    EXPECT_EQ(entries[1].name, "README");
+    EXPECT_EQ(entries[1].size, 40u);
+    EXPECT_EQ(entries[2].name, "DATA.BIN");
+    EXPECT_EQ(entries[2].size, 600u);
+    EXPECT_EQ(entries[3].name, "EMPTY.TXT");
+    EXPECT_EQ(entries[3].size, 0u);
+}
+
+TEST_F(DosFat16Test, EmptyDirectoryYieldsNothing) {
+    writeImage({});
+    EXPECT_TRUE(enumerate().empty());
+}
+
+TEST_F(DosFat16Test, EnumerationIsRepeatable) {
+    writeImage({{"ONE.TXT", std::vector<uint8_t>(10, '1')},
+                {"TWO.TXT", std::vector<uint8_t>(20, '2')}});
+    const auto first = enumerate();
+    const auto second = enumerate(); // FS_DIR_FIRST must rewind
+    ASSERT_EQ(first.size(), 2u);
+    ASSERT_EQ(second.size(), 2u);
+    EXPECT_EQ(first[0].name, second[0].name);
+    EXPECT_EQ(first[1].name, second[1].name);
+}
+
+// --- File read (FS_OPEN / FS_GETB / FS_CLOSE) -----------------------------
+
+// A deterministic byte pattern so multi-cluster reads are meaningfully checked.
+std::vector<uint8_t> pattern(size_t n, uint8_t seed) {
+    std::vector<uint8_t> v(n);
+    for (size_t i = 0; i < n; ++i)
+        v[i] = static_cast<uint8_t>((i * 31 + seed) & 0xFF);
+    return v;
+}
+
+TEST_F(DosFat16Test, ReadsSmallFile) {
+    const std::vector<uint8_t> content = {'H', 'i', ' ', 'D', 'O', 'S', '!'};
+    writeImage({{"HELLO.TXT", content}});
+
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("HELLO.TXT", out));
+    EXPECT_EQ(out, content);
+}
+
+TEST_F(DosFat16Test, OpenIsCaseInsensitive) {
+    const std::vector<uint8_t> content = {'a', 'b', 'c'};
+    writeImage({{"READ.ME", content}});
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("read.me", out)); // lowercase request
+    EXPECT_EQ(out, content);
+}
+
+TEST_F(DosFat16Test, ReadsEmptyFile) {
+    writeImage({{"EMPTY.TXT", {}}});
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("EMPTY.TXT", out)); // opens OK
+    EXPECT_TRUE(out.empty());                     // immediate EOF
+}
+
+TEST_F(DosFat16Test, OpenNonexistentFails) {
+    writeImage({{"REAL.TXT", {'x'}}});
+    std::vector<uint8_t> out;
+    EXPECT_FALSE(openReadClose("NOPE.TXT", out));
+}
+
+TEST_F(DosFat16Test, ReadsExactlyOneCluster) {
+    const auto content = pattern(512, 0x40); // exactly one 512-byte cluster
+    writeImage({{"ONE.BIN", content}});
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("ONE.BIN", out));
+    EXPECT_EQ(out, content);
+}
+
+TEST_F(DosFat16Test, ReadsMultiClusterFile) {
+    const auto content = pattern(600, 0x11); // spans 2 clusters
+    writeImage({{"DATA.BIN", content}});
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("DATA.BIN", out));
+    EXPECT_EQ(out, content);
+}
+
+TEST_F(DosFat16Test, ReadsFileSpanningSeveralClusters) {
+    const auto content = pattern(2000, 0x9C); // 4 clusters, partial last
+    writeImage({{"BIG.DAT", content}});
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("BIG.DAT", out));
+    ASSERT_EQ(out.size(), content.size());
+    EXPECT_EQ(out, content);
+}
+
+TEST_F(DosFat16Test, ReadsSecondFileAfterFirst) {
+    const auto a = pattern(300, 0x01);
+    const auto b = pattern(900, 0x02);
+    writeImage({{"A.BIN", a}, {"B.BIN", b}});
+    std::vector<uint8_t> oa, ob;
+    ASSERT_TRUE(openReadClose("A.BIN", oa));
+    ASSERT_TRUE(openReadClose("B.BIN", ob));
+    EXPECT_EQ(oa, a);
+    EXPECT_EQ(ob, b);
+}
+
+TEST_F(DosFat16Test, SkipsDeletedEntries) {
+    // Build a normal image, then mark the first root entry deleted ($E5) and
+    // confirm the driver skips it.
+    auto img = Fat16ImageBuilder::build(
+        {{"GONE.TXT", std::vector<uint8_t>(5, 'X')},
+         {"KEEP.TXT", std::vector<uint8_t>(5, 'Y')}});
+    // Root directory is at sector (reserved + numFats*fatSize); compute as the
+    // builder does: reserved(1) + 1*fatSize. Re-derive via a fresh build's BPB.
+    const uint16_t reserved = img[0x0E] | (img[0x0F] << 8);
+    const uint8_t numFats = img[0x10];
+    const uint16_t fatSize = img[0x16] | (img[0x17] << 8);
+    const uint32_t rootSector = reserved + numFats * fatSize;
+    img[rootSector * 512 + 0] = 0xE5; // delete "GONE.TXT"
+
+    std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char *>(img.data()),
+            static_cast<std::streamsize>(img.size()));
+    f.close();
+
+    const auto entries = enumerate();
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].name, "KEEP.TXT");
+}
+
+} // namespace
