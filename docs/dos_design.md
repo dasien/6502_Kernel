@@ -1,9 +1,10 @@
 # MFC-DOS — BIOS + DOS + Filesystem Design
 
 **Status:** in progress (the major arc after v3.2). Phase 1 (block device) done;
-Phase 2 underway — sub-step 2.1 (memory-map shift: DOS ROM region at `$9000-$AFFF`)
-built and tested. *("MFC-DOS" and the boot prompt are provisional — see
-[Identity](#identity).)*
+Phase 2 underway — sub-steps 2.1 (memory-map shift: DOS ROM at `$9000-$AFFF`) and 2.2
+(block-device equates + sector read/write primitives + DOS ABI jump table at `$AF00` +
+FS stubs) built and tested; next is 2.3 (FAT16 mount + read). *("MFC-DOS" and the boot
+prompt are provisional — see [Identity](#identity).)*
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -191,7 +192,14 @@ letters), or a plain `MFC>`/`>`. **TBD.**
      `Ram_top → $9000`; the assembler's buffers moved to `$8000` (source) / `$7E00`
      (symbols). Stub `src/kernel/dos/dos.asm` (signature only) builds `dos.rom`.
      Covered by DOS-ROM cases in `tests/test_memory_banking.cpp`.
-   - **2.2** block-device equates + a 512-byte sector read primitive + FS ABI stubs.
+   - **2.2 — DONE.** Block-device equates + 512-byte sector read/write primitives
+     (`BLK_READ_SECTOR`/`BLK_WRITE_SECTOR`, the 6502 side of `$FE24-$FE28`) + FS ABI
+     stubs, all in `src/kernel/dos/dos.asm`. Stable entry points live in a **DOS ABI
+     jump table at `$AF00`** (mirrors the kernel `$FF00` table): `DOS_COLD`, `FS_OPEN`/
+     `FS_GETB`/`FS_PUTB`/`FS_CLOSE`/`FS_DIR_FIRST`/`FS_DIR_NEXT` (stubs, carry=error),
+     `BLK_READ_SECTOR` (`$AF15`), `BLK_WRITE_SECTOR` (`$AF18`). DOS zero page uses the
+     free `$3A-$5A` gap (`BLK_BUF_PTR=$3A`). Covered by `tests/test_dos_blockio.cpp`
+     (`dos_blockio_tests`) which runs the real `dos.rom` routines.
    - **2.3** FAT16 mount (BPB) + root-dir walk by 8.3 name + cluster-chain read.
    - **2.4** FAT16 image generator + temporary monitor `catalog`/read command + C++
      integration test.

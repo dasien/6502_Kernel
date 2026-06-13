@@ -101,6 +101,34 @@ target_include_directories(block_device_tests PRIVATE
 
 target_compile_features(block_device_tests PRIVATE cxx_std_20)
 
+# Create test executable for the DOS block-device primitives (runs the real
+# dos.rom 6502 routines that drive the $FE24-$FE28 registers).
+add_executable(dos_blockio_tests
+    test_dos_blockio.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(dos_blockio_tests
+    gtest_main
+    gtest
+)
+
+target_include_directories(dos_blockio_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(dos_blockio_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -140,6 +168,10 @@ add_test(NAME memory_banking_unit_tests
 # Add block-device unit tests to CTest
 add_test(NAME block_device_unit_tests
     COMMAND block_device_tests)
+
+# Add DOS block-I/O tests to CTest (runs the dos.rom 6502 sector primitives)
+add_test(NAME dos_blockio_tests
+    COMMAND dos_blockio_tests)
 
 # Add integration test to CTest
 add_test(NAME monitor_integration
