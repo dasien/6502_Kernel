@@ -37,6 +37,7 @@ namespace {
 // DOS ABI jump-table entry points (fixed addresses; see dos.asm).
 constexpr uint16_t kFsOpen = 0xAF03;
 constexpr uint16_t kFsGetb = 0xAF06;
+constexpr uint16_t kFsPutb = 0xAF09;
 constexpr uint16_t kFsClose = 0xAF0C;
 constexpr uint16_t kFsDirFirst = 0xAF0F;
 constexpr uint16_t kFsDirNext = 0xAF12;
@@ -89,13 +90,15 @@ protected:
     }
 
     // Run a DOS routine to completion (RTS leaves the DOS ROM). Returns carry.
-    bool callRoutine(uint16_t entry, bool &carry_out, uint8_t a = 0, uint8_t x = 0) {
+    bool callRoutine(uint16_t entry, bool &carry_out, uint8_t a = 0, uint8_t x = 0,
+                     uint8_t y = 0) {
         cpu_->reg.SP = 0xFF;
         cpu_->pushByte(0xFF);
         cpu_->pushByte(0xFF); // return address $FFFF -> RTS to $0000
         cpu_->reg.PC = entry;
         cpu_->reg.A = a;
         cpu_->reg.X = x;
+        cpu_->reg.Y = y;
         for (int i = 0; i < 2000000; ++i) {
             const uint16_t pc = cpu_->reg.PC;
             if (pc < Memory::kDosRomStart || pc > Memory::kDosRomEnd) {
@@ -148,6 +151,33 @@ protected:
         }
         callRoutine(kFsClose, carry);
         return true;
+    }
+
+    // Write a file through the 6502 FS write path: FS_OPEN(write) + FS_PUTB per
+    // byte + FS_CLOSE. Returns true on success.
+    bool fsWriteFile(const std::string &name, const std::vector<uint8_t> &data) {
+        for (size_t i = 0; i < name.size(); ++i)
+            mem_->write(kNameAddr + i, static_cast<uint8_t>(name[i]));
+        mem_->write(kNameAddr + name.size(), 0);
+
+        bool carry = true;
+        if (!callRoutine(kFsOpen, carry, kNameAddr & 0xFF, kNameAddr >> 8, /*mode=*/1) || carry)
+            return false;
+        for (uint8_t b : data) {
+            if (!callRoutine(kFsPutb, carry, b) || carry) return false;
+        }
+        if (!callRoutine(kFsClose, carry) || carry) return false;
+        return true;
+    }
+
+    // Read the current on-disk image back from the host file.
+    std::vector<uint8_t> readImageFile() {
+        std::ifstream f(image_path_, std::ios::binary | std::ios::ate);
+        std::streamsize n = f.tellg();
+        f.seekg(0, std::ios::beg);
+        std::vector<uint8_t> img(n > 0 ? static_cast<size_t>(n) : 0);
+        if (n > 0) f.read(reinterpret_cast<char *>(img.data()), n);
+        return img;
     }
 
     Computer6502 computer;
@@ -266,6 +296,103 @@ TEST_F(DosFat16Test, ReadsSecondFileAfterFirst) {
     ASSERT_TRUE(openReadClose("B.BIN", ob));
     EXPECT_EQ(oa, a);
     EXPECT_EQ(ob, b);
+}
+
+// --- File write (FS_OPEN write / FS_PUTB / FS_CLOSE) ----------------------
+
+using mfcdos_test::Fat16ImageReader;
+
+TEST_F(DosFat16Test, WritesAndReadsBackSmallFile) {
+    writeImage({}); // format an empty volume
+    const auto content = pattern(20, 0x42);
+    ASSERT_TRUE(fsWriteFile("OUT.TXT", content));
+
+    // (a) verify the on-disk image is valid FAT16 to an independent parser.
+    Fat16ImageReader reader(readImageFile());
+    Fat16ImageReader::Entry e;
+    ASSERT_TRUE(reader.find("OUT.TXT", e));
+    EXPECT_EQ(e.size, 20u);
+    EXPECT_GE(e.firstCluster, 2u);
+    std::vector<uint8_t> parsed;
+    ASSERT_TRUE(reader.read("OUT.TXT", parsed));
+    EXPECT_EQ(parsed, content);
+
+    // (b) verify the 6502 read path round-trips it too.
+    std::vector<uint8_t> readback;
+    ASSERT_TRUE(openReadClose("OUT.TXT", readback));
+    EXPECT_EQ(readback, content);
+}
+
+TEST_F(DosFat16Test, WritesEmptyFile) {
+    writeImage({});
+    ASSERT_TRUE(fsWriteFile("EMPTY.TXT", {}));
+    Fat16ImageReader reader(readImageFile());
+    Fat16ImageReader::Entry e;
+    ASSERT_TRUE(reader.find("EMPTY.TXT", e));
+    EXPECT_EQ(e.size, 0u);
+    std::vector<uint8_t> rb;
+    ASSERT_TRUE(openReadClose("EMPTY.TXT", rb));
+    EXPECT_TRUE(rb.empty());
+}
+
+TEST_F(DosFat16Test, WritesMultiClusterFile) {
+    writeImage({});
+    const auto content = pattern(1500, 0x07); // 3 clusters (512 each)
+    ASSERT_TRUE(fsWriteFile("BIG.DAT", content));
+
+    Fat16ImageReader reader(readImageFile());
+    std::vector<uint8_t> parsed;
+    ASSERT_TRUE(reader.read("BIG.DAT", parsed));
+    EXPECT_EQ(parsed, content);
+    // 1500 bytes / 512 = 3 clusters allocated.
+    EXPECT_EQ(reader.allocatedClusters(), 3);
+}
+
+TEST_F(DosFat16Test, WritesTwoFilesIndependently) {
+    writeImage({});
+    const auto a = pattern(700, 0x10);  // 2 clusters
+    const auto b = pattern(300, 0x20);  // 1 cluster
+    ASSERT_TRUE(fsWriteFile("A.BIN", a));
+    ASSERT_TRUE(fsWriteFile("B.BIN", b));
+
+    Fat16ImageReader reader(readImageFile());
+    std::vector<uint8_t> pa, pb;
+    ASSERT_TRUE(reader.read("A.BIN", pa));
+    ASSERT_TRUE(reader.read("B.BIN", pb));
+    EXPECT_EQ(pa, a);
+    EXPECT_EQ(pb, b);
+    EXPECT_EQ(reader.allocatedClusters(), 3); // 2 + 1, no overlap/leak
+}
+
+TEST_F(DosFat16Test, OverwriteTruncatesAndFreesOldChain) {
+    writeImage({});
+    ASSERT_TRUE(fsWriteFile("F.DAT", pattern(2000, 0x55))); // 4 clusters
+    const auto small = pattern(100, 0xAA);                   // 1 cluster
+    ASSERT_TRUE(fsWriteFile("F.DAT", small));                // same name -> truncate
+
+    Fat16ImageReader reader(readImageFile());
+    Fat16ImageReader::Entry e;
+    ASSERT_TRUE(reader.find("F.DAT", e));
+    EXPECT_EQ(e.size, 100u);
+    std::vector<uint8_t> parsed;
+    ASSERT_TRUE(reader.read("F.DAT", parsed));
+    EXPECT_EQ(parsed, small);
+    // Only the new single cluster should remain allocated (old 4 freed).
+    EXPECT_EQ(reader.allocatedClusters(), 1);
+    // And there must be exactly one directory entry for the name.
+    int count = 0;
+    for (const auto &de : reader.entries()) if (de.name == "F.DAT") ++count;
+    EXPECT_EQ(count, 1);
+}
+
+TEST_F(DosFat16Test, WrittenFileAppearsInCatalogEnumeration) {
+    writeImage({});
+    ASSERT_TRUE(fsWriteFile("HELLO.TXT", pattern(10, 1)));
+    ASSERT_TRUE(fsWriteFile("WORLD.TXT", pattern(10, 2)));
+    const auto entries = enumerate(); // 6502 directory walk
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].name, "HELLO.TXT");
+    EXPECT_EQ(entries[1].name, "WORLD.TXT");
 }
 
 TEST_F(DosFat16Test, SkipsDeletedEntries) {

@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.3
+; Version:      3.3.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -158,6 +158,9 @@
 ;                   $AFFF) - '@' catalogs the disk.img, '@NAME' types a file. The
 ;                   monitor calls the DOS ABI ($AF.. : FS_DIR_FIRST/NEXT, FS_OPEN/
 ;                   GETB/CLOSE) directly. Phase 4 replaces '@' with the real DOS shell.
+; 2026-06-14  v3.3.1 MFC-DOS phase 3a adds FAT16 write, so FS_OPEN now takes its
+;                   mode in Y (0 = read). The '@' TYPE command sets Y = 0 before
+;                   calling FS_OPEN. ROM is otherwise unchanged.
 ;
 ; ================================================================
 
@@ -1487,6 +1490,7 @@ CMD_TYPE:
     JSR PRINT_NEWLINE
     LDA #<(MON_CMDBUF+1)        ; filename = the bytes after '@'
     LDX #>(MON_CMDBUF+1)
+    LDY #$00                    ; mode 0 = read
     JSR FS_OPEN
     BCS @notfound
 @rd:

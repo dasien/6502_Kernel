@@ -158,6 +158,109 @@ private:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Fat16ImageReader - independently parse a FAT16 image (to verify what the 6502
+// write code produced is genuinely valid FAT16, not just round-trippable).
+// ---------------------------------------------------------------------------
+class Fat16ImageReader {
+public:
+    struct Entry {
+        std::string name; // decoded "NAME.EXT"
+        uint32_t size;
+        uint16_t firstCluster;
+        uint8_t attr;
+    };
+
+    explicit Fat16ImageReader(std::vector<uint8_t> image) : img_(std::move(image)) {
+        const uint8_t *b = img_.data();
+        bytesPerSector_ = rd16(&b[0x0B]);
+        sectorsPerCluster_ = b[0x0D];
+        const uint16_t reserved = rd16(&b[0x0E]);
+        numFats_ = b[0x10];
+        rootEntries_ = rd16(&b[0x11]);
+        const uint16_t fatSize = rd16(&b[0x16]);
+        fatStart_ = reserved;
+        rootStart_ = reserved + numFats_ * fatSize;
+        const uint16_t rootSectors =
+            (rootEntries_ * 32 + bytesPerSector_ - 1) / bytesPerSector_;
+        dataStart_ = rootStart_ + rootSectors;
+    }
+
+    // Live (non-deleted, non-LFN, non-volume) root directory entries.
+    std::vector<Entry> entries() const {
+        std::vector<Entry> out;
+        const uint8_t *root = &img_[rootStart_ * bytesPerSector_];
+        for (uint16_t i = 0; i < rootEntries_; ++i) {
+            const uint8_t *e = root + i * 32;
+            if (e[0] == 0x00) break;        // end of directory
+            if (e[0] == 0xE5) continue;     // deleted
+            const uint8_t attr = e[0x0B];
+            if ((attr & 0x0F) == 0x0F) continue; // LFN
+            if (attr & 0x08) continue;            // volume label
+            out.push_back({decodeName(e), rd32(&e[0x1C]), rd16(&e[0x1A]), attr});
+        }
+        return out;
+    }
+
+    bool find(const std::string &name, Entry &out) const {
+        for (const auto &e : entries())
+            if (e.name == name) { out = e; return true; }
+        return false;
+    }
+
+    // Read a file's bytes by following its FAT16 cluster chain.
+    bool read(const std::string &name, std::vector<uint8_t> &out) const {
+        Entry e;
+        if (!find(name, e)) return false;
+        out.clear();
+        uint32_t remaining = e.size;
+        uint16_t cluster = e.firstCluster;
+        const uint32_t cbytes = bytesPerSector_ * sectorsPerCluster_;
+        while (remaining > 0 && cluster >= 2 && cluster < 0xFFF8) {
+            const uint32_t lba = dataStart_ + (cluster - 2) * sectorsPerCluster_;
+            const uint32_t n = std::min(cbytes, remaining);
+            const uint8_t *p = &img_[lba * bytesPerSector_];
+            out.insert(out.end(), p, p + n);
+            remaining -= n;
+            cluster = fatEntry(cluster);
+        }
+        return remaining == 0;
+    }
+
+    uint16_t fatEntry(uint16_t cluster) const {
+        const uint8_t *fat = &img_[fatStart_ * bytesPerSector_];
+        return rd16(&fat[cluster * 2]);
+    }
+
+    // Count clusters marked allocated (non-zero) from cluster 2 up.
+    int allocatedClusters() const {
+        int n = 0;
+        const uint32_t total = (img_.size() / bytesPerSector_ - dataStart_) / sectorsPerCluster_;
+        for (uint32_t c = 2; c < total + 2; ++c)
+            if (fatEntry(static_cast<uint16_t>(c)) != 0x0000) ++n;
+        return n;
+    }
+
+private:
+    static uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
+    static uint32_t rd32(const uint8_t *p) {
+        return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
+    }
+    static std::string decodeName(const uint8_t *e) {
+        std::string base, ext;
+        for (int i = 0; i < 8; ++i) if (e[i] != ' ') base.push_back(static_cast<char>(e[i]));
+        for (int i = 8; i < 11; ++i) if (e[i] != ' ') ext.push_back(static_cast<char>(e[i]));
+        return ext.empty() ? base : base + "." + ext;
+    }
+
+    std::vector<uint8_t> img_;
+    uint16_t bytesPerSector_ = 512;
+    uint8_t sectorsPerCluster_ = 1;
+    uint8_t numFats_ = 1;
+    uint16_t rootEntries_ = 0;
+    uint16_t fatStart_ = 0, rootStart_ = 0, dataStart_ = 0;
+};
+
 } // namespace mfcdos_test
 
 #endif // MFCDOS_TEST_FAT16_IMAGE_H

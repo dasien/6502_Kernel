@@ -4,8 +4,10 @@
 **Phase 2 (FAT16 read) COMPLETE** — 2.1 memory-map shift, 2.2 block primitives +
 `$AF00` DOS ABI table, 2.3 FAT16 read (mount + directory + cluster-chain file read),
 2.4 the `mkfat16` tool + a temporary `@` catalog/type monitor command (kernel v3.3).
-Next major step is **Phase 3 (FAT16 write)**. *("MFC-DOS" and the boot prompt are
-provisional — see [Identity](#identity).)*
+**Phase 3 (FAT16 write) underway** — 3a (the write engine: alloc/chain/free + FS_OPEN-
+write/PUTB/CLOSE, single + multi-cluster, truncate-on-reopen) built and tested; next is
+3b (ERASE + interactive surface). *("MFC-DOS" and the boot prompt are provisional — see
+[Identity](#identity).)*
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -223,6 +225,19 @@ letters), or a plain `MFC>`/`>`. **TBD.**
      - Covered by `monitor_integration` (catalog, type, missing-file) against a
        mounted FAT16 image.
 3. **FAT16 write** — create / `ERASE` / `SAVE`; full round-trip on the machine.
+   - **3a — DONE.** The write engine in `dos.asm`: cluster allocation (scan the FAT
+     for a free entry, mark EOC), FAT-entry **read-modify-write** (read the sector,
+     skip to the entry, overwrite 2 bytes in the buffered sector, flush — no RAM
+     sector buffer), free-chain, directory-slot find (reuse same-name + free old
+     chain, else append), and `FS_OPEN(write)` / `FS_PUTB` / `FS_CLOSE` (stream
+     bytes, allocate + chain clusters across boundaries, pad + flush the final
+     sector, finalize the dir entry). Single + multi-cluster; truncate-on-reopen.
+     `FS_OPEN` mode is passed in Y (0 = read, 1 = write). A C++ FAT16 parser
+     (`Fat16ImageReader`) independently validates the on-disk format; covered by
+     write/round-trip cases in `tests/test_dos_fat16.cpp`. (Single FAT copy;
+     deleted-slot reclaim deferred.)
+   - **3b** — `ERASE` (free chain + mark the directory entry deleted) and a temporary
+     interactive surface (save/erase) + full machine round-trip / host-interop check.
 4. **DOS shell as boot target** — the pivot: fill the (already-present) `$9000-$AFFF`
    DOS ROM with the command shell, boot into the DOS prompt, the command set above,
    launch-by-name (command → ROM module → file), program-file loader. `MON`/`BASIC`/
