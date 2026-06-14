@@ -1,11 +1,11 @@
 # MFC-DOS — BIOS + DOS + Filesystem Design
 
 **Status:** in progress (the major arc after v3.2). Phase 1 (block device) done;
-Phase 2 underway — sub-steps 2.1 (memory-map shift), 2.2 (block primitives + `$AF00`
-DOS ABI table), and 2.3 (FAT16 read: mount + directory enumeration + open/read by
-following the cluster chain) built and tested; next is 2.4 (image generator tool +
-a `catalog`/read surface). *("MFC-DOS" and the boot prompt are provisional — see
-[Identity](#identity).)*
+**Phase 2 (FAT16 read) COMPLETE** — 2.1 memory-map shift, 2.2 block primitives +
+`$AF00` DOS ABI table, 2.3 FAT16 read (mount + directory + cluster-chain file read),
+2.4 the `mkfat16` tool + a temporary `@` catalog/type monitor command (kernel v3.3).
+Next major step is **Phase 3 (FAT16 write)**. *("MFC-DOS" and the boot prompt are
+provisional — see [Identity](#identity).)*
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -212,9 +212,16 @@ letters), or a plain `MFC>`/`>`. **TBD.**
        cluster chain at cluster boundaries; carry=EOF), `FS_CLOSE`. Reads stream
        through the block device's sector buffer (no 512B RAM buffer); FAT lookups
        and dir scans use bounded skip-reads. `FS_PUTB` remains a stub (phase 3).
-   - **2.4** FAT16 image generator (graduate `fat16_image.h` into a `tools/`
-     program) + temporary monitor `catalog`/read command + wire FS into the kernel
-     `$FF00` ABI as needed.
+   - **2.4 — DONE.** Interactive surface + tooling:
+     - `tools/mkfat16` creates a FAT16 `disk.img` (sample files by default, or host
+       files added under derived 8.3 names), reusing the shared image builder. A
+       `sample_disk` CMake target writes `<build>/disk.img`.
+     - Temporary monitor command **`@`** (kernel.asm, v3.3): `@` catalogs the disk
+       (names + sizes), `@NAME` types a file. It calls the DOS ABI at `$AF..`
+       directly (the DOS ROM is always mapped), so no kernel `$FF00` change was
+       needed; phase 4 replaces `@` with the real DOS shell.
+     - Covered by `monitor_integration` (catalog, type, missing-file) against a
+       mounted FAT16 image.
 3. **FAT16 write** — create / `ERASE` / `SAVE`; full round-trip on the machine.
 4. **DOS shell as boot target** — the pivot: fill the (already-present) `$9000-$AFFF`
    DOS ROM with the command shell, boot into the DOS prompt, the command set above,

@@ -13,7 +13,10 @@
 #include <string>
 #include <vector>
 #include <iomanip>
+#include <filesystem>
+#include <fstream>
 #include "computer/Computer6502.h"
+#include "support/fat16_image.h"
 
 class MonitorIntegrationTester {
 public:
@@ -62,6 +65,11 @@ public:
         testMoveOverlapClearKeepsData();
         testEscAtPromptNoError();
 
+        // MFC-DOS '@' preview: catalog + type against a mounted FAT16 image.
+        testCatalog();
+        testTypeFile();
+        testTypeMissingFile();
+
         // Must run last: it launches BASIC (bank 1), which keeps running and
         // would otherwise consume the keystrokes of any following test.
         testBankLaunch();
@@ -70,12 +78,66 @@ public:
         printSummary();
     }
 
+    ~MonitorIntegrationTester() {
+        if (!disk_path_.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(disk_path_, ec);
+        }
+    }
+
     // Number of failed assertions (0 = all passed). Lets main() return a
     // non-zero exit code so ctest actually flags integration regressions.
     int failureCount() const { return tests_failed; }
 
+    // Build a FAT16 image with the given files and point the block device at it,
+    // so the '@' DOS preview command has a disk to read.
+    void mountDisk(const std::vector<mfcdos_test::Fat16File>& files) {
+        if (disk_path_.empty()) {
+            disk_path_ = (std::filesystem::temp_directory_path() /
+                          "mfcdos_monitor_disk.img").string();
+        }
+        const std::vector<uint8_t> img = mfcdos_test::Fat16ImageBuilder::build(files);
+        std::ofstream f(disk_path_, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char*>(img.data()),
+                static_cast<std::streamsize>(img.size()));
+        f.close();
+        computer.getBlockDevice()->setImagePath(disk_path_);
+    }
+
+    // '@' lists the mounted disk's files (the temporary DOS preview).
+    void testCatalog() {
+        clearScreen();
+        mountDisk({
+            {"HELLO.TXT", std::vector<uint8_t>(15, 'H')},
+            {"README.MD", std::vector<uint8_t>(42, 'R')},
+        });
+        sendCommand("@");
+        verifyResponse("HELLO.TXT", "Catalog lists HELLO.TXT");
+        verifyResponse("README.MD", "Catalog lists README.MD");
+    }
+
+    // '@NAME' types a file's contents to the screen.
+    void testTypeFile() {
+        clearScreen();
+        // "GREETING" + CR/LF so PRINT lays it on its own line; uppercase so it
+        // survives the screen's printable-ASCII filter in getScreenText().
+        std::vector<uint8_t> body = {'G','R','E','E','T','I','N','G','\r','\n'};
+        mountDisk({{"MSG.TXT", body}});
+        sendCommand("@MSG.TXT");
+        verifyResponse("GREETING", "Type displays file contents");
+    }
+
+    // '@NAME' for a missing file reports an error, not a crash.
+    void testTypeMissingFile() {
+        clearScreen();
+        mountDisk({{"REAL.TXT", std::vector<uint8_t>(4, 'X')}});
+        sendCommand("@NOPE.TXT");
+        verifyResponse("FILE NOT FOUND", "Type of missing file reports error");
+    }
+
 private:
     Computer::Computer6502 computer;
+    std::string disk_path_;
     int tests_passed;
     int tests_failed;
 

@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.2
+; Version:      3.3
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -153,6 +153,11 @@
 ;                   .ORG/.END/.BYTE/.WORD/.ASCII/=, host .s load, listing). The kernel
 ;                   ROM is unchanged from v3.1.1; v3.2 is the system version for the
 ;                   release that includes the module.
+; 2026-06-14  v3.3  MFC-DOS phase 2: a temporary '@' monitor command previews the
+;                   resident FAT16 filesystem in the always-mapped DOS ROM ($9000-
+;                   $AFFF) - '@' catalogs the disk.img, '@NAME' types a file. The
+;                   monitor calls the DOS ABI ($AF.. : FS_DIR_FIRST/NEXT, FS_OPEN/
+;                   GETB/CLOSE) directly. Phase 4 replaces '@' with the real DOS shell.
 ;
 ; ================================================================
 
@@ -258,6 +263,21 @@ ASCII_BACKSPACE    = $08           ; Backspace character
 ASCII_DELETE       = $7F           ; Delete character
 ASCII_ESC          = $1B           ; Escape character
 ASCII_DOT          = $2E           ; Dot '.' character
+ASCII_AT           = $40           ; At sign '@' (temporary DOS preview command)
+
+; ----------------------------------------------------------------
+; MFC-DOS ABI - fixed entry points in the always-mapped DOS ROM ($9000-$AFFF).
+; The monitor reaches the resident FAT16 filesystem here directly (the DOS ROM
+; is always mapped). See src/kernel/dos/dos.asm. The '@' command below is a
+; TEMPORARY preview; phase 4 replaces it with the real DOS shell.
+; ----------------------------------------------------------------
+FS_OPEN            = $AF03         ; A/X = ptr to null-terminated 8.3 name -> open (read)
+FS_GETB            = $AF06         ; -> A = next byte, carry set = EOF
+FS_CLOSE           = $AF0C         ; close the open file
+FS_DIR_FIRST       = $AF0F         ; start a root-dir scan; carry set = empty/none
+FS_DIR_NEXT        = $AF12         ; next entry -> DOS_DIR_ENTRY; carry set = no more
+DOS_DIR_ENTRY      = $0320         ; 32-byte current directory entry (filled by FS_DIR_*)
+DOS_DIRENT_SIZE    = $1C           ; offset of the 4-byte size within a dir entry
 
 ; Hardware I/O addresses for keyboard input
 PIA_DATA           = $FE00         ; PIA data register for keyboard
@@ -1141,6 +1161,10 @@ PARSE_CMD_START:
     CMP #'?'                    ; ASCII $3F
     BEQ PARSE_CMD_HELP_DIRECT   ; Jump directly to help
 
+    ; '@' is the temporary DOS preview: catalog ('@') / type a file ('@NAME').
+    CMP #ASCII_AT
+    BEQ PARSE_CMD_DOS_DIRECT
+
     ; ESC at the command prompt is a clean exit/no-op, not a syntax error
     CMP #ASCII_ESC
     BEQ PARSE_CMD_EXIT_DIRECT
@@ -1170,6 +1194,10 @@ PARSE_CMD_START:
 PARSE_CMD_HELP_DIRECT:
     ; Direct jump to help for '?' character
     JMP PARSE_CMD_HELP
+
+PARSE_CMD_DOS_DIRECT:
+    ; Direct jump to the DOS preview handler for '@'
+    JMP PARSE_CMD_DOS
 
 PARSE_CMD_EXIT_DIRECT:
     ; Direct jump to the clean-exit handler for a bare ESC
@@ -1379,6 +1407,108 @@ PARSE_CMD_RANGE_ERROR:
 
 PARSE_CMD_DONE:
     RTS
+
+; ================================================================
+; MFC-DOS PREVIEW COMMAND ('@') -- TEMPORARY (phase 4 replaces with DOS shell)
+; ================================================================
+; '@'      catalog: list files on the mounted disk.img with their sizes
+; '@NAME'  type: print the named file's contents to the screen
+; Reaches the resident FAT16 filesystem in the always-mapped DOS ROM via the
+; $AF.. ABI (FS_DIR_FIRST/NEXT, FS_OPEN/GETB/CLOSE).
+PARSE_CMD_DOS:
+    LDA MON_CMDLEN
+    CMP #$02                    ; '@' + at least one filename char?
+    BCC CMD_CATALOG             ; just '@'  -> catalog
+    JMP CMD_TYPE                ; '@NAME'   -> type the file
+
+; ----- catalog: walk the root directory -----
+CMD_CATALOG:
+    JSR PRINT_NEWLINE
+    JSR FS_DIR_FIRST
+    BCS @none
+@loop:
+    JSR CAT_PRINT_ENTRY
+    JSR FS_DIR_NEXT
+    BCC @loop
+    JMP PARSE_CMD_DONE
+@none:
+    LDA #<MSG_DOS_NOFILES
+    LDY #>MSG_DOS_NOFILES
+    JSR PRINT_MSG_AY
+    JMP PARSE_CMD_DONE
+
+; Print one directory entry: "NAME.EXT" then the size (hex) then newline.
+; Entry is in DOS_DIR_ENTRY (name = 11 bytes 8.3, size at +DOS_DIRENT_SIZE).
+CAT_PRINT_ENTRY:
+    LDX #$00                    ; base name: up to 8 chars, stop at first space
+@base:
+    LDA DOS_DIR_ENTRY,X
+    CMP #ASCII_SPACE
+    BEQ @ext
+    JSR PRINT_CHAR
+    INX
+    CPX #$08
+    BNE @base
+@ext:
+    LDA DOS_DIR_ENTRY+8         ; extension present?
+    CMP #ASCII_SPACE
+    BEQ @size
+    LDA #ASCII_DOT
+    JSR PRINT_CHAR
+    LDX #$08
+@extloop:
+    LDA DOS_DIR_ENTRY,X
+    CMP #ASCII_SPACE
+    BEQ @size
+    JSR PRINT_CHAR
+    INX
+    CPX #$0B
+    BNE @extloop
+@size:
+    LDA #ASCII_SPACE
+    JSR PRINT_CHAR
+    JSR PRINT_CHAR
+    LDA DOS_DIR_ENTRY+DOS_DIRENT_SIZE+3   ; 32-bit size, high byte first
+    JSR PRINT_HEX_BYTE
+    LDA DOS_DIR_ENTRY+DOS_DIRENT_SIZE+2
+    JSR PRINT_HEX_BYTE
+    LDA DOS_DIR_ENTRY+DOS_DIRENT_SIZE+1
+    JSR PRINT_HEX_BYTE
+    LDA DOS_DIR_ENTRY+DOS_DIRENT_SIZE
+    JSR PRINT_HEX_BYTE
+    JSR PRINT_NEWLINE
+    RTS
+
+; ----- type: print a file's contents -----
+CMD_TYPE:
+    LDX MON_CMDLEN              ; null-terminate the command so the name is a C string
+    LDA #$00
+    STA MON_CMDBUF,X
+    JSR PRINT_NEWLINE
+    LDA #<(MON_CMDBUF+1)        ; filename = the bytes after '@'
+    LDX #>(MON_CMDBUF+1)
+    JSR FS_OPEN
+    BCS @notfound
+@rd:
+    JSR FS_GETB
+    BCS @eof
+    CMP #ASCII_CR              ; ignore CR; LF drives the newline (handles LF & CRLF)
+    BEQ @rd
+    CMP #ASCII_LF
+    BNE @putc
+    JSR PRINT_NEWLINE
+    BRA @rd
+@putc:
+    JSR PRINT_CHAR
+    BRA @rd
+@eof:
+    JSR FS_CLOSE
+    JMP PARSE_CMD_DONE
+@notfound:
+    LDA #<MSG_DOS_NOFILE
+    LDY #>MSG_DOS_NOFILE
+    JSR PRINT_MSG_AY
+    JMP PARSE_CMD_DONE
 
 ; Parse colon command syntax for address specification
 ; Input: Command in MON_CMDBUF (e.g., "W:8000", "R:8000-8010", "L:8000,filename")
@@ -3366,8 +3496,9 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_EXIT         ; ESC
     .WORD MSG_HELP_HELP         ; ?
     .WORD MSG_HELP_RECALL       ; .
+    .WORD MSG_HELP_DOS          ; @
 
-HELP_MSG_COUNT = 17              ; Number of help messages
+HELP_MSG_COUNT = 18              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
@@ -3390,6 +3521,7 @@ MSG_HELP_SEARCH:     .BYTE "X:XXXX-YYYY,PATTERN SEARCH MEMORY", 0
 MSG_HELP_EXIT:       .BYTE "ESC    EXIT CURRENT MODE", 0
 MSG_HELP_HELP:       .BYTE "?      SHOW THIS HELP", 0
 MSG_HELP_RECALL:     .BYTE ".      RECALL LAST COMMAND", 0
+MSG_HELP_DOS:        .BYTE "@ / @NAME  DOS CATALOG / TYPE FILE", 0
 MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
@@ -3399,6 +3531,8 @@ MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
 MSG_BANK_HEADER:     .BYTE "MODULE BANKS:", 0
 MSG_BANK_PROMPT:     .BYTE "SELECT (ESC=CANCEL): ", 0
 MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
+MSG_DOS_NOFILES:     .BYTE "NO FILES (OR NO DISK)", $0D, $0A, 0
+MSG_DOS_NOFILE:      .BYTE "FILE NOT FOUND", $0D, $0A, 0
 
 ; ----------------------------------------------------------------
 ; Module directory: one 5-byte record per launchable module, walked by the B:

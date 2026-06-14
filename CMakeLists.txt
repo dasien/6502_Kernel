@@ -53,6 +53,25 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# ----------------------------------------------------------------
+# mkfat16 - host tool to create a FAT16 disk.img for the block device.
+# Reuses the FAT16 image builder shared with the filesystem tests.
+# Build it, then create a disk:   ./bin/mkfat16 ../disk.img [files...]
+# Or use the convenience target:  ninja sample_disk
+# ----------------------------------------------------------------
+add_executable(mkfat16 tools/mkfat16/mkfat16.cpp)
+target_include_directories(mkfat16 PRIVATE ${CMAKE_SOURCE_DIR}/tests/support)
+target_compile_features(mkfat16 PRIVATE cxx_std_20)
+
+# Convenience: write a sample disk.img (with sample files) next to the ROMs,
+# where the emulator looks for it (../disk.img relative to the bin/ dir).
+add_custom_target(sample_disk
+    COMMAND mkfat16 ${CMAKE_BINARY_DIR}/disk.img
+    DEPENDS mkfat16
+    COMMENT "Creating sample FAT16 disk image at ${CMAKE_BINARY_DIR}/disk.img"
+    VERBATIM
+)
+
 # Installation rules
 install(TARGETS 6502-kernel
     RUNTIME DESTINATION bin
