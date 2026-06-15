@@ -35,6 +35,11 @@ public:
     void runAllTests() {
         std::cout << "\nRunning integration tests...\n" << std::endl;
 
+        // The machine now boots into the DOS shell; exercise it first, then drop
+        // into the monitor (via MON) so the monitor tests below run as before.
+        testDosShell();
+        sendCommand("MON");
+
         // Test basic commands
         testClearScreen();
         testHelpCommand();
@@ -153,6 +158,37 @@ public:
         clearScreen();
         sendCommand("@HI.TXT");
         verifyResponse("HI!", "Saved file types back correctly");
+    }
+
+    // The MFC/OS DOS shell: boots to its banner, CATALOG/TYPE work, and MON
+    // launches the monitor with Q returning to the shell. Runs FIRST (at the DOS
+    // prompt), then leaves us in the monitor for the rest of the suite.
+    void testDosShell() {
+        // Boot landed at the DOS shell.
+        verifyResponse("MFC/OS", "Boots into the MFC/OS shell");
+
+        // CATALOG + TYPE against a mounted disk.
+        std::string greet = "HOWDY\r\n";
+        mountDisk({{"GREET.TXT", std::vector<uint8_t>(greet.begin(), greet.end())},
+                   {"ZEBRA.DAT", std::vector<uint8_t>(30, 'Z')}});
+        sendCommand("CATALOG");
+        verifyResponse("GREET.TXT", "DOS CATALOG lists GREET.TXT");
+        verifyResponse("ZEBRA.DAT", "DOS CATALOG lists ZEBRA.DAT");
+        sendCommand("TYPE GREET.TXT");
+        verifyResponse("HOWDY", "DOS TYPE prints file contents");
+
+        // Unknown command is reported clearly.
+        sendCommand("FROB");
+        verifyResponse("COMMAND NOT FOUND", "Unknown command reports COMMAND NOT FOUND");
+
+        // MON launches the monitor (its help header proves we're in the monitor).
+        sendCommand("MON");
+        sendCommand("?");
+        verifyResponse("MONITOR COMMANDS", "MON launches the monitor");
+        // Q returns to the DOS shell (HELP's built-in list proves we're back).
+        sendCommand("Q");
+        sendCommand("HELP");
+        verifyResponse("BUILT-IN", "Q returns to the DOS shell");
     }
 
     // '@-NAME' erases a file.

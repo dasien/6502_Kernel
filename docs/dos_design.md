@@ -4,11 +4,12 @@
 **Phase 2 (FAT16 read) COMPLETE** — 2.1 memory-map shift, 2.2 block primitives +
 `$AF00` DOS ABI table, 2.3 FAT16 read (mount + directory + cluster-chain file read),
 2.4 the `mkfat16` tool + a temporary `@` catalog/type monitor command (kernel v3.3).
-**Phase 3 (FAT16 write) COMPLETE** — 3a (write engine: alloc/chain/free + FS_OPEN-write/
-PUTB/CLOSE, single + multi-cluster, truncate-on-reopen) and 3b (FS_DELETE + the `@`
-save/erase preview, kernel v3.4). The machine can now create, grow, overwrite, and erase
-files in a host-mountable FAT16 volume. Next major step is **Phase 4 (the DOS shell as
-boot target)**. *("MFC-DOS" and the boot prompt are provisional — see [Identity](#identity).)*
+**Phase 3 (FAT16 write) COMPLETE** (3a write engine + 3b FS_DELETE/`@` save-erase).
+**Phase 4 (DOS shell) underway** — 4.1 the boot pivot is done: the machine boots into
+the **MFC/OS** shell (`>` prompt) with `HELP`/`MON`/`CATALOG`/`TYPE`; the monitor is
+launched by `MON` and exited with `Q` (kernel v3.5). Next: 4.2 (DOS file verbs +
+`.PRG` header, retire `@`), 4.3 (launch-by-name + program loader). Identity settled:
+OS = **MFC/OS**, bare `>` prompt, `Q` exits the monitor.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -175,9 +176,9 @@ ABI), leaving the kernel ROM as a lean pure-BIOS — not required for function.
 
 ## Identity
 
-Provisional, to confirm: the OS is **MFC-DOS**; boot shows a sign-on banner and a
-prompt. Prompt candidates: Apple-style `]`, CP/M-style `A>` (odd with no drive
-letters), or a plain `MFC>`/`>`. **TBD.**
+**Settled (2026-06-14):** the OS is **MFC/OS**; boot shows a sign-on banner and a
+bare **`>`** prompt. The monitor is launched by `MON` and exited with **`Q`** (back to
+the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal marker.)
 
 ## Phased build plan
 
@@ -250,6 +251,16 @@ letters), or a plain `MFC>`/`>`. **TBD.**
    DOS ROM with the command shell, boot into the DOS prompt, the command set above,
    launch-by-name (command → ROM module → file), program-file loader. `MON`/`BASIC`/
    `ASM` launch their banks; the monitor is entered as a tool and returns to DOS.
+   - **4.1 — DONE.** The boot pivot. RESET now `JMP DOS_COLD`; the machine boots into
+     the **MFC/OS** shell (banner + `>` prompt) in `dos.asm`: read a line (BIOS
+     `READ_COMMAND_LINE`), match a verb, dispatch. Verbs: `HELP`, `MON` (launches the
+     monitor via the new `K_MON_ENTRY` `$FF1E` BIOS entry), `CATALOG`/`CAT`, `TYPE
+     NAME`. The monitor gains `Q` (quit → `DOS_WARM` `$AF1E`). Kernel v3.5. The `@`
+     preview + `B:` menu remain reachable through `MON` (retired in 4.2/4.3).
+   - **4.2** — DOS file verbs: `SAVE name,start-end` / `LOAD` (with the `.PRG`
+     2-byte load-address header), `ERASE`, `RENAME` (adds `FS_RENAME`); retire `@`.
+   - **4.3** — launch-by-name (command → ROM module → disk `.PRG`) + program loader;
+     module return path switches to DOS; the `B:` menu retires.
 5. **Editor** (module, bank) — full-screen, generic; edit/save FS files → full
    in-machine self-hosting (edit → assemble → run, all at the DOS).
 6. *(Later/optional)* relocate the monitor to a bank; kernel ROM becomes a lean BIOS.

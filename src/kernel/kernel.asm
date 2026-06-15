@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.4
+; Version:      3.5
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -165,6 +165,10 @@
 ;                   '@-NAME' erases a file (FS_DELETE), and '@SSSS-EEEE=NAME' saves
 ;                   a memory range to a file (FS_OPEN-write + FS_PUTB + FS_CLOSE).
 ;                   Still a temporary preview; phase 4 brings the real DOS shell.
+; 2026-06-14  v3.5  MFC-DOS phase 4.1 - the boot pivot: RESET now boots into the
+;                   MFC/OS DOS shell (JMP DOS_COLD) instead of the monitor. The
+;                   monitor is launched by the DOS 'MON' command (K_MON_ENTRY at
+;                   $FF1E) and exited with 'Q', which returns to the shell (DOS_WARM).
 ;
 ; ================================================================
 
@@ -285,6 +289,8 @@ FS_CLOSE           = $AF0C         ; close the open file
 FS_DIR_FIRST       = $AF0F         ; start a root-dir scan; carry set = empty/none
 FS_DIR_NEXT        = $AF12         ; next entry -> DOS_DIR_ENTRY; carry set = no more
 FS_DELETE          = $AF1B         ; A/X = ptr to name -> erase the file
+DOS_COLD           = $AF00         ; DOS shell cold entry (boot target)
+DOS_WARM           = $AF1E         ; DOS shell re-entry (monitor Q returns here)
 DOS_DIR_ENTRY      = $0320         ; 32-byte current directory entry (filled by FS_DIR_*)
 DOS_DIRENT_SIZE    = $1C           ; offset of the 4-byte size within a dir entry
 
@@ -416,8 +422,9 @@ CLEAR_MON_VAR_LOOP:
     LDY #>MSG_WELCOME
     JSR PRINT_MSG_AY
 
-    ; Jump to monitor main loop
-    JMP MONITOR_MAIN
+    ; Boot into the MFC/OS DOS shell (always-mapped DOS ROM). The monitor is now
+    ; a tool launched from the DOS by MON; it returns here via DOS_WARM.
+    JMP DOS_COLD
 
 ; ================================================================
 ; RANDOM NUMBER GENERATOR ROUTINES
@@ -1174,6 +1181,10 @@ PARSE_CMD_START:
     CMP #ASCII_AT
     BEQ PARSE_CMD_DOS_DIRECT
 
+    ; 'Q' quits the monitor back to the DOS prompt.
+    CMP #'Q'
+    BEQ PARSE_CMD_QUIT_DIRECT
+
     ; ESC at the command prompt is a clean exit/no-op, not a syntax error
     CMP #ASCII_ESC
     BEQ PARSE_CMD_EXIT_DIRECT
@@ -1207,6 +1218,10 @@ PARSE_CMD_HELP_DIRECT:
 PARSE_CMD_DOS_DIRECT:
     ; Direct jump to the DOS preview handler for '@'
     JMP PARSE_CMD_DOS
+
+PARSE_CMD_QUIT_DIRECT:
+    ; Quit the monitor: return to the MFC/OS DOS shell (no return).
+    JMP DOS_WARM
 
 PARSE_CMD_EXIT_DIRECT:
     ; Direct jump to the clean-exit handler for a bare ESC
@@ -3618,8 +3633,9 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_RECALL       ; .
     .WORD MSG_HELP_DOS          ; @
     .WORD MSG_HELP_DOS2         ; @ save/erase
+    .WORD MSG_HELP_QUIT         ; Q
 
-HELP_MSG_COUNT = 19              ; Number of help messages
+HELP_MSG_COUNT = 20              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
@@ -3644,6 +3660,7 @@ MSG_HELP_HELP:       .BYTE "?      SHOW THIS HELP", 0
 MSG_HELP_RECALL:     .BYTE ".      RECALL LAST COMMAND", 0
 MSG_HELP_DOS:        .BYTE "@ / @NAME  DOS CATALOG / TYPE FILE", 0
 MSG_HELP_DOS2:       .BYTE "@-NAME ERASE  @S-E=NAME SAVE RANGE", 0
+MSG_HELP_QUIT:       .BYTE "Q      QUIT TO DOS", 0
 MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
@@ -3707,6 +3724,7 @@ K_RETURN_MODULE: JMP RETURN_FROM_MODULE ; $FF12 - module exit point (BASIC BYE, 
 K_READ_LINE:     JMP READ_COMMAND_LINE  ; $FF15
 K_PARSE_HEX:     JMP HEX_QUAD_TO_ADDR   ; $FF18
 K_PRINT_HEX_BYTE:JMP PRINT_HEX_BYTE     ; $FF1B
+K_MON_ENTRY:     JMP MONITOR_MAIN       ; $FF1E - DOS launches the monitor here
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

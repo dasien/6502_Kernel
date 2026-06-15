@@ -33,6 +33,26 @@ BLK_READY        = $00                  ; BLK_STATUS: ready / last op OK
 SECTOR_SIZE      = 512
 
 ; ----------------------------------------------------------------
+; BIOS ABI (kernel $FF00 jump table) + BIOS RAM the DOS shell uses
+; ----------------------------------------------------------------
+K_PRINT_CHAR     = $FF00
+K_PRINT_MESSAGE  = $FF03                ; MON_MSG_PTR_LO/HI -> string
+K_PRINT_NEWLINE  = $FF06
+K_CLEAR_SCREEN   = $FF0C
+K_READ_LINE      = $FF15                ; read a line -> MON_CMDBUF, len MON_CMDLEN
+K_PRINT_HEX_BYTE = $FF1B                ; A -> two hex digits
+K_MON_ENTRY      = $FF1E                ; launch the monitor (returns via Q -> DOS_WARM)
+
+MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
+MON_CMDLEN       = $026A                ; current command length
+MON_MSG_PTR_LO   = $16                  ; message pointer for K_PRINT_MESSAGE
+MON_MSG_PTR_HI   = $17
+
+ASCII_CR         = $0D
+ASCII_LF         = $0A
+ASCII_SPACE      = $20
+
+; ----------------------------------------------------------------
 ; DOS zero page (the free $3A-$5A gap; clear of monitor $14-$39,
 ; BASIC $00-$13/$5B-$FF, and dev-tools $C0-$DF)
 ; ----------------------------------------------------------------
@@ -111,6 +131,259 @@ DOS_SIGNATURE:
     .BYTE "MFC-DOS", $00
 DOS_VERSION:
     .BYTE $00, $01                      ; version 0.1 (major, minor)
+
+; ================================================================
+; DOS SHELL (CCP) - the MFC/OS front door
+; ================================================================
+; RESET (BIOS) hands control here after init. The shell prints a sign-on
+; banner, then loops: print the '>' prompt, read a line via the BIOS, parse a
+; verb, and dispatch. Built-in verbs: HELP, MON (launch the monitor), CATALOG /
+; CAT (list files), TYPE NAME (print a file). Phase 4.2 adds the write verbs;
+; 4.3 adds launch-by-name. Reached via the DOS ABI: DOS_COLD ($AF00, cold boot)
+; and DOS_WARM ($AF1E, re-entry from the monitor's Q command).
+
+; ----------------------------------------------------------------
+; _DOS_COLD - cold entry: banner, then the prompt loop
+; ----------------------------------------------------------------
+_DOS_COLD:
+    LDX #$FF
+    TXS                                 ; clean stack
+    LDA #<MSG_DOS_BANNER
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_DOS_BANNER
+    STA MON_MSG_PTR_HI
+    JSR K_PRINT_MESSAGE
+    JMP _DOS_PROMPT
+
+; ----------------------------------------------------------------
+; _DOS_WARM - re-entry from the monitor (no banner)
+; ----------------------------------------------------------------
+_DOS_WARM:
+    LDX #$FF
+    TXS
+_DOS_PROMPT:
+    LDA #'>'
+    JSR K_PRINT_CHAR
+    JSR K_READ_LINE                     ; -> MON_CMDBUF, length MON_CMDLEN
+    LDA MON_CMDLEN
+    BNE @run
+    JMP _DOS_PROMPT                     ; empty line
+@run:
+    JSR _DOS_DISPATCH
+    JMP _DOS_PROMPT
+
+; ----------------------------------------------------------------
+; _DOS_DISPATCH - match the typed verb and run its handler
+; ----------------------------------------------------------------
+_DOS_DISPATCH:
+    LDA #<KW_HELP
+    LDX #>KW_HELP
+    JSR _DOS_VERB_MATCH
+    BCS @n1
+    JMP _DOS_DO_HELP
+@n1:
+    LDA #<KW_MON
+    LDX #>KW_MON
+    JSR _DOS_VERB_MATCH
+    BCS @n2
+    JMP _DOS_DO_MON
+@n2:
+    LDA #<KW_CATALOG
+    LDX #>KW_CATALOG
+    JSR _DOS_VERB_MATCH
+    BCS @n3
+    JMP _DOS_DO_CAT
+@n3:
+    LDA #<KW_CAT
+    LDX #>KW_CAT
+    JSR _DOS_VERB_MATCH
+    BCS @n4
+    JMP _DOS_DO_CAT
+@n4:
+    LDA #<KW_TYPE
+    LDX #>KW_TYPE
+    JSR _DOS_VERB_MATCH
+    BCS @n5
+    JMP _DOS_DO_TYPE
+@n5:
+    ; unknown verb
+    JSR K_PRINT_NEWLINE
+    LDA #<MSG_DOS_BADCMD
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_DOS_BADCMD
+    STA MON_MSG_PTR_HI
+    JMP K_PRINT_MESSAGE                 ; tail (RTS to _DOS_PROMPT)
+
+; ----------------------------------------------------------------
+; _DOS_VERB_MATCH - does MON_CMDBUF start with the keyword in A/X?
+; ----------------------------------------------------------------
+; In: A/X = ptr to a null-terminated UPPERCASE keyword. Input in MON_CMDBUF is
+; already uppercased by READ_COMMAND_LINE. Out: carry clear = match, with Y =
+; index of the delimiter (space or end) just past the verb; carry set = no match.
+_DOS_VERB_MATCH:
+    STA DOS_PTR
+    STX DOS_PTR+1
+    LDY #$00
+@loop:
+    LDA (DOS_PTR),Y
+    BEQ @kwend                          ; keyword exhausted
+    CMP MON_CMDBUF,Y
+    BNE @no
+    INY
+    BRA @loop
+@kwend:
+    LDA MON_CMDBUF,Y                    ; must be a delimiter (else it's a longer word)
+    BEQ @yes
+    CMP #ASCII_SPACE
+    BEQ @yes
+@no:
+    SEC
+    RTS
+@yes:
+    CLC
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_DO_HELP - list the built-in commands
+; ----------------------------------------------------------------
+_DOS_DO_HELP:
+    JSR K_PRINT_NEWLINE
+    LDA #<MSG_DOS_HELP
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_DOS_HELP
+    STA MON_MSG_PTR_HI
+    JMP K_PRINT_MESSAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_MON - launch the monitor (returns to DOS_WARM via its Q command)
+; ----------------------------------------------------------------
+_DOS_DO_MON:
+    JMP K_MON_ENTRY
+
+; ----------------------------------------------------------------
+; _DOS_DO_CAT - list files with sizes
+; ----------------------------------------------------------------
+_DOS_DO_CAT:
+    JSR K_PRINT_NEWLINE
+    JSR _FS_DIR_FIRST
+    BCS @none
+@loop:
+    JSR _DOS_PRINT_ENTRY
+    JSR _FS_DIR_NEXT
+    BCC @loop
+    RTS
+@none:
+    LDA #<MSG_DOS_NOFILES
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_DOS_NOFILES
+    STA MON_MSG_PTR_HI
+    JMP K_PRINT_MESSAGE
+
+; Print one DOS_ENTRY as "NAME.EXT  <8 hex size>" + newline.
+_DOS_PRINT_ENTRY:
+    LDX #$00                            ; base name (stop at first space)
+@base:
+    LDA DOS_ENTRY,X
+    CMP #ASCII_SPACE
+    BEQ @ext
+    JSR K_PRINT_CHAR
+    INX
+    CPX #$08
+    BNE @base
+@ext:
+    LDA DOS_ENTRY+8                     ; extension?
+    CMP #ASCII_SPACE
+    BEQ @size
+    LDA #'.'
+    JSR K_PRINT_CHAR
+    LDX #$08
+@extloop:
+    LDA DOS_ENTRY,X
+    CMP #ASCII_SPACE
+    BEQ @size
+    JSR K_PRINT_CHAR
+    INX
+    CPX #$0B
+    BNE @extloop
+@size:
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    JSR K_PRINT_CHAR
+    LDA DOS_ENTRY+$1F                   ; 32-bit size, high byte first
+    JSR K_PRINT_HEX_BYTE
+    LDA DOS_ENTRY+$1E
+    JSR K_PRINT_HEX_BYTE
+    LDA DOS_ENTRY+$1D
+    JSR K_PRINT_HEX_BYTE
+    LDA DOS_ENTRY+$1C
+    JSR K_PRINT_HEX_BYTE
+    JMP K_PRINT_NEWLINE
+
+; ----------------------------------------------------------------
+; _DOS_DO_TYPE - print the contents of "TYPE NAME"
+; ----------------------------------------------------------------
+; On entry Y = index of the delimiter after the verb (from _DOS_VERB_MATCH).
+_DOS_DO_TYPE:
+@skip:
+    LDA MON_CMDBUF,Y                    ; skip spaces to the filename
+    CMP #ASCII_SPACE
+    BNE @name
+    INY
+    CPY MON_CMDLEN
+    BCC @skip
+    JMP @noname                         ; nothing after TYPE
+@name:
+    LDX MON_CMDLEN                      ; null-terminate the line
+    LDA #$00
+    STA MON_CMDBUF,X
+    TYA                                 ; A/X = &MON_CMDBUF[Y]
+    CLC
+    ADC #<MON_CMDBUF
+    PHA
+    LDA #>MON_CMDBUF
+    ADC #$00
+    TAX
+    PLA
+    LDY #$00                            ; read mode
+    JSR _FS_OPEN
+    BCS @notfound
+    JSR K_PRINT_NEWLINE
+@rd:
+    JSR _FS_GETB
+    BCS @eof
+    CMP #ASCII_CR                       ; ignore CR; newline on LF (handles LF/CRLF)
+    BEQ @rd
+    CMP #ASCII_LF
+    BNE @putc
+    JSR K_PRINT_NEWLINE
+    BRA @rd
+@putc:
+    JSR K_PRINT_CHAR
+    BRA @rd
+@eof:
+    JMP _FS_CLOSE                       ; tail (returns to _DOS_PROMPT)
+@notfound:
+@noname:
+    JSR K_PRINT_NEWLINE
+    LDA #<MSG_DOS_NOFILE
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_DOS_NOFILE
+    STA MON_MSG_PTR_HI
+    JMP K_PRINT_MESSAGE
+
+; ----------------------------------------------------------------
+; DOS shell strings
+; ----------------------------------------------------------------
+MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
+MSG_DOS_HELP:    .BYTE "BUILT-IN: CATALOG TYPE MON HELP", $0D, $0A, 0
+MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
+MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
+MSG_DOS_NOFILE:  .BYTE "FILE NOT FOUND", $0D, $0A, 0
+KW_HELP:         .BYTE "HELP", 0
+KW_MON:          .BYTE "MON", 0
+KW_CATALOG:      .BYTE "CATALOG", 0
+KW_CAT:          .BYTE "CAT", 0
+KW_TYPE:         .BYTE "TYPE", 0
 
 ; ================================================================
 ; BLOCK DEVICE PRIMITIVES
@@ -1345,12 +1618,6 @@ _DOS_DEC_LEFT:
     STA DOS_F_LEFT+3
     RTS
 
-; ----------------------------------------------------------------
-; _DOS_COLD - DOS shell cold entry (placeholder; wired in phase 4)
-; ----------------------------------------------------------------
-_DOS_COLD:
-    RTS
-
 ; ================================================================
 ; DOS ABI JUMP TABLE ($AF00) - the stable entry points
 ; ================================================================
@@ -1370,3 +1637,4 @@ FS_DIR_NEXT:      JMP _FS_DIR_NEXT       ; $AF12
 BLK_READ_SECTOR:  JMP _BLK_READ_SECTOR   ; $AF15
 BLK_WRITE_SECTOR: JMP _BLK_WRITE_SECTOR  ; $AF18
 FS_DELETE:        JMP _FS_DELETE         ; $AF1B
+DOS_WARM:         JMP _DOS_WARM          ; $AF1E - re-enter the shell (no banner)
