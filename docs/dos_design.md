@@ -4,10 +4,11 @@
 **Phase 2 (FAT16 read) COMPLETE** — 2.1 memory-map shift, 2.2 block primitives +
 `$AF00` DOS ABI table, 2.3 FAT16 read (mount + directory + cluster-chain file read),
 2.4 the `mkfat16` tool + a temporary `@` catalog/type monitor command (kernel v3.3).
-**Phase 3 (FAT16 write) underway** — 3a (the write engine: alloc/chain/free + FS_OPEN-
-write/PUTB/CLOSE, single + multi-cluster, truncate-on-reopen) built and tested; next is
-3b (ERASE + interactive surface). *("MFC-DOS" and the boot prompt are provisional — see
-[Identity](#identity).)*
+**Phase 3 (FAT16 write) COMPLETE** — 3a (write engine: alloc/chain/free + FS_OPEN-write/
+PUTB/CLOSE, single + multi-cluster, truncate-on-reopen) and 3b (FS_DELETE + the `@`
+save/erase preview, kernel v3.4). The machine can now create, grow, overwrite, and erase
+files in a host-mountable FAT16 volume. Next major step is **Phase 4 (the DOS shell as
+boot target)**. *("MFC-DOS" and the boot prompt are provisional — see [Identity](#identity).)*
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -236,8 +237,13 @@ letters), or a plain `MFC>`/`>`. **TBD.**
      (`Fat16ImageReader`) independently validates the on-disk format; covered by
      write/round-trip cases in `tests/test_dos_fat16.cpp`. (Single FAT copy;
      deleted-slot reclaim deferred.)
-   - **3b** — `ERASE` (free chain + mark the directory entry deleted) and a temporary
-     interactive surface (save/erase) + full machine round-trip / host-interop check.
+   - **3b — DONE.** `FS_DELETE` (scan, free the cluster chain, mark the directory
+     entry `$E5`) at DOS ABI `$AF1B`. The temporary `@` preview gains write
+     commands (kernel v3.4): `@-NAME` erases, and `@SSSS-EEEE=NAME` saves a memory
+     range to a file (`FS_OPEN`-write + `FS_PUTB` loop + `FS_CLOSE`). Covered by
+     erase/free-and-reuse cases in `dos_fat16_tests` and save/erase round-trip in
+     `monitor_integration`. (Full machine round-trip: poke memory -> `@..=F` save
+     -> `@` catalog -> `@F` type back.)
 4. **DOS shell as boot target** — the pivot: fill the (already-present) `$9000-$AFFF`
    DOS ROM with the command shell, boot into the DOS prompt, the command set above,
    launch-by-name (command → ROM module → file), program-file loader. `MON`/`BASIC`/

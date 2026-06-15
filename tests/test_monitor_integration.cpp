@@ -65,10 +65,12 @@ public:
         testMoveOverlapClearKeepsData();
         testEscAtPromptNoError();
 
-        // MFC-DOS '@' preview: catalog + type against a mounted FAT16 image.
+        // MFC-DOS '@' preview: catalog + type + save + erase against a FAT16 image.
         testCatalog();
         testTypeFile();
         testTypeMissingFile();
+        testDosSave();
+        testDosErase();
 
         // Must run last: it launches BASIC (bank 1), which keeps running and
         // would otherwise consume the keystrokes of any following test.
@@ -133,6 +135,37 @@ public:
         mountDisk({{"REAL.TXT", std::vector<uint8_t>(4, 'X')}});
         sendCommand("@NOPE.TXT");
         verifyResponse("FILE NOT FOUND", "Type of missing file reports error");
+    }
+
+    // '@SSSS-EEEE=NAME' saves a memory range to a file; it then catalogs and
+    // types back. Bytes $48 $49 $21 = "HI!".
+    void testDosSave() {
+        clearScreen();
+        mountDisk({}); // empty formatted disk
+        computer.getMemory()->write(0x0900, 'H');  // "HI!" at $0900-$0902
+        computer.getMemory()->write(0x0901, 'I');
+        computer.getMemory()->write(0x0902, '!');
+        sendCommand("@0900-0902=HI.TXT");
+        verifyResponse("SAVED", "Save reports SAVED");
+        clearScreen();
+        sendCommand("@");
+        verifyResponse("HI.TXT", "Saved file appears in catalog");
+        clearScreen();
+        sendCommand("@HI.TXT");
+        verifyResponse("HI!", "Saved file types back correctly");
+    }
+
+    // '@-NAME' erases a file.
+    void testDosErase() {
+        clearScreen();
+        mountDisk({{"GONE.TXT", std::vector<uint8_t>(6, 'G')},
+                   {"STAY.TXT", std::vector<uint8_t>(6, 'S')}});
+        sendCommand("@-GONE.TXT");
+        verifyResponse("ERASED", "Erase reports ERASED");
+        clearScreen();
+        sendCommand("@");
+        verifyResponse("STAY.TXT", "Catalog still lists STAY.TXT");
+        verifyAbsent("GONE.TXT", "Erased file is gone from catalog");
     }
 
 private:

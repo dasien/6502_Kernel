@@ -956,6 +956,88 @@ _DOS_SAVE_DIRENT_POS:
     STA DOS_W_DIRENT_IDX
     RTS
 
+; ================================================================
+; FILESYSTEM: ERASE (FS_DELETE)
+; ================================================================
+; _FS_DELETE - delete a file by name: free its cluster chain and mark its
+; directory entry deleted ($E5). In: A/X = ptr to null-terminated name.
+; Out: carry clear on success, carry set if not mounted / not found.
+_FS_DELETE:
+    STA DOS_PTR
+    STX DOS_PTR+1
+    JSR _DOS_PARSE_NAME83
+    JSR _FS_ENSURE_MOUNT
+    BCS @err
+    LDA DOS_ROOT_START                  ; scan root from the start
+    STA DOS_DIR_LBA
+    LDA DOS_ROOT_START+1
+    STA DOS_DIR_LBA+1
+    STZ DOS_DIR_IDX
+    LDA DOS_ROOT_ENTS
+    STA DOS_DIR_LEFT
+    LDA DOS_ROOT_ENTS+1
+    STA DOS_DIR_LEFT+1
+@loop:
+    LDA DOS_DIR_LEFT
+    ORA DOS_DIR_LEFT+1
+    BEQ @err
+    JSR _DOS_READ_DIR_ENTRY
+    BCS @err
+    LDA DOS_ENTRY+DIR_NAME
+    BEQ @err                            ; end of directory -> not found
+    CMP #DIRENT_DELETED
+    BEQ @adv
+    LDX #$00
+@cmp:
+    LDA DOS_ENTRY,X
+    CMP DOS_NAME83,X
+    BNE @adv
+    INX
+    CPX #11
+    BNE @cmp
+    ; matched: record slot, free chain, mark deleted
+    JSR _DOS_SAVE_DIRENT_POS
+    LDA DOS_ENTRY+DIR_CLUSTER_LO
+    STA DOS_ARG_CLUS
+    LDA DOS_ENTRY+DIR_CLUSTER_LO+1
+    STA DOS_ARG_CLUS+1
+    JSR _DOS_FREE_CHAIN
+    JMP _DOS_MARK_DELETED               ; tail call (returns its carry)
+@adv:
+    JSR _DOS_DIR_ADVANCE
+    BRA @loop
+@err:
+    SEC
+    RTS
+
+; _DOS_MARK_DELETED - write $E5 over name[0] of the slot at DOS_W_DIRENT_*
+_DOS_MARK_DELETED:
+    LDA DOS_W_DIRENT_LBA
+    LDX DOS_W_DIRENT_LBA+1
+    JSR _DOS_READ_SECTOR
+    BCS @err
+    LDA DOS_W_DIRENT_IDX                ; skip to slot * 32
+    STA DOS_TMP
+    STZ DOS_TMP+1
+    LDX #$05
+@sh:
+    ASL DOS_TMP
+    ROL DOS_TMP+1
+    DEX
+    BNE @sh
+    JSR _DOS_SKIP_BYTES
+    LDA #DIRENT_DELETED
+    STA BLK_DATA                        ; overwrite name[0]
+    LDA #BLK_CMD_WRITE
+    STA BLK_CMD
+    LDA BLK_STATUS
+    BNE @err
+    CLC
+    RTS
+@err:
+    SEC
+    RTS
+
 ; ----------------------------------------------------------------
 ; _DOS_DIR_WRITE_ENTRY - write the open file's 32-byte directory entry
 ; ----------------------------------------------------------------
@@ -1287,3 +1369,4 @@ FS_DIR_FIRST:     JMP _FS_DIR_FIRST      ; $AF0F
 FS_DIR_NEXT:      JMP _FS_DIR_NEXT       ; $AF12
 BLK_READ_SECTOR:  JMP _BLK_READ_SECTOR   ; $AF15
 BLK_WRITE_SECTOR: JMP _BLK_WRITE_SECTOR  ; $AF18
+FS_DELETE:        JMP _FS_DELETE         ; $AF1B

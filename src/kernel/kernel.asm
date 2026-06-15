@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.3.1
+; Version:      3.4
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -161,6 +161,10 @@
 ; 2026-06-14  v3.3.1 MFC-DOS phase 3a adds FAT16 write, so FS_OPEN now takes its
 ;                   mode in Y (0 = read). The '@' TYPE command sets Y = 0 before
 ;                   calling FS_OPEN. ROM is otherwise unchanged.
+; 2026-06-14  v3.4  MFC-DOS phase 3b: the '@' preview gains write commands -
+;                   '@-NAME' erases a file (FS_DELETE), and '@SSSS-EEEE=NAME' saves
+;                   a memory range to a file (FS_OPEN-write + FS_PUTB + FS_CLOSE).
+;                   Still a temporary preview; phase 4 brings the real DOS shell.
 ;
 ; ================================================================
 
@@ -274,11 +278,13 @@ ASCII_AT           = $40           ; At sign '@' (temporary DOS preview command)
 ; is always mapped). See src/kernel/dos/dos.asm. The '@' command below is a
 ; TEMPORARY preview; phase 4 replaces it with the real DOS shell.
 ; ----------------------------------------------------------------
-FS_OPEN            = $AF03         ; A/X = ptr to null-terminated 8.3 name -> open (read)
+FS_OPEN            = $AF03         ; A/X = ptr to 8.3 name, Y = mode (0=read,1=write)
 FS_GETB            = $AF06         ; -> A = next byte, carry set = EOF
+FS_PUTB            = $AF09         ; A = byte -> append to the open (write) file
 FS_CLOSE           = $AF0C         ; close the open file
 FS_DIR_FIRST       = $AF0F         ; start a root-dir scan; carry set = empty/none
 FS_DIR_NEXT        = $AF12         ; next entry -> DOS_DIR_ENTRY; carry set = no more
+FS_DELETE          = $AF1B         ; A/X = ptr to name -> erase the file
 DOS_DIR_ENTRY      = $0320         ; 32-byte current directory entry (filled by FS_DIR_*)
 DOS_DIRENT_SIZE    = $1C           ; offset of the 4-byte size within a dir entry
 
@@ -1414,15 +1420,36 @@ PARSE_CMD_DONE:
 ; ================================================================
 ; MFC-DOS PREVIEW COMMAND ('@') -- TEMPORARY (phase 4 replaces with DOS shell)
 ; ================================================================
-; '@'      catalog: list files on the mounted disk.img with their sizes
-; '@NAME'  type: print the named file's contents to the screen
+; '@'              catalog: list files on the mounted disk.img with sizes
+; '@NAME'          type: print the named file's contents
+; '@-NAME'         erase: delete the named file
+; '@SSSS-EEEE=NAME' save: write memory range SSSS-EEEE to the named file
 ; Reaches the resident FAT16 filesystem in the always-mapped DOS ROM via the
-; $AF.. ABI (FS_DIR_FIRST/NEXT, FS_OPEN/GETB/CLOSE).
+; $AF.. ABI (FS_DIR_FIRST/NEXT, FS_OPEN/GETB/PUTB/CLOSE, FS_DELETE).
 PARSE_CMD_DOS:
     LDA MON_CMDLEN
-    CMP #$02                    ; '@' + at least one filename char?
-    BCC CMD_CATALOG             ; just '@'  -> catalog
-    JMP CMD_TYPE                ; '@NAME'   -> type the file
+    CMP #$02                    ; '@' + at least one char?
+    BCS @hasarg
+    JMP CMD_CATALOG             ; just '@'  -> catalog
+@hasarg:
+    LDA MON_CMDBUF+1
+    CMP #'-'
+    BEQ @erase                  ; '@-NAME' -> erase
+    LDX #$01                    ; scan the argument for '=' (a save)
+@scan_eq:
+    CPX MON_CMDLEN
+    BCS @type                   ; no '=' found -> type
+    LDA MON_CMDBUF,X
+    CMP #'='
+    BEQ @save
+    INX
+    BNE @scan_eq
+@type:
+    JMP CMD_TYPE
+@erase:
+    JMP CMD_ERASE
+@save:
+    JMP CMD_SAVE
 
 ; ----- catalog: walk the root directory -----
 CMD_CATALOG:
@@ -1507,6 +1534,95 @@ CMD_TYPE:
     BRA @rd
 @eof:
     JSR FS_CLOSE
+    JMP PARSE_CMD_DONE
+@notfound:
+    LDA #<MSG_DOS_NOFILE
+    LDY #>MSG_DOS_NOFILE
+    JSR PRINT_MSG_AY
+    JMP PARSE_CMD_DONE
+
+; ----- save: write a memory range to a file -----
+; Syntax (fixed-width hex): @SSSS-EEEE=NAME
+;   SSSS at offset 1, '-' at 5, EEEE at 6, '=' at 10, NAME at 11.
+CMD_SAVE:
+    LDX #$01                    ; parse start address (4 hex)
+    JSR HEX_QUAD_TO_ADDR
+    BCS @bad
+    LDA MON_CURRADDR_LO
+    STA MON_STARTADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_STARTADDR_HI
+    LDA MON_CMDBUF+5
+    CMP #ASCII_DASH
+    BNE @bad
+    LDX #$06                    ; parse end address (4 hex)
+    JSR HEX_QUAD_TO_ADDR
+    BCS @bad
+    LDA MON_CURRADDR_LO
+    STA MON_ENDADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_ENDADDR_HI
+    LDA MON_CMDBUF+10
+    CMP #'='
+    BNE @bad
+    LDX MON_CMDLEN              ; null-terminate the command (name is a C string)
+    LDA #$00
+    STA MON_CMDBUF,X
+    JSR PRINT_NEWLINE
+    LDA #<(MON_CMDBUF+11)       ; open NAME for writing
+    LDX #>(MON_CMDBUF+11)
+    LDY #$01                    ; mode 1 = write
+    JSR FS_OPEN
+    BCS @werr
+    LDA MON_STARTADDR_LO       ; read cursor = start
+    STA MON_CURRADDR_LO
+    LDA MON_STARTADDR_HI
+    STA MON_CURRADDR_HI
+@sloop:
+    LDY #$00
+    LDA (MON_CURRADDR_LO),Y    ; next source byte
+    JSR FS_PUTB
+    BCS @werr
+    LDA MON_CURRADDR_LO        ; reached the end address?
+    CMP MON_ENDADDR_LO
+    BNE @sinc
+    LDA MON_CURRADDR_HI
+    CMP MON_ENDADDR_HI
+    BEQ @sdone
+@sinc:
+    INC MON_CURRADDR_LO
+    BNE @sloop
+    INC MON_CURRADDR_HI
+    BRA @sloop
+@sdone:
+    JSR FS_CLOSE
+    BCS @werr
+    LDA #<MSG_DOS_SAVED
+    LDY #>MSG_DOS_SAVED
+    JSR PRINT_MSG_AY
+    JMP PARSE_CMD_DONE
+@bad:
+    JMP PARSE_CMD_ERROR        ; malformed syntax -> ERROR?
+@werr:
+    LDA #<MSG_DOS_WRITEERR
+    LDY #>MSG_DOS_WRITEERR
+    JSR PRINT_MSG_AY
+    JMP PARSE_CMD_DONE
+
+; ----- erase: delete a file -----
+; Syntax: @-NAME   (name starts at offset 2)
+CMD_ERASE:
+    LDX MON_CMDLEN
+    LDA #$00
+    STA MON_CMDBUF,X           ; null-terminate
+    JSR PRINT_NEWLINE
+    LDA #<(MON_CMDBUF+2)
+    LDX #>(MON_CMDBUF+2)
+    JSR FS_DELETE
+    BCS @notfound
+    LDA #<MSG_DOS_ERASED
+    LDY #>MSG_DOS_ERASED
+    JSR PRINT_MSG_AY
     JMP PARSE_CMD_DONE
 @notfound:
     LDA #<MSG_DOS_NOFILE
@@ -3501,8 +3617,9 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_HELP         ; ?
     .WORD MSG_HELP_RECALL       ; .
     .WORD MSG_HELP_DOS          ; @
+    .WORD MSG_HELP_DOS2         ; @ save/erase
 
-HELP_MSG_COUNT = 18              ; Number of help messages
+HELP_MSG_COUNT = 19              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
@@ -3526,6 +3643,7 @@ MSG_HELP_EXIT:       .BYTE "ESC    EXIT CURRENT MODE", 0
 MSG_HELP_HELP:       .BYTE "?      SHOW THIS HELP", 0
 MSG_HELP_RECALL:     .BYTE ".      RECALL LAST COMMAND", 0
 MSG_HELP_DOS:        .BYTE "@ / @NAME  DOS CATALOG / TYPE FILE", 0
+MSG_HELP_DOS2:       .BYTE "@-NAME ERASE  @S-E=NAME SAVE RANGE", 0
 MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
@@ -3537,6 +3655,9 @@ MSG_BANK_PROMPT:     .BYTE "SELECT (ESC=CANCEL): ", 0
 MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
 MSG_DOS_NOFILES:     .BYTE "NO FILES (OR NO DISK)", $0D, $0A, 0
 MSG_DOS_NOFILE:      .BYTE "FILE NOT FOUND", $0D, $0A, 0
+MSG_DOS_SAVED:       .BYTE "SAVED", $0D, $0A, 0
+MSG_DOS_ERASED:      .BYTE "ERASED", $0D, $0A, 0
+MSG_DOS_WRITEERR:    .BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 
 ; ----------------------------------------------------------------
 ; Module directory: one 5-byte record per launchable module, walked by the B:
