@@ -90,7 +90,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    const std::vector<uint8_t> img = Fat16ImageBuilder::build(files);
+    // Size the volume as a genuine FAT16 (>= 4085 clusters) so host OSes mount
+    // it as FAT16, not FAT12.
+    const std::vector<uint8_t> img =
+        Fat16ImageBuilder::build(files, Fat16ImageBuilder::kHostFat16Clusters);
     std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open()) {
         std::cerr << "error: cannot write '" << outPath << "'\n";

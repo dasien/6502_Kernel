@@ -405,6 +405,39 @@ TEST_F(DosFat16Test, WrittenFileAppearsInCatalogEnumeration) {
     EXPECT_EQ(entries[1].name, "WORLD.TXT");
 }
 
+// --- Host-mountable (genuine FAT16) geometry ------------------------------
+// A >= 4085-cluster volume has a multi-sector FAT and a much larger data
+// region; confirm mount derives the geometry and read/write still land right.
+
+TEST_F(DosFat16Test, ReadsHostSizedFat16Image) {
+    const auto content = pattern(1000, 0x5C);
+    const auto img = Fat16ImageBuilder::build(
+        {{"HOST.TXT", content}}, Fat16ImageBuilder::kHostFat16Clusters);
+    std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char *>(img.data()),
+            static_cast<std::streamsize>(img.size()));
+    f.close();
+
+    std::vector<uint8_t> rb;
+    ASSERT_TRUE(openReadClose("HOST.TXT", rb));
+    EXPECT_EQ(rb, content);
+}
+
+TEST_F(DosFat16Test, WritesToHostSizedFat16Image) {
+    const auto img = Fat16ImageBuilder::build({}, Fat16ImageBuilder::kHostFat16Clusters);
+    std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char *>(img.data()),
+            static_cast<std::streamsize>(img.size()));
+    f.close();
+
+    const auto content = pattern(1200, 0x77);
+    ASSERT_TRUE(fsWriteFile("NEW.TXT", content));
+    Fat16ImageReader reader(readImageFile());
+    std::vector<uint8_t> parsed;
+    ASSERT_TRUE(reader.read("NEW.TXT", parsed));
+    EXPECT_EQ(parsed, content);
+}
+
 // --- Erase (FS_DELETE) ----------------------------------------------------
 
 TEST_F(DosFat16Test, EraseRemovesFileAndFreesClusters) {

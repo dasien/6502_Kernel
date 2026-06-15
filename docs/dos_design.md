@@ -217,8 +217,10 @@ letters), or a plain `MFC>`/`>`. **TBD.**
        and dir scans use bounded skip-reads. `FS_PUTB` remains a stub (phase 3).
    - **2.4 — DONE.** Interactive surface + tooling:
      - `tools/mkfat16` creates a FAT16 `disk.img` (sample files by default, or host
-       files added under derived 8.3 names), reusing the shared image builder. A
-       `sample_disk` CMake target writes `<build>/disk.img`.
+       files added under derived 8.3 names), reusing the shared image builder. It
+       sizes the volume as a genuine FAT16 (>= 4085 clusters), so macOS mounts it
+       read/write and exchanges files with the machine. A `sample_disk` CMake
+       target writes `<build>/disk.img`.
      - Temporary monitor command **`@`** (kernel.asm, v3.3): `@` catalogs the disk
        (names + sizes), `@NAME` types a file. It calls the DOS ABI at `$AF..`
        directly (the DOS ROM is always mapped), so no kernel `$FF00` change was
@@ -270,7 +272,10 @@ and flips the boot target.
 
 ## Open questions
 - OS name + boot prompt (Identity above).
-- Image creation/format — a host tool (`diskutil`) vs an in-machine `FORMAT` later.
+- Image creation/format — the `tools/mkfat16` host tool creates a genuine FAT16
+  image (>= 4085 clusters; ~2 MB), confirmed mountable read/write by macOS
+  (`fsck_msdos` clean, `hdiutil attach` exchanges files both ways). An in-machine
+  `FORMAT` is still a possible later addition.
 - `BLK_LBA` width (16-bit/32 MB vs wider).
 - Subdirectories, multiple open files, long names — deferred.
 - Editor cursor addressing — a small `K_SET_CURSOR` ABI entry vs direct screen-RAM

@@ -35,24 +35,30 @@ public:
     static constexpr uint16_t kReservedSectors = 1;
     static constexpr uint8_t kNumFats = 1;
     static constexpr uint16_t kRootEntries = 16;   // one 512-byte root sector
-    static constexpr uint16_t kDataClusters = 128; // small but genuine FAT16
+    static constexpr uint32_t kDefaultDataClusters = 128; // small + fast for tests
+    // A genuine FAT16 volume needs >= 4085 clusters, or host OSes treat it as
+    // FAT12. The mkfat16 tool uses this so the image is host-mountable.
+    static constexpr uint32_t kHostFat16Clusters = 4096;
 
     // Build the image bytes for the given files. Files are placed in directory
-    // order, each in contiguous clusters starting at cluster 2.
-    static std::vector<uint8_t> build(const std::vector<Fat16File> &files) {
-        const uint16_t fatSize = fatSectors();
+    // order, each in contiguous clusters starting at cluster 2. dataClusters
+    // sets the volume size (default small for tests; kHostFat16Clusters for a
+    // host-mountable image).
+    static std::vector<uint8_t> build(const std::vector<Fat16File> &files,
+                                      uint32_t dataClusters = kDefaultDataClusters) {
+        const uint16_t fatSize = fatSectors(dataClusters);
         const uint16_t rootSectors = kRootEntries * 32 / kBytesPerSector; // = 1
         const uint16_t fatStart = kReservedSectors;
         const uint16_t rootStart = fatStart + kNumFats * fatSize;
         const uint16_t dataStart = rootStart + rootSectors;
-        const uint32_t totalSectors = dataStart + kDataClusters;
+        const uint32_t totalSectors = dataStart + dataClusters;
 
         std::vector<uint8_t> img(totalSectors * kBytesPerSector, 0x00);
 
         writeBootSector(img, fatSize, totalSectors);
 
         // FAT[0]/FAT[1] are reserved (media + EOC markers).
-        std::vector<uint16_t> fat(2 + kDataClusters, 0x0000);
+        std::vector<uint16_t> fat(2 + dataClusters, 0x0000);
         fat[0] = 0xFFF8;
         fat[1] = 0xFFFF;
 
@@ -97,8 +103,8 @@ private:
         return kBytesPerSector * kSectorsPerCluster;
     }
 
-    static uint16_t fatSectors() {
-        const uint32_t entries = 2 + kDataClusters;
+    static uint16_t fatSectors(uint32_t dataClusters) {
+        const uint32_t entries = 2 + dataClusters;
         const uint32_t bytes = entries * 2;
         return static_cast<uint16_t>((bytes + kBytesPerSector - 1) / kBytesPerSector);
     }
