@@ -257,8 +257,15 @@ the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal ma
      monitor via the new `K_MON_ENTRY` `$FF1E` BIOS entry), `CATALOG`/`CAT`, `TYPE
      NAME`. The monitor gains `Q` (quit → `DOS_WARM` `$AF1E`). Kernel v3.5. The `@`
      preview + `B:` menu remain reachable through `MON` (retired in 4.2/4.3).
-   - **4.2** — DOS file verbs: `SAVE name,start-end` / `LOAD` (with the `.PRG`
-     2-byte load-address header), `ERASE`, `RENAME` (adds `FS_RENAME`); retire `@`.
+   - **4.2a — DONE.** DOS file verbs in the shell: `SAVE name,SSSS-EEEE` (writes the
+     `.PRG` 2-byte load-address header then the range), `LOAD name[,AAAA]` (loads to
+     the header's address, or an override), `ERASE name`, `RENAME old,new`. New
+     `FS_RENAME` (DOS ABI `$AF21`) + a shared `_DOS_DIR_FIND_EXISTING` helper.
+     Kernel v3.5.1 (MONITOR_MAIN resets its display state on launch). Covered by
+     DOS round-trip cases in `monitor_integration` and `FS_RENAME` cases in
+     `dos_fat16_tests`.
+   - **4.2b** — retire the temporary `@` preview from the monitor (DOS now owns the
+     file verbs).
    - **4.3** — launch-by-name (command → ROM module → disk `.PRG`) + program loader;
      module return path switches to DOS; the `B:` menu retires.
 5. **Editor** (module, bank) — full-screen, generic; edit/save FS files → full

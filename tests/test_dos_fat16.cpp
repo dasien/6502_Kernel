@@ -42,6 +42,12 @@ constexpr uint16_t kFsClose = 0xAF0C;
 constexpr uint16_t kFsDirFirst = 0xAF0F;
 constexpr uint16_t kFsDirNext = 0xAF12;
 constexpr uint16_t kFsDelete = 0xAF1B;
+constexpr uint16_t kFsRename = 0xAF21;
+
+// DOS second name pointer (FS_RENAME new name).
+constexpr uint16_t kDosPtr2 = 0x003E;
+// A second RAM scratch address for the "new" name in rename.
+constexpr uint16_t kNameAddr2 = 0x0840;
 
 // A RAM scratch address (in user RAM, untouched by the FS) for filename strings.
 constexpr uint16_t kNameAddr = 0x0800;
@@ -178,6 +184,20 @@ protected:
         mem_->write(kNameAddr + name.size(), 0);
         bool carry = true;
         return callRoutine(kFsDelete, carry, kNameAddr & 0xFF, kNameAddr >> 8) && !carry;
+    }
+
+    // Rename via the 6502 FS_RENAME path (old name -> A/X, new name -> DOS_PTR2).
+    bool fsRename(const std::string &oldName, const std::string &newName) {
+        for (size_t i = 0; i < oldName.size(); ++i)
+            mem_->write(kNameAddr + i, static_cast<uint8_t>(oldName[i]));
+        mem_->write(kNameAddr + oldName.size(), 0);
+        for (size_t i = 0; i < newName.size(); ++i)
+            mem_->write(kNameAddr2 + i, static_cast<uint8_t>(newName[i]));
+        mem_->write(kNameAddr2 + newName.size(), 0);
+        mem_->write(kDosPtr2, kNameAddr2 & 0xFF);
+        mem_->write(kDosPtr2 + 1, kNameAddr2 >> 8);
+        bool carry = true;
+        return callRoutine(kFsRename, carry, kNameAddr & 0xFF, kNameAddr >> 8) && !carry;
     }
 
     // Read the current on-disk image back from the host file.
@@ -461,6 +481,29 @@ TEST_F(DosFat16Test, EraseRemovesFileAndFreesClusters) {
     std::vector<uint8_t> rb;
     ASSERT_TRUE(openReadClose("KEEP.TXT", rb));
     EXPECT_EQ(rb, pattern(50, 0x03));
+}
+
+TEST_F(DosFat16Test, RenamePreservesContentsAndChain) {
+    writeImage({});
+    const auto content = pattern(700, 0x44); // 2 clusters
+    ASSERT_TRUE(fsWriteFile("OLD.DAT", content));
+    ASSERT_TRUE(fsRename("OLD.DAT", "NEW.DAT"));
+
+    Fat16ImageReader reader(readImageFile());
+    Fat16ImageReader::Entry e;
+    EXPECT_FALSE(reader.find("OLD.DAT", e)); // old name gone
+    ASSERT_TRUE(reader.find("NEW.DAT", e));  // new name present
+    EXPECT_EQ(e.size, 700u);
+    std::vector<uint8_t> parsed;
+    ASSERT_TRUE(reader.read("NEW.DAT", parsed)); // same clusters/data
+    EXPECT_EQ(parsed, content);
+    EXPECT_EQ(reader.allocatedClusters(), 2); // chain untouched (rename != copy)
+}
+
+TEST_F(DosFat16Test, RenameNonexistentFails) {
+    writeImage({});
+    ASSERT_TRUE(fsWriteFile("REAL.TXT", pattern(8, 1)));
+    EXPECT_FALSE(fsRename("NOPE.TXT", "WHATEVER.TXT"));
 }
 
 TEST_F(DosFat16Test, DeleteNonexistentFails) {

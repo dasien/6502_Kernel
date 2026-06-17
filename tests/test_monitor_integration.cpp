@@ -38,6 +38,7 @@ public:
         // The machine now boots into the DOS shell; exercise it first, then drop
         // into the monitor (via MON) so the monitor tests below run as before.
         testDosShell();
+        testDosFileVerbs();
         sendCommand("MON");
 
         // Test basic commands
@@ -188,7 +189,43 @@ public:
         // Q returns to the DOS shell (HELP's built-in list proves we're back).
         sendCommand("Q");
         sendCommand("HELP");
-        verifyResponse("BUILT-IN", "Q returns to the DOS shell");
+        verifyResponse("RENAME", "Q returns to the DOS shell");
+    }
+
+    // DOS file verbs: SAVE (with .PRG header) / LOAD / RENAME / ERASE, exercised
+    // at the DOS prompt as a round trip. Runs while still in the DOS shell.
+    void testDosFileVerbs() {
+        mountDisk({}); // empty formatted disk
+        // Poke "HI!" and SAVE the range (writes a 2-byte load-address header).
+        computer.getMemory()->write(0x0900, 'H');
+        computer.getMemory()->write(0x0901, 'I');
+        computer.getMemory()->write(0x0902, '!');
+        sendCommand("SAVE DEMO.BIN,0900-0902");
+        verifyResponse("SAVED", "DOS SAVE reports SAVED");
+        sendCommand("CATALOG");
+        verifyResponse("DEMO.BIN", "Saved file appears in CATALOG");
+
+        // LOAD with an explicit address loads the body (past the header) there.
+        sendCommand("LOAD DEMO.BIN,0A00");
+        verifyResponse("LOADED", "DOS LOAD reports LOADED");
+        verifyMemEquals(0x0A00, 'H', "LOAD body byte 0 -> $0A00");
+        verifyMemEquals(0x0A02, '!', "LOAD body byte 2 -> $0A02");
+
+        // LOAD without an address uses the header's load address ($0900). Zero it
+        // first so a successful load must restore it from the file.
+        computer.getMemory()->write(0x0900, 0x00);
+        sendCommand("LOAD DEMO.BIN");
+        verifyMemEquals(0x0900, 'H', "LOAD uses the file's header address");
+
+        // RENAME then confirm the new name catalogs.
+        sendCommand("RENAME DEMO.BIN,RENAMED.BIN");
+        verifyResponse("RENAMED", "DOS RENAME reports RENAMED");
+        sendCommand("CATALOG");
+        verifyResponse("RENAMED.BIN", "Renamed file appears in CATALOG");
+
+        // ERASE the renamed file.
+        sendCommand("ERASE RENAMED.BIN");
+        verifyResponse("ERASED", "DOS ERASE reports ERASED");
     }
 
     // '@-NAME' erases a file.

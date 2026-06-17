@@ -40,6 +40,7 @@ K_PRINT_MESSAGE  = $FF03                ; MON_MSG_PTR_LO/HI -> string
 K_PRINT_NEWLINE  = $FF06
 K_CLEAR_SCREEN   = $FF0C
 K_READ_LINE      = $FF15                ; read a line -> MON_CMDBUF, len MON_CMDLEN
+K_PARSE_HEX      = $FF18                ; X = MON_CMDBUF index -> MON_CURRADDR, X += 4
 K_PRINT_HEX_BYTE = $FF1B                ; A -> two hex digits
 K_MON_ENTRY      = $FF1E                ; launch the monitor (returns via Q -> DOS_WARM)
 
@@ -47,6 +48,12 @@ MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned
 MON_CMDLEN       = $026A                ; current command length
 MON_MSG_PTR_LO   = $16                  ; message pointer for K_PRINT_MESSAGE
 MON_MSG_PTR_HI   = $17
+MON_CURRADDR_LO  = $14                  ; K_PARSE_HEX result / our mem cursor (zp)
+MON_CURRADDR_HI  = $15
+MON_STARTADDR_LO = $026C                ; range start (SAVE) / addr override (LOAD)
+MON_STARTADDR_HI = $026D
+MON_ENDADDR_LO   = $026E                ; range end (SAVE)
+MON_ENDADDR_HI   = $026F
 
 ASCII_CR         = $0D
 ASCII_LF         = $0A
@@ -58,6 +65,7 @@ ASCII_SPACE      = $20
 ; ----------------------------------------------------------------
 BLK_BUF_PTR      = $3A                  ; $3A-$3B: caller's 512-byte sector buffer
 DOS_PTR          = $3C                  ; $3C-$3D: filename pointer (FS_OPEN)
+DOS_PTR2         = $3E                  ; $3E-$3F: second name pointer (FS_RENAME)
 
 ; ----------------------------------------------------------------
 ; DOS filesystem state block ($0300-$034F)
@@ -105,6 +113,8 @@ DOS_ARG_CLUS     = $035B                ; word: cluster argument for FAT helpers
 DOS_ARG_VAL      = $035D                ; word: FAT entry value argument/result
 DOS_NEW_CLUS     = $035F                ; word: freshly allocated cluster (chaining stash)
 DOS_FREE_NEXT    = $0361                ; word: next-cluster stash (free-chain walk)
+DOS_SH_NAMEIDX   = $0363                ; shell: index of an argument name in MON_CMDBUF
+DOS_SH_HASADDR   = $0364                ; shell: LOAD given an explicit address?
 
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
@@ -206,6 +216,30 @@ _DOS_DISPATCH:
     BCS @n5
     JMP _DOS_DO_TYPE
 @n5:
+    LDA #<KW_SAVE
+    LDX #>KW_SAVE
+    JSR _DOS_VERB_MATCH
+    BCS @n6
+    JMP _DOS_DO_SAVE
+@n6:
+    LDA #<KW_LOAD
+    LDX #>KW_LOAD
+    JSR _DOS_VERB_MATCH
+    BCS @n7
+    JMP _DOS_DO_LOAD
+@n7:
+    LDA #<KW_ERASE
+    LDX #>KW_ERASE
+    JSR _DOS_VERB_MATCH
+    BCS @n8
+    JMP _DOS_DO_ERASE
+@n8:
+    LDA #<KW_RENAME
+    LDX #>KW_RENAME
+    JSR _DOS_VERB_MATCH
+    BCS @n9
+    JMP _DOS_DO_RENAME
+@n9:
     ; unknown verb
     JSR K_PRINT_NEWLINE
     LDA #<MSG_DOS_BADCMD
@@ -372,18 +406,287 @@ _DOS_DO_TYPE:
     JMP K_PRINT_MESSAGE
 
 ; ----------------------------------------------------------------
+; _DOS_ARGSTART - skip spaces from Y to the first argument character
+; ----------------------------------------------------------------
+; In: Y = index just past the verb. Out: Y = first non-space char, carry clear;
+; carry set if the line ended (no argument).
+_DOS_ARGSTART:
+@l:
+    CPY MON_CMDLEN
+    BCS @none
+    LDA MON_CMDBUF,Y
+    CMP #ASCII_SPACE
+    BNE @ok
+    INY
+    BRA @l
+@ok:
+    CLC
+    RTS
+@none:
+    SEC
+    RTS
+
+; Shared error printers (newline + message, tail-call print).
+_DOS_PERR_USAGE:
+    LDA #<MSG_DOS_USAGE
+    LDX #>MSG_DOS_USAGE
+    BRA _DOS_PERR
+_DOS_PERR_NOFILE:
+    LDA #<MSG_DOS_NOFILE
+    LDX #>MSG_DOS_NOFILE
+    BRA _DOS_PERR
+_DOS_PERR_WRITE:
+    LDA #<MSG_DOS_WRITEERR
+    LDX #>MSG_DOS_WRITEERR
+_DOS_PERR:
+    STA MON_MSG_PTR_LO
+    STX MON_MSG_PTR_HI
+    JSR K_PRINT_NEWLINE
+    JMP K_PRINT_MESSAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_ERASE - ERASE NAME
+; ----------------------------------------------------------------
+_DOS_DO_ERASE:
+    JSR _DOS_ARGSTART
+    BCS @usage
+    LDX MON_CMDLEN                      ; null-terminate the name
+    LDA #$00
+    STA MON_CMDBUF,X
+    TYA                                 ; A/X = &MON_CMDBUF[Y]
+    LDX #>MON_CMDBUF
+    JSR _FS_DELETE
+    BCS @notfound
+    LDA #<MSG_DOS_ERASED
+    LDX #>MSG_DOS_ERASED
+    JMP _DOS_PERR
+@notfound:
+    JMP _DOS_PERR_NOFILE
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_RENAME - RENAME OLD,NEW
+; ----------------------------------------------------------------
+_DOS_DO_RENAME:
+    JSR _DOS_ARGSTART
+    BCS @usage
+    STY DOS_SH_NAMEIDX                  ; old name start
+@findc:
+    CPY MON_CMDLEN
+    BCS @usage
+    LDA MON_CMDBUF,Y
+    CMP #','
+    BEQ @gotc
+    INY
+    BRA @findc
+@gotc:
+    LDA #$00
+    STA MON_CMDBUF,Y                    ; terminate old name
+    INY                                 ; new name start
+    TYA
+    STA DOS_PTR2
+    LDA #>MON_CMDBUF
+    STA DOS_PTR2+1
+    LDX MON_CMDLEN                      ; terminate new name
+    LDA #$00
+    STA MON_CMDBUF,X
+    LDA DOS_SH_NAMEIDX                  ; old ptr in A/X
+    LDX #>MON_CMDBUF
+    JSR _FS_RENAME
+    BCS @notfound
+    LDA #<MSG_DOS_RENAMED
+    LDX #>MSG_DOS_RENAMED
+    JMP _DOS_PERR
+@notfound:
+    JMP _DOS_PERR_NOFILE
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_SAVE - SAVE NAME,SSSS-EEEE  (writes a 2-byte load-address header)
+; ----------------------------------------------------------------
+_DOS_DO_SAVE:
+    JSR _DOS_ARGSTART
+    BCC :+
+    JMP @usage
+:
+    STY DOS_SH_NAMEIDX
+@findc:
+    CPY MON_CMDLEN
+    BCC :+
+    JMP @usage
+:
+    LDA MON_CMDBUF,Y
+    CMP #','
+    BEQ @gotc
+    INY
+    BRA @findc
+@gotc:
+    LDA #$00
+    STA MON_CMDBUF,Y                    ; terminate the name at the comma
+    INY                                 ; first hex char
+    TYA
+    TAX
+    JSR K_PARSE_HEX                     ; start -> MON_CURRADDR, X += 4
+    BCS @usage
+    LDA MON_CURRADDR_LO
+    STA MON_STARTADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_STARTADDR_HI
+    LDA MON_CMDBUF,X                    ; expect '-'
+    CMP #'-'
+    BNE @usage
+    INX
+    JSR K_PARSE_HEX                     ; end -> MON_CURRADDR
+    BCS @usage
+    LDA MON_CURRADDR_LO
+    STA MON_ENDADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_ENDADDR_HI
+    LDA DOS_SH_NAMEIDX                  ; open NAME for writing
+    LDX #>MON_CMDBUF
+    LDY #$01
+    JSR _FS_OPEN
+    BCS @werr
+    LDA MON_STARTADDR_LO               ; 2-byte load-address header
+    JSR _FS_PUTB
+    BCS @werr
+    LDA MON_STARTADDR_HI
+    JSR _FS_PUTB
+    BCS @werr
+    LDA MON_STARTADDR_LO               ; read cursor = start
+    STA MON_CURRADDR_LO
+    LDA MON_STARTADDR_HI
+    STA MON_CURRADDR_HI
+@wl:
+    LDY #$00
+    LDA (MON_CURRADDR_LO),Y
+    JSR _FS_PUTB
+    BCS @werr
+    LDA MON_CURRADDR_LO
+    CMP MON_ENDADDR_LO
+    BNE @winc
+    LDA MON_CURRADDR_HI
+    CMP MON_ENDADDR_HI
+    BEQ @wdone
+@winc:
+    INC MON_CURRADDR_LO
+    BNE @wl
+    INC MON_CURRADDR_HI
+    BRA @wl
+@wdone:
+    JSR _FS_CLOSE
+    BCS @werr
+    LDA #<MSG_DOS_SAVED
+    LDX #>MSG_DOS_SAVED
+    JMP _DOS_PERR
+@werr:
+    JMP _DOS_PERR_WRITE
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_LOAD - LOAD NAME[,AAAA]  (load addr from header unless overridden)
+; ----------------------------------------------------------------
+_DOS_DO_LOAD:
+    JSR _DOS_ARGSTART
+    BCC :+
+    JMP @usage
+:
+    STY DOS_SH_NAMEIDX
+    STZ DOS_SH_HASADDR
+@findc:
+    CPY MON_CMDLEN
+    BCC :+
+    JMP @noaddr
+:
+    LDA MON_CMDBUF,Y
+    CMP #','
+    BEQ @gotc
+    INY
+    BRA @findc
+@gotc:
+    LDA #$00
+    STA MON_CMDBUF,Y                    ; terminate name at comma
+    INY
+    TYA
+    TAX
+    JSR K_PARSE_HEX                     ; override addr -> MON_CURRADDR
+    BCS @usage
+    LDA MON_CURRADDR_LO
+    STA MON_STARTADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_STARTADDR_HI
+    LDA #$01
+    STA DOS_SH_HASADDR
+    BRA @open
+@noaddr:
+    LDX MON_CMDLEN                      ; terminate name at end
+    LDA #$00
+    STA MON_CMDBUF,X
+@open:
+    LDA DOS_SH_NAMEIDX
+    LDX #>MON_CMDBUF
+    LDY #$00
+    JSR _FS_OPEN
+    BCS @notfound
+    JSR _FS_GETB                        ; header low
+    BCS @close
+    STA MON_CURRADDR_LO
+    JSR _FS_GETB                        ; header high
+    BCS @close
+    STA MON_CURRADDR_HI
+    LDA DOS_SH_HASADDR                  ; override?
+    BEQ @body
+    LDA MON_STARTADDR_LO
+    STA MON_CURRADDR_LO
+    LDA MON_STARTADDR_HI
+    STA MON_CURRADDR_HI
+@body:
+    JSR _FS_GETB
+    BCS @close
+    LDY #$00
+    STA (MON_CURRADDR_LO),Y
+    INC MON_CURRADDR_LO
+    BNE @body
+    INC MON_CURRADDR_HI
+    BRA @body
+@close:
+    JSR _FS_CLOSE
+    LDA #<MSG_DOS_LOADED
+    LDX #>MSG_DOS_LOADED
+    JMP _DOS_PERR
+@notfound:
+    JMP _DOS_PERR_NOFILE
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
 ; DOS shell strings
 ; ----------------------------------------------------------------
 MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
-MSG_DOS_HELP:    .BYTE "BUILT-IN: CATALOG TYPE MON HELP", $0D, $0A, 0
+MSG_DOS_HELP:    .BYTE "CATALOG TYPE SAVE LOAD ERASE RENAME", $0D, $0A
+                 .BYTE "MON HELP", $0D, $0A, 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
 MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
 MSG_DOS_NOFILE:  .BYTE "FILE NOT FOUND", $0D, $0A, 0
+MSG_DOS_USAGE:   .BYTE "USAGE: SAVE F,SSSS-EEEE / LOAD F[,AAAA]", $0D, $0A
+                 .BYTE "       ERASE F / RENAME OLD,NEW", $0D, $0A, 0
+MSG_DOS_SAVED:   .BYTE "SAVED", $0D, $0A, 0
+MSG_DOS_LOADED:  .BYTE "LOADED", $0D, $0A, 0
+MSG_DOS_ERASED:  .BYTE "ERASED", $0D, $0A, 0
+MSG_DOS_RENAMED: .BYTE "RENAMED", $0D, $0A, 0
+MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 KW_HELP:         .BYTE "HELP", 0
 KW_MON:          .BYTE "MON", 0
 KW_CATALOG:      .BYTE "CATALOG", 0
 KW_CAT:          .BYTE "CAT", 0
 KW_TYPE:         .BYTE "TYPE", 0
+KW_SAVE:         .BYTE "SAVE", 0
+KW_LOAD:         .BYTE "LOAD", 0
+KW_ERASE:        .BYTE "ERASE", 0
+KW_RENAME:       .BYTE "RENAME", 0
 
 ; ================================================================
 ; BLOCK DEVICE PRIMITIVES
@@ -1239,9 +1542,25 @@ _FS_DELETE:
     STA DOS_PTR
     STX DOS_PTR+1
     JSR _DOS_PARSE_NAME83
-    JSR _FS_ENSURE_MOUNT
+    JSR _DOS_DIR_FIND_EXISTING          ; -> DOS_W_DIRENT_*, DOS_ENTRY
     BCS @err
-    LDA DOS_ROOT_START                  ; scan root from the start
+    LDA DOS_ENTRY+DIR_CLUSTER_LO        ; free the cluster chain
+    STA DOS_ARG_CLUS
+    LDA DOS_ENTRY+DIR_CLUSTER_LO+1
+    STA DOS_ARG_CLUS+1
+    JSR _DOS_FREE_CHAIN
+    JMP _DOS_MARK_DELETED               ; mark the entry deleted (tail call)
+@err:
+    SEC
+    RTS
+
+; _DOS_DIR_FIND_EXISTING - scan the root directory for DOS_NAME83.
+; Out: carry clear with DOS_W_DIRENT_* = the slot and DOS_ENTRY = the entry, or
+; carry set if not mounted / not found. (Shared by delete and rename.)
+_DOS_DIR_FIND_EXISTING:
+    JSR _FS_ENSURE_MOUNT
+    BCS @no
+    LDA DOS_ROOT_START
     STA DOS_DIR_LBA
     LDA DOS_ROOT_START+1
     STA DOS_DIR_LBA+1
@@ -1253,11 +1572,11 @@ _FS_DELETE:
 @loop:
     LDA DOS_DIR_LEFT
     ORA DOS_DIR_LEFT+1
-    BEQ @err
+    BEQ @no
     JSR _DOS_READ_DIR_ENTRY
-    BCS @err
+    BCS @no
     LDA DOS_ENTRY+DIR_NAME
-    BEQ @err                            ; end of directory -> not found
+    BEQ @no                             ; end of directory
     CMP #DIRENT_DELETED
     BEQ @adv
     LDX #$00
@@ -1268,17 +1587,64 @@ _FS_DELETE:
     INX
     CPX #11
     BNE @cmp
-    ; matched: record slot, free chain, mark deleted
-    JSR _DOS_SAVE_DIRENT_POS
-    LDA DOS_ENTRY+DIR_CLUSTER_LO
-    STA DOS_ARG_CLUS
-    LDA DOS_ENTRY+DIR_CLUSTER_LO+1
-    STA DOS_ARG_CLUS+1
-    JSR _DOS_FREE_CHAIN
-    JMP _DOS_MARK_DELETED               ; tail call (returns its carry)
+    JSR _DOS_SAVE_DIRENT_POS            ; record DOS_W_DIRENT_*
+    CLC
+    RTS
 @adv:
     JSR _DOS_DIR_ADVANCE
     BRA @loop
+@no:
+    SEC
+    RTS
+
+; _FS_RENAME - rename a file. In: A/X = old name ptr, DOS_PTR2 = new name ptr.
+; Out: carry clear renamed; carry set if old not found / not mounted.
+_FS_RENAME:
+    STA DOS_PTR
+    STX DOS_PTR+1
+    JSR _DOS_PARSE_NAME83               ; old -> DOS_NAME83
+    JSR _DOS_DIR_FIND_EXISTING          ; locate the slot
+    BCS @err
+    LDA DOS_PTR2                        ; new -> DOS_NAME83
+    STA DOS_PTR
+    LDA DOS_PTR2+1
+    STA DOS_PTR+1
+    JSR _DOS_PARSE_NAME83
+    JMP _DOS_DIR_WRITE_NAME             ; overwrite the 11-byte name (tail call)
+@err:
+    SEC
+    RTS
+
+; _DOS_DIR_WRITE_NAME - rmw the 11-byte name field of the slot at DOS_W_DIRENT_*
+; with DOS_NAME83. Out: carry set on error.
+_DOS_DIR_WRITE_NAME:
+    LDA DOS_W_DIRENT_LBA
+    LDX DOS_W_DIRENT_LBA+1
+    JSR _DOS_READ_SECTOR
+    BCS @err
+    LDA DOS_W_DIRENT_IDX                ; skip to slot * 32
+    STA DOS_TMP
+    STZ DOS_TMP+1
+    LDX #$05
+@sh:
+    ASL DOS_TMP
+    ROL DOS_TMP+1
+    DEX
+    BNE @sh
+    JSR _DOS_SKIP_BYTES
+    LDY #$00
+@nm:
+    LDA DOS_NAME83,Y
+    STA BLK_DATA
+    INY
+    CPY #11
+    BNE @nm
+    LDA #BLK_CMD_WRITE
+    STA BLK_CMD
+    LDA BLK_STATUS
+    BNE @err
+    CLC
+    RTS
 @err:
     SEC
     RTS
@@ -1638,3 +2004,4 @@ BLK_READ_SECTOR:  JMP _BLK_READ_SECTOR   ; $AF15
 BLK_WRITE_SECTOR: JMP _BLK_WRITE_SECTOR  ; $AF18
 FS_DELETE:        JMP _FS_DELETE         ; $AF1B
 DOS_WARM:         JMP _DOS_WARM          ; $AF1E - re-enter the shell (no banner)
+FS_RENAME:        JMP _FS_RENAME         ; $AF21 - A/X = old, DOS_PTR2 = new

@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.5
+; Version:      3.5.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -169,6 +169,10 @@
 ;                   MFC/OS DOS shell (JMP DOS_COLD) instead of the monitor. The
 ;                   monitor is launched by the DOS 'MON' command (K_MON_ENTRY at
 ;                   $FF1E) and exited with 'Q', which returns to the shell (DOS_WARM).
+; 2026-06-15  v3.5.1 Phase 4.2a: MONITOR_MAIN now resets its display state
+;                   (MON_CURRADDR, MON_MODE) on entry, so a monitor launched by
+;                   MON starts clean rather than inheriting the DOS shell's scratch
+;                   use of MON_CURRADDR. (DOS file verbs themselves live in dos.rom.)
 ;
 ; ================================================================
 
@@ -3465,7 +3469,12 @@ SEARCH_DONE:
 ; Main monitor command loop - reads and processes commands
 ; This is the heart of the monitor program
 MONITOR_MAIN:
-    ; Print welcome message (simplified)
+    ; A freshly launched monitor (from DOS via MON) starts clean: command mode,
+    ; current address 0. The DOS shell uses MON_CURRADDR as scratch, so reset it
+    ; here rather than relying on boot-time zeroing.
+    STZ MON_CURRADDR_LO
+    STZ MON_CURRADDR_HI
+    STZ MON_MODE
     JSR PRINT_NEWLINE           ; Start with a newline
 
 MONITOR_LOOP:
