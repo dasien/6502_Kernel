@@ -71,13 +71,6 @@ public:
         testMoveOverlapClearKeepsData();
         testEscAtPromptNoError();
 
-        // MFC-DOS '@' preview: catalog + type + save + erase against a FAT16 image.
-        testCatalog();
-        testTypeFile();
-        testTypeMissingFile();
-        testDosSave();
-        testDosErase();
-
         // Must run last: it launches BASIC (bank 1), which keeps running and
         // would otherwise consume the keystrokes of any following test.
         testBankLaunch();
@@ -110,55 +103,6 @@ public:
                 static_cast<std::streamsize>(img.size()));
         f.close();
         computer.getBlockDevice()->setImagePath(disk_path_);
-    }
-
-    // '@' lists the mounted disk's files (the temporary DOS preview).
-    void testCatalog() {
-        clearScreen();
-        mountDisk({
-            {"HELLO.TXT", std::vector<uint8_t>(15, 'H')},
-            {"README.MD", std::vector<uint8_t>(42, 'R')},
-        });
-        sendCommand("@");
-        verifyResponse("HELLO.TXT", "Catalog lists HELLO.TXT");
-        verifyResponse("README.MD", "Catalog lists README.MD");
-    }
-
-    // '@NAME' types a file's contents to the screen.
-    void testTypeFile() {
-        clearScreen();
-        // "GREETING" + CR/LF so PRINT lays it on its own line; uppercase so it
-        // survives the screen's printable-ASCII filter in getScreenText().
-        std::vector<uint8_t> body = {'G','R','E','E','T','I','N','G','\r','\n'};
-        mountDisk({{"MSG.TXT", body}});
-        sendCommand("@MSG.TXT");
-        verifyResponse("GREETING", "Type displays file contents");
-    }
-
-    // '@NAME' for a missing file reports an error, not a crash.
-    void testTypeMissingFile() {
-        clearScreen();
-        mountDisk({{"REAL.TXT", std::vector<uint8_t>(4, 'X')}});
-        sendCommand("@NOPE.TXT");
-        verifyResponse("FILE NOT FOUND", "Type of missing file reports error");
-    }
-
-    // '@SSSS-EEEE=NAME' saves a memory range to a file; it then catalogs and
-    // types back. Bytes $48 $49 $21 = "HI!".
-    void testDosSave() {
-        clearScreen();
-        mountDisk({}); // empty formatted disk
-        computer.getMemory()->write(0x0900, 'H');  // "HI!" at $0900-$0902
-        computer.getMemory()->write(0x0901, 'I');
-        computer.getMemory()->write(0x0902, '!');
-        sendCommand("@0900-0902=HI.TXT");
-        verifyResponse("SAVED", "Save reports SAVED");
-        clearScreen();
-        sendCommand("@");
-        verifyResponse("HI.TXT", "Saved file appears in catalog");
-        clearScreen();
-        sendCommand("@HI.TXT");
-        verifyResponse("HI!", "Saved file types back correctly");
     }
 
     // The MFC/OS DOS shell: boots to its banner, CATALOG/TYPE work, and MON
@@ -226,19 +170,6 @@ public:
         // ERASE the renamed file.
         sendCommand("ERASE RENAMED.BIN");
         verifyResponse("ERASED", "DOS ERASE reports ERASED");
-    }
-
-    // '@-NAME' erases a file.
-    void testDosErase() {
-        clearScreen();
-        mountDisk({{"GONE.TXT", std::vector<uint8_t>(6, 'G')},
-                   {"STAY.TXT", std::vector<uint8_t>(6, 'S')}});
-        sendCommand("@-GONE.TXT");
-        verifyResponse("ERASED", "Erase reports ERASED");
-        clearScreen();
-        sendCommand("@");
-        verifyResponse("STAY.TXT", "Catalog still lists STAY.TXT");
-        verifyAbsent("GONE.TXT", "Erased file is gone from catalog");
     }
 
 private:

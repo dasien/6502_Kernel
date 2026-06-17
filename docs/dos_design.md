@@ -5,11 +5,11 @@
 `$AF00` DOS ABI table, 2.3 FAT16 read (mount + directory + cluster-chain file read),
 2.4 the `mkfat16` tool + a temporary `@` catalog/type monitor command (kernel v3.3).
 **Phase 3 (FAT16 write) COMPLETE** (3a write engine + 3b FS_DELETE/`@` save-erase).
-**Phase 4 (DOS shell) underway** — 4.1 the boot pivot is done: the machine boots into
-the **MFC/OS** shell (`>` prompt) with `HELP`/`MON`/`CATALOG`/`TYPE`; the monitor is
-launched by `MON` and exited with `Q` (kernel v3.5). Next: 4.2 (DOS file verbs +
-`.PRG` header, retire `@`), 4.3 (launch-by-name + program loader). Identity settled:
-OS = **MFC/OS**, bare `>` prompt, `Q` exits the monitor.
+**Phase 4 (DOS shell) underway** — 4.1 boot pivot + 4.2 file verbs done: the machine
+boots into the **MFC/OS** shell (`>` prompt) with `CATALOG`/`TYPE`/`SAVE`/`LOAD`/`ERASE`/
+`RENAME`/`MON`/`HELP`; the monitor is launched by `MON`, exited with `Q`, and is now a
+pure debugger (the temporary `@` preview is retired). Kernel v3.6. Next: 4.3
+(launch-by-name + `.PRG` program loader). Identity: OS = **MFC/OS**, bare `>` prompt.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -264,8 +264,11 @@ the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal ma
      Kernel v3.5.1 (MONITOR_MAIN resets its display state on launch). Covered by
      DOS round-trip cases in `monitor_integration` and `FS_RENAME` cases in
      `dos_fat16_tests`.
-   - **4.2b** — retire the temporary `@` preview from the monitor (DOS now owns the
-     file verbs).
+   - **4.2b — DONE.** Retired the temporary `@` preview: removed its dispatch,
+     `CMD_CATALOG`/`CMD_TYPE`/`CMD_SAVE`/`CMD_ERASE` routines, the `FS_*`/`DOS_DIR_ENTRY`
+     equates, and the `MSG_DOS_*` strings from `kernel.asm` (~550 bytes freed). The
+     monitor is a pure debugger again; the DOS shell owns the file verbs. Kernel v3.6.
+     The obsolete monitor `@` tests were removed (coverage is the DOS-level tests).
    - **4.3** — launch-by-name (command → ROM module → disk `.PRG`) + program loader;
      module return path switches to DOS; the `B:` menu retires.
 5. **Editor** (module, bank) — full-screen, generic; edit/save FS files → full
