@@ -7,7 +7,7 @@ against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites,
 so its handler set IS the WDC W65C02S instruction set as this project defines it.
 
 This script parses those handler registrations and emits:
-  * src/kernel/devtools/opcodes_65c02.inc  - ca65 tables for the assembler/
+  * src/kernel/assembler/opcodes_65c02.inc - ca65 tables for the assembler/
     disassembler module (Phase 4): per-opcode mnemonic id + mode id, the
     mnemonic strings, and per-mode operand length.
   * docs/opcode_table_65c02.md             - a human-readable reference.
@@ -23,7 +23,7 @@ import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CPU_SRC = os.path.join(REPO_ROOT, "src", "computer", "CPU6502.cpp")
-INC_OUT = os.path.join(REPO_ROOT, "src", "kernel", "devtools", "opcodes_65c02.inc")
+INC_OUT = os.path.join(REPO_ROOT, "src", "kernel", "assembler", "opcodes_65c02.inc")
 MD_OUT = os.path.join(REPO_ROOT, "docs", "opcode_table_65c02.md")
 
 # Branch mnemonics use relative addressing; every other zero-suffix handler is

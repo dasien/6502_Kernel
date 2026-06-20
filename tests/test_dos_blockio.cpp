@@ -65,7 +65,7 @@ protected:
         std::error_code ec;
         std::filesystem::remove(image_path_, ec);
 
-        computer.power_on(); // loads kernel/basic/devtools/dos ROMs
+        computer.power_on(); // loads kernel/basic/assembler/dos ROMs
         mem_ = computer.getMemory();
         cpu_ = computer.getCpu();
         computer.getBlockDevice()->setImagePath(image_path_);

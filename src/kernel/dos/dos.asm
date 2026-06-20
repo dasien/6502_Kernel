@@ -186,7 +186,7 @@ _DOS_WARM:
     LDX #$FF
     TXS
 _DOS_PROMPT:
-    LDA #'>'
+    LDA #']'                            ; ']' distinguishes the DOS prompt from the monitor's
     JSR K_PRINT_CHAR
     JSR K_READ_LINE                     ; -> MON_CMDBUF, length MON_CMDLEN
     LDA MON_CMDLEN

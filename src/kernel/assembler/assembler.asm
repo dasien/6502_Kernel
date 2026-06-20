@@ -1,10 +1,10 @@
 ; ================================================================
-; MFC 6502 DEV TOOLS MODULE  (assembler / disassembler)
+; MFC 6502 ASSEMBLER MODULE  (assembler / disassembler)
 ; ================================================================
-; Filename:     devtools.asm
+; Filename:     assembler.asm
 ; Author:       Brian Gentry
 ; Version:      0.6 (Phase 4 sub-step 6: host source load + listing)
-; Assembler:    ca65  (-I src/kernel/devtools for opcodes_65c02.inc)
+; Assembler:    ca65  (-I src/kernel/assembler for opcodes_65c02.inc)
 ;
 ; A bank-switched ROM module for the $B000-$DFFF window (module bank 2; see
 ; docs/module_slot_design.md). The kernel's B: bank menu maps this bank and JMPs

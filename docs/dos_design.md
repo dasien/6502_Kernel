@@ -6,11 +6,11 @@
 2.4 the `mkfat16` tool + a temporary `@` catalog/type monitor command (kernel v3.3).
 **Phase 3 (FAT16 write) COMPLETE** (3a write engine + 3b FS_DELETE/`@` save-erase).
 **Phase 4 (DOS shell) underway** — 4.1 boot pivot + 4.2 file verbs done: the machine
-boots into the **MFC/OS** shell (`>` prompt) with `CATALOG`/`TYPE`/`SAVE`/`LOAD`/`ERASE`/
+boots into the **MFC/OS** shell (`]` prompt) with `CATALOG`/`TYPE`/`SAVE`/`LOAD`/`ERASE`/
 `RENAME`/`IMPORT`/`EXPORT`/`MON`/`HELP`; the monitor is launched by `MON`, exited with
 `Q`, and is a pure debugger (the `@` preview and the host `L:`/`S:` are retired - host
 transfer is now DOS `IMPORT`/`EXPORT`). Kernel v3.7. Next: 4.3 (launch-by-name + `.PRG`
-program loader). Identity: OS = **MFC/OS**, bare `>` prompt.
+program loader). Identity: OS = **MFC/OS**, `]` prompt.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -180,7 +180,7 @@ ABI), leaving the kernel ROM as a lean pure-BIOS — not required for function.
 ## Identity
 
 **Settled (2026-06-14):** the OS is **MFC/OS**; boot shows a sign-on banner and a
-bare **`>`** prompt. The monitor is launched by `MON` and exited with **`Q`** (back to
+an **`]`** prompt. The monitor is launched by `MON` and exited with **`Q`** (back to
 the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal marker.)
 
 ## Phased build plan
@@ -255,7 +255,7 @@ the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal ma
    launch-by-name (command → ROM module → file), program-file loader. `MON`/`BASIC`/
    `ASM` launch their banks; the monitor is entered as a tool and returns to DOS.
    - **4.1 — DONE.** The boot pivot. RESET now `JMP DOS_COLD`; the machine boots into
-     the **MFC/OS** shell (banner + `>` prompt) in `dos.asm`: read a line (BIOS
+     the **MFC/OS** shell (banner + `]` prompt) in `dos.asm`: read a line (BIOS
      `READ_COMMAND_LINE`), match a verb, dispatch. Verbs: `HELP`, `MON` (launches the
      monitor via the new `K_MON_ENTRY` `$FF1E` BIOS entry), `CATALOG`/`CAT`, `TYPE
      NAME`. The monitor gains `Q` (quit → `DOS_WARM` `$AF1E`). Kernel v3.5. The `@`

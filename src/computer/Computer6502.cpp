@@ -152,7 +152,7 @@ namespace Computer
         // Module bank table: pre-load each module ROM into a switchable bank in
         // the $B000-$DFFF window (MODULE_BANK selects one; the kernel B: menu maps
         // them on demand). Banks must match the kernel's MODULE_DIR: 1 = BASIC,
-        // 2 = dev tools. Add new modules here and in MODULE_DIR together.
+        // 2 = assembler. Add new modules here and in MODULE_DIR together.
         auto installBank = [this](uint8_t bank, const std::string &path, const char *name)
         {
             std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -174,7 +174,7 @@ namespace Computer
         };
 
         installBank(1, "../kernel/basic.rom", "BASIC");
-        installBank(2, "../kernel/devtools.rom", "DEV TOOLS");
+        installBank(2, "../kernel/assembler.rom", "ASSEMBLER");
 
         // Always-mapped DOS ROM at $9000-$AFFF (resident FAT16 filesystem / DOS
         // shell). If absent, the region stays RAM and the machine boots as before.

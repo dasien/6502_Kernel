@@ -66,26 +66,26 @@ if(CA65_FOUND AND LD65_FOUND)
     )
 
     # ================================================================
-    # DEV TOOLS Module ROM Build Target (module bank 2)
+    # ASSEMBLER Module ROM Build Target (module bank 2)
     # ================================================================
 
-    set(DEVTOOLS_DIR ${CMAKE_SOURCE_DIR}/src/kernel/devtools)
-    set(DEVTOOLS_ASM_SOURCE ${DEVTOOLS_DIR}/devtools.asm)
-    set(DEVTOOLS_CONFIG ${DEVTOOLS_DIR}/devtools_memory.cfg)
-    set(DEVTOOLS_INC ${DEVTOOLS_DIR}/opcodes_65c02.inc)
+    set(ASSEMBLER_DIR ${CMAKE_SOURCE_DIR}/src/kernel/assembler)
+    set(ASSEMBLER_ASM_SOURCE ${ASSEMBLER_DIR}/assembler.asm)
+    set(ASSEMBLER_CONFIG ${ASSEMBLER_DIR}/assembler_memory.cfg)
+    set(ASSEMBLER_INC ${ASSEMBLER_DIR}/opcodes_65c02.inc)
 
-    set(DEVTOOLS_OBJECT ${CMAKE_BINARY_DIR}/kernel/devtools.o)
-    set(DEVTOOLS_ROM ${CMAKE_BINARY_DIR}/kernel/devtools.rom)
-    set(DEVTOOLS_MAP ${CMAKE_BINARY_DIR}/kernel/devtools.map)
+    set(ASSEMBLER_OBJECT ${CMAKE_BINARY_DIR}/kernel/assembler.o)
+    set(ASSEMBLER_ROM ${CMAKE_BINARY_DIR}/kernel/assembler.rom)
+    set(ASSEMBLER_MAP ${CMAKE_BINARY_DIR}/kernel/assembler.map)
 
-    # -I DEVTOOLS_DIR so .include "opcodes_65c02.inc" resolves.
-    add_custom_target(devtools_rom ALL
-        COMMAND ca65 ${DEVTOOLS_ASM_SOURCE} -I ${DEVTOOLS_DIR} -o ${DEVTOOLS_OBJECT}
-        COMMAND ld65 -C ${DEVTOOLS_CONFIG} ${DEVTOOLS_OBJECT} -o ${DEVTOOLS_ROM} -m ${DEVTOOLS_MAP}
-        COMMAND ${CMAKE_COMMAND} -E echo "DEV TOOLS module ROM built (bank 2)"
-        COMMENT "Building DEV TOOLS module ROM"
+    # -I ASSEMBLER_DIR so .include "opcodes_65c02.inc" resolves.
+    add_custom_target(assembler_rom ALL
+        COMMAND ca65 ${ASSEMBLER_ASM_SOURCE} -I ${ASSEMBLER_DIR} -o ${ASSEMBLER_OBJECT}
+        COMMAND ld65 -C ${ASSEMBLER_CONFIG} ${ASSEMBLER_OBJECT} -o ${ASSEMBLER_ROM} -m ${ASSEMBLER_MAP}
+        COMMAND ${CMAKE_COMMAND} -E echo "ASSEMBLER module ROM built (bank 2)"
+        COMMENT "Building ASSEMBLER module ROM"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
-        DEPENDS ${DEVTOOLS_ASM_SOURCE} ${DEVTOOLS_CONFIG} ${DEVTOOLS_INC}
+        DEPENDS ${ASSEMBLER_ASM_SOURCE} ${ASSEMBLER_CONFIG} ${ASSEMBLER_INC}
         VERBATIM
     )
 

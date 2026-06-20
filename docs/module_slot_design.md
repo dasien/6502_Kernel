@@ -2,8 +2,8 @@
 
 **Status:** Phases 1–4 implemented (kernel v3.1.1). I/O is at `$FE00`, the module
 window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
-bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/devtools/`,
-`devtools.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
+bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
+`assembler.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
 catalog), modules return via `$FF12` (`RETURN_FROM_MODULE`, which unmaps the bank),
 and `RESET` zeroes the window so bank 0 boots clean.
 
@@ -207,7 +207,7 @@ is the source of truth.)
 At startup the emulator loads module images into the bank table instead of writing
 BASIC into flat RAM:
 - bank 1 ← `basic.rom`
-- bank 2 ← `devtools.rom`
+- bank 2 ← `assembler.rom`
 - (3–255 reserved)
 
 A small name→file map (config or convention). Bank 0 is RAM (no image).
@@ -254,7 +254,7 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
    `FILL_RANGE_CORE` out of `F:` and reused it for the window clear. Covered by
    `testBankMenu`/`testBankLaunch` in the integration suite.
 4. **[DONE, v3.1/3.1.1]** **First new module**: combined assembler + disassembler
-   in bank 2 (`devtools.rom`). Disassembler, line assembler, and a two-pass
+   in bank 2 (`assembler.rom`). Disassembler, line assembler, and a two-pass
    assembler (labels, expressions, `.ORG`/`.END`/`.BYTE`/`.WORD`/`.ASCII`, `=`),
    with host `.s` source load and a build listing. The module ABI was extended
    (`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`) so the module reuses the kernel

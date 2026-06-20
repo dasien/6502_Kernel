@@ -113,6 +113,7 @@ public:
     void testDosShell() {
         // Boot landed at the DOS shell.
         verifyResponse("MFC/OS", "Boots into the MFC/OS shell");
+        verifyResponse("]", "DOS prompt is ]");
 
         // CATALOG + TYPE against a mounted disk.
         std::string greet = "HOWDY\r\n";
