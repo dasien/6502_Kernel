@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.7
+; Version:      3.8
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -183,6 +183,12 @@
 ;                   L:/S: host load/save are retired - dropped from CMD_INDEX_MAP and
 ;                   help, and their handlers (PARSE_CMD_LOAD/SAVE_CHECK, CMD_LOAD_FILE,
 ;                   CMD_SAVE_FILE) excised; the freed jump-table slots map to no-ops.
+; 2026-06-20  v3.8  Phase 4.3a: launch-by-name for ROM modules. RETURN_FROM_MODULE
+;                   ($FF12) now re-enters the DOS shell (DOS_WARM) instead of the
+;                   monitor, so BASIC/ASM launched from the DOS return to the ']'
+;                   prompt. New K_LAUNCH_BY_NAME ABI ($FF21) scans MODULE_DIR (the
+;                   assembler's name is now "ASM"). The monitor's B: bank menu is
+;                   retired (CMD_BANK_MENU/PARSE_CMD_BASIC excised, B -> invalid).
 ;
 ; ================================================================
 
@@ -1230,15 +1236,6 @@ PARSE_CMD_ERROR_JMP:
 ; MONITOR COMMAND PARSING ROUTINES
 ; ================================================================
 
-PARSE_CMD_BASIC:
-    JSR PARSE_COLON_COMMAND     ; Parse B: format
-    BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
-
-    ; B: is the module bank menu. It returns here only when the user cancels
-    ; (ESC); selecting a module maps its bank and JMPs into it (never returns).
-    JSR CMD_BANK_MENU
-    JMP PARSE_CMD_DONE
-
 PARSE_CMD_CLEAR:
     JSR PARSE_COLON_COMMAND     ; Parse C: format
     BCS PARSE_CMD_ERROR_JMP2    ; If error, jump to local error handler
@@ -1826,75 +1823,10 @@ RESTORE_MONITOR_STATE:
 ; ================================================================
 
 ; ----------------------------------------------------------------
-; CMD_BANK_MENU - Show the module-slot menu and launch a selected module
-; Input: None
-; Output: Cancels (RTS) on ESC; on a valid selection maps the module's bank and
-;         JMPs into it (does not return). Returns to the monitor on cancel or on
-;         a not-loaded bank.
-; Modifies: A, X, Y, MON_HEX_TEMP, JUMP_VECTOR, MON_MSG_PTR
-; Note: Walks MODULE_DIR (5-byte records: bank#, entry word, name pointer word).
-;       The displayed selection number is the 1-based directory index, not the
-;       bank number (the directory is the source of truth, like the $FF00 table).
-; ----------------------------------------------------------------
-CMD_BANK_MENU:
-    LDA #<MSG_BANK_HEADER
-    LDY #>MSG_BANK_HEADER
-    JSR PRINT_MSG_AY
-    JSR PRINT_NEWLINE
-
-    LDA #'1'                    ; ASCII of the first menu selection number
-    STA MON_HEX_TEMP            ; running menu-number (PRINT_* don't touch it)
-    LDX #$00                    ; byte offset into MODULE_DIR
-
-BANK_MENU_ROW:
-    LDA #ASCII_SPACE
-    JSR PRINT_CHAR
-    JSR PRINT_CHAR
-    LDA MON_HEX_TEMP            ; menu selection digit
-    JSR PRINT_CHAR
-    LDA #ASCII_SPACE
-    JSR PRINT_CHAR
-    JSR PRINT_CHAR
-
-    LDA MODULE_DIR+3,X          ; name pointer low
-    STA MON_MSG_PTR_LO
-    LDA MODULE_DIR+4,X          ; name pointer high
-    STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
-    JSR PRINT_NEWLINE
-
-    INC MON_HEX_TEMP            ; next menu number
-    TXA
-    CLC
-    ADC #MODULE_DIR_RECSIZE     ; advance to next record
-    TAX
-    CPX #(MODULE_DIR_COUNT * MODULE_DIR_RECSIZE)
-    BNE BANK_MENU_ROW
-
-    LDA #<MSG_BANK_PROMPT
-    LDY #>MSG_BANK_PROMPT
-    JSR PRINT_MSG_AY
-
-BANK_MENU_WAIT:
-    JSR GET_KEYSTROKE
-    BCC BANK_MENU_WAIT          ; no key yet
-    CMP #ASCII_ESC
-    BEQ BANK_MENU_CANCEL
-    SEC
-    SBC #'1'                    ; A = 0-based selection index
-    BCC BANK_MENU_WAIT          ; below '1' -> ignore
-    CMP #MODULE_DIR_COUNT
-    BCS BANK_MENU_WAIT          ; out of range -> ignore
-    JMP BANK_LAUNCH             ; A = selection index
-
-BANK_MENU_CANCEL:
-    JMP PRINT_NEWLINE           ; tail call: newline, then RTS to the parser
-
-; ----------------------------------------------------------------
 ; BANK_LAUNCH - Map a directory entry's bank and jump into the module
 ; Input: A = 0-based MODULE_DIR index
 ; Output: Maps the bank and JMPs to the module entry (does not return). On a
-;         not-loaded bank, unmaps and returns to the monitor with an error.
+;         not-loaded bank, unmaps and returns to the DOS prompt with an error.
 ; Modifies: A, X, Y, MODULE_BANK, JUMP_VECTOR
 ; ----------------------------------------------------------------
 BANK_LAUNCH:
@@ -1906,9 +1838,6 @@ BANK_LAUNCH:
     CLC
     ADC JUMP_VECTOR             ; index*4 + index = index*5
     TAX                         ; X = byte offset into MODULE_DIR
-
-    ; Save monitor state before handing control to the module (clean return).
-    JSR SAVE_MONITOR_STATE
 
     LDA MODULE_DIR,X            ; bank number
     STA MODULE_BANK             ; map the module into $B000-$DFFF
@@ -1929,7 +1858,67 @@ BANK_NOT_LOADED:
     STZ MODULE_BANK             ; unmap -> window back to RAM
     LDA #<MSG_MODULE_FAIL
     LDY #>MSG_MODULE_FAIL
-    JMP PRINT_MSG_AY            ; tail call: error, then RTS to the parser
+    JSR PRINT_MSG_AY            ; report the error...
+    JMP DOS_WARM                ; ...then back to the DOS prompt
+
+; ----------------------------------------------------------------
+; K_LAUNCH_BY_NAME - launch a ROM module whose MODULE_DIR name matches A/X
+; ----------------------------------------------------------------
+; The DOS shell calls this to resolve a typed name against the module registry.
+; Reached via the $FF00 ABI entry K_LAUNCH_BY_NAME ($FF21).
+; In:  A/X = pointer to a null-terminated UPPERCASE name (e.g. "BASIC", "ASM").
+; Out: on a match, maps the bank and runs the module (which returns to the DOS
+;      via $FF12) - does NOT return here. On no match, carry set, RTS (the DOS
+;      then tries a disk program). Uses LBN_NAME_PTR/LBN_MOD_PTR zero page.
+LBN_NAME_PTR = $40             ; $40/$41: the typed name
+LBN_MOD_PTR  = $42             ; $42/$43: a module's name (from MODULE_DIR)
+LBN_IDX      = $44             ; 0-based module index (LBN_STRCMP clobbers Y, so
+                               ;   the index can't live in Y across the compare)
+LAUNCH_BY_NAME:
+    STA LBN_NAME_PTR
+    STX LBN_NAME_PTR+1
+    LDX #$00                    ; X = byte offset into MODULE_DIR
+    STX LBN_IDX                 ; index = 0
+@rec:
+    CPX #(MODULE_DIR_COUNT * MODULE_DIR_RECSIZE)
+    BCS @nomatch
+    LDA MODULE_DIR+3,X          ; this module's name pointer
+    STA LBN_MOD_PTR
+    LDA MODULE_DIR+4,X
+    STA LBN_MOD_PTR+1
+    JSR LBN_STRCMP              ; equal? (carry clear = match). Preserves X/LBN_IDX.
+    BCC @found
+    INC LBN_IDX                 ; advance to the next record
+    TXA
+    CLC
+    ADC #MODULE_DIR_RECSIZE
+    TAX
+    BRA @rec
+@found:
+    LDA LBN_IDX                 ; A = matched index
+    JMP BANK_LAUNCH             ; maps + runs (returns to DOS via $FF12)
+@nomatch:
+    SEC
+    RTS
+
+; Compare the null-terminated strings at LBN_NAME_PTR and LBN_MOD_PTR.
+; Out: carry clear if equal (including matching terminators), set otherwise.
+LBN_STRCMP:
+    LDY #$00
+@loop:
+    LDA (LBN_NAME_PTR),Y
+    CMP (LBN_MOD_PTR),Y
+    BNE @ne
+    CMP #$00                    ; equal so far - both terminate here? -> match
+    BEQ @eq
+    INY
+    BNE @loop
+@ne:
+    SEC
+    RTS
+@eq:
+    CLC
+    RTS
 
 ; ----------------------------------------------------------------
 ; RETURN_FROM_MODULE
@@ -1943,23 +1932,18 @@ BANK_NOT_LOADED:
 RETURN_FROM_MODULE:
     STZ MODULE_BANK             ; unmap the module -> window back to RAM
 
-    ; Restore monitor state
-    JSR RESTORE_MONITOR_STATE
-
-    ; Clear BASIC's interrupt-enable flags so a later NMI breaks to the monitor
-    ; instead of trying to dispatch a stale BASIC ON NMI/IRQ handler.
+    ; Clear BASIC's interrupt-enable flags so a later NMI doesn't try to dispatch
+    ; a stale BASIC ON NMI/IRQ handler.
     STZ BASIC_NMI_FLAGS
     STZ BASIC_IRQ_FLAGS
 
-    ; Reset stack pointer to clean state (must be done AFTER JSR returns)
+    ; Reset the stack to a clean state, then re-enter the MFC/OS shell. (Modules
+    ; are launched from the DOS now, so they return to the DOS prompt, not the
+    ; monitor; DOS_WARM reprints the prompt without the banner.)
     LDX #$FF
     TXS
-
-    ; Clear screen for clean transition
     JSR CLEAR_SCREEN
-
-    ; Return to monitor loop
-    JMP MONITOR_LOOP
+    JMP DOS_WARM
 
 ; Clear screen command - Clears all screen memory and resets cursor to origin
 ; Input: None (address in MON_CURRADDR_HI/LO is ignored for clear command)
@@ -3208,7 +3192,7 @@ NMI_HANDLER_BREAK:
 ; produced by CMD_INDEX_MAP (the '?' help and ESC commands are handled before
 ; this table is consulted), so those two entries are unused.
 CMD_JUMP_COMPACT_LO:
-    .BYTE <PARSE_CMD_BASIC      ; 0 - 'B'
+    .BYTE <PARSE_CMD_DONE       ; 0 - unused ('B' bank menu retired)
     .BYTE <PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE <PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE <PARSE_CMD_GO_CHECK   ; 3 - 'G'
@@ -3226,7 +3210,7 @@ CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_HEX_TO_DEC ; 15 - 'H' (hex to decimal)
 
 CMD_JUMP_COMPACT_HI:
-    .BYTE >PARSE_CMD_BASIC      ; 0 - 'B'
+    .BYTE >PARSE_CMD_DONE       ; 0 - unused ('B' bank menu retired)
     .BYTE >PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE >PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE >PARSE_CMD_GO_CHECK   ; 3 - 'G'
@@ -3247,7 +3231,7 @@ CMD_JUMP_COMPACT_HI:
 ; For characters B-Z, subtract 'B' ($42) to get offset into this table
 ; Note: '?' character is handled as special case before table lookup (maps to help)
 CMD_INDEX_MAP:
-    .BYTE 0     ; B -> 0 (BASIC)
+    .BYTE $FF   ; B -> invalid (bank menu retired; launch BASIC/ASM by name at DOS)
     .BYTE 1     ; C -> 1 (Clear)
     .BYTE 14    ; D -> 14 (Decimal to Hex)
     .BYTE $FF   ; E -> invalid
@@ -3286,7 +3270,6 @@ MODE_PREFIX_TABLE:
 ; Commands listed alphabetically by command letter; ESC (a navigation key,
 ; not a colon command) is kept last.
 HELP_MSG_TABLE:
-    .WORD MSG_HELP_BASIC        ; B
     .WORD MSG_HELP_CLEAR        ; C
     .WORD MSG_HELP_DECIMAL      ; D
     .WORD MSG_HELP_FILL         ; F
@@ -3303,13 +3286,12 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_RECALL       ; .
     .WORD MSG_HELP_QUIT         ; Q
 
-HELP_MSG_COUNT = 16              ; Number of help messages
+HELP_MSG_COUNT = 15              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
 MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
-MSG_HELP_BASIC:      .BYTE "B:     MODULE BANK MENU", 0
 MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
 MSG_HELP_DECIMAL:    .BYTE "D:NNNNN DECIMAL TO HEX", 0
 MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
@@ -3331,17 +3313,14 @@ MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
 MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
 MSG_WELCOME:         .BYTE "       -=MFC 6502 OPERATIONAL=-", $0D, $0A, 0
 MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
-MSG_BANK_HEADER:     .BYTE "MODULE BANKS:", 0
-MSG_BANK_PROMPT:     .BYTE "SELECT (ESC=CANCEL): ", 0
 MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
 
 ; ----------------------------------------------------------------
-; Module directory: one 5-byte record per launchable module, walked by the B:
-; bank menu. The displayed selection number is the 1-based index here; the bank
-; number is stored per-record so the menu order is independent of bank layout.
+; Module directory: one 5-byte record per launchable module. The DOS resolves a
+; typed name against this table (K_LAUNCH_BY_NAME) and maps + runs the bank.
 ;   byte 0      bank number (written to MODULE_BANK to map the module)
 ;   bytes 1-2   entry address (little-endian) - JMP target after mapping
-;   bytes 3-4   pointer to the null-terminated display name
+;   bytes 3-4   pointer to the null-terminated launch name (typed at the DOS ])
 ; Adding a module = add a record + name string here and register its ROM image
 ; as that bank in the host bank table (Computer6502). See module_slot_design.md.
 ; ----------------------------------------------------------------
@@ -3352,11 +3331,11 @@ MODULE_DIR:
     .WORD NAME_BASIC
     .BYTE 2                     ; bank 2
     .WORD $B000                 ; entry (DEVT_MAIN at the window base)
-    .WORD NAME_DEVTOOLS
+    .WORD NAME_ASM
 MODULE_DIR_COUNT = (* - MODULE_DIR) / MODULE_DIR_RECSIZE
 
 NAME_BASIC:          .BYTE "BASIC", 0
-NAME_DEVTOOLS:       .BYTE "ASSEMBLER / DISASSEMBLER", 0
+NAME_ASM:            .BYTE "ASM", 0
 
 ; ================================================================
 ; RESERVED I/O PAGE ($FE00-$FEFF)
@@ -3384,6 +3363,7 @@ K_READ_LINE:     JMP READ_COMMAND_LINE  ; $FF15
 K_PARSE_HEX:     JMP HEX_QUAD_TO_ADDR   ; $FF18
 K_PRINT_HEX_BYTE:JMP PRINT_HEX_BYTE     ; $FF1B
 K_MON_ENTRY:     JMP MONITOR_MAIN       ; $FF1E - DOS launches the monitor here
+K_LAUNCH_BY_NAME:JMP LAUNCH_BY_NAME     ; $FF21 - DOS launches a module by name
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

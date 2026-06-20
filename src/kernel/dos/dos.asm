@@ -43,6 +43,7 @@ K_READ_LINE      = $FF15                ; read a line -> MON_CMDBUF, len MON_CMD
 K_PARSE_HEX      = $FF18                ; X = MON_CMDBUF index -> MON_CURRADDR, X += 4
 K_PRINT_HEX_BYTE = $FF1B                ; A -> two hex digits
 K_MON_ENTRY      = $FF1E                ; launch the monitor (returns via Q -> DOS_WARM)
+K_LAUNCH_BY_NAME = $FF21                ; A/X=name -> launch a ROM module, or carry set
 
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
@@ -266,8 +267,25 @@ _DOS_DISPATCH:
     BCS @n11
     JMP _DOS_DO_EXPORT
 @n11:
-    ; unknown verb
+    ; No built-in command matched - try launching a program by name. Isolate the
+    ; first word (the program name) by null-terminating at the first space/end.
+    LDY #$00
+@end:
+    CPY MON_CMDLEN
+    BCS @term
+    LDA MON_CMDBUF,Y
+    CMP #ASCII_SPACE
+    BEQ @term
+    INY
+    BRA @end
+@term:
+    LDA #$00
+    STA MON_CMDBUF,Y
     JSR K_PRINT_NEWLINE
+    LDA #<MON_CMDBUF                    ; try a ROM module (BASIC/ASM)
+    LDX #>MON_CMDBUF
+    JSR K_LAUNCH_BY_NAME               ; runs it (no return) on a match
+    ; carry set => not a module. (4.3b: try a disk .PRG here.) Report not found.
     LDA #<MSG_DOS_BADCMD
     STA MON_MSG_PTR_LO
     LDA #>MSG_DOS_BADCMD

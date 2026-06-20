@@ -35,28 +35,30 @@ public:
     void runAllTests() {
         std::cout << "\nRunning integration tests...\n" << std::endl;
 
-        // The machine now boots into the DOS shell; exercise it first, then drop
-        // into the monitor (via MON) so the monitor tests below run as before.
+        // The machine boots into the DOS shell. Exercise the DOS first, then the
+        // ROM modules (launched from the DOS by name, returning to the DOS), then
+        // drop into the monitor (MON) for the pure-monitor command tests.
         testDosShell();
         testDosFileVerbs();
         testDosTransfer();
-        sendCommand("MON");
-        testMonitorLSRetired();
 
-        // Test basic commands
-        testClearScreen();
-        testHelpCommand();
-        testScrollIntegrity();
-        testBankMenu();
+        // Launch-by-name: the assembler module runs via "ASM" and returns to the
+        // DOS prompt on exit. (BANK_LAUNCH clears the screen, so no clear needed.)
         testDevtoolsModule();
         testDisassembler();
         testDisassemblerBackspace();
         testDisassemblerEscMidline();
-        testModuleStatePreservedAcrossLaunch();
         testAssembler();
         testTwoPassAssembler();
         testTwoPassDirectives();
         testAssemblerListing();
+
+        // Monitor tests run inside MON.
+        sendCommand("MON");
+        testMonitorLSRetired();
+        testClearScreen();
+        testHelpCommand();
+        testScrollIntegrity();
         testGoPromptNewline();
         testFillCommand();
         testReadCommand();
@@ -73,8 +75,8 @@ public:
         testMoveOverlapClearKeepsData();
         testEscAtPromptNoError();
 
-        // Must run last: it launches BASIC (bank 1), which keeps running and
-        // would otherwise consume the keystrokes of any following test.
+        // Must run last: it launches BASIC, which keeps running and would
+        // otherwise consume the keystrokes of any following test.
         testBankLaunch();
 
         // Print summary
@@ -263,6 +265,13 @@ private:
         sendCommand("C:");
     }
 
+    // Launch the assembler module by name from the DOS prompt (replaces the old
+    // B:-menu path). BANK_LAUNCH clears the screen, so callers needn't. The module
+    // returns to the DOS prompt on ESC.
+    void launchAsm() {
+        sendCommand("ASM", 200000);
+    }
+
     // Read a byte straight from emulator RAM - robust, unlike screen scraping.
     uint8_t readMem(uint16_t address) {
         return computer.getMemory()->read(address);
@@ -373,39 +382,16 @@ private:
         computer.run(cycles);
     }
 
-    // B: opens the module bank menu (Phase 3). It lists MODULE_DIR (BASIC = bank
-    // 1, dev tools = bank 2) and waits for a single-key selection; ESC cancels.
-    void testBankMenu() {
-        clearScreen();
-        sendCommand("B:");
-        verifyResponse("MODULE BANKS", "Bank menu header shown");
-        verifyResponse("BASIC", "Bank menu lists BASIC");
-        verifyResponse("ASSEMBLER", "Bank menu lists the dev tools module");
-        verifyResponse("SELECT", "Bank menu shows the selection prompt");
-
-        // ESC cancels; the monitor must be responsive again afterward.
-        sendKey(0x1B);
-        clearScreen();
-        sendCommand("R:8000");
-        verifyResponse("8000:", "Monitor responsive after bank-menu ESC");
-    }
-
-    // End-to-end round-trip through the dev-tools module (bank 2): B: -> 2 maps
-    // the bank and jumps in (banner prints), then ESC makes the module JMP $FF12,
-    // which unmaps the bank (window back to RAM) and returns to the monitor.
-    // Unlike BASIC, the module returns cleanly, so this can run mid-suite.
+    // Launch-by-name: typing "ASM" at the DOS prompt maps bank 2 and jumps into
+    // the module (banner prints); ESC makes it JMP $FF12, which unmaps the bank
+    // (window back to RAM) and returns to the DOS prompt.
     void testDevtoolsModule() {
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);    // select dev tools -> module banner
-        verifyMemEquals(0xFE23, 0x02, "B: select maps bank 2 (MODULE_BANK)");
-        verifyResponse("DEV TOOLS", "Dev tools module launches from bank 2");
+        launchAsm();
+        verifyMemEquals(0xFE23, 0x02, "ASM maps bank 2 (MODULE_BANK)");
+        verifyResponse("DEV TOOLS", "Assembler module launches via ASM");
 
-        sendKey(0x1B, 200000);   // ESC -> module returns via $FF12
+        sendKey(0x1B, 200000);   // ESC -> module returns via $FF12 to the DOS
         verifyMemEquals(0xFE23, 0x00, "Module return unmaps bank (window = RAM)");
-        clearScreen();
-        sendCommand("R:8000");
-        verifyResponse("8000:", "Monitor responsive after module return");
     }
 
     // The dev-tools disassembler (D xxxx). Poke a known 65C02 sequence into RAM
@@ -423,9 +409,7 @@ private:
         for (size_t i = 0; i < sizeof(code); ++i)
             mem->write(static_cast<uint16_t>(0x0800 + i), code[i]);
 
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);            // launch dev tools (bank 2)
+        launchAsm();
 
         for (char c : std::string("D0800"))
             computer.getPia()->addKeypress(c);
@@ -448,9 +432,7 @@ private:
         mem->write(0x0800, 0xA9);        // LDA #$05 marker at $0800
         mem->write(0x0801, 0x05);
 
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);            // launch dev tools
+        launchAsm();
 
         // "D085" then backspace (drops the 5 -> $0008) then "00" -> $0800.
         for (char c : std::string("D085"))
@@ -472,9 +454,7 @@ private:
     void testDisassemblerEscMidline() {
         computer.getMemory()->write(0x0800, 0xEA);   // NOP marker
 
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);
+        launchAsm();
 
         for (char c : std::string("D08"))            // partial address...
             computer.getPia()->addKeypress(c);
@@ -494,42 +474,14 @@ private:
         sendKey(0x1B, 200000);
     }
 
-    // Edge case of reusing the monitor's scratch via the extended ABI: a module's
-    // disassemble (K_PARSE_HEX) overwrites MON_CURRADDR ($14/$15), but the launch
-    // save/restore must leave the monitor's current address intact on return.
-    void testModuleStatePreservedAcrossLaunch() {
-        clearScreen();
-        sendCommand("R:1234");                   // set the monitor's current address
-        const uint8_t pre_lo = readMem(0x14);
-        const uint8_t pre_hi = readMem(0x15);
-
-        sendCommand("B:");
-        sendKey('2', 200000);                    // launch dev tools
-        for (char c : std::string("D0400"))      // module sets MON_CURRADDR := $0400
-            computer.getPia()->addKeypress(c);
-        computer.getPia()->addKeypress('\r');
-        computer.run(500000);
-        sendKey(0x1B, 200000);                   // exit back to the monitor
-
-        verifyMemEquals(0x14, pre_lo, "MON_CURRADDR lo restored after module");
-        verifyMemEquals(0x15, pre_hi, "MON_CURRADDR hi restored after module");
-
-        // And the monitor's command buffer is usable again (it was the module's
-        // line-input scratch via K_READ_LINE).
-        clearScreen();
-        sendCommand("R:8000");
-        verifyResponse("8000:", "Monitor command input works after module reuse");
-    }
-
-    // End-to-end: selecting BASIC from the menu maps bank 1 into the window and
-    // jumps into the module. Verifies the bank register, that the window now
-    // shows bank-1 ROM (LAB_COLD opcode $A0), and that BASIC's banner prints.
-    // Runs LAST (BASIC keeps running afterward), so it can't disturb other tests.
+    // End-to-end: typing "BASIC" at the DOS prompt maps bank 1 into the window and
+    // jumps into the module. Verifies the bank register, that the window now shows
+    // bank-1 ROM (LAB_COLD opcode $A0), and that BASIC's banner prints. Runs LAST
+    // (BASIC keeps running afterward). Q exits the monitor back to the DOS first.
     void testBankLaunch() {
-        clearScreen();
-        sendCommand("B:");
-        sendKey('1', 200000);    // select BASIC -> EhBASIC "Memory size ?" prompt
-        verifyMemEquals(0xFE23, 0x01, "B: select maps bank 1 (MODULE_BANK)");
+        sendCommand("Q");        // leave the monitor -> DOS prompt
+        sendCommand("BASIC", 200000);
+        verifyMemEquals(0xFE23, 0x01, "BASIC maps bank 1 (MODULE_BANK)");
         verifyMemEquals(0xB000, 0xA0, "Window shows bank-1 ROM (LAB_COLD opcode)");
         sendKey('\r', 2000000);  // accept default memory size -> sign-on banner
         verifyResponse("MFC BASIC", "BASIC launches from bank 1");
@@ -539,9 +491,7 @@ private:
     // addressing modes (incl. 65C02 (zp), accumulator, and a computed branch)
     // and verifies the emitted bytes straight from memory.
     void testAssembler() {
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);            // launch dev tools
+        launchAsm();
 
         sendCommand("A0800");            // assemble mode at $0800
         sendCommand("LDA #$05");         // A9 05      immediate
@@ -602,9 +552,7 @@ private:
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);             // source terminator
 
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);            // launch dev tools
+        launchAsm();
         sendCommand("B", 300000);        // build
 
         verifyMemEquals(0x0800, 0xA9, "2pass: LDA #imm");
@@ -642,9 +590,7 @@ private:
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
 
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);
+        launchAsm();
         sendCommand("B", 300000);
 
         verifyMemEquals(0x0900, 0x48, "dir: .ASCII 'H'");
@@ -677,9 +623,7 @@ private:
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
 
-        clearScreen();
-        sendCommand("B:");
-        sendKey('2', 200000);
+        launchAsm();
         sendCommand("B", 300000);
 
         verifyResponse("0800: LDA #$2A", "listing: address + source line");

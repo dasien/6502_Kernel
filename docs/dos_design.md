@@ -9,8 +9,9 @@
 boots into the **MFC/OS** shell (`]` prompt) with `CATALOG`/`TYPE`/`SAVE`/`LOAD`/`ERASE`/
 `RENAME`/`IMPORT`/`EXPORT`/`MON`/`HELP`; the monitor is launched by `MON`, exited with
 `Q`, and is a pure debugger (the `@` preview and the host `L:`/`S:` are retired - host
-transfer is now DOS `IMPORT`/`EXPORT`). Kernel v3.7. Next: 4.3 (launch-by-name + `.PRG`
-program loader). Identity: OS = **MFC/OS**, `]` prompt.
+transfer is now DOS `IMPORT`/`EXPORT`). **4.3a done:** `BASIC`/`ASM` launch by name
+from `]` and return to it; the `B:` bank menu is retired. Kernel v3.8. Next: 4.3b (disk
+`.PRG` loader + `&` override). Identity: OS = **MFC/OS**, `]` prompt.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -130,17 +131,23 @@ aliases):
 There is **no `BANKS` menu and no `RUN` verb.** You type a **name** at the DOS prompt
 and the DOS resolves it, in order:
 
-1. **Built-in DOS command** (`CATALOG`, `ERASE`, …).
-2. **Built-in ROM program** — `BASIC`, `ASM`, `MON`, `EDIT` (from the `MODULE_DIR`
-   registry) → map the bank, jump to its entry.
+1. **Built-in DOS command** (`CATALOG`, `ERASE`, …; includes `MON`).
+2. **Built-in ROM program** — `BASIC`, `ASM` (from the `MODULE_DIR` registry) → map
+   the bank, jump to its entry; returns to the DOS on exit.
 3. **Program file on disk** → load it into RAM and execute.
 
+**Settled (2026-06):** the assembler's launch name is **`ASM`** (its `MODULE_DIR`
+name). **ROM-module-first** resolution (a disk file of the same name is shadowed),
+with an **override prefix `&`**: typing `&NAME` skips the module check and runs the
+disk file `NAME` (so a disk program can intentionally replace a built-in). A launched
+program returns to the DOS by a plain **`RTS`** — the DOS runs it as a subroutine
+(pushes a `DOS_WARM` return), so a normal `RTS` lands back at the `]` prompt; a
+program that takes over the machine just needs a reset.
+
 So "ROMs" vs "programs" is just an implementation detail (ROM = fast, always present,
-not editable; file = on disk, can be assembled/saved). From the user's seat
-everything is *a named program you run*. The old `B:` bank menu becomes "type the
-name"; `MODULE_DIR` remains as the registry the DOS consults. A `HELP`/built-ins
-listing surfaces the resident programs for discoverability; `CATALOG` lists disk
-files.
+not editable; file = on disk, can be assembled/saved). The old `B:` bank menu is
+retired; `MODULE_DIR` remains the registry the DOS consults (via a kernel ABI). A
+`HELP`/built-ins listing surfaces the resident programs; `CATALOG` lists disk files.
 
 ### Program file format
 
@@ -279,8 +286,17 @@ the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal ma
      equates, and the `MSG_DOS_*` strings from `kernel.asm` (~550 bytes freed). The
      monitor is a pure debugger again; the DOS shell owns the file verbs. Kernel v3.6.
      The obsolete monitor `@` tests were removed (coverage is the DOS-level tests).
-   - **4.3** — launch-by-name (command → ROM module → disk `.PRG`) + program loader;
-     module return path switches to DOS; the `B:` menu retires.
+   - **4.3** — launch-by-name. Decisions: `ASM` launch name, ROM-module-first with
+     `&NAME` override to force a disk program, programs return via `RTS`.
+     - *4.3a — DONE.* `RETURN_FROM_MODULE` (`$FF12`) now re-enters `DOS_WARM` (monitor-
+       state save/restore dropped); new `K_LAUNCH_BY_NAME` ABI (`$FF21`) scans
+       `MODULE_DIR` and `BANK_LAUNCH`es a match (assembler's name is `ASM`); the DOS
+       resolves an unmatched verb to a module. `BASIC`/`ASM` run from `]` and return
+       to `]`. The monitor `B:` bank menu is excised (`CMD_BANK_MENU`/`PARSE_CMD_BASIC`
+       removed). Kernel v3.8.
+     - *4.3b:* disk `.PRG` launch — `FS_OPEN` the name, read the 2-byte load-address
+       header, load the body, run it as a subroutine (returns to `]` on `RTS`); the
+       `&` override forces this path. Closes assemble → `SAVE` → run by name.
 5. **Editor** (module, bank) — full-screen, generic; edit/save FS files → full
    in-machine self-hosting (edit → assemble → run, all at the DOS).
 6. *(Later/optional)* relocate the monitor to a bank; kernel ROM becomes a lean BIOS.
