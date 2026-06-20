@@ -39,7 +39,9 @@ public:
         // into the monitor (via MON) so the monitor tests below run as before.
         testDosShell();
         testDosFileVerbs();
+        testDosTransfer();
         sendCommand("MON");
+        testMonitorLSRetired();
 
         // Test basic commands
         testClearScreen();
@@ -170,6 +172,31 @@ public:
         // ERASE the renamed file.
         sendCommand("ERASE RENAMED.BIN");
         verifyResponse("ERASED", "DOS ERASE reports ERASED");
+    }
+
+    // IMPORT/EXPORT (host <-> filesystem). In a console build there is no file
+    // picker, so the host open fails; confirm the verbs are recognized and fail
+    // gracefully (no hang/crash) rather than reporting COMMAND NOT FOUND.
+    void testDosTransfer() {
+        mountDisk({{"AFILE.TXT", std::vector<uint8_t>(10, 'A')}});
+        sendCommand("IMPORT NEWF.TXT");
+        verifyResponse("HOST I/O ERROR", "IMPORT handles no host dialog gracefully");
+        // EXPORT of an existing file reaches the host write (then errors, no GUI).
+        sendCommand("EXPORT AFILE.TXT");
+        verifyResponse("HOST I/O ERROR", "EXPORT reaches host write, errors gracefully");
+        // EXPORT of a missing file fails before any host I/O.
+        sendCommand("EXPORT NOPE.TXT");
+        verifyResponse("FILE NOT FOUND", "EXPORT of a missing file reports not found");
+    }
+
+    // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).
+    void testMonitorLSRetired() {
+        clearScreen();
+        sendCommand("L:0800");
+        verifyResponse("ERROR?", "Monitor L: is retired");
+        clearScreen();
+        sendCommand("S:0800-0810");
+        verifyResponse("ERROR?", "Monitor S: is retired");
     }
 
 private:

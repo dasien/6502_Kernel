@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.6
+; Version:      3.7
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -178,6 +178,11 @@
 ;                   RENAME), so the monitor is a pure debugger again. Removes the
 ;                   '@' dispatch, its CMD_* routines, the FS_*/DOS_DIR_ENTRY equates,
 ;                   and the MSG_DOS_* strings.
+; 2026-06-17  v3.7  Phase 4.2c: host <-> filesystem transfer moves to the DOS as
+;                   IMPORT/EXPORT (host file picker <-> a FAT16 file). The monitor's
+;                   L:/S: host load/save are retired - dropped from CMD_INDEX_MAP and
+;                   help, and their handlers (PARSE_CMD_LOAD/SAVE_CHECK, CMD_LOAD_FILE,
+;                   CMD_SAVE_FILE) excised; the freed jump-table slots map to no-ops.
 ;
 ; ================================================================
 
@@ -1362,18 +1367,6 @@ PARSE_CMD_GO_CHECK:
     JSR CMD_RUN_PROGRAM         ; Execute run program command
     JMP PARSE_CMD_DONE
 
-PARSE_CMD_LOAD_CHECK:
-    JSR PARSE_COLON_COMMAND     ; Parse L:xxxx format (address only)
-    BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_LOAD_FILE           ; Execute load file command (host picks the file)
-    JMP PARSE_CMD_DONE
-
-PARSE_CMD_SAVE_CHECK:
-    JSR PARSE_COLON_COMMAND     ; Parse S:xxxx-yyyy format (range only)
-    BCS PARSE_CMD_ERROR         ; If error, show error message
-    JSR CMD_SAVE_FILE           ; Execute save file command (host picks the file)
-    JMP PARSE_CMD_DONE
-
 PARSE_CMD_FILL_CHECK:
     JSR PARSE_COLON_COMMAND     ; Parse F:xxxx-yyyy format
     BCS PARSE_CMD_RANGE_ERROR   ; If address parsing error, show range error
@@ -2449,109 +2442,6 @@ CMD_RUN_PROGRAM:
     ; stack level than the old JSR-wrapper indirection.
     JMP (MON_CURRADDR_LO)       ; Jump to user program
 
-; Load file command - Load binary file from host system to specified memory address
-; Input: Target address in MON_CURRADDR_HI/LO (L:xxxx)
-; Output: File contents loaded to memory, success/error message displayed
-; Modifies: A, X, Y, and memory at target address
-; Note: Communicates with C++ host via file I/O interface, one-shot operation.
-;       The host presents a file-open dialog (it owns the host filesystem path),
-;       so the kernel supplies only the load address - no filename.
-CMD_LOAD_FILE:
-    ; Set up file I/O communication with C++ host
-    ; Store target address in file I/O interface
-    LDA MON_CURRADDR_LO         ; Get load address low byte
-    STA FILE_ADDR_LO            ; Store in file interface
-    LDA MON_CURRADDR_HI         ; Get load address high byte
-    STA FILE_ADDR_HI            ; Store in file interface
-
-    ; No filename: the host file-open dialog selects the source file.
-
-    ; Issue load command to C++ host
-    LDA #FILE_LOAD_CMD          ; Load command code
-    STA FILE_COMMAND            ; Store in command register
-
-    ; Wait for operation to complete
-LOAD_WAIT_COMPLETE:
-    LDA FILE_STATUS             ; Read status register
-    CMP #FILE_IN_PROGRESS       ; Still in progress?
-    BEQ LOAD_WAIT_COMPLETE      ; If so, keep waiting
-
-    ; Check if operation was successful
-    CMP #FILE_SUCCESS           ; Was it successful?
-    BEQ LOAD_CMD_SUCCESS        ; If so, show success message
-
-    ; Operation failed - show error
-    JSR PRINT_ERROR_MSG         ; Print error message
-    RTS
-
-LOAD_CMD_SUCCESS:
-    ; Show success message
-    LDA #<MSG_SUCCESS
-    LDY #>MSG_SUCCESS
-    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
-
-; Save file command - Save memory range to binary file on host system
-; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO (S:xxxx-yyyy)
-; Output: Memory range written to file, success/error message displayed
-; Modifies: A, X, Y
-; Note: Validates address range, communicates with C++ host via file I/O interface.
-;       The host presents a file-save dialog (it owns the host filesystem path),
-;       so the kernel supplies only the address range - no filename.
-CMD_SAVE_FILE:
-    ; Check if we have a valid address range (end address must be non-zero)
-    LDA MON_ENDADDR_LO          ; Check end address low byte
-    ORA MON_ENDADDR_HI          ; OR with high byte
-    BEQ SAVE_RANGE_ERROR        ; If zero, no range specified
-
-    ; Validate that start <= end
-    JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
-    BCC SAVE_MODE_VALID_RANGE   ; If valid range, continue
-
-SAVE_RANGE_ERROR:
-    JSR PRINT_RANGE_ERROR       ; Print range error message
-    RTS
-
-SAVE_MODE_VALID_RANGE:
-    ; Set up file I/O communication with C++ host
-    ; Store start address in file I/O interface
-    LDA MON_STARTADDR_LO        ; Get start address low byte
-    STA FILE_ADDR_LO            ; Store in file interface
-    LDA MON_STARTADDR_HI        ; Get start address high byte
-    STA FILE_ADDR_HI            ; Store in file interface
-
-    ; Store end address in additional PIA registers
-    LDA MON_ENDADDR_LO          ; Get end address low byte
-    STA FILE_END_ADDR_LO        ; Store in file end address low
-    LDA MON_ENDADDR_HI          ; Get end address high byte
-    STA FILE_END_ADDR_HI        ; Store in file end address high
-
-    ; No filename: the host file-save dialog selects the destination file.
-
-    ; Issue save command to C++ host
-    LDA #FILE_SAVE_CMD          ; Save command code
-    STA FILE_COMMAND            ; Store in command register
-
-    ; Wait for operation to complete
-SAVE_WAIT_COMPLETE:
-    LDA FILE_STATUS             ; Read status register
-    CMP #FILE_IN_PROGRESS       ; Still in progress?
-    BEQ SAVE_WAIT_COMPLETE      ; If so, keep waiting
-
-    ; Check if operation was successful
-    CMP #FILE_SUCCESS           ; Was it successful?
-    BEQ SAVE_CMD_SUCCESS        ; If so, show success message
-
-    ; Operation failed - show error
-    JSR PRINT_ERROR_MSG         ; Print error message
-    RTS
-
-SAVE_CMD_SUCCESS:
-    ; Show success message
-    LDA #<MSG_SUCCESS
-    LDY #>MSG_SUCCESS
-    JMP PRINT_MSG_AY            ; tail call: PRINT_MESSAGE's RTS returns to caller
-
-
 ; Dump memory range in formatted hex display with paging support
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
 ; Output: Formatted memory dump to screen (8 bytes per line with addresses)
@@ -3323,10 +3213,10 @@ CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE <PARSE_CMD_GO_CHECK   ; 3 - 'G'
     .BYTE <PARSE_CMD_HELP       ; 4 - unused (help is the '?' command, handled earlier)
-    .BYTE <PARSE_CMD_LOAD_CHECK ; 5 - 'L'
+    .BYTE <PARSE_CMD_DONE       ; 5 - unused ('L' retired; host load is DOS IMPORT)
     .BYTE <PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE <PARSE_CMD_READ_CHECK ; 7 - 'R'
-    .BYTE <PARSE_CMD_SAVE_CHECK ; 8 - 'S'
+    .BYTE <PARSE_CMD_DONE       ; 8 - unused ('S' retired; host save is DOS EXPORT)
     .BYTE <PARSE_CMD_STACK      ; 9 - 'T'
     .BYTE <PARSE_CMD_WRITE_CHECK; 10 - 'W'
     .BYTE <PARSE_CMD_EXIT       ; 11 - unused (ESC handled earlier)
@@ -3341,10 +3231,10 @@ CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE >PARSE_CMD_GO_CHECK   ; 3 - 'G'
     .BYTE >PARSE_CMD_HELP       ; 4 - unused (help is the '?' command, handled earlier)
-    .BYTE >PARSE_CMD_LOAD_CHECK ; 5 - 'L'
+    .BYTE >PARSE_CMD_DONE       ; 5 - unused ('L' retired; host load is DOS IMPORT)
     .BYTE >PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE >PARSE_CMD_READ_CHECK ; 7 - 'R'
-    .BYTE >PARSE_CMD_SAVE_CHECK ; 8 - 'S'
+    .BYTE >PARSE_CMD_DONE       ; 8 - unused ('S' retired; host save is DOS EXPORT)
     .BYTE >PARSE_CMD_STACK      ; 9 - 'T'
     .BYTE >PARSE_CMD_WRITE_CHECK; 10 - 'W'
     .BYTE >PARSE_CMD_EXIT       ; 11 - unused (ESC handled earlier)
@@ -3367,14 +3257,14 @@ CMD_INDEX_MAP:
     .BYTE $FF   ; I -> invalid
     .BYTE $FF   ; J -> invalid
     .BYTE $FF   ; K -> invalid
-    .BYTE 5     ; L -> 5 (Load)
+    .BYTE $FF   ; L -> invalid (host load retired; use DOS LOAD / IMPORT)
     .BYTE 6     ; M -> 6 (Move/Copy)
     .BYTE $FF   ; N -> invalid
     .BYTE $FF   ; O -> invalid
     .BYTE $FF   ; P -> invalid
     .BYTE $FF   ; Q -> invalid
     .BYTE 7     ; R -> 7 (Read Memory)
-    .BYTE 8     ; S -> 8 (Save)
+    .BYTE $FF   ; S -> invalid (host save retired; use DOS SAVE / EXPORT)
     .BYTE 9     ; T -> 9 (Print Stack)
     .BYTE $FF   ; U -> invalid
     .BYTE $FF   ; V -> invalid
@@ -3402,10 +3292,8 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_FILL         ; F
     .WORD MSG_HELP_GO           ; G
     .WORD MSG_HELP_HEX_TO_DEC   ; H
-    .WORD MSG_HELP_LOAD         ; L
     .WORD MSG_HELP_MOVE         ; M
     .WORD MSG_HELP_READ         ; R
-    .WORD MSG_HELP_SAVE         ; S
     .WORD MSG_HELP_STACK        ; T
     .WORD MSG_HELP_WRITE        ; W
     .WORD MSG_HELP_SEARCH       ; X
@@ -3415,7 +3303,7 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_RECALL       ; .
     .WORD MSG_HELP_QUIT         ; Q
 
-HELP_MSG_COUNT = 18              ; Number of help messages
+HELP_MSG_COUNT = 16              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
@@ -3426,9 +3314,7 @@ MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
 MSG_HELP_DECIMAL:    .BYTE "D:NNNNN DECIMAL TO HEX", 0
 MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
 MSG_HELP_HEX_TO_DEC: .BYTE "H:XXXX HEX TO DECIMAL", 0
-MSG_HELP_LOAD:       .BYTE "L:XXXX LOAD FILE", 0
 MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY) READ FROM MEMORY", 0
-MSG_HELP_SAVE:       .BYTE "S:XXXX-YYYY   SAVE MEMORY RANGE", 0
 MSG_HELP_STACK:      .BYTE "T:     PRINT STACK", 0
 MSG_HELP_WRITE:      .BYTE "W:XXXX WRITE TO MEMORY", 0
 MSG_HELP_ZERO:       .BYTE "Z:     PRINT ZERO PAGE", 0

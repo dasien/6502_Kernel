@@ -60,6 +60,20 @@ ASCII_LF         = $0A
 ASCII_SPACE      = $20
 
 ; ----------------------------------------------------------------
+; Host byte-stream file I/O (PIA) - used by IMPORT/EXPORT to bridge a host
+; (macOS) file and a FAT16 file via the file-picker dialog.
+; ----------------------------------------------------------------
+FIO_COMMAND      = $FE10                ; file command register
+FIO_STATUS       = $FE11                ; file status register
+FIO_DATA         = $FE22                ; byte-stream data register
+FIO_OPEN_RD      = $03                  ; open host file for reading (open dialog)
+FIO_OPEN_WR      = $04                  ; open host file for writing (save dialog)
+FIO_CLOSE        = $05                  ; close/flush the host stream
+FIO_INPROG       = $01                  ; status: operation in progress
+FIO_EOF          = $04                  ; status (read): no more bytes
+FIO_ERROR        = $FF                  ; status: error / cancelled
+
+; ----------------------------------------------------------------
 ; DOS zero page (the free $3A-$5A gap; clear of monitor $14-$39,
 ; BASIC $00-$13/$5B-$FF, and dev-tools $C0-$DF)
 ; ----------------------------------------------------------------
@@ -240,6 +254,18 @@ _DOS_DISPATCH:
     BCS @n9
     JMP _DOS_DO_RENAME
 @n9:
+    LDA #<KW_IMPORT
+    LDX #>KW_IMPORT
+    JSR _DOS_VERB_MATCH
+    BCS @n10
+    JMP _DOS_DO_IMPORT
+@n10:
+    LDA #<KW_EXPORT
+    LDX #>KW_EXPORT
+    JSR _DOS_VERB_MATCH
+    BCS @n11
+    JMP _DOS_DO_EXPORT
+@n11:
     ; unknown verb
     JSR K_PRINT_NEWLINE
     LDA #<MSG_DOS_BADCMD
@@ -434,6 +460,10 @@ _DOS_PERR_USAGE:
 _DOS_PERR_NOFILE:
     LDA #<MSG_DOS_NOFILE
     LDX #>MSG_DOS_NOFILE
+    BRA _DOS_PERR
+_DOS_PERR_HOST:
+    LDA #<MSG_DOS_HOSTERR
+    LDX #>MSG_DOS_HOSTERR
     BRA _DOS_PERR
 _DOS_PERR_WRITE:
     LDA #<MSG_DOS_WRITEERR
@@ -663,11 +693,108 @@ _DOS_DO_LOAD:
     JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
+; _DOS_DO_IMPORT - IMPORT NAME : host file (picker) -> FAT16 file NAME
+; ----------------------------------------------------------------
+_DOS_DO_IMPORT:
+    JSR _DOS_ARGSTART
+    BCC :+
+    JMP @usage
+:
+    STY DOS_SH_NAMEIDX
+    LDX MON_CMDLEN
+    LDA #$00
+    STA MON_CMDBUF,X                    ; null-terminate the name
+    LDA #FIO_OPEN_RD                    ; open the host file (open dialog)
+    STA FIO_COMMAND
+@wait:
+    LDA FIO_STATUS
+    CMP #FIO_INPROG
+    BEQ @wait
+    CMP #FIO_ERROR
+    BNE :+
+    JMP @hosterr
+:
+    LDA DOS_SH_NAMEIDX                  ; open the FAT16 file for writing
+    LDX #>MON_CMDBUF
+    LDY #$01
+    JSR _FS_OPEN
+    BCS @abort
+@copy:
+    LDA FIO_STATUS
+    CMP #FIO_EOF
+    BEQ @done
+    LDA FIO_DATA                        ; host byte -> FAT16 file
+    JSR _FS_PUTB
+    BCS @abort
+    BRA @copy
+@done:
+    LDA #FIO_CLOSE
+    STA FIO_COMMAND
+    JSR _FS_CLOSE
+    BCS @abort2
+    LDA #<MSG_DOS_IMPORTED
+    LDX #>MSG_DOS_IMPORTED
+    JMP _DOS_PERR
+@abort:                                 ; FS error mid-transfer: close host stream
+    LDA #FIO_CLOSE
+    STA FIO_COMMAND
+@abort2:
+    JMP _DOS_PERR_WRITE
+@hosterr:
+    JMP _DOS_PERR_HOST
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_EXPORT - EXPORT NAME : FAT16 file NAME -> host file (save dialog)
+; ----------------------------------------------------------------
+_DOS_DO_EXPORT:
+    JSR _DOS_ARGSTART
+    BCC :+
+    JMP @usage
+:
+    LDX MON_CMDLEN
+    LDA #$00
+    STA MON_CMDBUF,X
+    TYA                                 ; open the FAT16 file for reading
+    LDX #>MON_CMDBUF
+    LDY #$00
+    JSR _FS_OPEN
+    BCS @notfound
+    LDA #FIO_OPEN_WR                    ; open the host file (save dialog)
+    STA FIO_COMMAND
+@wait:
+    LDA FIO_STATUS
+    CMP #FIO_INPROG
+    BEQ @wait
+    CMP #FIO_ERROR
+    BEQ @hosterr
+@copy:
+    JSR _FS_GETB
+    BCS @done
+    STA FIO_DATA                        ; FAT16 byte -> host stream
+    BRA @copy
+@done:
+    LDA #FIO_CLOSE
+    STA FIO_COMMAND
+    JSR _FS_CLOSE
+    LDA #<MSG_DOS_EXPORTED
+    LDX #>MSG_DOS_EXPORTED
+    JMP _DOS_PERR
+@hosterr:
+    JSR _FS_CLOSE                       ; close the FAT16 file we opened
+    JMP _DOS_PERR_HOST
+@notfound:
+    JMP _DOS_PERR_NOFILE
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
 ; DOS shell strings
 ; ----------------------------------------------------------------
 MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
 MSG_DOS_HELP:    .BYTE "CATALOG TYPE SAVE LOAD ERASE RENAME", $0D, $0A
-                 .BYTE "MON HELP", $0D, $0A, 0
+                 .BYTE "IMPORT EXPORT MON HELP", $0D, $0A, 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
 MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
 MSG_DOS_NOFILE:  .BYTE "FILE NOT FOUND", $0D, $0A, 0
@@ -677,7 +804,10 @@ MSG_DOS_SAVED:   .BYTE "SAVED", $0D, $0A, 0
 MSG_DOS_LOADED:  .BYTE "LOADED", $0D, $0A, 0
 MSG_DOS_ERASED:  .BYTE "ERASED", $0D, $0A, 0
 MSG_DOS_RENAMED: .BYTE "RENAMED", $0D, $0A, 0
+MSG_DOS_IMPORTED:.BYTE "IMPORTED", $0D, $0A, 0
+MSG_DOS_EXPORTED:.BYTE "EXPORTED", $0D, $0A, 0
 MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
+MSG_DOS_HOSTERR: .BYTE "HOST I/O ERROR", $0D, $0A, 0
 KW_HELP:         .BYTE "HELP", 0
 KW_MON:          .BYTE "MON", 0
 KW_CATALOG:      .BYTE "CATALOG", 0
@@ -687,6 +817,8 @@ KW_SAVE:         .BYTE "SAVE", 0
 KW_LOAD:         .BYTE "LOAD", 0
 KW_ERASE:        .BYTE "ERASE", 0
 KW_RENAME:       .BYTE "RENAME", 0
+KW_IMPORT:       .BYTE "IMPORT", 0
+KW_EXPORT:       .BYTE "EXPORT", 0
 
 ; ================================================================
 ; BLOCK DEVICE PRIMITIVES

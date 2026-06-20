@@ -7,9 +7,10 @@
 **Phase 3 (FAT16 write) COMPLETE** (3a write engine + 3b FS_DELETE/`@` save-erase).
 **Phase 4 (DOS shell) underway** — 4.1 boot pivot + 4.2 file verbs done: the machine
 boots into the **MFC/OS** shell (`>` prompt) with `CATALOG`/`TYPE`/`SAVE`/`LOAD`/`ERASE`/
-`RENAME`/`MON`/`HELP`; the monitor is launched by `MON`, exited with `Q`, and is now a
-pure debugger (the temporary `@` preview is retired). Kernel v3.6. Next: 4.3
-(launch-by-name + `.PRG` program loader). Identity: OS = **MFC/OS**, bare `>` prompt.
+`RENAME`/`IMPORT`/`EXPORT`/`MON`/`HELP`; the monitor is launched by `MON`, exited with
+`Q`, and is a pure debugger (the `@` preview and the host `L:`/`S:` are retired - host
+transfer is now DOS `IMPORT`/`EXPORT`). Kernel v3.7. Next: 4.3 (launch-by-name + `.PRG`
+program loader). Identity: OS = **MFC/OS**, bare `>` prompt.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -121,6 +122,8 @@ aliases):
 | `ERASE name` | delete a file |
 | `RENAME old,new` | rename a file |
 | `TYPE name` | display a text file |
+| `IMPORT name` | copy a host (macOS) file, via the file picker, into a FAT16 file |
+| `EXPORT name` | copy a FAT16 file out to a host file, via the save dialog |
 
 ### Launch by name (unified — ROMs *and* programs)
 
@@ -264,6 +267,13 @@ the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal ma
      Kernel v3.5.1 (MONITOR_MAIN resets its display state on launch). Covered by
      DOS round-trip cases in `monitor_integration` and `FS_RENAME` cases in
      `dos_fat16_tests`.
+   - **4.2c — DONE.** Host bridge moved into the DOS as `IMPORT name` / `EXPORT name`
+     (host file picker <-> a FAT16 file, reusing the PIA byte-stream that `L:`/`S:`
+     used, now bridged to the FS via `FS_PUTB`/`FS_GETB`). The monitor's `L:`/`S:`
+     host load/save are retired: removed from `CMD_INDEX_MAP` + help, and their
+     handlers (`PARSE_CMD_LOAD`/`SAVE_CHECK`, `CMD_LOAD_FILE`, `CMD_SAVE_FILE`)
+     excised - freeing ~180 bytes of kernel ROM (the two vacated jump-table slots
+     map to a no-op). Kernel v3.7.
    - **4.2b — DONE.** Retired the temporary `@` preview: removed its dispatch,
      `CMD_CATALOG`/`CMD_TYPE`/`CMD_SAVE`/`CMD_ERASE` routines, the `FS_*`/`DOS_DIR_ENTRY`
      equates, and the `MSG_DOS_*` strings from `kernel.asm` (~550 bytes freed). The
