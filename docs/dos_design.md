@@ -9,9 +9,10 @@
 boots into the **MFC/OS** shell (`]` prompt) with `CATALOG`/`TYPE`/`SAVE`/`LOAD`/`ERASE`/
 `RENAME`/`IMPORT`/`EXPORT`/`MON`/`HELP`; the monitor is launched by `MON`, exited with
 `Q`, and is a pure debugger (the `@` preview and the host `L:`/`S:` are retired - host
-transfer is now DOS `IMPORT`/`EXPORT`). **4.3a done:** `BASIC`/`ASM` launch by name
-from `]` and return to it; the `B:` bank menu is retired. Kernel v3.8. Next: 4.3b (disk
-`.PRG` loader + `&` override). Identity: OS = **MFC/OS**, `]` prompt.
+transfer is now DOS `IMPORT`/`EXPORT`). **Phase 4 COMPLETE:** launch-by-name runs
+`BASIC`/`ASM` and disk `.PRG` programs (`&` forces the disk version), each returning to
+`]`; the `B:` bank menu is retired. Kernel v3.8. **The assemble → SAVE → run loop is
+closed.** Next: Phase 5 (the editor). Identity: OS = **MFC/OS**, `]` prompt.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
@@ -294,9 +295,12 @@ the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal ma
        resolves an unmatched verb to a module. `BASIC`/`ASM` run from `]` and return
        to `]`. The monitor `B:` bank menu is excised (`CMD_BANK_MENU`/`PARSE_CMD_BASIC`
        removed). Kernel v3.8.
-     - *4.3b:* disk `.PRG` launch — `FS_OPEN` the name, read the 2-byte load-address
-       header, load the body, run it as a subroutine (returns to `]` on `RTS`); the
-       `&` override forces this path. Closes assemble → `SAVE` → run by name.
+     - *4.3b — DONE.* Disk `.PRG` launch (`_DOS_RUN_FILE`): `FS_OPEN` the name, read
+       the 2-byte load-address header, load the body there, then run it as a
+       subroutine — clean stack with a `DOS_WARM` return pushed, so the program's
+       `RTS` returns to `]`. A leading `&` forces this disk path over a same-named
+       module. Unknown name → `COMMAND NOT FOUND`. **Closes the loop:** assemble in
+       `ASM` → `SAVE NAME,start-end` → type `NAME` to run it.
 5. **Editor** (module, bank) — full-screen, generic; edit/save FS files → full
    in-machine self-hosting (edit → assemble → run, all at the DOS).
 6. *(Later/optional)* relocate the monitor to a bank; kernel ROM becomes a lean BIOS.

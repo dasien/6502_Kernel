@@ -267,9 +267,17 @@ _DOS_DISPATCH:
     BCS @n11
     JMP _DOS_DO_EXPORT
 @n11:
-    ; No built-in command matched - try launching a program by name. Isolate the
-    ; first word (the program name) by null-terminating at the first space/end.
-    LDY #$00
+    ; No built-in command matched - launch a program by name. A leading '&'
+    ; forces the disk path (skip the ROM-module check); otherwise modules win.
+    LDX #$00                            ; name starts at offset 0...
+    LDA MON_CMDBUF
+    CMP #'&'
+    BNE @noamp
+    LDX #$01                            ; ...or just past a leading '&'
+@noamp:
+    STX DOS_SH_NAMEIDX
+    TXA                                 ; isolate the first word: null-terminate it
+    TAY
 @end:
     CPY MON_CMDLEN
     BCS @term
@@ -282,10 +290,16 @@ _DOS_DISPATCH:
     LDA #$00
     STA MON_CMDBUF,Y
     JSR K_PRINT_NEWLINE
+    LDA DOS_SH_NAMEIDX                  ; '&' present? -> skip the module check
+    BNE @disk
     LDA #<MON_CMDBUF                    ; try a ROM module (BASIC/ASM)
     LDX #>MON_CMDBUF
     JSR K_LAUNCH_BY_NAME               ; runs it (no return) on a match
-    ; carry set => not a module. (4.3b: try a disk .PRG here.) Report not found.
+@disk:
+    LDA DOS_SH_NAMEIDX                  ; name ptr = MON_CMDBUF + offset
+    LDX #>MON_CMDBUF                    ; (low byte = offset, MON_CMDBUF is page-aligned)
+    JSR _DOS_RUN_FILE                  ; loads + runs a disk .PRG (no return on success)
+    ; only here if the program wasn't found
     LDA #<MSG_DOS_BADCMD
     STA MON_MSG_PTR_LO
     LDA #>MSG_DOS_BADCMD
@@ -806,6 +820,51 @@ _DOS_DO_EXPORT:
     JMP _DOS_PERR_NOFILE
 @usage:
     JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_RUN_FILE - load and run a disk program (.PRG) by name
+; ----------------------------------------------------------------
+; In: A/X = pointer to a null-terminated file name. The file begins with a
+; 2-byte little-endian load address (= the entry point), then the body. Loads
+; the body there and runs it as a subroutine: a clean stack is set up with a
+; DOS_WARM return pushed, so the program's RTS returns to the ] prompt. Does NOT
+; return on success; on a missing/short file, carry set + RTS.
+; Uses DOS_PTR (load cursor) and DOS_PTR2 (entry, also the indirect-JMP vector).
+_DOS_RUN_FILE:
+    LDY #$00                            ; read mode
+    JSR _FS_OPEN
+    BCS @nf
+    JSR _FS_GETB                        ; load-address header low (= entry low)
+    BCS @badclose
+    STA DOS_PTR2
+    STA DOS_PTR
+    JSR _FS_GETB                        ; load-address header high
+    BCS @badclose
+    STA DOS_PTR2+1
+    STA DOS_PTR+1
+@body:
+    JSR _FS_GETB                        ; stream the body to (load cursor)
+    BCS @done
+    LDY #$00
+    STA (DOS_PTR),Y
+    INC DOS_PTR
+    BNE @body
+    INC DOS_PTR+1
+    BRA @body
+@done:
+    JSR _FS_CLOSE
+    LDX #$FF                            ; clean stack for the program
+    TXS
+    LDA #>(DOS_WARM-1)                  ; push DOS_WARM-1: the program's RTS lands
+    PHA                                 ;   on DOS_WARM (RTS adds 1)
+    LDA #<(DOS_WARM-1)
+    PHA
+    JMP (DOS_PTR2)                      ; run it at the header's load address
+@badclose:
+    JSR _FS_CLOSE
+@nf:
+    SEC
+    RTS
 
 ; ----------------------------------------------------------------
 ; DOS shell strings

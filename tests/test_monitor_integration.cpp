@@ -41,6 +41,9 @@ public:
         testDosShell();
         testDosFileVerbs();
         testDosTransfer();
+        testRunDiskProgram();
+        testRunOverride();
+        testRunNotFound();
 
         // Launch-by-name: the assembler module runs via "ASM" and returns to the
         // DOS prompt on exit. (BANK_LAUNCH clears the screen, so no clear needed.)
@@ -175,6 +178,41 @@ public:
         // ERASE the renamed file.
         sendCommand("ERASE RENAMED.BIN");
         verifyResponse("ERASED", "DOS ERASE reports ERASED");
+    }
+
+    // Launch-by-name for a disk program (.PRG). Save a tiny program (header +
+    // body ending in RTS) to the disk, type its name, and confirm it loaded at
+    // its header address, ran (wrote a marker), and returned to the ] prompt.
+    void testRunDiskProgram() {
+        // .PRG: header $0820, body = LDA #$42 / STA $0900 / RTS
+        std::vector<uint8_t> prg = {0x20, 0x08, 0xA9, 0x42, 0x8D, 0x00, 0x09, 0x60};
+        mountDisk({{"RUNME.PRG", prg}});
+        computer.getMemory()->write(0x0820, 0x00); // clear load target + marker
+        computer.getMemory()->write(0x0900, 0x00);
+        sendCommand("RUNME.PRG", 300000);
+        verifyMemEquals(0x0820, 0xA9, "Program body loaded at its header address");
+        verifyMemEquals(0x0900, 0x42, "Disk program ran (wrote its marker)");
+        // Back at the DOS prompt and responsive (program RTS'd to DOS_WARM).
+        sendCommand("HELP");
+        verifyResponse("RENAME", "Returned to the DOS prompt after the program");
+    }
+
+    // The '&' override runs a disk program even when a ROM module shares its name.
+    void testRunOverride() {
+        // Disk file named "ASM" (same as the assembler module). Body: LDA #$37 /
+        // STA $0950 / RTS at header $0930.
+        std::vector<uint8_t> prg = {0x30, 0x09, 0xA9, 0x37, 0x8D, 0x50, 0x09, 0x60};
+        mountDisk({{"ASM", prg}});
+        computer.getMemory()->write(0x0950, 0x00);
+        sendCommand("&ASM", 300000);  // force the disk version
+        verifyMemEquals(0x0950, 0x37, "& override ran the disk program over the module");
+    }
+
+    // A name that is neither a command, a module, nor a file reports not found.
+    void testRunNotFound() {
+        mountDisk({{"REAL.PRG", std::vector<uint8_t>{0x00, 0x08, 0x60}}});
+        sendCommand("GHOST.PRG");
+        verifyResponse("COMMAND NOT FOUND", "Unknown program reports not found");
     }
 
     // IMPORT/EXPORT (host <-> filesystem). In a console build there is no file
