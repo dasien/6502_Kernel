@@ -235,7 +235,10 @@ QChar DisplayWidget::asciiToChar(const uint8_t ascii_code) const
 
 void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y, const uint8_t character)
 {
-    const QChar ch = asciiToChar(character);
+    // Bit 7 set => reverse video (inverse): the glyph comes from the low 7 bits
+    // and the foreground/background colours are swapped (classic 8-bit style).
+    const bool reverse = (character & 0x80) != 0;
+    const QChar ch = asciiToChar(character & 0x7F);
 
     const int pixel_x = x * char_width_;
 
@@ -246,7 +249,17 @@ void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
     const int vertical_offset = (char_height_ - font_height) / 2 + font_ascent;
     const int pixel_y = y * char_height_ + vertical_offset;
 
-    painter.drawText(pixel_x, pixel_y, QString(ch));
+    if (reverse)
+    {
+        painter.fillRect(pixel_x, y * char_height_, char_width_, char_height_, foreground_color_);
+        painter.setPen(background_color_);
+        painter.drawText(pixel_x, pixel_y, QString(ch));
+        painter.setPen(foreground_color_);
+    }
+    else
+    {
+        painter.drawText(pixel_x, pixel_y, QString(ch));
+    }
 }
 
 void DisplayWidget::drawCursor(QPainter& painter)

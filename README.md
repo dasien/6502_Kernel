@@ -179,4 +179,23 @@ For detailed development information and project context, see:
 5. **Number Conversion**: Use D: and H: commands to convert between decimal and hex
 6. **Program Development**: Load programs with L:, test with G:, save modifications with S:
 
+## Acknowledgments
+
+This project stands on the shoulders of the classic 6502 and free-software
+community. With thanks to the authors whose work we have ported, derived from,
+or studied:
+
+- **micro-Max** by **H.G. Muller** — the remarkably small but complete chess
+  engine (full FIDE rules and move legality) behind `CHESS.PRG`. We compile the
+  freely published 1.6 source with cc65 and wrap it in a console front-end for
+  MFC-DOS. Pristine upstream sources are kept under `vendor/micromax/`.
+  <https://home.hccnet.nl/h.g.muller/max-src2.html>
+- **EhBASIC** (Enhanced 6502 BASIC) by the late **Lee Davison** — the basis for
+  the built-in MFC BASIC interpreter.
+- **cc65** — the 6502 C cross-compiler and toolchain used to build `CHESS.PRG`.
+  <https://cc65.github.io/>
+
+Where we port or adapt third-party code, the original, unmodified source is
+preserved under `vendor/` so its authorship and licensing remain clear.
+
 The monitor is designed for both interactive exploration and efficient program development workflows.

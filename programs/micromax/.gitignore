@@ -1,0 +1,5 @@
+# cc65 build intermediates (CHESS.PRG is the committed deliverable)
+*.o
+*.bin
+*.map
+*.lbl
