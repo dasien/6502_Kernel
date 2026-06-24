@@ -1,0 +1,3 @@
+# cc65 build intermediates (EDIT.PRG is the deliverable)
+*.o
+*.bin
