@@ -1,0 +1,11 @@
+# Host build tool + cc65 intermediates
+dat2c
+*.o
+*.bin
+*.map
+*.lbl
+# Generated per-game data + built programs (rebuild via build.sh from a .dat)
+game_data.c
+*.PRG
+# Third-party Scott Adams game databases are not redistributed in-repo
+*.dat

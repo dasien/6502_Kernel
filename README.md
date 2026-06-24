@@ -190,10 +190,20 @@ or studied:
   freely published 1.6 source with cc65 and wrap it in a console front-end for
   MFC-DOS. Pristine upstream sources are kept under `vendor/micromax/`.
   <https://home.hccnet.nl/h.g.muller/max-src2.html>
+- **ScottFree** by **Alan Cox** / Swansea University Computer Society — the
+  GPL Scott Adams adventure interpreter we port to run the classic Adventure
+  International games on MFC-DOS. The interpreter is in `programs/scottfree`;
+  the host tool `dat2c` pre-parses a game `.dat` into linkable C tables.
+- **Scott Adams** / **Adventure International** — author and publisher of the
+  twelve classic text adventures (Adventureland, Pirate Adventure, … The Golden
+  Voyage). The shareware `.dat` databases are obtained separately and are not
+  redistributed here.
 - **EhBASIC** (Enhanced 6502 BASIC) by the late **Lee Davison** — the basis for
   the built-in MFC BASIC interpreter.
-- **cc65** — the 6502 C cross-compiler and toolchain used to build `CHESS.PRG`.
-  <https://cc65.github.io/>
+- **cc65** — the 6502 C cross-compiler and toolchain used to build the C
+  programs (`CHESS.PRG`, the Scott Adams games). <https://cc65.github.io/>
+
+See `docs/cc65_to_prg.md` for the C-to-`.PRG` build pipeline.
 
 Where we port or adapt third-party code, the original, unmodified source is
 preserved under `vendor/` so its authorship and licensing remain clear.
