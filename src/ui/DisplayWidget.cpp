@@ -282,11 +282,19 @@ void DisplayWidget::drawCursor(QPainter& painter)
     }
 
     const int pixel_x = cursor_x * char_width_;
-    const int pixel_y = (cursor_y + 1) * char_height_ - 2;
 
-    // Underscore cursor: a line along the bottom of the current character cell.
+    // Block cursor: inverse-video the cell (matching the editor's cursor) -- a
+    // filled foreground block with the cell's glyph redrawn in the background
+    // colour. Blink toggles it, so the character under it stays readable.
+    painter.fillRect(pixel_x, cursor_y * char_height_, char_width_, char_height_,
+                     foreground_color_);
+    const uint8_t cell = video_chip_->getCharacterAt(cursor_x, cursor_y);
+    const QChar ch = asciiToChar(cell & 0x7F);
+    const QFontMetrics metrics(character_font_);
+    const int vertical_offset = (char_height_ - metrics.height()) / 2 + metrics.ascent();
+    painter.setPen(background_color_);
+    painter.drawText(pixel_x, cursor_y * char_height_ + vertical_offset, QString(ch));
     painter.setPen(foreground_color_);
-    painter.drawLine(pixel_x, pixel_y, pixel_x + char_width_ - 1, pixel_y);
 }
 
 void DisplayWidget::keyPressEvent(QKeyEvent* event)
