@@ -15,6 +15,8 @@
  *  in the full port). ESC quits to the DOS prompt.
  */
 
+#include <string.h>
+
 #define COLS      40
 #define TEXTROWS  24            /* rows 0..23 are text; row 24 is the status line */
 #define MAXROWS   150
@@ -24,6 +26,11 @@
 char INCH(void);                /* blocking: returns the next key, true case */
 int  INCH_NB(void);             /* non-blocking: next key 0..255, or -1 if none */
 void QUITDOS(void);             /* return to the DOS ] prompt */
+char dopen_read(char *name);    /* DOS file I/O: 0 = ok, 1 = error */
+char dopen_write(char *name);
+int  dgetb(void);               /* next byte 0..255, or -1 at EOF */
+char dputb(char c);
+void dclose(void);
 
 /* logical keys returned by readkey() for nav (above the byte range) */
 #define K_LEFT  1001
@@ -43,26 +50,32 @@ unsigned char rowlen[MAXROWS];
 int numrows = 1;
 int cx = 0, cy = 0;             /* cursor: column, row (in the document) */
 int rowoff = 0;                 /* first document row shown at screen top */
+char dirty = 0;                 /* unsaved changes since last load/save */
+char curname[16];               /* current filename ("" = none yet) */
+char statusmsg[20];             /* transient status text (until next key) */
 
-static void putstat(int col, char c) { SCREEN[TEXTROWS * COLS + col] = c | 0x80; }
+static void appendnum(char *buf, int *pi, int v)
+{
+    char t[6]; int n = 0;
+    do { t[n++] = '0' + v % 10; v /= 10; } while (v);
+    while (n) buf[(*pi)++] = t[--n];
+}
 
+/* "EDIT name* Lx/y Cz  <msg>" on the reverse-video bottom row */
 static void status(void)
 {
-    /* "EDIT  L<cy+1>/<numrows> C<cx+1>" on the reverse-video bottom row */
-    char buf[COLS];
-    int i, n, v;
-    for (i = 0; i < COLS; i++) buf[i] = ' ';
-    buf[0] = 'E'; buf[1] = 'D'; buf[2] = 'I'; buf[3] = 'T';
-    i = 6; buf[i++] = 'L';
-    v = cy + 1; n = 0; { char t[6]; do { t[n++] = '0' + v % 10; v /= 10; } while (v);
-                         while (n) buf[i++] = t[--n]; }
-    buf[i++] = '/';
-    v = numrows; n = 0; { char t[6]; do { t[n++] = '0' + v % 10; v /= 10; } while (v);
-                          while (n) buf[i++] = t[--n]; }
-    buf[i++] = ' '; buf[i++] = 'C';
-    v = cx + 1; n = 0; { char t[6]; do { t[n++] = '0' + v % 10; v /= 10; } while (v);
-                         while (n) buf[i++] = t[--n]; }
-    for (i = 0; i < COLS; i++) putstat(i, buf[i]);
+    char buf[64];
+    char *nm = curname[0] ? curname : "[new]";
+    int i = 0, c;
+    for (c = 0; c < 64; c++) buf[c] = ' ';
+    buf[i++] = 'E'; buf[i++] = 'D'; buf[i++] = 'I'; buf[i++] = 'T'; buf[i++] = ' ';
+    { char *p = nm; while (*p && i < 18) buf[i++] = *p++; }
+    if (dirty) buf[i++] = '*';
+    buf[i++] = ' '; buf[i++] = 'L'; appendnum(buf, &i, cy + 1);
+    buf[i++] = '/'; appendnum(buf, &i, numrows);
+    buf[i++] = ' '; buf[i++] = 'C'; appendnum(buf, &i, cx + 1);
+    if (statusmsg[0]) { char *p = statusmsg; buf[i++] = ' '; while (*p && i < 63) buf[i++] = *p++; }
+    for (c = 0; c < COLS; c++) SCREEN[TEXTROWS * COLS + c] = buf[c] | 0x80;
 }
 
 char full_redraw = 1;           /* 1 = repaint the whole text area next refresh */
@@ -103,6 +116,7 @@ static void insert_ch(char ch)
     rows[cy][cx] = ch;
     rowlen[cy]++;
     cx++;
+    dirty = 1;
 }
 
 static void newline(void)
@@ -121,6 +135,7 @@ static void newline(void)
     numrows++;
     cy++; cx = 0;
     full_redraw = 1;            /* rows shifted: repaint everything */
+    dirty = 1;
 }
 
 static void backspace(void)
@@ -129,6 +144,7 @@ static void backspace(void)
     if (cx > 0) {                               /* delete the char before the cursor */
         for (i = cx - 1; i < rowlen[cy] - 1; i++) rows[cy][i] = rows[cy][i + 1];
         rowlen[cy]--; cx--;
+        dirty = 1;
         return;
     }
     if (cy == 0) return;                         /* top-left: nothing to do */
@@ -146,6 +162,7 @@ static void backspace(void)
     numrows--;
     cy--;
     full_redraw = 1;            /* rows shifted: repaint everything */
+    dirty = 1;
 }
 
 /* read a key, decoding ESC [ X navigation sequences into K_* logical keys.
@@ -170,6 +187,66 @@ static int readkey(void)
     return K_ESC;
 }
 
+static void msg(char *m) { strcpy(statusmsg, m); }
+
+/* read a line into buf on the status row; 1 = RETURN, 0 = ESC (cancel) */
+static int prompt(char *label, char *buf, int max)
+{
+    int len = 0, k, i, c;
+    for (;;) {
+        i = 0;
+        { char *p = label; while (*p) SCREEN[TEXTROWS * COLS + i++] = (*p++) | 0x80; }
+        for (c = 0; c < len; c++) SCREEN[TEXTROWS * COLS + i++] = buf[c] | 0x80;
+        while (i < COLS) SCREEN[TEXTROWS * COLS + i++] = ' ' | 0x80;
+        k = readkey();
+        if (k == K_ESC) return 0;
+        if (k == 0x0D || k == 0x0A) { buf[len] = 0; return 1; }
+        if (k == 0x08 || k == 0x7F) { if (len > 0) len--; continue; }
+        if (k >= 0x20 && k < 0x7F && len < max - 1) buf[len++] = (char)k;
+    }
+}
+
+static void save(void)
+{
+    char name[16]; int r, c;
+    if (curname[0]) strcpy(name, curname);
+    else if (!prompt("Save as: ", name, 16)) { msg("Cancelled"); return; }
+    if (dopen_write(name)) { msg("Save failed"); return; }
+    for (r = 0; r < numrows; r++) {
+        for (c = 0; c < rowlen[r]; c++) dputb(rows[r][c]);
+        dputb('\n');                            /* terminate every line */
+    }
+    dclose();
+    strcpy(curname, name);
+    dirty = 0;
+    msg("Saved");
+}
+
+static void load(void)
+{
+    char name[16]; int c, len = 0;
+    if (!prompt("Open: ", name, 16)) { msg("Cancelled"); return; }
+    if (dopen_read(name)) { msg("Not found"); return; }
+    numrows = 0;
+    for (;;) {
+        c = dgetb();
+        if (c < 0) break;
+        if (c == '\r') continue;                /* tolerate CRLF */
+        if (c == '\n') {
+            rowlen[numrows++] = len; len = 0;
+            if (numrows >= MAXROWS) break;
+        } else if (len < MAXLEN) {
+            rows[numrows][len++] = (char)c;     /* long lines clipped (no h-scroll yet) */
+        }
+    }
+    dclose();
+    if (len > 0 && numrows < MAXROWS) rowlen[numrows++] = len;  /* last unterminated line */
+    if (numrows == 0) { rowlen[0] = 0; numrows = 1; }
+    cx = cy = rowoff = 0; dirty = 0; full_redraw = 1;
+    strcpy(curname, name);
+    msg("Loaded");
+}
+
 int main(void)
 {
     int k;
@@ -180,8 +257,11 @@ int main(void)
     for (;;) {
         refresh();
         k = readkey();
+        statusmsg[0] = 0;                        /* clear transient msg on any key */
         switch (k) {
             case K_ESC: QUITDOS(); break;
+            case 0x13: save(); break;            /* Ctrl-S */
+            case 0x0F: load(); break;            /* Ctrl-O */
             case 0x0D: case 0x0A: newline(); break;
             case 0x08: case 0x7F: backspace(); break;
             case K_LEFT:
