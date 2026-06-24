@@ -21,6 +21,17 @@ void CLS(void);
 int  RND(void);
 void QUITDOS(void);             /* return to the DOS ] prompt */
 
+/* ---- DOS file I/O (saves live on the mounted disk) ---- */
+char dopen_read(char *name);    /* 0 = ok, 1 = error */
+char dopen_write(char *name);   /* 0 = ok, 1 = error */
+int  dgetb(void);               /* next byte 0..255, or -1 at EOF */
+char dputb(char c);             /* 0 = ok, 1 = error */
+void dclose(void);
+
+void SaveGame(void);            /* defined below; called from GetInput */
+void RestoreGame(void);
+void Look(void);
+
 #define W while
 #define MyLoc (GameHeader.PlayerRoom)
 
@@ -208,13 +219,17 @@ void GetInput(int *vb, int *no)
     char verb[10], noun[10];
     char *buf = gibuf;
     int vc, nc, num;
-    do {
+    for (;;) {
         do {
             Output("\nTell me what to do ? ");
             LineInput(buf);
             num = Split(buf, verb, noun);
         } W (num == 0);
         if (num == 1) *noun = 0;
+        /* meta-commands handled here so they work in every game's vocabulary */
+        if (strcasecmp(verb, "SAVE") == 0) { SaveGame(); continue; }
+        if (strcasecmp(verb, "RESTORE") == 0 || strcasecmp(verb, "LOAD") == 0) { RestoreGame(); continue; }
+        if (strcasecmp(verb, "QUIT") == 0) QUITDOS();
         if (*noun == 0 && verb[1] == 0) {
             switch (up(*verb)) {
                 case 'N': strcpy(verb, "NORTH"); break;
@@ -229,14 +244,76 @@ void GetInput(int *vb, int *no)
         nc = WhichWord(verb, Nouns);
         if (nc >= 1 && nc <= 6) vc = 1;
         else { vc = WhichWord(verb, Verbs); nc = WhichWord(noun, Nouns); }
+        if (vc == -1) { Output("You use word(s) I don't know! "); continue; }
         *vb = vc; *no = nc;
-        if (vc == -1) Output("You use word(s) I don't know! ");
-    } W (vc == -1);
+        break;
+    }
     strcpy(NounText, noun);
 }
 
 /* ------------------------------------------------------------------ */
-void SaveGame(void) { Output("Saving is not supported yet.\n"); }
+/* ------------------------------------------------------------------ */
+/* Save / restore -- a compact binary state file on the mounted disk.   */
+/* Layout: "MFC", adventure#, BitFlags(4), MyLoc(1), CurrentCounter(2),  */
+/* SavedRoom(2), LightTime(2), Counters[16](2 ea), RoomSaved[16](2 ea),  */
+/* Items[].Location(1 ea). Ints little-endian.                          */
+/* ------------------------------------------------------------------ */
+static char savename[16];
+
+static void AskName(void)
+{
+    char line[40]; char *s = line; int i = 0;
+    Output("File name: ");
+    LineInput(line);
+    W (*s == ' ') s++;
+    W (*s && *s != ' ' && *s != '.' && i < 8) savename[i++] = *s++;
+    if (i == 0) { strcpy(savename, "SAVE"); i = 4; }
+    savename[i] = 0;
+    strcat(savename, ".SAV");
+}
+
+static void wint(int v) { dputb((char)v); dputb((char)(v >> 8)); }
+static int  rint(void)  { int lo = dgetb(); int hi = dgetb(); return (int)(short)((lo & 0xff) | (hi << 8)); }
+
+void SaveGame(void)
+{
+    int i, ct;
+    AskName();
+    if (dopen_write(savename)) { Output("\nCan't create save file.\n"); return; }
+    dputb('M'); dputb('F'); dputb('C'); dputb((char)GameAdventure);
+    dputb((char)BitFlags);        dputb((char)(BitFlags >> 8));
+    dputb((char)(BitFlags >> 16)); dputb((char)(BitFlags >> 24));
+    dputb((char)MyLoc);
+    wint(CurrentCounter); wint(SavedRoom); wint(GameHeader.LightTime);
+    for (i = 0; i < 16; i++) wint(Counters[i]);
+    for (i = 0; i < 16; i++) wint(RoomSaved[i]);
+    for (ct = 0; ct <= GameHeader.NumItems; ct++) dputb((char)Items[ct].Location);
+    dclose();
+    Output("\nSaved to "); Output(savename); Output("\n");
+}
+
+void RestoreGame(void)
+{
+    int i, ct; long bf;
+    AskName();
+    if (dopen_read(savename)) { Output("\nNo such save file.\n"); return; }
+    if (dgetb() != 'M' || dgetb() != 'F' || dgetb() != 'C' || dgetb() != GameAdventure) {
+        dclose(); Output("\nNot a save for this game.\n"); return;
+    }
+    bf  =  (long)(dgetb() & 0xff);
+    bf |=  (long)(dgetb() & 0xff) << 8;
+    bf |=  (long)(dgetb() & 0xff) << 16;
+    bf |=  (long)(dgetb() & 0xff) << 24;
+    BitFlags = bf;
+    MyLoc = dgetb();
+    CurrentCounter = rint(); SavedRoom = rint(); GameHeader.LightTime = rint();
+    for (i = 0; i < 16; i++) Counters[i] = rint();
+    for (i = 0; i < 16; i++) RoomSaved[i] = rint();
+    for (ct = 0; ct <= GameHeader.NumItems; ct++) Items[ct].Location = (unsigned char)dgetb();
+    dclose();
+    Output("\nRestored.\n");
+    Look();
+}
 
 void GameOver(void) { Output("The game is now over.\n"); QUITDOS(); }
 
