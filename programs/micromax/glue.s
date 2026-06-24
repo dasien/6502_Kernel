@@ -35,7 +35,9 @@ rndseed:        .word   $ACE1   ; nonzero LFSR seed (DATA = loaded into RAM)
 .proc _INCH
 @wait:  jsr     K_GET_KEYSTROKE ; carry set + A=char when a key is ready
         bcc     @wait
-        cmp     #'Q'            ; quit to DOS (kernel uppercases, so 'q' too)
+        cmp     #'Q'            ; quit to DOS (the kernel preserves case now,
+        beq     @quit           ; so accept both 'Q' and 'q')
+        cmp     #'q'
         beq     @quit
         cmp     #$1B            ; ESC also quits
         beq     @quit
@@ -43,8 +45,8 @@ rndseed:        .word   $ACE1   ; nonzero LFSR seed (DATA = loaded into RAM)
         beq     @edit           ; the C reader decides whether a char remains to
         cmp     #$7F            ; erase (delete key maps to backspace too)
         beq     @edit
-        cmp     #'A'            ; the kernel uppercases letters, but micro-Max
-        bcc     @nolc           ; wants lowercase file letters a-h, so undo it
+        cmp     #'A'            ; micro-Max wants lowercase file letters a-h;
+        bcc     @nolc           ; fold any uppercase letter the player typed
         cmp     #'Z'+1
         bcs     @nolc
         ora     #$20            ; A-Z -> a-z

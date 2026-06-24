@@ -366,18 +366,12 @@ uint8_t DisplayWidget::qtKeyToAscii(QKeyEvent* event) const
             return 0x1B; // Escape
         case Qt::Key_Space:
             return 0x20; // Space
-        case Qt::Key_Up:
-            return 0x11; // Cursor up (for potential monitor navigation)
-        case Qt::Key_Down:
-            return 0x12; // Cursor down
-        case Qt::Key_Left:
-            return 0x13; // Cursor left
-        case Qt::Key_Right:
-            return 0x14; // Cursor right
-        case Qt::Key_Home:
-            return 0x19; // Home
         case Qt::Key_Delete:
             return 0x7F; // Delete
+        // Cursor/navigation keys are intentionally not mapped: nothing in the
+        // system uses them yet, and the old 0x11-0x14 codes collided with the
+        // Ctrl-Q/R/S/T control bytes. A future full-screen editor will define a
+        // deliberate scheme (likely ESC sequences) when it needs them.
         default:
             break;
     }

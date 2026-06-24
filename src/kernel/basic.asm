@@ -8119,9 +8119,9 @@ BASIC_GET:
       SEC                     ; carry set = byte available
       RTS
 BGET_EOF:
-      LDA   #$09              ; restore VEC_IN -> $FF09 (keyboard GET_KEYSTROKE)
+      LDA   #<KEY_UC          ; restore VEC_IN -> folding keyboard input (KEY_UC)
       STA   VEC_IN
-      LDA   #$FF
+      LDA   #>KEY_UC
       STA   VEC_IN+1
       LDA   #$00              ; restore VEC_OUT -> $FF00 (screen PRINT_CHAR)
       STA   VEC_OUT
@@ -8134,6 +8134,25 @@ BGET_EOF:
       JSR   LAB_18C3
       JMP   (VEC_IN)          ; satisfy this input call from the keyboard
 
+; ----------------------------------------------------------------
+; KEY_UC - BASIC keyboard input: read a key (the kernel's GET_KEYSTROKE at
+; $FF09 now returns true case) and fold a-z -> uppercase, because EhBASIC's
+; tokenizer matches keywords against an uppercase table. Keeps the input-vector
+; convention: carry set + A = char, or carry clear when no key is ready.
+; ----------------------------------------------------------------
+KEY_UC:
+      JSR   $FF09             ; GET_KEYSTROKE -> C set + A=char, or C clear
+      BCC   KEY_UC_NONE       ; no key: return with carry clear
+      CMP   #'a'              ; below 'a'? leave unchanged
+      BCC   KEY_UC_RET
+      CMP   #'z'+1            ; above 'z'? leave unchanged
+      BCS   KEY_UC_RET
+      AND   #$DF              ; fold lowercase letter to uppercase
+KEY_UC_RET:
+      SEC                     ; carry set = character available
+KEY_UC_NONE:
+      RTS
+
 ; The rest are tables messages and code for RAM
 
 ; the rest of the code is tables and BASIC start-up code
@@ -8143,7 +8162,7 @@ PG2_TABS:
       .byte $00               ; ctrl-c byte           -     GET needs this
       .byte $00               ; ctrl-c byte timeout   -     GET needs this
       .word CTRLC             ; ctrl c check vector
-      .word $FF09             ; VEC_IN - monitor GET_KEYSTROKE at $FF09
+      .word KEY_UC            ; VEC_IN - folding keyboard input (GET_KEYSTROKE + upcase)
       .word $FF00             ; VEC_OUT - monitor PRINT_CHAR at $FF00
       .word BASIC_LOAD        ; VEC_LD - stream load (Stage 3: stub)
       .word BASIC_SAVE        ; VEC_SV - save program as ASCII text to a file

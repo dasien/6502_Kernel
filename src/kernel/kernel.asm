@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.8
+; Version:      3.9
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -189,6 +189,11 @@
 ;                   prompt. New K_LAUNCH_BY_NAME ABI ($FF21) scans MODULE_DIR (the
 ;                   assembler's name is now "ASM"). The monitor's B: bank menu is
 ;                   retired (CMD_BANK_MENU/PARSE_CMD_BASIC excised, B -> invalid).
+; 2026-06-24  v3.9  GET_KEYSTROKE ($FF09) now returns the key AS TYPED instead of
+;                   force-folding a-z to uppercase, so lowercase-aware programs
+;                   (the upcoming editor) get real case. Shell command lines stay
+;                   uppercase (READ_COMMAND_LINE already folds), and BASIC's input
+;                   vector points at a folding wrapper (KEY_UC) for its tokenizer.
 ;
 ; ================================================================
 
@@ -926,15 +931,12 @@ GET_KEYSTROKE:
     LDA PIA_CONTROL         ; Read PIA control register
     AND #PIA_DATA_AVAIL     ; Check data available bit
     BEQ GET_NO_KEY          ; Branch if no data available
-    LDA PIA_DATA            ; Read character from PIA
-
-    ; Convert lowercase to uppercase
-    CMP #$61                ; Less than 'a'?
-    BCC GET_KEYSTROKE_DONE  ; If less, skip conversion
-    CMP #$7B                ; Greater than 'z'?
-    BCS GET_KEYSTROKE_DONE  ; If greater or equal, skip conversion
-    AND #$DF                ; Convert to uppercase (clear bit 5)
-GET_KEYSTROKE_DONE:
+    LDA PIA_DATA            ; Read character from PIA -- returned AS TYPED.
+    ; Case is preserved here so lowercase-aware programs (e.g. the editor) can
+    ; see it. Consumers that want uppercase fold it themselves: the shell line
+    ; editor READ_COMMAND_LINE uppercases command lines, and BASIC's input
+    ; vector points at a folding wrapper (KEY_UC) since its tokenizer needs
+    ; uppercase keywords.
     SEC                     ; Set carry to indicate character available
     RTS
 GET_NO_KEY:
