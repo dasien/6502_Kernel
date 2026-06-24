@@ -27,6 +27,8 @@ char dopen_write(char *name);   /* 0 = ok, 1 = error */
 int  dgetb(void);               /* next byte 0..255, or -1 at EOF */
 char dputb(char c);             /* 0 = ok, 1 = error */
 void dclose(void);
+char dir_first(char *dst11);    /* enumerate dir: 0 = entry in dst, 1 = none */
+char dir_next(char *dst11);
 
 void SaveGame(void);            /* defined below; called from GetInput */
 void RestoreGame(void);
@@ -258,26 +260,67 @@ void GetInput(int *vb, int *no)
 /* SavedRoom(2), LightTime(2), Counters[16](2 ea), RoomSaved[16](2 ea),  */
 /* Items[].Location(1 ea). Ints little-endian.                          */
 /* ------------------------------------------------------------------ */
+#define MAXSAVES 18
 static char savename[16];
+static char savelist[MAXSAVES][9];      /* base names of *.SAV files on disk */
 
-static void AskName(void)
+static void MakeName(char *base)        /* savename = base + ".SAV" */
 {
-    char line[40]; char *s = line; int i = 0;
-    Output("File name: ");
-    LineInput(line);
-    W (*s == ' ') s++;
-    W (*s && *s != ' ' && *s != '.' && i < 8) savename[i++] = *s++;
-    if (i == 0) { strcpy(savename, "SAVE"); i = 4; }
-    savename[i] = 0;
+    strcpy(savename, base);
     strcat(savename, ".SAV");
+}
+
+/* enumerate the disk, collecting the base names of all *.SAV files */
+static int ScanSaves(void)
+{
+    char ent[12]; int n = 0; char rc;
+    for (rc = dir_first(ent); rc == 0 && n < MAXSAVES; rc = dir_next(ent)) {
+        if (ent[8] == 'S' && ent[9] == 'A' && ent[10] == 'V') {
+            int i = 0;
+            W (i < 8 && ent[i] != ' ') { savelist[n][i] = ent[i]; i++; }
+            savelist[n][i] = 0;
+            n++;
+        }
+    }
+    return n;
+}
+
+static int AskNumber(void)              /* read a line, parse a decimal */
+{
+    char *s = gibuf; int v = 0;
+    LineInput(gibuf);
+    W (*s == ' ') s++;
+    W (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+    return v;
+}
+
+static void AskName(void)               /* prompt for a base name -> savename */
+{
+    char *s = gibuf; char base[10]; int i = 0;
+    Output("File name: ");
+    LineInput(gibuf);
+    W (*s == ' ') s++;
+    W (*s && *s != ' ' && *s != '.' && i < 8) base[i++] = *s++;
+    if (i == 0) { strcpy(base, "SAVE"); i = 4; }
+    base[i] = 0;
+    MakeName(base);
 }
 
 static void wint(int v) { dputb((char)v); dputb((char)(v >> 8)); }
 static int  rint(void)  { int lo = dgetb(); int hi = dgetb(); return (int)(short)((lo & 0xff) | (hi << 8)); }
 
+static void ListSaves(int n)
+{
+    int i;
+    Output("\nSaved games:\n");
+    for (i = 0; i < n; i++) { Output("  "); OutputNumber(i + 1); Output(savelist[i]); Output("\n"); }
+}
+
 void SaveGame(void)
 {
-    int i, ct;
+    int i, ct, n;
+    n = ScanSaves();
+    if (n) { Output("\nExisting saves:"); for (i = 0; i < n; i++) { Output(" "); Output(savelist[i]); } Output("\n"); }
     AskName();
     if (dopen_write(savename)) { Output("\nCan't create save file.\n"); return; }
     dputb('M'); dputb('F'); dputb('C'); dputb((char)GameAdventure);
@@ -294,9 +337,15 @@ void SaveGame(void)
 
 void RestoreGame(void)
 {
-    int i, ct; long bf;
-    AskName();
-    if (dopen_read(savename)) { Output("\nNo such save file.\n"); return; }
+    int i, ct, n, pick; long bf;
+    n = ScanSaves();
+    if (n == 0) { Output("\nNo saved games on the disk.\n"); return; }
+    ListSaves(n);
+    Output("Restore which (number, 0 = cancel)? ");
+    pick = AskNumber();
+    if (pick < 1 || pick > n) { Output("Cancelled.\n"); return; }
+    MakeName(savelist[pick - 1]);
+    if (dopen_read(savename)) { Output("\nCan't open save file.\n"); return; }
     if (dgetb() != 'M' || dgetb() != 'F' || dgetb() != 'C' || dgetb() != GameAdventure) {
         dclose(); Output("\nNot a save for this game.\n"); return;
     }

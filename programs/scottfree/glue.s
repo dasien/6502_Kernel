@@ -11,6 +11,8 @@
 
 .export _OUTCH, _INCH, _CLS, _RND, _QUITDOS
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
+.export _dir_first, _dir_next
+.importzp ptr1                  ; cc65 zero-page scratch (above the DOS's $14-$3F)
 
 K_PRINT_CHAR    = $FF00
 K_PRINT_NEWLINE = $FF06
@@ -20,7 +22,10 @@ FS_OPEN         = $AF03         ; A/X=name ptr, Y=mode(0 read/1 write); C=err
 FS_GETB         = $AF06         ; -> C clear + A=byte, or C set = EOF
 FS_PUTB         = $AF09         ; A=byte; C set = error
 FS_CLOSE        = $AF0C
+FS_DIR_FIRST    = $AF0F         ; -> C clear + DOS_ENTRY filled, or C set = none
+FS_DIR_NEXT     = $AF12
 DOS_WARM        = $AF1E
+DOS_ENTRY       = $0320         ; 32-byte current dir entry (name = first 11 bytes)
 
 .segment "DATA"
 rndseed:        .word   $C0DE
@@ -110,6 +115,33 @@ rndseed:        .word   $C0DE
 .proc _dclose
         jmp     FS_CLOSE        ; tail call (its RTS returns to the C caller)
 .endproc
+
+; ---- char dir_first(char *dst11) / char dir_next(char *dst11) --------------
+; Enumerate root-dir entries: copy the 11-byte 8.3 name into dst; returns
+; 0 = got an entry, 1 = no more. Run to completion before opening a file.
+_dir_first:
+        sta     ptr1
+        stx     ptr1+1
+        jsr     FS_DIR_FIRST
+        jmp     dir_copy
+_dir_next:
+        sta     ptr1
+        stx     ptr1+1
+        jsr     FS_DIR_NEXT
+dir_copy:
+        bcs     dir_none
+        ldy     #$0A            ; copy DOS_ENTRY[0..10] -> (ptr1)
+@cp:    lda     DOS_ENTRY,y
+        sta     (ptr1),y
+        dey
+        bpl     @cp
+        lda     #$00
+        ldx     #$00
+        rts
+dir_none:
+        lda     #$01
+        ldx     #$00
+        rts
 
 ; ---- int RND(void) -- 16-bit Galois LFSR (poly $B400), returns A:X ----------
 .proc _RND
