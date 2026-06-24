@@ -22,7 +22,19 @@
 
 /* ---- kernel hooks (glue.s) ---- */
 char INCH(void);                /* blocking: returns the next key, true case */
+int  INCH_NB(void);             /* non-blocking: next key 0..255, or -1 if none */
 void QUITDOS(void);             /* return to the DOS ] prompt */
+
+/* logical keys returned by readkey() for nav (above the byte range) */
+#define K_LEFT  1001
+#define K_RIGHT 1002
+#define K_UP    1003
+#define K_DOWN  1004
+#define K_HOME  1005
+#define K_END   1006
+#define K_PGUP  1007
+#define K_PGDN  1008
+#define K_ESC   1009
 
 unsigned char *const SCREEN = (unsigned char *)0x0400;
 
@@ -136,6 +148,28 @@ static void backspace(void)
     full_redraw = 1;            /* rows shifted: repaint everything */
 }
 
+/* read a key, decoding ESC [ X navigation sequences into K_* logical keys.
+   A bare ESC (nothing queued after it) is K_ESC. */
+static int readkey(void)
+{
+    int c = INCH();
+    if (c != 0x1B) return c;
+    c = INCH_NB();
+    if (c != '[') return K_ESC;             /* bare ESC (or unknown) */
+    c = INCH_NB();
+    switch (c) {
+        case 'A': return K_UP;
+        case 'B': return K_DOWN;
+        case 'C': return K_RIGHT;
+        case 'D': return K_LEFT;
+        case 'H': return K_HOME;
+        case 'F': return K_END;
+        case '5': INCH_NB(); return K_PGUP; /* consume the trailing '~' */
+        case '6': INCH_NB(); return K_PGDN;
+    }
+    return K_ESC;
+}
+
 int main(void)
 {
     int k;
@@ -145,11 +179,37 @@ int main(void)
     *(unsigned char *)0x0276 = 40;
     for (;;) {
         refresh();
-        k = INCH();
-        if (k == 0x1B) QUITDOS();                /* ESC -> DOS */
-        else if (k == 0x0D || k == 0x0A) newline();
-        else if (k == 0x08 || k == 0x7F) backspace();
-        else if (k >= 0x20 && k < 0x7F) insert_ch((char)k);
+        k = readkey();
+        switch (k) {
+            case K_ESC: QUITDOS(); break;
+            case 0x0D: case 0x0A: newline(); break;
+            case 0x08: case 0x7F: backspace(); break;
+            case K_LEFT:
+                if (cx > 0) cx--;
+                else if (cy > 0) { cy--; cx = rowlen[cy]; full_redraw = 1; }
+                break;
+            case K_RIGHT:
+                if (cx < rowlen[cy]) cx++;
+                else if (cy < numrows - 1) { cy++; cx = 0; full_redraw = 1; }
+                break;
+            case K_UP:
+                if (cy > 0) { cy--; if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; }
+                break;
+            case K_DOWN:
+                if (cy < numrows - 1) { cy++; if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; }
+                break;
+            case K_HOME: cx = 0; break;
+            case K_END:  cx = rowlen[cy]; break;
+            case K_PGUP:
+                cy -= TEXTROWS; if (cy < 0) cy = 0;
+                if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; break;
+            case K_PGDN:
+                cy += TEXTROWS; if (cy > numrows - 1) cy = numrows - 1;
+                if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; break;
+            default:
+                if (k >= 0x20 && k < 0x7F) insert_ch((char)k);
+                break;
+        }
     }
     return 0;
 }

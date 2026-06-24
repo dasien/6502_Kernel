@@ -8,7 +8,7 @@
 ; is needed here.
 ; ============================================================================
 
-.export _INCH, _QUITDOS
+.export _INCH, _INCH_NB, _QUITDOS
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 DOS_WARM        = $AF1E
@@ -19,6 +19,18 @@ DOS_WARM        = $AF1E
 @wait:  jsr     K_GET_KEYSTROKE
         bcc     @wait
         ldx     #$00
+        rts
+.endproc
+
+; int INCH_NB(void) -- non-blocking: next key 0..255, or -1 if none ready.
+; Used to peek the rest of an ESC sequence without blocking on a bare ESC.
+.proc _INCH_NB
+        jsr     K_GET_KEYSTROKE
+        bcs     @got
+        lda     #$ff
+        ldx     #$ff            ; -1
+        rts
+@got:   ldx     #$00            ; 0..255
         rts
 .endproc
 

@@ -296,12 +296,44 @@ void DisplayWidget::keyPressEvent(QKeyEvent* event)
         return;
     }
 
+    // Navigation keys are sent as ANSI escape sequences (ESC [ X), which a
+    // full-screen program decodes; this keeps them distinct from the single
+    // control bytes. Each byte is delivered as a separate keypress.
+    const char* seq = nullptr;
+    switch (event->key())
+    {
+        case Qt::Key_Up:       seq = "\x1b[A"; break;
+        case Qt::Key_Down:     seq = "\x1b[B"; break;
+        case Qt::Key_Right:    seq = "\x1b[C"; break;
+        case Qt::Key_Left:     seq = "\x1b[D"; break;
+        case Qt::Key_Home:     seq = "\x1b[H"; break;
+        case Qt::Key_End:      seq = "\x1b[F"; break;
+        case Qt::Key_PageUp:   seq = "\x1b[5~"; break;
+        case Qt::Key_PageDown: seq = "\x1b[6~"; break;
+        default: break;
+    }
+    if (seq)
+    {
+        for (const char* p = seq; *p; ++p) emit keyPressed(static_cast<uint8_t>(*p));
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
+    // Ctrl+letter -> control byte 0x01..0x1A (for editor commands).
+    if ((event->modifiers() & Qt::ControlModifier) &&
+        event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z)
+    {
+        emit keyPressed(static_cast<uint8_t>(event->key() - Qt::Key_A + 1));
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
     const uint8_t ascii_code = qtKeyToAscii(event);
     if (ascii_code != 0)
     {
         emit keyPressed(ascii_code);
     }
-    
+
     QWidget::keyPressEvent(event);
 }
 
