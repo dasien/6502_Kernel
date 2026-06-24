@@ -201,6 +201,18 @@ _DOS_PROMPT:
 ; _DOS_DISPATCH - match the typed verb and run its handler
 ; ----------------------------------------------------------------
 _DOS_DISPATCH:
+    LDA #<KW_CLS
+    LDX #>KW_CLS
+    JSR _DOS_VERB_MATCH
+    BCS @ncls1
+    JMP _DOS_DO_CLS
+@ncls1:
+    LDA #<KW_CLEAR
+    LDX #>KW_CLEAR
+    JSR _DOS_VERB_MATCH
+    BCS @ncls2
+    JMP _DOS_DO_CLS
+@ncls2:
     LDA #<KW_HELP
     LDX #>KW_HELP
     JSR _DOS_VERB_MATCH
@@ -305,6 +317,13 @@ _DOS_DISPATCH:
     LDA #>MSG_DOS_BADCMD
     STA MON_MSG_PTR_HI
     JMP K_PRINT_MESSAGE                 ; tail (RTS to _DOS_PROMPT)
+
+; ----------------------------------------------------------------
+; _DOS_DO_CLS - CLS / CLEAR: clear the screen (kernel CLEAR_SCREEN at $FF0C,
+; the same routine the monitor's C: uses)
+; ----------------------------------------------------------------
+_DOS_DO_CLS:
+    JMP K_CLEAR_SCREEN                  ; tail (its RTS returns to _DOS_PROMPT)
 
 ; ----------------------------------------------------------------
 ; _DOS_VERB_MATCH - does MON_CMDBUF start with the keyword in A/X?
@@ -871,7 +890,7 @@ _DOS_RUN_FILE:
 ; ----------------------------------------------------------------
 MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
 MSG_DOS_HELP:    .BYTE "CATALOG TYPE SAVE LOAD ERASE RENAME", $0D, $0A
-                 .BYTE "IMPORT EXPORT MON HELP", $0D, $0A, 0
+                 .BYTE "IMPORT EXPORT CLS MON HELP", $0D, $0A, 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
 MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
 MSG_DOS_NOFILE:  .BYTE "FILE NOT FOUND", $0D, $0A, 0
@@ -885,6 +904,8 @@ MSG_DOS_IMPORTED:.BYTE "IMPORTED", $0D, $0A, 0
 MSG_DOS_EXPORTED:.BYTE "EXPORTED", $0D, $0A, 0
 MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 MSG_DOS_HOSTERR: .BYTE "HOST I/O ERROR", $0D, $0A, 0
+KW_CLS:          .BYTE "CLS", 0
+KW_CLEAR:        .BYTE "CLEAR", 0
 KW_HELP:         .BYTE "HELP", 0
 KW_MON:          .BYTE "MON", 0
 KW_CATALOG:      .BYTE "CATALOG", 0
