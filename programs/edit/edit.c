@@ -9,7 +9,9 @@
  *  a small row count. Vertical + horizontal scroll, a reverse-video block
  *  cursor and status line, and DOS-FS load/save (Ctrl-O / Ctrl-S).
  *
- *  ESC quits to the DOS prompt (a deliberate quit + unsaved guard is a TODO).
+ *  Ctrl-Q quits to the DOS prompt -- twice in a row when there are unsaved
+ *  changes. ESC no longer quits (it only cancels prompts), so a stray ESC can't
+ *  lose work.
  */
 
 #include <string.h>
@@ -50,8 +52,9 @@ int rowoff = 0;                 /* first document row shown at screen top */
 int coloff = 0;                 /* first document column shown at screen left */
 char dirty = 0;                 /* unsaved changes since last load/save */
 char curname[16];               /* current filename ("" = none yet) */
-char statusmsg[20];             /* transient status text (until next key) */
+char statusmsg[32];             /* transient status text (until next key) */
 char full_redraw = 1;           /* 1 = repaint the whole text area next refresh */
+char quit_armed = 0;            /* a dirty Ctrl-Q was issued; next one quits */
 
 static void msg(char *m) { strcpy(statusmsg, m); }
 
@@ -274,8 +277,13 @@ int main(void)
         refresh();
         k = readkey();
         statusmsg[0] = 0;                        /* clear transient msg on any key */
+        if (k != 0x11) quit_armed = 0;           /* any non-Ctrl-Q key disarms quit */
         switch (k) {
-            case K_ESC: QUITDOS(); break;
+            case K_ESC: break;                   /* ESC no longer quits (cancels prompts only) */
+            case 0x11:                           /* Ctrl-Q: quit, guarded if unsaved */
+                if (dirty && !quit_armed) { msg("Unsaved! ^Q to quit"); quit_armed = 1; }
+                else QUITDOS();
+                break;
             case 0x13: save(); break;            /* Ctrl-S */
             case 0x0F: load(); break;            /* Ctrl-O */
             case 0x0D: case 0x0A: newline(); break;
