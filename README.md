@@ -198,6 +198,10 @@ or studied:
   twelve classic text adventures (Adventureland, Pirate Adventure, … The Golden
   Voyage). The shareware `.dat` databases are obtained separately and are not
   redistributed here.
+- **kilo** by **Salvatore Sanfilippo (antirez)** — the inspiration for the
+  `EDIT` text editor. EDIT is our own implementation (it renders straight to
+  screen RAM rather than a terminal), but its structure and the incremental
+  search are lifted from kilo's design. <https://github.com/antirez/kilo>
 - **EhBASIC** (Enhanced 6502 BASIC) by the late **Lee Davison** — the basis for
   the built-in MFC BASIC interpreter.
 - **cc65** — the 6502 C cross-compiler and toolchain used to build the C

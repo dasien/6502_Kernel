@@ -266,6 +266,69 @@ static void load(void)
     msg("Loaded");
 }
 
+/* ------------------------------------------------------------------ */
+/* Incremental search (Ctrl-F), inspired by kilo. Collect every match position
+   in the document so the arrows step through ALL occurrences (including
+   several on one line), wrapping around. RETURN keeps the cursor at the
+   match; ESC restores the original position. */
+#define MAXMATCH 256
+static int mr[MAXMATCH], mc[MAXMATCH];   /* match positions (row, col) */
+static int nmatch, midx;                 /* match count, current index */
+static char search_found;                /* 1 if the cursor is on a match */
+
+static void collect(char *q, int qlen)   /* find all matches into mr/mc */
+{
+    int r, i, j;
+    nmatch = 0; search_found = 0;
+    if (qlen == 0) return;
+    for (r = 0; r < numrows && nmatch < MAXMATCH; r++)
+        for (i = 0; i + qlen <= row[r].len && nmatch < MAXMATCH; i++) {
+            for (j = 0; j < qlen; j++) if (row[r].chars[i + j] != q[j]) break;
+            if (j == qlen) { mr[nmatch] = r; mc[nmatch] = i; nmatch++; }
+        }
+}
+
+static void gotomatch(void)              /* move the cursor to match[midx] */
+{
+    if (nmatch == 0) { search_found = 0; return; }
+    if (midx < 0) midx = nmatch - 1;
+    if (midx >= nmatch) midx = 0;
+    cy = mr[midx]; cx = mc[midx]; search_found = 1;
+}
+
+static void draw_search(char *q, int qlen)
+{
+    int r, c, i = 0, base;
+    if (cy < rowoff) rowoff = cy;
+    if (cy >= rowoff + TEXTROWS) rowoff = cy - TEXTROWS + 1;
+    if (cx < coloff) coloff = cx;
+    if (cx >= coloff + COLS) coloff = cx - COLS + 1;
+    for (r = 0; r < TEXTROWS; r++) paint_row(r);
+    base = (cy - rowoff) * COLS + (cx - coloff);
+    if (search_found) for (c = 0; c < qlen && (cx - coloff) + c < COLS; c++) SCREEN[base + c] |= 0x80;
+    else SCREEN[base] |= 0x80;                  /* just the cursor when no match */
+    { char *p = "Search: "; while (*p) SCREEN[TEXTROWS * COLS + i++] = (*p++) | 0x80; }
+    for (c = 0; c < qlen; c++) SCREEN[TEXTROWS * COLS + i++] = q[c] | 0x80;
+    while (i < COLS) SCREEN[TEXTROWS * COLS + i++] = ' ' | 0x80;
+}
+
+static void search(void)
+{
+    char q[40]; int qlen = 0, k;
+    int scx = cx, scy = cy, sro = rowoff, sco = coloff;   /* restore on cancel */
+    nmatch = 0; midx = 0; search_found = 0; q[0] = 0;
+    for (;;) {
+        draw_search(q, qlen);
+        k = readkey();
+        if (k == K_ESC) { cx = scx; cy = scy; rowoff = sro; coloff = sco; full_redraw = 1; msg("Search cancelled"); return; }
+        if (k == 0x0D || k == 0x0A) { full_redraw = 1; msg(search_found ? "Found" : "Not found"); return; }
+        if (k == 0x08 || k == 0x7F) { if (qlen) qlen--; q[qlen] = 0; collect(q, qlen); midx = 0; gotomatch(); }
+        else if (k == K_UP || k == K_LEFT) { midx--; gotomatch(); }       /* previous occurrence */
+        else if (k == K_DOWN || k == K_RIGHT) { midx++; gotomatch(); }    /* next occurrence */
+        else if (k >= 0x20 && k < 0x7F && qlen < 39) { q[qlen++] = (char)k; q[qlen] = 0; collect(q, qlen); midx = 0; gotomatch(); }
+    }
+}
+
 int main(void)
 {
     int k;
@@ -286,6 +349,7 @@ int main(void)
                 break;
             case 0x13: save(); break;            /* Ctrl-S */
             case 0x0F: load(); break;            /* Ctrl-O */
+            case 0x06: search(); break;          /* Ctrl-F */
             case 0x0D: case 0x0A: newline(); break;
             case 0x08: case 0x7F: backspace(); break;
             case K_LEFT:
