@@ -1,26 +1,23 @@
 /*
- *  EDIT -- a minimal full-screen text editor for MFC-DOS (kilo-inspired spike).
+ *  EDIT -- a minimal full-screen text editor for MFC-DOS (kilo-inspired).
  *
- *  This is the vertical-slice spike for the kilo port: it proves the editor
- *  architecture on our platform end to end --
- *    - render directly to the 40x25 screen RAM at $0400 (no ANSI/terminal),
- *    - read keys via the kernel (GET_KEYSTROKE, now case-preserving),
- *    - basic editing: type, RETURN (split line), backspace (join),
- *    - vertical scroll as the cursor leaves the window,
- *    - a reverse-video cursor cell + a reverse-video status line.
+ *  Renders directly to the 40x25 screen RAM at $0400 (no ANSI/terminal), reads
+ *  keys via the kernel (GET_KEYSTROKE, case-preserving), and edits a document
+ *  held as dynamically-allocated lines (kilo's erow model): a fixed array of
+ *  row descriptors, each pointing at a malloc'd string sized to its content, so
+ *  capacity is bounded by total text (the heap) rather than a per-line width or
+ *  a small row count. Vertical + horizontal scroll, a reverse-video block
+ *  cursor and status line, and DOS-FS load/save (Ctrl-O / Ctrl-S).
  *
- *  Deliberately trimmed for the spike: a fixed row table (no malloc yet),
- *  lines clipped to the 40-column width (no horizontal scroll), no file
- *  load/save, no arrow keys (the emulator key scheme + DOS FS load/save land
- *  in the full port). ESC quits to the DOS prompt.
+ *  ESC quits to the DOS prompt (a deliberate quit + unsaved guard is a TODO).
  */
 
 #include <string.h>
+#include <stdlib.h>
 
 #define COLS      40
 #define TEXTROWS  24            /* rows 0..23 are text; row 24 is the status line */
-#define MAXROWS   150
-#define MAXLEN    39            /* max chars per line (keeps the cursor on screen) */
+#define MAXROWS   600           /* line-descriptor slots (text itself is on the heap) */
 
 /* ---- kernel hooks (glue.s) ---- */
 char INCH(void);                /* blocking: returns the next key, true case */
@@ -45,15 +42,39 @@ void dclose(void);
 
 unsigned char *const SCREEN = (unsigned char *)0x0400;
 
-char rows[MAXROWS][MAXLEN + 1];
-unsigned char rowlen[MAXROWS];
+typedef struct { char *chars; int len; int cap; } erow;
+erow row[MAXROWS];              /* row[i].chars == 0 for an empty line */
 int numrows = 1;
 int cx = 0, cy = 0;             /* cursor: column, row (in the document) */
 int rowoff = 0;                 /* first document row shown at screen top */
+int coloff = 0;                 /* first document column shown at screen left */
 char dirty = 0;                 /* unsaved changes since last load/save */
 char curname[16];               /* current filename ("" = none yet) */
 char statusmsg[20];             /* transient status text (until next key) */
+char full_redraw = 1;           /* 1 = repaint the whole text area next refresh */
 
+static void msg(char *m) { strcpy(statusmsg, m); }
+
+/* grow row r's capacity to at least `need` bytes; 0 = out of memory (old kept) */
+static int row_reserve(int r, int need)
+{
+    char *p; int nc;
+    if (need <= row[r].cap) return 1;
+    nc = (need + 7) & ~7;                        /* round up to 8 */
+    p = realloc(row[r].chars, nc);               /* realloc(0,n) == malloc(n) */
+    if (!p) return 0;
+    row[r].chars = p; row[r].cap = nc;
+    return 1;
+}
+
+static void clear_doc(void)
+{
+    int i;
+    for (i = 0; i < numrows; i++) { free(row[i].chars); row[i].chars = 0; row[i].len = 0; row[i].cap = 0; }
+    numrows = 0;
+}
+
+/* ------------------------------------------------------------------ */
 static void appendnum(char *buf, int *pi, int v)
 {
     char t[6]; int n = 0;
@@ -78,25 +99,24 @@ static void status(void)
     for (c = 0; c < COLS; c++) SCREEN[TEXTROWS * COLS + c] = buf[c] | 0x80;
 }
 
-char full_redraw = 1;           /* 1 = repaint the whole text area next refresh */
-
-/* paint one screen text row r (0..TEXTROWS-1) from its document row */
+/* paint one screen text row r (0..TEXTROWS-1), windowed horizontally at coloff */
 static void paint_row(int r)
 {
-    int fr = rowoff + r, c, len = 0;
-    unsigned char *p = SCREEN + r * COLS;       /* row base, computed once */
-    char *src = rows[0];
-    if (fr < numrows) { src = rows[fr]; len = rowlen[fr]; }
-    for (c = 0; c < COLS; c++) p[c] = (c < len) ? (unsigned char)src[c] : ' ';
+    int fr = rowoff + r, c, sc, len = 0;
+    unsigned char *p = SCREEN + r * COLS;
+    char *src = 0;
+    if (fr < numrows) { src = row[fr].chars; len = row[fr].len; }
+    for (c = 0; c < COLS; c++) { sc = coloff + c; p[c] = (sc < len) ? (unsigned char)src[sc] : ' '; }
 }
 
 static void refresh(void)
 {
-    int old = rowoff, r;
-    /* keep the cursor row inside the window */
+    int oldr = rowoff, oldc = coloff, r;
     if (cy < rowoff) rowoff = cy;
     if (cy >= rowoff + TEXTROWS) rowoff = cy - TEXTROWS + 1;
-    if (rowoff != old) full_redraw = 1;         /* scrolled -> repaint all rows */
+    if (cx < coloff) coloff = cx;
+    if (cx >= coloff + COLS) coloff = cx - COLS + 1;
+    if (rowoff != oldr || coloff != oldc) full_redraw = 1;
 
     if (full_redraw) {
         for (r = 0; r < TEXTROWS; r++) paint_row(r);
@@ -104,75 +124,70 @@ static void refresh(void)
     } else {
         paint_row(cy - rowoff);                 /* typing: only the cursor's row */
     }
-    SCREEN[(cy - rowoff) * COLS + cx] |= 0x80;   /* reverse-video block cursor */
+    SCREEN[(cy - rowoff) * COLS + (cx - coloff)] |= 0x80;   /* block cursor */
     status();
 }
 
+/* ------------------------------------------------------------------ */
 static void insert_ch(char ch)
 {
+    erow *e = &row[cy];
     int i;
-    if (rowlen[cy] >= MAXLEN) return;           /* line full (spike: no h-scroll) */
-    for (i = rowlen[cy]; i > cx; i--) rows[cy][i] = rows[cy][i - 1];
-    rows[cy][cx] = ch;
-    rowlen[cy]++;
-    cx++;
-    dirty = 1;
+    if (!row_reserve(cy, e->len + 1)) { msg("No memory"); return; }
+    for (i = e->len; i > cx; i--) e->chars[i] = e->chars[i - 1];
+    e->chars[cx] = ch;
+    e->len++; cx++; dirty = 1;
 }
 
 static void newline(void)
 {
-    int i;
-    if (numrows >= MAXROWS) return;
-    for (i = numrows; i > cy + 1; i--) {        /* open a gap below the cursor row */
-        int j;
-        for (j = 0; j <= MAXLEN; j++) rows[i][j] = rows[i - 1][j];
-        rowlen[i] = rowlen[i - 1];
+    int tail = row[cy].len - cx, i;
+    char *nc = 0;
+    if (numrows >= MAXROWS) { msg("Too many lines"); return; }
+    if (tail > 0) {                             /* allocate the new line first */
+        nc = malloc((tail + 7) & ~7);
+        if (!nc) { msg("No memory"); return; }
+        for (i = 0; i < tail; i++) nc[i] = row[cy].chars[cx + i];
     }
-    /* new row = tail of the current row from cx */
-    for (i = cx; i < rowlen[cy]; i++) rows[cy + 1][i - cx] = rows[cy][i];
-    rowlen[cy + 1] = rowlen[cy] - cx;
-    rowlen[cy] = cx;
+    for (i = numrows; i > cy + 1; i--) row[i] = row[i - 1];   /* open a gap */
+    row[cy + 1].chars = nc;
+    row[cy + 1].len = tail;
+    row[cy + 1].cap = nc ? ((tail + 7) & ~7) : 0;
+    row[cy].len = cx;                           /* truncate (keep its buffer) */
     numrows++;
-    cy++; cx = 0;
-    full_redraw = 1;            /* rows shifted: repaint everything */
-    dirty = 1;
+    cy++; cx = 0; full_redraw = 1; dirty = 1;
 }
 
 static void backspace(void)
 {
-    int i;
+    int i, plen;
+    erow *e = &row[cy];
     if (cx > 0) {                               /* delete the char before the cursor */
-        for (i = cx - 1; i < rowlen[cy] - 1; i++) rows[cy][i] = rows[cy][i + 1];
-        rowlen[cy]--; cx--;
-        dirty = 1;
+        for (i = cx - 1; i < e->len - 1; i++) e->chars[i] = e->chars[i + 1];
+        e->len--; cx--; dirty = 1;
         return;
     }
-    if (cy == 0) return;                         /* top-left: nothing to do */
-    /* join this row onto the end of the previous one (if it fits) */
-    cx = rowlen[cy - 1];
-    for (i = 0; i < rowlen[cy] && cx + i < MAXLEN; i++)
-        rows[cy - 1][cx + i] = rows[cy][i];
-    rowlen[cy - 1] = cx + rowlen[cy];
-    if (rowlen[cy - 1] > MAXLEN) rowlen[cy - 1] = MAXLEN;
-    for (i = cy; i < numrows - 1; i++) {        /* close the gap */
-        int j;
-        for (j = 0; j <= MAXLEN; j++) rows[i][j] = rows[i + 1][j];
-        rowlen[i] = rowlen[i + 1];
+    if (cy == 0) return;
+    plen = row[cy - 1].len;                      /* join onto the previous line */
+    if (e->len > 0) {
+        if (!row_reserve(cy - 1, plen + e->len)) { msg("No memory"); return; }
+        for (i = 0; i < e->len; i++) row[cy - 1].chars[plen + i] = e->chars[i];
+        row[cy - 1].len = plen + e->len;
     }
-    numrows--;
-    cy--;
-    full_redraw = 1;            /* rows shifted: repaint everything */
-    dirty = 1;
+    cx = plen;
+    free(e->chars);                              /* free the absorbed line */
+    for (i = cy; i < numrows - 1; i++) row[i] = row[i + 1];   /* close the gap */
+    row[numrows - 1].chars = 0; row[numrows - 1].len = 0; row[numrows - 1].cap = 0;
+    numrows--; cy--; full_redraw = 1; dirty = 1;
 }
 
-/* read a key, decoding ESC [ X navigation sequences into K_* logical keys.
-   A bare ESC (nothing queued after it) is K_ESC. */
+/* read a key, decoding ESC [ X navigation sequences into K_* logical keys. */
 static int readkey(void)
 {
     int c = INCH();
     if (c != 0x1B) return c;
     c = INCH_NB();
-    if (c != '[') return K_ESC;             /* bare ESC (or unknown) */
+    if (c != '[') return K_ESC;
     c = INCH_NB();
     switch (c) {
         case 'A': return K_UP;
@@ -181,13 +196,11 @@ static int readkey(void)
         case 'D': return K_LEFT;
         case 'H': return K_HOME;
         case 'F': return K_END;
-        case '5': INCH_NB(); return K_PGUP; /* consume the trailing '~' */
+        case '5': INCH_NB(); return K_PGUP;
         case '6': INCH_NB(); return K_PGDN;
     }
     return K_ESC;
 }
-
-static void msg(char *m) { strcpy(statusmsg, m); }
 
 /* read a line into buf on the status row; 1 = RETURN, 0 = ESC (cancel) */
 static int prompt(char *label, char *buf, int max)
@@ -213,7 +226,7 @@ static void save(void)
     else if (!prompt("Save as: ", name, 16)) { msg("Cancelled"); return; }
     if (dopen_write(name)) { msg("Save failed"); return; }
     for (r = 0; r < numrows; r++) {
-        for (c = 0; c < rowlen[r]; c++) dputb(rows[r][c]);
+        for (c = 0; c < row[r].len; c++) dputb(row[r].chars[c]);
         dputb('\n');                            /* terminate every line */
     }
     dclose();
@@ -224,25 +237,28 @@ static void save(void)
 
 static void load(void)
 {
-    char name[16]; int c, len = 0;
+    char name[16]; int c, r;
     if (!prompt("Open: ", name, 16)) { msg("Cancelled"); return; }
     if (dopen_read(name)) { msg("Not found"); return; }
-    numrows = 0;
+    clear_doc();
+    row[0].chars = 0; row[0].len = 0; row[0].cap = 0; numrows = 1;
     for (;;) {
         c = dgetb();
         if (c < 0) break;
         if (c == '\r') continue;                /* tolerate CRLF */
         if (c == '\n') {
-            rowlen[numrows++] = len; len = 0;
             if (numrows >= MAXROWS) break;
-        } else if (len < MAXLEN) {
-            rows[numrows][len++] = (char)c;     /* long lines clipped (no h-scroll yet) */
+            row[numrows].chars = 0; row[numrows].len = 0; row[numrows].cap = 0;
+            numrows++;
+        } else {
+            r = numrows - 1;
+            if (row_reserve(r, row[r].len + 1)) row[r].chars[row[r].len++] = (char)c;
         }
     }
     dclose();
-    if (len > 0 && numrows < MAXROWS) rowlen[numrows++] = len;  /* last unterminated line */
-    if (numrows == 0) { rowlen[0] = 0; numrows = 1; }
-    cx = cy = rowoff = 0; dirty = 0; full_redraw = 1;
+    /* a trailing newline made an extra empty row -- drop it (round-trips save) */
+    if (numrows > 1 && row[numrows - 1].len == 0) { free(row[numrows - 1].chars); numrows--; }
+    cx = cy = rowoff = coloff = 0; dirty = 0; full_redraw = 1;
     strcpy(curname, name);
     msg("Loaded");
 }
@@ -250,9 +266,9 @@ static void load(void)
 int main(void)
 {
     int k;
-    rowlen[0] = 0;
-    /* Park the kernel's blinking underbar cursor off-screen (drawCursor skips
-       cursor_x >= 40) so only the editor's block cursor shows. */
+    row[0].chars = 0; row[0].len = 0; row[0].cap = 0; numrows = 1;
+    /* Park the kernel's blinking cursor off-screen (drawCursor skips x>=40) so
+       only the editor's block cursor shows. */
     *(unsigned char *)0x0276 = 40;
     for (;;) {
         refresh();
@@ -266,26 +282,26 @@ int main(void)
             case 0x08: case 0x7F: backspace(); break;
             case K_LEFT:
                 if (cx > 0) cx--;
-                else if (cy > 0) { cy--; cx = rowlen[cy]; full_redraw = 1; }
+                else if (cy > 0) { cy--; cx = row[cy].len; full_redraw = 1; }
                 break;
             case K_RIGHT:
-                if (cx < rowlen[cy]) cx++;
+                if (cx < row[cy].len) cx++;
                 else if (cy < numrows - 1) { cy++; cx = 0; full_redraw = 1; }
                 break;
             case K_UP:
-                if (cy > 0) { cy--; if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; }
+                if (cy > 0) { cy--; if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; }
                 break;
             case K_DOWN:
-                if (cy < numrows - 1) { cy++; if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; }
+                if (cy < numrows - 1) { cy++; if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; }
                 break;
             case K_HOME: cx = 0; break;
-            case K_END:  cx = rowlen[cy]; break;
+            case K_END:  cx = row[cy].len; break;
             case K_PGUP:
                 cy -= TEXTROWS; if (cy < 0) cy = 0;
-                if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; break;
+                if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; break;
             case K_PGDN:
                 cy += TEXTROWS; if (cy > numrows - 1) cy = numrows - 1;
-                if (cx > rowlen[cy]) cx = rowlen[cy]; full_redraw = 1; break;
+                if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; break;
             default:
                 if (k >= 0x20 && k < 0x7F) insert_ch((char)k);
                 break;
