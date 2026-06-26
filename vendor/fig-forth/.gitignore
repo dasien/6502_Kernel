@@ -1,0 +1,11 @@
+# Generated intermediates / build artifacts (regenerate from the listing).
+figforth-src-raw.txt
+figforth.s
+figforth-ref.bin
+figforth-out.bin
+*.o
+*.bin
+*.map
+*.lst
+# (the upstream listing is figforth-6502-r1.1.lst.txt and is NOT ignored)
+!figforth-6502-r1.1.lst.txt

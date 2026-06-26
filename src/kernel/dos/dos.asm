@@ -44,6 +44,7 @@ K_PARSE_HEX      = $FF18                ; X = MON_CMDBUF index -> MON_CURRADDR, 
 K_PRINT_HEX_BYTE = $FF1B                ; A -> two hex digits
 K_MON_ENTRY      = $FF1E                ; launch the monitor (returns via Q -> DOS_WARM)
 K_LAUNCH_BY_NAME = $FF21                ; A/X=name -> launch a ROM module, or carry set
+K_LIST_MODULES   = $FF24                ; print the module catalog (BANKS command)
 
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
@@ -213,6 +214,12 @@ _DOS_DISPATCH:
     BCS @ncls2
     JMP _DOS_DO_CLS
 @ncls2:
+    LDA #<KW_BANKS
+    LDX #>KW_BANKS
+    JSR _DOS_VERB_MATCH
+    BCS @nbanks
+    JMP _DOS_DO_BANKS
+@nbanks:
     LDA #<KW_HELP
     LDX #>KW_HELP
     JSR _DOS_VERB_MATCH
@@ -324,6 +331,12 @@ _DOS_DISPATCH:
 ; ----------------------------------------------------------------
 _DOS_DO_CLS:
     JMP K_CLEAR_SCREEN                  ; tail (its RTS returns to _DOS_PROMPT)
+
+; ----------------------------------------------------------------
+; _DOS_DO_BANKS - BANKS: list the ROM module catalog (bank + name)
+; ----------------------------------------------------------------
+_DOS_DO_BANKS:
+    JMP K_LIST_MODULES                 ; tail (its RTS returns to _DOS_PROMPT)
 
 ; ----------------------------------------------------------------
 ; _DOS_VERB_MATCH - does MON_CMDBUF start with the keyword in A/X?
@@ -906,6 +919,7 @@ MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 MSG_DOS_HOSTERR: .BYTE "HOST I/O ERROR", $0D, $0A, 0
 KW_CLS:          .BYTE "CLS", 0
 KW_CLEAR:        .BYTE "CLEAR", 0
+KW_BANKS:        .BYTE "BANKS", 0
 KW_HELP:         .BYTE "HELP", 0
 KW_MON:          .BYTE "MON", 0
 KW_CATALOG:      .BYTE "CATALOG", 0

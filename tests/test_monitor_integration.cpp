@@ -48,6 +48,7 @@ public:
         // Launch-by-name: the assembler module runs via "ASM" and returns to the
         // DOS prompt on exit. (BANK_LAUNCH clears the screen, so no clear needed.)
         testDevtoolsModule();
+        testForthModule();
         testDisassembler();
         testDisassemblerBackspace();
         testDisassemblerEscMidline();
@@ -430,6 +431,26 @@ private:
 
         sendKey(0x1B, 200000);   // ESC -> module returns via $FF12 to the DOS
         verifyMemEquals(0xFE23, 0x00, "Module return unmaps bank (window = RAM)");
+    }
+
+    // FIG-Forth (bank 3). Launch via "FORTH", confirm the sign-on, define a word
+    // (proving new definitions compile into the RAM dictionary - the ROMable
+    // vocabulary fix), execute it, then exit via the MON word back to the DOS.
+    void testForthModule() {
+        sendCommand("FORTH", 4000000);   // cold start + sign-on
+        verifyMemEquals(0xFE23, 0x03, "FORTH maps bank 3 (MODULE_BANK)");
+        verifyResponse("fig-FORTH", "FORTH module signs on");
+
+        sendCommand(": DOUBLE 2 * ;", 3000000);   // compiles into RAM at $0802
+        sendCommand("21 DOUBLE .", 3000000);       // -> 42, proving lookup+exec work
+        verifyResponse("42", "FORTH runs a user-defined word (RAM dictionary)");
+        // FORTHLATEST ($0800) is the relocated FORTH thread cell; after the
+        // definition it points at DOUBLE's header at $0802 (little-endian).
+        verifyMemEquals(0x0800, 0x02, "New word linked via RAM thread cell (lo)");
+        verifyMemEquals(0x0801, 0x08, "New word linked via RAM thread cell (hi)");
+
+        sendCommand("MON", 2000000);     // MON word -> JMP $FF12 -> DOS
+        verifyMemEquals(0xFE23, 0x00, "FORTH MON word exits to DOS (bank unmapped)");
     }
 
     // The dev-tools disassembler (D xxxx). Poke a known 65C02 sequence into RAM

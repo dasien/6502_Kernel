@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.9
+; Version:      3.11
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -194,6 +194,11 @@
 ;                   (the upcoming editor) get real case. Shell command lines stay
 ;                   uppercase (READ_COMMAND_LINE already folds), and BASIC's input
 ;                   vector points at a folding wrapper (KEY_UC) for its tokenizer.
+; 2026-06-25  v3.10 New K_LIST_MODULES ABI ($FF24) prints the module catalog
+;                   (bank + name per MODULE_DIR record), backing the DOS 'BANKS'
+;                   command.
+; 2026-06-25  v3.11 Registered FIG-Forth 6502 as module bank 3 ("FORTH") in
+;                   MODULE_DIR. Launched by name from the DOS; listed by BANKS.
 ;
 ; ================================================================
 
@@ -3318,6 +3323,38 @@ MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
 MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
 
 ; ----------------------------------------------------------------
+; LIST_MODULES - print the module catalog as "<bank>  <NAME>" lines, one per
+; MODULE_DIR record. Exposed at $FF24 for the DOS 'BANKS' command. X holds the
+; record offset across the print calls (saved on the stack, which clobber it).
+; ----------------------------------------------------------------
+LIST_MODULES:
+    LDX #$00                    ; X = byte offset into MODULE_DIR
+@rec:
+    CPX #(MODULE_DIR_COUNT * MODULE_DIR_RECSIZE)
+    BCS @done
+    LDA MODULE_DIR,X            ; bank number
+    PHX
+    JSR PRINT_HEX_BYTE          ; (clobbers X)
+    LDA #' '
+    JSR PRINT_CHAR
+    LDA #' '
+    JSR PRINT_CHAR
+    PLX
+    LDA MODULE_DIR+3,X          ; name pointer (low/high) -> PRINT_MSG_AY
+    LDY MODULE_DIR+4,X
+    PHX
+    JSR PRINT_MSG_AY            ; (clobbers X)
+    JSR PRINT_NEWLINE
+    PLX
+    TXA
+    CLC
+    ADC #MODULE_DIR_RECSIZE
+    TAX
+    BRA @rec
+@done:
+    RTS
+
+; ----------------------------------------------------------------
 ; Module directory: one 5-byte record per launchable module. The DOS resolves a
 ; typed name against this table (K_LAUNCH_BY_NAME) and maps + runs the bank.
 ;   byte 0      bank number (written to MODULE_BANK to map the module)
@@ -3334,10 +3371,14 @@ MODULE_DIR:
     .BYTE 2                     ; bank 2
     .WORD $B000                 ; entry (DEVT_MAIN at the window base)
     .WORD NAME_ASM
+    .BYTE 3                     ; bank 3
+    .WORD $B000                 ; entry (FIG-Forth ENTER at the window base)
+    .WORD NAME_FORTH
 MODULE_DIR_COUNT = (* - MODULE_DIR) / MODULE_DIR_RECSIZE
 
 NAME_BASIC:          .BYTE "BASIC", 0
 NAME_ASM:            .BYTE "ASM", 0
+NAME_FORTH:          .BYTE "FORTH", 0
 
 ; ================================================================
 ; RESERVED I/O PAGE ($FE00-$FEFF)
@@ -3366,6 +3407,7 @@ K_PARSE_HEX:     JMP HEX_QUAD_TO_ADDR   ; $FF18
 K_PRINT_HEX_BYTE:JMP PRINT_HEX_BYTE     ; $FF1B
 K_MON_ENTRY:     JMP MONITOR_MAIN       ; $FF1E - DOS launches the monitor here
 K_LAUNCH_BY_NAME:JMP LAUNCH_BY_NAME     ; $FF21 - DOS launches a module by name
+K_LIST_MODULES:  JMP LIST_MODULES       ; $FF24 - print the module catalog (BANKS)
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

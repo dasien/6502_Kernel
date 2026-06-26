@@ -90,6 +90,31 @@ if(CA65_FOUND AND LD65_FOUND)
     )
 
     # ================================================================
+    # FORTH Module ROM Build Target (module bank 3)
+    # ================================================================
+    # FIG-Forth 6502 (Ragsdale Rel 1.1). forth.s is generated from the
+    # byte-verified vendor/fig-forth/figforth.s by make_module.py; see that
+    # directory for provenance and the $0200 byte-identical check.
+
+    set(FORTH_DIR ${CMAKE_SOURCE_DIR}/src/kernel/forth)
+    set(FORTH_ASM_SOURCE ${FORTH_DIR}/forth.s)
+    set(FORTH_CONFIG ${FORTH_DIR}/forth_memory.cfg)
+
+    set(FORTH_OBJECT ${CMAKE_BINARY_DIR}/kernel/forth.o)
+    set(FORTH_ROM ${CMAKE_BINARY_DIR}/kernel/forth.rom)
+    set(FORTH_MAP ${CMAKE_BINARY_DIR}/kernel/forth.map)
+
+    add_custom_target(forth_rom ALL
+        COMMAND ca65 ${FORTH_ASM_SOURCE} -o ${FORTH_OBJECT}
+        COMMAND ld65 -C ${FORTH_CONFIG} ${FORTH_OBJECT} -o ${FORTH_ROM} -m ${FORTH_MAP}
+        COMMAND ${CMAKE_COMMAND} -E echo "FORTH module ROM built (bank 3)"
+        COMMENT "Building FORTH module ROM"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+        DEPENDS ${FORTH_ASM_SOURCE} ${FORTH_CONFIG}
+        VERBATIM
+    )
+
+    # ================================================================
     # MFC-DOS Resident ROM Build Target ($9000-$AFFF, always mapped)
     # ================================================================
 

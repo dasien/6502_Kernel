@@ -204,6 +204,12 @@ or studied:
   search are lifted from kilo's design. <https://github.com/antirez/kilo>
 - **EhBASIC** (Enhanced 6502 BASIC) by the late **Lee Davison** — the basis for
   the built-in MFC BASIC interpreter.
+- **fig-FORTH for the 6502** by **William F. Ragsdale** and the **FORTH Interest
+  Group (FIG)** — the public-domain FIG model behind the `FORTH` module (bank 3).
+  We mechanically convert the original assembler listing to ca65 (verified
+  byte-identical at its native `$0200` origin), then relocate it into the ROM
+  module window and wire its I/O to the kernel. The pristine listing and the
+  conversion/verification tooling live under `vendor/fig-forth/`.
 - **cc65** — the 6502 C cross-compiler and toolchain used to build the C
   programs (`CHESS.PRG`, the Scott Adams games). <https://cc65.github.io/>
 

@@ -175,6 +175,7 @@ namespace Computer
 
         installBank(1, "../kernel/basic.rom", "BASIC");
         installBank(2, "../kernel/assembler.rom", "ASSEMBLER");
+        installBank(3, "../kernel/forth.rom", "FORTH");
 
         // Always-mapped DOS ROM at $9000-$AFFF (resident FAT16 filesystem / DOS
         // shell). If absent, the region stays RAM and the machine boots as before.

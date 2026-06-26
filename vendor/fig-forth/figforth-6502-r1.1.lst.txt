@@ -1,0 +1,4853 @@
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0001
+
+LINE # LOC     CODE       LINE
+
+0002  0000            ;
+0003  0000            ;       Through the courtesy of
+0004  0000            ;
+0005  0000            ;        FORTH INTEREST GROUP
+0006  0000            ;           P. O. Box 1105
+0007  0000            ;      San Carlos, CA 94070
+0008  0000            ;
+0009  0000            ;             Release 1.1
+0010  0000            ;       With compiler security
+0011  0000            ;               and
+0012  0000            ;       variable length names
+0013  0000            ;
+0014  0000            ; Further distribution must include the above notice
+0015  0000            ; The FIG Installation Manual is required as it
+0016  0000            ; contains the model of FORTH and glossary of the system.
+0017  0000            ; Available from FIG at the above address for $10.00 postpai
+0018  0000            ;
+0019  0000            ; Translated from the FIG Model by W. F. Ragsdale
+0020  0000            ; with input-output given for the Rockewell System-65.
+0021  0000            ; Transportation to other systems only requires
+0022  0000            ; alteration of: XEMIT, XKEY, XQTER, XCR, and RSLW.
+0023  0000            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0002
+
+LINE # LOC     CODE       LINE
+
+0025  0000            ;
+0026  0000            ;   Equates giving memory assigments, machine
+0027  0000            ;   registers, and disk parameters.
+0028  0000            ;
+0029  0000            ;
+0030  0000            SSIZE  =128   sector size in bytes
+0031  0000            NBUF   =8              ; number of buffers desired in ram
+0032  0000            ;                    (SSIZE*NBUF >= 1024 bytes)
+0033  0000            SECTR  =800    sectors per drive
+0034  0000            ;                        forcing hi drive to Screen #100
+0035  0000            SECTL  =1600     sector limit for 2 drives
+0036  0000            ;                of 800 sectors per drive
+0037  0000            BMAG   =1056    total buffer magnitude, in bytes
+0038  0000            ;                    expressed by SSIZE+4*NBUF
+0039  0000            ;
+0040  0000            BOS    =$20        bottom of data stack, in z-page.
+0041  0000            TOS    =$9E        top of data stack, in z-page.
+0042  0000            N      =TOS+8      xXxxxxxxx    scratch workspace
+0043  0000            IP     =N+8         Xx          interpretive pointer
+0044  0000            W      =IP+3       xXx          code field pointer
+0045  0000            UP     =W+2         Xx          user area pointer
+0046  0000            XSAVE  =UP+2        X           temporary for X register
+0047  0000            ;
+0048  0000            TIBX   =$0100      terminal input buffer of 84 bytes.
+0049  0000            ORIG   =$0200      origin of FORTH's dictionary.
+0050  0000            MEM    =$4000      top of assigned memory+1 byte.
+0051  0000            UAREA  =MEM-128    128 bytes of user area
+0052  0000            DAREA  =UAREA-BMAG disk buffer area
+0053  0000            ;
+0054  0000            ;      Monitor calls for terminal support
+0055  0000            ;
+0056  0000            OUTCH  =$D2C1      ; output one ASCII character to termina
+0057  0000            INCH   =$D1DC      ; input one ASCII character from termina
+0058  0000            TCR    =$D0F1     ; terminal return and line feed
+0059  0000            ;
+0060  0000            ;
+0061  0000            ;   From DAREA downward to the top of the dictionary is free
+0062  0000            ;   space where the user's applications are compiled.
+0063  0000            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0003
+
+LINE # LOC     CODE       LINE
+
+0065  0000            ;
+0066  0000            ;     Boot up parameters. This area provide jump vectors
+0067  0000            ;     to bootup code, and parameters describing the system
+0068  0000            ;
+0069  0000                   *=ORIG
+0070  0200  EA        ENTER  NOP               User cold entry point
+0071  0201  4C 47 12         JMP COLD+2          vector to COLD entry
+0072  0204  EA        REENTR NOP             ; User warm entry point
+0073  0205  4C 57 12         JMP WARM            vector to WARM entry
+0074  0208  04 00            .WORD $0004       6502 encoded in radix-36
+0075  020A  D2 5E            .WORD $5ED2
+0076  020C  64 1A            .WORD NTOP       Name address of MON
+0077  020E  7F 00            .WORD $7F         Backspace character
+0078  0210  80 3F            .WORD UAREA      Initial user area
+0079  0212  9E 00            .WORD TOS         Initial top of stack
+0080  0214  FF 01            .WORD $1FF        Initial top of return stack
+0081  0216  00 01            .WORD TIBX        Initial terminal input buffer
+0082  0218  1F 00            .WORD 31          Initial name field width
+0083  021A  00 00            .WORD 0           0=no disk 1=disk
+0084  021C  74 1A            .WORD TOP         Initial fence address
+0085  021E  74 1A            .WORD TOP         Initial top of dictionary
+0086  0220  BE 11            .WORD VL0         Initial vocabulary link pointer
+0087  0222            ;
+0088  0222            ;     The following offset adjusts all code fields
+0089  0222            ;     to avoid an address ending $xxFF.  This must
+0090  0222            ;     be checked and altered on any alteration, for
+0091  0222            ;     the indirect jump at W-1 to operate!!!
+0092  0222            ;
+0093  0222            ;
+0094  0222                   *=*+2
+0095  0224            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0004
+
+LINE # LOC     CODE       LINE
+
+0097  0224            ;
+0098  0224            ;                             LIT
+0099  0224            ;
+0100  0224            ;                             SCREEN 13 LINE 1
+0101  0224            ;
+0102  0224  83        L22    .BYTE $83,'LI',$D4    <--- name field
+0102  0225  4C 49
+0102  0227  D4
+0103  0228                   ;  <--- link field
+0104  0228  00 00            .WORD 00            Last link is marked by zero
+0105  022A  2C 02     LIT    .WORD *+2   <--- code address field
+0106  022C  B1 AE            LDA (IP),Y   <--- start of parameter field
+0107  022E  48               PHA
+0108  022F  E6 AE            INC IP
+0109  0231  D0 02            BNE L30
+0110  0233  E6 AF            INC IP+1
+0111  0235  B1 AE     L30    LDA (IP),Y
+0112  0237  E6 AE     L31    INC IP
+0113  0239  D0 02            BNE PUSH
+0114  023B  E6 AF            INC IP+1
+0115  023D            ;
+0116  023D  CA        PUSH   DEX
+0117  023E  CA               DEX
+0118  023F            ;
+0119  023F  95 01     PUT    STA 1,X
+0120  0241  68               PLA
+0121  0242  95 00            STA 0,X
+0122  0244            ;
+0123  0244            ;     NEXT is the address interpreter that moves from
+0124  0244            ;     machine level word to word.
+0125  0244            ;
+0126  0244  A0 01     NEXT   LDY #1
+0127  0246  B1 AE            LDA (IP),Y    Fetch code field address pointed
+0128  0248  85 B2            STA W+1       to by IP
+0129  024A  88               DEY
+0130  024B  B1 AE            LDA (IP),Y
+0131  024D  85 B1            STA W
+0132  024F  20 6F 02         JSR TRACE   Remove this when all is well
+0133  0252  18               CLC           Increment IP by two
+0134  0253  A5 AE            LDA IP
+0135  0255  69 02            ADC #2
+0136  0257  85 AE            STA IP
+0137  0259  90 02            BCC L54
+0138  025B  E6 AF            INC IP+1
+0139  025D  4C B0 00  L54    JMP W-1     Jump to an indirect jump (W)
+0140  0260            ;               which vectors to code pointed by a code fiel
+0141  0260            ;
+0142  0260            ;    CLIT pushes next inline byte to data stack
+0143  0260            ;
+0144  0260  84        L35    .BYTE $84,'CLI',$D4
+0144  0261  43 4C 49
+0144  0264  D4
+0145  0265  24 02            .WORD L22      LINK TO LIT
+0146  0267  69 02     CLIT   .WORD *+2
+0147  0269  B1 AE            LDA (IP),Y
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0005
+
+LINE # LOC     CODE       LINE
+
+0148  026B  48               PHA
+0149  026C  98               TYA
+0150  026D  F0 C8            BEQ L31     a forced branch into LIT
+0151  026F            ;
+0152  026F            ;     This is a temporary trace routine, to be used
+0153  026F            ;     until FORTH is generally operating.  Then NOP
+0154  026F            ;     the terminal query "JSR ONEKEY".  This will allow
+0155  026F            ;     user input to the text interpreter.  When crashes
+0156  026F            ;     occur, the display shows IP,  W, and the word
+0157  026F            ;     locations of offending code.  When all is well,
+0158  026F            ;     remove:  TRACE,  TCOLON,  PRNAM,  DECNP and the
+0159  026F            ;              following monitor/register equates.
+0160  026F            ;
+0161  026F            ;
+0162  026F            ;   Monitor routines needed to trace
+0163  026F            ;
+0164  026F            XBLANK =$D0AF    Print one blank
+0165  026F            CRLF   =$D0D2    Print a carriage return and line feed
+0166  026F            HEX2   =$D2CE    Print accum as two hex numbers
+0167  026F            LETTER =$D2C1    Print accumulator as one ASCII character
+0168  026F            ONEKEY =$D1DC    Wait for keystroke, into accum.
+0169  026F            XW     =$12      Scratch register to next code field address
+0170  026F            NP     =$14    Another scratch register pointing to name
+0171  026F            ;
+0172  026F  86 B5     TRACE  STX XSAVE
+0173  0271  20 D2 D0         JSR CRLF
+0174  0274  A5 AF            LDA IP+1
+0175  0276  20 CE D2         JSR HEX2
+0176  0279  A5 AE            LDA IP
+0177  027B  20 CE D2         JSR HEX2   Print IP, the interpretive pointer
+0178  027E  20 AF D0         JSR XBLANK
+0179  0281            ;
+0180  0281  A0 00            LDY #0
+0181  0283  B1 AE            LDA (IP),Y
+0182  0285  85 12            STA XW
+0183  0287  85 14            STA NP    Fetch the next code field pointer
+0184  0289  C8               INY
+0185  028A  B1 AE            LDA (IP),Y
+0186  028C  85 13            STA XW+1
+0187  028E  85 15            STA NP+1
+0188  0290  20 D9 02         JSR PRNAM  Print dictionary name
+0189  0293            ;
+0190  0293  A5 13            LDA XW+1
+0191  0295  20 CE D2         JSR HEX2   Print code field address
+0192  0298  A5 12            LDA XW
+0193  029A  20 CE D2         JSR HEX2
+0194  029D  20 AF D0         JSR XBLANK
+0195  02A0            ;
+0196  02A0  A5 B5            LDA XSAVE     Print stack location in z-page
+0197  02A2  20 CE D2         JSR HEX2
+0198  02A5  20 AF D0         JSR XBLANK
+0199  02A8            ;
+0200  02A8  A9 01            LDA #1        Print return stack bottom in Page 1
+0201  02AA  20 CE D2         JSR HEX2
+0202  02AD  BA               TSX
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0006
+
+LINE # LOC     CODE       LINE
+
+0203  02AE  E8               INX
+0204  02AF  8A               TXA
+0205  02B0  20 CE D2         JSR HEX2
+0206  02B3  20 AF D0         JSR XBLANK
+0207  02B6            ;
+0208  02B6  20 DC D1         JSR ONEKEY    Wait for operator keystroke
+0209  02B9  A6 B5            LDX XSAVE       just to pinpoint early problems.
+0210  02BB  A0 00            LDY #0
+0211  02BD  60               RTS
+0212  02BE            ;
+0213  02BE            ;    TCOLON is called from DOCOLON to label each
+0214  02BE            ;    point where FORTH 'nests' one level.
+0215  02BE            ;
+0216  02BE  86 B5     TCOLON STX XSAVE
+0217  02C0  A5 B1            LDA W
+0218  02C2  85 14            STA NP    Locate the name of the called
+0219  02C4  A5 B2            LDA W+1
+0220  02C6  85 15            STA NP+1
+0221  02C8  20 D2 D0         JSR CRLF
+0222  02CB  A9 3A            LDA #':
+0223  02CD  20 C1 D2         JSR LETTER
+0224  02D0  20 AF D0         JSR XBLANK
+0225  02D3  20 D9 02         JSR PRNAM
+0226  02D6  A6 B5            LDX XSAVE
+0227  02D8  60               RTS
+0228  02D9            ;
+0229  02D9            ;     Print name by its code field address in NP
+0230  02D9            ;
+0231  02D9  20 FB 02  PRNAM  JSR DECNP
+0232  02DC  20 FB 02         JSR DECNP
+0233  02DF  20 FB 02         JSR DECNP
+0234  02E2  A0 00            LDY #0
+0235  02E4  20 FB 02  PN1    JSR DECNP
+0236  02E7  B1 14            LDA (NP),Y    loop till D7 in name set
+0237  02E9  10 F9            BPL PN1
+0238  02EB  C8        PN2    INY
+0239  02EC  B1 14            LDA (NP),Y
+0240  02EE  20 C1 D2         JSR LETTER    print letters of name field
+0241  02F1  B1 14            LDA (NP),Y
+0242  02F3  10 F6            BPL PN2
+0243  02F5  20 AF D0         JSR XBLANK
+0244  02F8  A0 00            LDY #0
+0245  02FA  60               RTS
+0246  02FB            ;
+0247  02FB            ;     Decrement name field pointer
+0248  02FB            ;
+0249  02FB  A5 14     DECNP  LDA NP
+0250  02FD  D0 02            BNE DECNP1
+0251  02FF  C6 15            DEC NP+1
+0252  0301  C6 14     DECNP1 DEC NP
+0253  0303  60               RTS
+0254  0304            ;
+0255  0304            ;
+0256  0304  0A        SETUP  ASL A
+0257  0305  85 A5            STA N-1
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0007
+
+LINE # LOC     CODE       LINE
+
+0258  0307  B5 00     L63    LDA 0,X
+0259  0309  99 A6 00         STA N,Y
+0260  030C  E8               INX
+0261  030D  C8               INY
+0262  030E  C4 A5            CPY N-1
+0263  0310  D0 F5            BNE L63
+0264  0312  A0 00            LDY #0
+0265  0314  60               RTS
+0266  0315            ;
+0267  0315            ;                             EXECUTE
+0268  0315            ;                             SCREEN 14 LINE 11
+0269  0315            ;
+0270  0315  87        L75    .BYTE $87,'EXECUT',$C5
+0270  0316  45 58
+0270  0318  45 43 55
+0270  031B  54
+0270  031C  C5
+0271  031D  60 02            .WORD L35           ;  LINK TO CLIT
+0272  031F  21 03     EXEC   .WORD *+2
+0273  0321  B5 00            LDA 0,X
+0274  0323  85 B1            STA W
+0275  0325  B5 01            LDA 1,X
+0276  0327  85 B2            STA W+1
+0277  0329  E8               INX
+0278  032A  E8               INX
+0279  032B  4C B0 00         JMP W-1         To JMP (W) in z-page
+0280  032E            ;
+0281  032E            ;                             BRANCH
+0282  032E            ;                             SCREEN 15 LINE 1
+0283  032E            ;
+0284  032E  86        L89    .BYTE $86,'BRANC',$C8
+0284  032F  42 52
+0284  0331  41 4E 43
+0284  0334  C8
+0285  0335  15 03            .WORD L75           ;  LINK TO EXECUTE
+0286  0337  39 03     BRAN   .WORD *+2
+0287  0339  18               CLC
+0288  033A  B1 AE            LDA (IP),Y
+0289  033C  65 AE            ADC IP
+0290  033E  48               PHA
+0291  033F  C8               INY
+0292  0340  B1 AE            LDA (IP),Y
+0293  0342  65 AF            ADC IP+1
+0294  0344  85 AF            STA IP+1
+0295  0346  68               PLA
+0296  0347  85 AE            STA IP
+0297  0349  4C 46 02         JMP NEXT+2
+0298  034C            ;
+0299  034C            ;                             0BRANCH
+0300  034C            ;                             SCREEN 15 LINE 6
+0301  034C            ;
+0302  034C  87        L107   .BYTE $87,'0BRANC',$C8
+0302  034D  30 42
+0302  034F  52 41 4E
+0302  0352  43
+0302  0353  C8
+0303  0354  2E 03            .WORD L89           ;  LINK TO BRANCH
+0304  0356  58 03     ZBRAN  .WORD *+2
+0305  0358  E8               INX
+0306  0359  E8               INX
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0008
+
+LINE # LOC     CODE       LINE
+
+0307  035A  B5 FE            LDA $FE,X
+0308  035C  15 FF            ORA $FF,X
+0309  035E  F0 D9            BEQ BRAN+2
+0310  0360            ;
+0311  0360  18        BUMP   CLC
+0312  0361  A5 AE            LDA IP
+0313  0363  69 02            ADC #2
+0314  0365  85 AE            STA IP
+0315  0367  90 02            BCC L122
+0316  0369  E6 AF            INC IP+1
+0317  036B  4C 44 02  L122   JMP NEXT
+0318  036E            ;
+0319  036E            ;                             (LOOP)
+0320  036E            ;                             SCREEN 16 LINE 1
+0321  036E            ;
+0322  036E  86        L127   .BYTE $86,'(LOOP',$A9
+0322  036F  28 4C
+0322  0371  4F 4F 50
+0322  0374  A9
+0323  0375  4C 03            .WORD L107          ;  LINK TO 0BRANCH
+0324  0377  79 03     PLOOP  .WORD L130
+0325  0379  86 B5     L130   STX XSAVE
+0326  037B  BA               TSX
+0327  037C  FE 01 01         INC $101,X
+0328  037F  D0 03            BNE PL1
+0329  0381  FE 02 01         INC $102,X
+0330  0384            ;
+0331  0384  18        PL1    CLC
+0332  0385  BD 03 01         LDA $103,X
+0333  0388  FD 01 01         SBC $101,X
+0334  038B  BD 04 01         LDA $104,X
+0335  038E  FD 02 01         SBC $102,X
+0336  0391            ;
+0337  0391  A6 B5     PL2    LDX XSAVE
+0338  0393  0A               ASL A
+0339  0394  90 A3            BCC BRAN+2
+0340  0396  68               PLA
+0341  0397  68               PLA
+0342  0398  68               PLA
+0343  0399  68               PLA
+0344  039A  4C 60 03         JMP BUMP
+0345  039D            ;
+0346  039D            ;                             (+LOOP)
+0347  039D            ;                             SCREEN 16 LINE 8
+0348  039D            ;
+0349  039D  87        L154   .BYTE $87,'(+LOOP',$A9
+0349  039E  28 2B
+0349  03A0  4C 4F 4F
+0349  03A3  50
+0349  03A4  A9
+0350  03A5  6E 03            .WORD L127 LINK TO (LOOP)
+0351  03A7  A9 03     PPLOO  .WORD *+2
+0352  03A9  E8               INX
+0353  03AA  E8               INX
+0354  03AB  86 B5            STX XSAVE
+0355  03AD  B5 FF            LDA $FF,X
+0356  03AF  48               PHA
+0357  03B0  48               PHA
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0009
+
+LINE # LOC     CODE       LINE
+
+0358  03B1  B5 FE            LDA $FE,X
+0359  03B3  BA               TSX
+0360  03B4  E8               INX
+0361  03B5  E8               INX
+0362  03B6  18               CLC
+0363  03B7  7D 01 01         ADC $101,X
+0364  03BA  9D 01 01         STA $101,X
+0365  03BD  68               PLA
+0366  03BE  7D 02 01         ADC $102,X
+0367  03C1  9D 02 01         STA $102,X
+0368  03C4  68               PLA
+0369  03C5  10 BD            BPL PL1
+0370  03C7  18               CLC
+0371  03C8  BD 01 01         LDA $101,X
+0372  03CB  FD 03 01         SBC $103,X
+0373  03CE  BD 02 01         LDA $102,X
+0374  03D1  FD 04 01         SBC $104,X
+0375  03D4  4C 91 03         JMP PL2
+0376  03D7            ;
+0377  03D7            ;                             (DO)
+0378  03D7            ;                             SCREEN 17 LINE 2
+0379  03D7            ;
+0380  03D7  84        L185   .BYTE $84,'(DO',$A9
+0380  03D8  28 44 4F
+0380  03DB  A9
+0381  03DC  9D 03            .WORD L154          ;  LINK TO (+LOOP)
+0382  03DE  E0 03     PDO    .WORD *+2
+0383  03E0  B5 03            LDA 3,X
+0384  03E2  48               PHA
+0385  03E3  B5 02            LDA 2,X
+0386  03E5  48               PHA
+0387  03E6  B5 01            LDA 1,X
+0388  03E8  48               PHA
+0389  03E9  B5 00            LDA 0,X
+0390  03EB  48               PHA
+0391  03EC            ;
+0392  03EC  E8        POPTWO INX
+0393  03ED  E8               INX
+0394  03EE            ;
+0395  03EE  E8        POP    INX
+0396  03EF  E8               INX
+0397  03F0  4C 44 02         JMP NEXT
+0398  03F3            ;
+0399  03F3            ;                             I
+0400  03F3            ;                             SCREEN 17 LINE 9
+0401  03F3            ;
+0402  03F3  81        L207   .BYTE $81,$C9
+0402  03F4  C9
+0403  03F5  D7 03            .WORD L185          ;  LINK TO (DO)
+0404  03F7  5F 06     I      .WORD R+2           Share the code for R
+0405  03F9            ;
+0406  03F9            ;                             DIGIT
+0407  03F9            ;                             SCREEN 18 LINE 1
+0408  03F9            ;
+0409  03F9  85        L214   .BYTE $85,'DIGI',$D4
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0010
+
+LINE # LOC     CODE       LINE
+
+0409  03FA  44 49
+0409  03FC  47 49
+0409  03FE  D4
+0410  03FF  F3 03            .WORD L207          ;  LINK TO I
+0411  0401  03 04     DIGIT  .WORD *+2
+0412  0403  38               SEC
+0413  0404  B5 02            LDA 2,X
+0414  0406  E9 30            SBC #$30
+0415  0408  30 18            BMI L234
+0416  040A  C9 0A            CMP #$A
+0417  040C  30 07            BMI L227
+0418  040E  38               SEC
+0419  040F  E9 07            SBC #7
+0420  0411  C9 0A            CMP #$A
+0421  0413  30 0D            BMI L234
+0422  0415  D5 00     L227   CMP 0,X
+0423  0417  10 09            BPL L234
+0424  0419  95 02            STA 2,X
+0425  041B  A9 01            LDA #1
+0426  041D  48               PHA
+0427  041E  98               TYA
+0428  041F  4C 3F 02         JMP PUT ; exit true with converted value
+0429  0422  98        L234   TYA
+0430  0423  48               PHA
+0431  0424  E8               INX
+0432  0425  E8               INX
+0433  0426  4C 3F 02         JMP PUT ; exit false for bad conversion
+0434  0429            ;
+0435  0429            ;                             (FIND)
+0436  0429            ;                             SCREEN 19 LINE 1
+0437  0429            ;
+0438  0429  86        L243   .BYTE $86,'(FIND',$A9
+0438  042A  28 46
+0438  042C  49 4E 44
+0438  042F  A9
+0439  0430  F9 03            .WORD L214          ;  LINK TO DIGIT
+0440  0432  34 04     PFIND  .WORD *+2
+0441  0434  A9 02            LDA #2
+0442  0436  20 04 03         JSR SETUP
+0443  0439  86 B5            STX XSAVE
+0444  043B  A0 00     L249   LDY #0
+0445  043D  B1 A6            LDA (N),Y
+0446  043F  51 A8            EOR (N+2),Y
+0447  0441  29 3F            AND #$3F
+0448  0443  D0 2D            BNE L281
+0449  0445  C8        L254   INY
+0450  0446  B1 A6            LDA (N),Y
+0451  0448  51 A8            EOR (N+2),Y
+0452  044A  0A               ASL A
+0453  044B  D0 23            BNE L280
+0454  044D  90 F6            BCC L254
+0455  044F  A6 B5            LDX XSAVE
+0456  0451  CA               DEX
+0457  0452  CA               DEX
+0458  0453  CA               DEX
+0459  0454  CA               DEX
+0460  0455  18               CLC
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0011
+
+LINE # LOC     CODE       LINE
+
+0461  0456  98               TYA
+0462  0457  69 05            ADC #5
+0463  0459  65 A6            ADC N
+0464  045B  95 02            STA 2,X
+0465  045D  A0 00            LDY #0
+0466  045F  98               TYA
+0467  0460  65 A7            ADC N+1
+0468  0462  95 03            STA 3,X
+0469  0464  94 01            STY 1,X
+0470  0466  B1 A6            LDA (N),Y
+0471  0468  95 00            STA 0,X
+0472  046A  A9 01            LDA #1
+0473  046C  48               PHA
+0474  046D  4C 3D 02         JMP PUSH
+0475  0470  B0 05     L280   BCS L284
+0476  0472  C8        L281   INY
+0477  0473  B1 A6            LDA (N),Y
+0478  0475  10 FB            BPL L281
+0479  0477  C8        L284   INY
+0480  0478  B1 A6            LDA (N),Y
+0481  047A  AA               TAX
+0482  047B  C8               INY
+0483  047C  B1 A6            LDA (N),Y
+0484  047E  85 A7            STA N+1
+0485  0480  86 A6            STX N
+0486  0482  05 A6            ORA N
+0487  0484  D0 B5            BNE L249
+0488  0486  A6 B5            LDX XSAVE
+0489  0488  A9 00            LDA #0
+0490  048A  48               PHA
+0491  048B  4C 3D 02         JMP PUSH     exit false upon reading null link
+0492  048E            ;
+0493  048E            ;                             ENCLOSE
+0494  048E            ;                             SCREEN 20 LINE 1
+0495  048E            ;
+0496  048E  87        L301   .BYTE $87,'ENCLOS',$C5
+0496  048F  45 4E
+0496  0491  43 4C 4F
+0496  0494  53
+0496  0495  C5
+0497  0496  29 04            .WORD L243          ;  LINK TO (FIND)
+0498  0498  9A 04     ENCL   .WORD *+2
+0499  049A  A9 02            LDA #2
+0500  049C  20 04 03         JSR SETUP
+0501  049F  8A               TXA
+0502  04A0  38               SEC
+0503  04A1  E9 08            SBC #8
+0504  04A3  AA               TAX
+0505  04A4  94 03            STY 3,X
+0506  04A6  94 01            STY 1,X
+0507  04A8  88               DEY
+0508  04A9  C8        L313   INY
+0509  04AA  B1 A8            LDA (N+2),Y
+0510  04AC  C5 A6            CMP N
+0511  04AE  F0 F9            BEQ L313
+0512  04B0  94 04            STY 4,X
+0513  04B2  B1 A8     L318   LDA (N+2),Y
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0012
+
+LINE # LOC     CODE       LINE
+
+0514  04B4  D0 0E            BNE L327
+0515  04B6  94 02            STY 2,X
+0516  04B8  94 00            STY 0,X
+0517  04BA  98               TYA
+0518  04BB  D5 04            CMP 4,X
+0519  04BD  D0 02            BNE L326
+0520  04BF  F6 02            INC 2,X
+0521  04C1  4C 44 02  L326   JMP NEXT
+0522  04C4  94 02     L327   STY 2,X
+0523  04C6  C8               INY
+0524  04C7  C5 A6            CMP N
+0525  04C9  D0 E7            BNE L318
+0526  04CB  94 00            STY 0,X
+0527  04CD  4C 44 02         JMP NEXT
+0528  04D0            ;
+0529  04D0            ;                             EMIT
+0530  04D0            ;                             SCREEN 21 LINE 5
+0531  04D0            ;
+0532  04D0  84        L337   .BYTE $84,'EMI',$D4
+0532  04D1  45 4D 49
+0532  04D4  D4
+0533  04D5  8E 04            .WORD L301          ;  LINK TO ENCLOSE
+0534  04D7  F1 15     EMIT   .WORD XEMIT            Vector to code for EMIT
+0535  04D9            ;
+0536  04D9            ;                             KEY
+0537  04D9            ;                             SCREEN 21 LINE 7
+0538  04D9            ;
+0539  04D9  83        L344   .BYTE $83,'KE',$D9
+0539  04DA  4B 45
+0539  04DC  D9
+0540  04DD  D0 04            .WORD L337          ;  LINK TO EMIT
+0541  04DF  0C 16     KEY    .WORD XKEY             Vector to code for KEY
+0542  04E1            ;
+0543  04E1            ;                             ?TERMINAL
+0544  04E1            ;                             SCREEN 21 LINE 9
+0545  04E1            ;
+0546  04E1  89        L351   .BYTE $89,'?TERMINA',$CC
+0546  04E2  3F 54
+0546  04E4  45 52 4D
+0546  04E7  49 4E 41
+0546  04EA  CC
+0547  04EB  D9 04            .WORD L344          ;  LINK TO KEY
+0548  04ED  16 16     QTERM  .WORD XQTER            Vector to code for ?TERMINA
+0549  04EF            ;
+0550  04EF            ;                             CR
+0551  04EF            ;                             SCREEN 21 LINE 11
+0552  04EF            ;
+0553  04EF  82        L358   .BYTE $82,'C',$D2
+0553  04F0  43
+0553  04F1  D2
+0554  04F2  E1 04            .WORD L351          ;  LINK TO ?TERMINAL
+0555  04F4  21 16     CR     .WORD XCR              Vector to code for CR
+0556  04F6            ;
+0557  04F6            ;                             CMOVE
+0558  04F6            ;                             SCREEN 22 LINE 1
+0559  04F6            ;
+0560  04F6  85        L365   .BYTE $85,'CMOV',$C5
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0013
+
+LINE # LOC     CODE       LINE
+
+0560  04F7  43 4D
+0560  04F9  4F 56
+0560  04FB  C5
+0561  04FC  EF 04            .WORD L358 ;  LINK TO CR
+0562  04FE  00 05     CMOVE  .WORD *+2
+0563  0500  A9 03            LDA #3
+0564  0502  20 04 03         JSR SETUP
+0565  0505  C4 A6     L370   CPY N
+0566  0507  D0 07            BNE L375
+0567  0509  C6 A7            DEC N+1
+0568  050B  10 03            BPL L375
+0569  050D  4C 44 02         JMP NEXT
+0570  0510  B1 AA     L375   LDA (N+4),Y
+0571  0512  91 A8            STA (N+2),Y
+0572  0514  C8               INY
+0573  0515  D0 EE            BNE L370
+0574  0517  E6 AB            INC N+5
+0575  0519  E6 A9            INC N+3
+0576  051B  4C 05 05         JMP L370
+0577  051E            ;
+0578  051E            ;                             U*
+0579  051E            ;                             SCREEN 23 LINE 1
+0580  051E            ;
+0581  051E  82        L386   .BYTE $82,'U',$AA
+0581  051F  55
+0581  0520  AA
+0582  0521  F6 04            .WORD L365          ;  LINK TO CMOVE
+0583  0523  25 05     USTAR  .WORD *+2
+0584  0525  B5 02            LDA 2,X
+0585  0527  85 A6            STA N
+0586  0529  94 02            STY 2,X
+0587  052B  B5 03            LDA 3,X
+0588  052D  85 A7            STA N+1
+0589  052F  94 03            STY 3,X
+0590  0531  A0 10            LDY #16     for 16 bits
+0591  0533  16 02     L396   ASL 2,X
+0592  0535  36 03            ROL 3,X
+0593  0537  36 00            ROL 0,X
+0594  0539  36 01            ROL 1,X
+0595  053B  90 13            BCC L411
+0596  053D  18               CLC
+0597  053E  A5 A6            LDA N
+0598  0540  75 02            ADC 2,X
+0599  0542  95 02            STA 2,X
+0600  0544  A5 A7            LDA N+1
+0601  0546  75 03            ADC 3,X
+0602  0548  95 03            STA 3,X
+0603  054A  A9 00            LDA #0
+0604  054C  75 00            ADC 0,X
+0605  054E  95 00            STA 0,X
+0606  0550  88        L411   DEY
+0607  0551  D0 E0            BNE L396
+0608  0553  4C 44 02         JMP NEXT
+0609  0556            ;
+0610  0556            ;                             U/
+0611  0556            ;                             SCREEN 24 LINE 1
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0014
+
+LINE # LOC     CODE       LINE
+
+0612  0556            ;
+0613  0556  82        L418   .BYTE $82,'U',$AF
+0613  0557  55
+0613  0558  AF
+0614  0559  1E 05            .WORD L386          ;  LINK TO U*
+0615  055B  5D 05     USLAS  .WORD *+2
+0616  055D  B5 04            LDA 4,X
+0617  055F  B4 02            LDY 2,X
+0618  0561  94 04            STY 4,X
+0619  0563  0A               ASL A
+0620  0564  95 02            STA 2,X
+0621  0566  B5 05            LDA 5,X
+0622  0568  B4 03            LDY 3,X
+0623  056A  94 05            STY 5,X
+0624  056C  2A               ROL A
+0625  056D  95 03            STA 3,X
+0626  056F  A9 10            LDA #16     for 16 bits
+0627  0571  85 A6            STA N
+0628  0573  36 04     L433   ROL 4,X
+0629  0575  36 05            ROL 5,X
+0630  0577  38               SEC
+0631  0578  B5 04            LDA 4,X
+0632  057A  F5 00            SBC 0,X
+0633  057C  A8               TAY
+0634  057D  B5 05            LDA 5,X
+0635  057F  F5 01            SBC 1,X
+0636  0581  90 04            BCC L444
+0637  0583  94 04            STY 4,X
+0638  0585  95 05            STA 5,X
+0639  0587  36 02     L444   ROL 2,X
+0640  0589  36 03            ROL 3,X
+0641  058B  C6 A6            DEC N
+0642  058D  D0 E4            BNE L433
+0643  058F  4C EE 03         JMP POP
+0644  0592            ;
+0645  0592            ;                             AND
+0646  0592            ;                             SCREEN 25 LINE 2
+0647  0592            ;
+0648  0592  83        L453   .BYTE $83,'AN',$C4
+0648  0593  41 4E
+0648  0595  C4
+0649  0596  56 05            .WORD L418          ;  LINK TO U/
+0650  0598  9A 05     ANDD   .WORD *+2
+0651  059A  B5 00            LDA 0,X
+0652  059C  35 02            AND 2,X
+0653  059E  48               PHA
+0654  059F  B5 01            LDA 1,X
+0655  05A1  35 03            AND 3,X
+0656  05A3            ;
+0657  05A3  E8        BINARY INX
+0658  05A4  E8               INX
+0659  05A5  4C 3F 02         JMP PUT
+0660  05A8            ;
+0661  05A8            ;                             OR
+0662  05A8            ;                             SCREEN 25 LINE 7
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0015
+
+LINE # LOC     CODE       LINE
+
+0663  05A8            ;
+0664  05A8  82        L469   .BYTE $82,'O',$D2
+0664  05A9  4F
+0664  05AA  D2
+0665  05AB  92 05            .WORD L453          ;  LINK TO AND
+0666  05AD  AF 05     OR     .WORD *+2
+0667  05AF  B5 00            LDA 0,X
+0668  05B1  15 02            ORA 2,X
+0669  05B3  48               PHA
+0670  05B4  B5 01            LDA 1,X
+0671  05B6  15 03            ORA 3,X
+0672  05B8  E8               INX
+0673  05B9  E8               INX
+0674  05BA  4C 3F 02         JMP PUT
+0675  05BD            ;
+0676  05BD            ;                             XOR
+0677  05BD            ;                             SCREEN 25 LINE 11
+0678  05BD            ;
+0679  05BD  83        L484   .BYTE $83,'XO',$D2
+0679  05BE  58 4F
+0679  05C0  D2
+0680  05C1  A8 05            .WORD L469          ;  LINK TO OR
+0681  05C3  C5 05     XOR    .WORD *+2
+0682  05C5  B5 00            LDA 0,X
+0683  05C7  55 02            EOR 2,X
+0684  05C9  48               PHA
+0685  05CA  B5 01            LDA 1,X
+0686  05CC  55 03            EOR 3,X
+0687  05CE  E8               INX
+0688  05CF  E8               INX
+0689  05D0  4C 3F 02         JMP PUT
+0690  05D3            ;
+0691  05D3            ;                             SP@
+0692  05D3            ;                             SCREEN 26 LINE 1
+0693  05D3            ;
+0694  05D3  83        L499   .BYTE $83,'SP',$C0
+0694  05D4  53 50
+0694  05D6  C0
+0695  05D7  BD 05            .WORD L484          ;  LINK TO XOR
+0696  05D9  DB 05     SPAT   .WORD *+2
+0697  05DB  8A               TXA
+0698  05DC            ;
+0699  05DC  48        PUSH0A PHA
+0700  05DD  A9 00            LDA #0
+0701  05DF  4C 3D 02         JMP PUSH
+0702  05E2            ;
+0703  05E2            ;                             SP!
+0704  05E2            ;                             SCREEN 26 LINE 5
+0705  05E2            ;
+0706  05E2  83        L511   .BYTE $83,'SP',$A1
+0706  05E3  53 50
+0706  05E5  A1
+0707  05E6  D3 05            .WORD L499          ;  LINK TO SP@
+0708  05E8  EA 05     SPSTO  .WORD *+2
+0709  05EA  A0 06            LDY #6
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0016
+
+LINE # LOC     CODE       LINE
+
+0710  05EC  B1 B3            LDA (UP),Y  load data stack pointer (X-reg)
+0711  05EE  AA               TAX         silent user variable S0.
+0712  05EF  4C 44 02         JMP NEXT
+0713  05F2            ;
+0714  05F2            ;                             RP!
+0715  05F2            ;                             SCREEN 26 LINE 8
+0716  05F2            ;
+0717  05F2  83        L522   .BYTE $83,'RP',$A1
+0717  05F3  52 50
+0717  05F5  A1
+0718  05F6  E2 05            .WORD L511          ;  LINK TO SP!
+0719  05F8  FA 05     RPSTO  .WORD *+2
+0720  05FA  86 B5            STX XSAVE    load return stack pointer
+0721  05FC  A0 08            LDY #8       (machine stack pointer) from
+0722  05FE  B1 B3            LDA (UP),Y   silent user variable R0.
+0723  0600  AA               TAX
+0724  0601  9A               TXS
+0725  0602  A6 B5            LDX XSAVE
+0726  0604  4C 44 02         JMP NEXT
+0727  0607            ;
+0728  0607            ;                             ;S
+0729  0607            ;                             SCREEN 26 LINE 12
+0730  0607            ;
+0731  0607  82        L536   .BYTE $82,';',$D3
+0731  0608  3B
+0731  0609  D3
+0732  060A  F2 05            .WORD L522          ;  LINK TO RP!
+0733  060C  0E 06     SEMIS  .WORD *+2
+0734  060E  68               PLA
+0735  060F  85 AE            STA IP
+0736  0611  68               PLA
+0737  0612  85 AF            STA IP+1
+0738  0614  4C 44 02         JMP NEXT
+0739  0617            ;
+0740  0617            ;                             LEAVE
+0741  0617            ;                             SCREEN 27 LINE 1
+0742  0617            ;
+0743  0617  85        L548   .BYTE $85,'LEAV',$C5
+0743  0618  4C 45
+0743  061A  41 56
+0743  061C  C5
+0744  061D  07 06            .WORD L536          ;  LINK TO ;S
+0745  061F  21 06     LEAVE  .WORD *+2
+0746  0621  86 B5            STX XSAVE
+0747  0623  BA               TSX
+0748  0624  BD 01 01         LDA $101,X
+0749  0627  9D 03 01         STA $103,X
+0750  062A  BD 02 01         LDA $102,X
+0751  062D  9D 04 01         STA $104,X
+0752  0630  A6 B5            LDX XSAVE
+0753  0632  4C 44 02         JMP NEXT
+0754  0635            ;
+0755  0635            ;                             >R
+0756  0635            ;                             SCREEN 27 LINE 5
+0757  0635            ;
+0758  0635  82        L563   .BYTE $82,'>',$D2
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0017
+
+LINE # LOC     CODE       LINE
+
+0758  0636  3E
+0758  0637  D2
+0759  0638  17 06            .WORD L548          ;  LINK TO LEAVE
+0760  063A  3C 06     TOR    .WORD *+2
+0761  063C  B5 01            LDA 1,X      move high byte
+0762  063E  48               PHA
+0763  063F  B5 00            LDA 0,X      then low byte
+0764  0641  48               PHA          to return stack
+0765  0642  E8               INX
+0766  0643  E8               INX          popping off data stack
+0767  0644  4C 44 02         JMP NEXT
+0768  0647            ;
+0769  0647            ;                             R>
+0770  0647            ;                             SCREEN 27 LINE 8
+0771  0647            ;
+0772  0647  82        L577   .BYTE $82,'R',$BE
+0772  0648  52
+0772  0649  BE
+0773  064A  35 06            .WORD L563          ;  LINK TO >R
+0774  064C  4E 06     RFROM  .WORD *+2
+0775  064E  CA               DEX          make room on data stack
+0776  064F  CA               DEX
+0777  0650  68               PLA          high byte
+0778  0651  95 00            STA 0,X
+0779  0653  68               PLA          then low byte
+0780  0654  95 01            STA 1,X      restored to data stack
+0781  0656  4C 44 02         JMP NEXT
+0782  0659            ;
+0783  0659            ;                             R
+0784  0659            ;                             SCREEN 27 LINE 11
+0785  0659            ;
+0786  0659  81        L591   .BYTE $81,$D2
+0786  065A  D2
+0787  065B  47 06            .WORD L577          ;  LINK TO R>
+0788  065D  5F 06     R      .WORD *+2
+0789  065F  86 B5            STX XSAVE
+0790  0661  BA               TSX          address return stack.
+0791  0662  BD 01 01         LDA $101,X   copy bottom value
+0792  0665  48               PHA          to data stack.
+0793  0666  BD 02 01         LDA $102,X
+0794  0669  A6 B5            LDX XSAVE
+0795  066B  4C 3D 02         JMP PUSH
+0796  066E            ;
+0797  066E            ;                             0=
+0798  066E            ;                             SCREEN 28 LINE 2
+0799  066E            ;
+0800  066E  82        L605   .BYTE $82,'0',$BD
+0800  066F  30
+0800  0670  BD
+0801  0671  59 06            .WORD L591          ;  LINK TO R
+0802  0673  75 06     ZEQU   .WORD *+2
+0803  0675  B5 00            LDA 0,X
+0804  0677  15 01            ORA 1,X
+0805  0679  94 01            STY 1,X
+0806  067B  D0 01            BNE L613
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0018
+
+LINE # LOC     CODE       LINE
+
+0807  067D  C8               INY
+0808  067E  94 00     L613   STY 0,X
+0809  0680  4C 44 02         JMP NEXT
+0810  0683            ;
+0811  0683            ;                             0<
+0812  0683            ;                             SCREEN 28 LINE 6
+0813  0683            ;
+0814  0683  82        L619   .BYTE $82,'0',$BC
+0814  0684  30
+0814  0685  BC
+0815  0686  6E 06            .WORD L605          ;  LINK TO 0=
+0816  0688  8A 06     ZLESS  .WORD *+2
+0817  068A  16 01            ASL 1,X
+0818  068C  98               TYA
+0819  068D  2A               ROL A
+0820  068E  94 01            STY 1,X
+0821  0690  95 00            STA 0,X
+0822  0692  4C 44 02         JMP NEXT
+0823  0695            ;
+0824  0695            ;
+0825  0695            ;                             +
+0826  0695            ;                             SCREEN 29 LINE 1
+0827  0695            ;
+0828  0695  81        L632   .BYTE $81,$AB
+0828  0696  AB
+0829  0697  83 06            .WORD L619          ;  LINK TO V-ADJ
+0830  0699  9B 06     PLUS   .WORD *+2
+0831  069B  18               CLC
+0832  069C  B5 00            LDA 0,X
+0833  069E  75 02            ADC 2,X
+0834  06A0  95 02            STA 2,X
+0835  06A2  B5 01            LDA 1,X
+0836  06A4  75 03            ADC 3,X
+0837  06A6  95 03            STA 3,X
+0838  06A8  E8               INX
+0839  06A9  E8               INX
+0840  06AA  4C 44 02         JMP NEXT
+0841  06AD            ;
+0842  06AD            ;                             D+
+0843  06AD            ;                             SCREEN 29 LINE 4
+0844  06AD            ;
+0845  06AD  82        L649   .BYTE $82,'D',$AB
+0845  06AE  44
+0845  06AF  AB
+0846  06B0  95 06            .WORD L632          ;  LINK TO +
+0847  06B2  B4 06     DPLUS  .WORD *+2
+0848  06B4  18               CLC
+0849  06B5  B5 02            LDA 2,X
+0850  06B7  75 06            ADC 6,X
+0851  06B9  95 06            STA 6,X
+0852  06BB  B5 03            LDA 3,X
+0853  06BD  75 07            ADC 7,X
+0854  06BF  95 07            STA 7,X
+0855  06C1  B5 00            LDA 0,X
+0856  06C3  75 04            ADC 4,X
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0019
+
+LINE # LOC     CODE       LINE
+
+0857  06C5  95 04            STA 4,X
+0858  06C7  B5 01            LDA 1,X
+0859  06C9  75 05            ADC 5,X
+0860  06CB  95 05            STA 5,X
+0861  06CD  4C EC 03         JMP POPTWO
+0862  06D0            ;
+0863  06D0            ;                             MINUS
+0864  06D0            ;                             SCREEN 29 LINE 9
+0865  06D0            ;
+0866  06D0  85        L670   .BYTE $85,'MINU',$D3
+0866  06D1  4D 49
+0866  06D3  4E 55
+0866  06D5  D3
+0867  06D6  AD 06            .WORD L649          ;  LINK TO D+
+0868  06D8  DA 06     MINUS  .WORD *+2
+0869  06DA  38               SEC
+0870  06DB  98               TYA
+0871  06DC  F5 00            SBC 0,X
+0872  06DE  95 00            STA 0,X
+0873  06E0  98               TYA
+0874  06E1  F5 01            SBC 1,X
+0875  06E3  95 01            STA 1,X
+0876  06E5  4C 44 02         JMP NEXT
+0877  06E8            ;
+0878  06E8            ;                             DMINUS
+0879  06E8            ;                             SCREEN 29 LINE 12
+0880  06E8            ;
+0881  06E8  86        L685   .BYTE $86,'DMINU',$D3
+0881  06E9  44 4D
+0881  06EB  49 4E 55
+0881  06EE  D3
+0882  06EF  D0 06            .WORD L670          ;  LINK TO MINUS
+0883  06F1  F3 06     DMINU  .WORD *+2
+0884  06F3  38               SEC
+0885  06F4  98               TYA
+0886  06F5  F5 02            SBC 2,X
+0887  06F7  95 02            STA 2,X
+0888  06F9  98               TYA
+0889  06FA  F5 03            SBC 3,X
+0890  06FC  95 03            STA 3,X
+0891  06FE  4C DB 06         JMP MINUS+3
+0892  0701            ;
+0893  0701            ;                             OVER
+0894  0701            ;                             SCREEN 30 LINE 1
+0895  0701            ;
+0896  0701  84        L700   .BYTE $84,'OVE',$D2
+0896  0702  4F 56 45
+0896  0705  D2
+0897  0706  E8 06            .WORD L685          ;  LINK TO DMINUS
+0898  0708  0A 07     OVER   .WORD *+2
+0899  070A  B5 02            LDA 2,X
+0900  070C  48               PHA
+0901  070D  B5 03            LDA 3,X
+0902  070F  4C 3D 02         JMP PUSH
+0903  0712            ;
+0904  0712            ;                             DROP
+0905  0712            ;                             SCREEN 30 LINE 4
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0020
+
+LINE # LOC     CODE       LINE
+
+0906  0712            ;
+0907  0712  84        L711   .BYTE $84,'DRO',$D0
+0907  0713  44 52 4F
+0907  0716  D0
+0908  0717  01 07            .WORD L700          ;  LINK TO OVER
+0909  0719  EE 03     DROP   .WORD POP
+0910  071B            ;
+0911  071B            ;                             SWAP
+0912  071B            ;                             SCREEN 30 LINE 8
+0913  071B            ;
+0914  071B  84        L718   .BYTE $84,'SWA',$D0
+0914  071C  53 57 41
+0914  071F  D0
+0915  0720  12 07            .WORD L711          ;  LINK TO DROP
+0916  0722  24 07     SWAP   .WORD *+2
+0917  0724  B5 02            LDA 2,X
+0918  0726  48               PHA
+0919  0727  B5 00            LDA 0,X
+0920  0729  95 02            STA 2,X
+0921  072B  B5 03            LDA 3,X
+0922  072D  B4 01            LDY 1,X
+0923  072F  94 03            STY 3,X
+0924  0731  4C 3F 02         JMP PUT
+0925  0734            ;
+0926  0734            ;                             DUP
+0927  0734            ;                             SCREEN 30 LINE 12
+0928  0734            ;
+0929  0734  83        L733   .BYTE $83,'DU',$D0
+0929  0735  44 55
+0929  0737  D0
+0930  0738  1B 07            .WORD L718          ;  LINK TO SWAP
+0931  073A  3C 07     DUP    .WORD *+2
+0932  073C  B5 00            LDA 0,X
+0933  073E  48               PHA
+0934  073F  B5 01            LDA 1,X
+0935  0741  4C 3D 02         JMP PUSH
+0936  0744            ;
+0937  0744            ;                             +!
+0938  0744            ;                             SCREEN 31 LINE 2
+0939  0744            ;
+0940  0744  82        L744   .BYTE $82,'+',$A1
+0940  0745  2B
+0940  0746  A1
+0941  0747  34 07            .WORD L733          ;  LINK TO DUP
+0942  0749  4B 07     PSTOR  .WORD *+2
+0943  074B  18               CLC
+0944  074C  A1 00            LDA (0,X)    fetch 16-bit value addressed
+0945  074E  75 02            ADC 2,X      by bottom of stack, adding to
+0946  0750  81 00            STA (0,X)    second item on stack, and
+0947  0752  F6 00            INC 0,X      return to memory.
+0948  0754  D0 02            BNE L754
+0949  0756  F6 01            INC 1,X
+0950  0758  A1 00     L754   LDA (0,X)
+0951  075A  75 03            ADC 3,X
+0952  075C  81 00            STA (0,X)
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0021
+
+LINE # LOC     CODE       LINE
+
+0953  075E  4C EC 03         JMP POPTWO
+0954  0761            ;
+0955  0761            ;                             TOGGLE
+0956  0761            ;                             SCREEN 31 LINE 7
+0957  0761            ;
+0958  0761  86        L762   .BYTE $86,'TOGGL',$C5
+0958  0762  54 4F
+0958  0764  47 47 4C
+0958  0767  C5
+0959  0768  44 07            .WORD L744          ;  LINK TO + !
+0960  076A  6C 07     TOGGL  .WORD *+2
+0961  076C  A1 02            LDA (2,X)    complement bits in memory address
+0962  076E  55 00            EOR 0,X      second on stack, by pattern
+0963  0770  81 02            STA (2,X)    on bottom of stack.
+0964  0772  4C EC 03         JMP POPTWO
+0965  0775            ;
+0966  0775            ;                             @
+0967  0775            ;                             SCREEN 32 LINE 1
+0968  0775            ;
+0969  0775  81        L773   .BYTE $81,$C0
+0969  0776  C0
+0970  0777  61 07            .WORD L762          ;  LINK TO TOGGLE
+0971  0779  7B 07     AT     .WORD *+2
+0972  077B  A1 00            LDA (0,X)
+0973  077D  48               PHA
+0974  077E  F6 00            INC 0,X
+0975  0780  D0 02            BNE L781
+0976  0782  F6 01            INC 1,X
+0977  0784  A1 00     L781   LDA (0,X)
+0978  0786  4C 3F 02         JMP PUT
+0979  0789            ;
+0980  0789            ;                             C@
+0981  0789            ;                             SCREEN 32 LINE 5
+0982  0789            ;
+0983  0789  82        L787   .BYTE $82,'C',$C0
+0983  078A  43
+0983  078B  C0
+0984  078C  75 07            .WORD L773          ;  LINK TO @
+0985  078E  90 07     CAT    .WORD *+2
+0986  0790  A1 00            LDA (0,X)    fetch byte addressed by bottom
+0987  0792  95 00            STA 0,X      of stack to stack, zeroing
+0988  0794  94 01            STY 1,X      the high byte.
+0989  0796  4C 44 02         JMP NEXT
+0990  0799            ;
+0991  0799            ;                             !
+0992  0799            ;                             SCREEN 32 LINE 8
+0993  0799            ;
+0994  0799  81        L798   .BYTE $81,$A1
+0994  079A  A1
+0995  079B  89 07            .WORD L787          ;  LINK TO C@
+0996  079D  9F 07     STORE  .WORD *+2
+0997  079F  B5 02            LDA 2,X
+0998  07A1  81 00            STA (0,X)    store second 16-bit value on stack
+0999  07A3  F6 00            INC 0,X      to memory as addresses by
+1000  07A5  D0 02            BNE L806
+1001  07A7  F6 01            INC 1,X      bottom of stack.
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0022
+
+LINE # LOC     CODE       LINE
+
+1002  07A9  B5 03     L806   LDA 3,X
+1003  07AB  81 00            STA (0,X)
+1004  07AD  4C EC 03         JMP POPTWO
+1005  07B0            ;
+1006  07B0            ;                             C!
+1007  07B0            ;                             SCREEN 32 LINE 12
+1008  07B0            ;
+1009  07B0  82        L813   .BYTE $82,'C',$A1
+1009  07B1  43
+1009  07B2  A1
+1010  07B3  99 07            .WORD L798          ;  LINK TO !
+1011  07B5  B7 07     CSTOR  .WORD *+2
+1012  07B7  B5 02            LDA 2,X
+1013  07B9  81 00            STA (0,X)
+1014  07BB  4C EC 03         JMP POPTWO
+1015  07BE            ;
+1016  07BE            ;                             :
+1017  07BE            ;                             SCREEN 33 LINE 2
+1018  07BE            ;
+1019  07BE  C1        L823   .BYTE $C1,$BA
+1019  07BF  BA
+1020  07C0  B0 07            .WORD L813          ;  LINK TO C!
+1021  07C2  D6 07     COLON  .WORD DOCOL
+1022  07C4  42 0B            .WORD QEXEC
+1023  07C6  FE 0A            .WORD SCSP
+1024  07C8  58 09            .WORD CURR
+1025  07CA  79 07            .WORD AT
+1026  07CC  4B 09            .WORD CON
+1027  07CE  9D 07            .WORD STORE
+1028  07D0  36 10            .WORD CREAT
+1029  07D2  C3 0B            .WORD RBRAC
+1030  07D4  12 0C            .WORD PSCOD
+1031  07D6            ;
+1032  07D6  A5 AF     DOCOL  LDA IP+1
+1033  07D8  48               PHA
+1034  07D9  A5 AE            LDA IP
+1035  07DB  48               PHA
+1036  07DC  20 BE 02         JSR TCOLON     Mark the start of a traced : def.
+1037  07DF  18               CLC
+1038  07E0  A5 B1            LDA W
+1039  07E2  69 02            ADC #2
+1040  07E4  85 AE            STA IP
+1041  07E6  98               TYA
+1042  07E7  65 B2            ADC W+1
+1043  07E9  85 AF            STA IP+1
+1044  07EB  4C 44 02         JMP NEXT
+1045  07EE            ;
+1046  07EE            ;
+1047  07EE            ;                             ;
+1048  07EE            ;                             SCREEN 33 LINE 9
+1049  07EE            ;
+1050  07EE  C1        L853   .BYTE $C1,$BB
+1050  07EF  BB
+1051  07F0  BE 07            .WORD L823          ;  LINK TO :
+1052  07F2  D6 07            .WORD DOCOL
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0023
+
+LINE # LOC     CODE       LINE
+
+1053  07F4  6A 0B            .WORD QCSP
+1054  07F6  9F 0B            .WORD COMP
+1055  07F8  0C 06            .WORD SEMIS
+1056  07FA  D7 0B            .WORD SMUDG
+1057  07FC  B5 0B            .WORD LBRAC
+1058  07FE  0C 06            .WORD SEMIS
+1059  0800            ;
+1060  0800            ;
+1061  0800            ;                             CONSTANT
+1062  0800            ;                             SCREEN 34 LINE 1
+1063  0800            ;
+1064  0800  88        L867   .BYTE $88,'CONSTAN',$D4
+1064  0801  43 4F
+1064  0803  4E 53 54
+1064  0806  41 4E
+1064  0808  D4
+1065  0809  EE 07            .WORD L853          ;  LINK TO ;
+1066  080B  D6 07     CONST  .WORD DOCOL
+1067  080D  36 10            .WORD CREAT
+1068  080F  D7 0B            .WORD SMUDG
+1069  0811  D9 09            .WORD COMMA
+1070  0813  12 0C            .WORD PSCOD
+1071  0815            ;
+1072  0815  A0 02     DOCON  LDY #2
+1073  0817  B1 B1            LDA (W),Y
+1074  0819  48               PHA
+1075  081A  C8               INY
+1076  081B  B1 B1            LDA (W),Y
+1077  081D  4C 3D 02         JMP PUSH
+1078  0820            ;
+1079  0820            ;                             VARIABLE
+1080  0820            ;                             SCREEN 34 LINE 5
+1081  0820            ;
+1082  0820  88        L885   .BYTE $88,'VARIABL',$C5
+1082  0821  56 41
+1082  0823  52 49 41
+1082  0826  42 4C
+1082  0828  C5
+1083  0829  00 08            .WORD L867          ;  LINK TO CONSTANT
+1084  082B  D6 07     VAR    .WORD DOCOL
+1085  082D  0B 08            .WORD CONST
+1086  082F  12 0C            .WORD PSCOD
+1087  0831            ;
+1088  0831  18        DOVAR  CLC
+1089  0832  A5 B1            LDA W
+1090  0834  69 02            ADC #2
+1091  0836  48               PHA
+1092  0837  98               TYA
+1093  0838  65 B2            ADC W+1
+1094  083A  4C 3D 02         JMP PUSH
+1095  083D            ;
+1096  083D            ;
+1097  083D            ;
+1098  083D             .FILE FOR2/1       ; LINK TO NEXT FILE
+1099  083D            ;
+1100  083D            ;                             USER
+1101  083D            ;                             SCREEN 34 LINE 10
+1102  083D            ;
+1103  083D  84        L902   .BYTE $84,'USE',$D2
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0024
+
+LINE # LOC     CODE       LINE
+
+1103  083E  55 53 45
+1103  0841  D2
+1104  0842  20 08            .WORD L885          ;  LINK TO VARIABLE
+1105  0844  D6 07     USER   .WORD DOCOL
+1106  0846  0B 08            .WORD CONST
+1107  0848  12 0C            .WORD PSCOD
+1108  084A            ;
+1109  084A  A0 02     DOUSE  LDY #2
+1110  084C  18               CLC
+1111  084D  B1 B1            LDA (W),Y
+1112  084F  65 B3            ADC UP
+1113  0851  48               PHA
+1114  0852  A9 00            LDA #0
+1115  0854  65 B4            ADC UP+1
+1116  0856  4C 3D 02         JMP PUSH
+1117  0859            ;
+1118  0859            ;                             0
+1119  0859            ;                             SCREEN 35 LINE 2
+1120  0859            ;
+1121  0859  81        L920   .BYTE $81,$B0
+1121  085A  B0
+1122  085B  3D 08            .WORD L902          ;  LINK TO USER
+1123  085D  15 08     ZERO   .WORD DOCON
+1124  085F  00 00            .WORD 0
+1125  0861            ;
+1126  0861            ;                             1
+1127  0861            ;                             SCREEN 35 LINE 2
+1128  0861            ;
+1129  0861  81        L928   .BYTE $81,$B1
+1129  0862  B1
+1130  0863  59 08            .WORD L920          ;  LINK TO 0
+1131  0865  15 08     ONE    .WORD DOCON
+1132  0867  01 00            .WORD 1
+1133  0869            ;
+1134  0869            ;                             2
+1135  0869            ;                             SCREEN 35 LINE 3
+1136  0869            ;
+1137  0869  81        L936   .BYTE $81,$B2
+1137  086A  B2
+1138  086B  61 08            .WORD L928          ;  LINK TO 1
+1139  086D  15 08     TWO    .WORD DOCON
+1140  086F  02 00            .WORD 2
+1141  0871            ;
+1142  0871            ;                             3
+1143  0871            ;                             SCREEN 35 LINE 3
+1144  0871            ;
+1145  0871  81        L944   .BYTE $81,$B3
+1145  0872  B3
+1146  0873  69 08            .WORD L936          ;  LINK TO 2
+1147  0875  15 08     THREE  .WORD DOCON
+1148  0877  03 00            .WORD 3
+1149  0879            ;
+1150  0879            ;                             BL
+1151  0879            ;                             SCREEN 35 LINE 4
+1152  0879            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0025
+
+LINE # LOC     CODE       LINE
+
+1153  0879  82        L952   .BYTE $82,'B',$CC
+1153  087A  42
+1153  087B  CC
+1154  087C  71 08            .WORD L944          ;  LINK TO 3
+1155  087E  15 08     BL     .WORD DOCON
+1156  0880  20 00            .WORD $20
+1157  0882            ;
+1158  0882            ;                             C/L
+1159  0882            ;                             SCREEN 35 LINE 5
+1160  0882            ;                             Characters per line
+1161  0882  83        L960   .BYTE $83,'C/',$CC
+1161  0883  43 2F
+1161  0885  CC
+1162  0886  79 08            .WORD L952          ;  LINK TO BL
+1163  0888  15 08     CSLL   .WORD DOCON
+1164  088A  40 00            .WORD 64
+1165  088C            ;
+1166  088C            ;                             FIRST
+1167  088C            ;                             SCREEN 35 LINE 7
+1168  088C            ;
+1169  088C  85        L968   .BYTE $85,'FIRS',$D4
+1169  088D  46 49
+1169  088F  52 53
+1169  0891  D4
+1170  0892  82 08            .WORD L960          ;  LINK TO C/L
+1171  0894  15 08     FIRST  .WORD DOCON
+1172  0896  60 3B            .WORD DAREA  bottom of disk buffer area
+1173  0898            ;
+1174  0898            ;                             LIMIT
+1175  0898            ;                             SCREEN 35 LINE 8
+1176  0898            ;
+1177  0898  85        L976   .BYTE $85,'LIMI',$D4
+1177  0899  4C 49
+1177  089B  4D 49
+1177  089D  D4
+1178  089E  8C 08            .WORD L968          ;  LINK TO FIRST
+1179  08A0  15 08     LIMIT  .WORD DOCON
+1180  08A2  80 3F            .WORD UAREA  buffers end at user area
+1181  08A4            ;
+1182  08A4            ;                             B/BUF
+1183  08A4            ;                             SCREEN 35 LINE 9
+1184  08A4            ;                             Bytes per buffer
+1185  08A4  85        L984   .BYTE $85,'B/BU',$C6
+1185  08A5  42 2F
+1185  08A7  42 55
+1185  08A9  C6
+1186  08AA  98 08            .WORD L976          ;  LINK TO LIMIT
+1187  08AC  15 08     BBUF   .WORD DOCON
+1188  08AE  80 00            .WORD SSIZE   sector size
+1189  08B0            ;
+1190  08B0            ;                             B/SCR
+1191  08B0            ;                             SCREEN 35 LINE 10
+1192  08B0            ;                             Blocks per screen
+1193  08B0  85        L992   .BYTE $85,'B/SC',$D2
+1193  08B1  42 2F
+1193  08B3  53 43
+1193  08B5  D2
+1194  08B6  A4 08            .WORD L984          ;  LINK TO B/BUF
+1195  08B8  15 08     BSCR   .WORD DOCON
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0026
+
+LINE # LOC     CODE       LINE
+
+1196  08BA  08 00            .WORD 8      blocks to make one screen.
+1197  08BC            ;
+1198  08BC            ;                             +ORIGIN
+1199  08BC            ;                             SCREEN 35 LINE 12
+1200  08BC            ;
+1201  08BC  87        L1000  .BYTE $87,'+ORIGI',$CE
+1201  08BD  2B 4F
+1201  08BF  52 49 47
+1201  08C2  49
+1201  08C3  CE
+1202  08C4  B0 08            .WORD L992          ;  LINK TO B/SCR
+1203  08C6  D6 07     PORIG  .WORD DOCOL
+1204  08C8  2A 02            .WORD LIT,ORIG
+1204  08CA  00 02
+1205  08CC  99 06            .WORD PLUS
+1206  08CE  0C 06            .WORD SEMIS
+1207  08D0            ;
+1208  08D0            ;                             TIB
+1209  08D0            ;                             SCREEN 36 LINE 4
+1210  08D0            ;
+1211  08D0  83        L1010  .BYTE $83,'TI',$C2
+1211  08D1  54 49
+1211  08D3  C2
+1212  08D4  BC 08            .WORD L1000         ;  LINK TO +ORIGIN
+1213  08D6  4A 08     TIB    .WORD DOUSE
+1214  08D8  0A               .BYTE $A
+1215  08D9            ;
+1216  08D9            ;                             WIDTH
+1217  08D9            ;                             SCREEN 36 LINE 5
+1218  08D9            ;
+1219  08D9  85        L1018  .BYTE $85,'WIDT',$C8
+1219  08DA  57 49
+1219  08DC  44 54
+1219  08DE  C8
+1220  08DF  D0 08            .WORD L1010         ;  LINK TO TIB
+1221  08E1  4A 08     WIDTH  .WORD DOUSE
+1222  08E3  0C               .BYTE $C
+1223  08E4            ;
+1224  08E4            ;                             WARNING
+1225  08E4            ;                             SCREEN 36 LINE 6
+1226  08E4            ;
+1227  08E4  87        L1026  .BYTE $87,'WARNIN',$C7
+1227  08E5  57 41
+1227  08E7  52 4E 49
+1227  08EA  4E
+1227  08EB  C7
+1228  08EC  D9 08            .WORD L1018         ;  LINK TO WIDTH
+1229  08EE  4A 08     WARN   .WORD DOUSE
+1230  08F0  0E               .BYTE $E
+1231  08F1            ;
+1232  08F1            ;                             FENCE
+1233  08F1            ;                             SCREEN 36 LINE 7
+1234  08F1            ;
+1235  08F1  85        L1034  .BYTE $85,'FENC',$C5
+1235  08F2  46 45
+1235  08F4  4E 43
+1235  08F6  C5
+1236  08F7  E4 08            .WORD L1026         ;  LINK TO WARNING
+1237  08F9  4A 08     FENCE  .WORD DOUSE
+1238  08FB  10               .BYTE $10
+1239  08FC            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0027
+
+LINE # LOC     CODE       LINE
+
+1240  08FC            ;                             DP
+1241  08FC            ;                             SCREEN 36 LINE 8
+1242  08FC            ;
+1243  08FC  82        L1042  .BYTE $82,'D',$D0
+1243  08FD  44
+1243  08FE  D0
+1244  08FF  F1 08            .WORD L1034         ;  LINK TO FENCE
+1245  0901  4A 08     DP     .WORD DOUSE
+1246  0903  12               .BYTE $12
+1247  0904            ;
+1248  0904            ;                             VOC-LINK
+1249  0904            ;                             SCREEN 36 LINE 9
+1250  0904            ;
+1251  0904  88        L1050  .BYTE $88,'VOC-LIN',$CB
+1251  0905  56 4F
+1251  0907  43 2D 4C
+1251  090A  49 4E
+1251  090C  CB
+1252  090D  FC 08            .WORD L1042         ;  LINK TO DP
+1253  090F  4A 08     VOCL   .WORD DOUSE
+1254  0911  14               .BYTE $14
+1255  0912            ;
+1256  0912            ;                             BLK
+1257  0912            ;                             SCREEN 36 LINE 10
+1258  0912            ;
+1259  0912  83        L1058  .BYTE $83,'BL',$CB
+1259  0913  42 4C
+1259  0915  CB
+1260  0916  04 09            .WORD L1050         ;  LINK TO VOC-LINK
+1261  0918  4A 08     BLK    .WORD DOUSE
+1262  091A  16               .BYTE $16
+1263  091B            ;
+1264  091B            ;                             IN
+1265  091B            ;                             SCREEN 36 LINE 11
+1266  091B            ;
+1267  091B  82        L1066  .BYTE $82,'I',$CE
+1267  091C  49
+1267  091D  CE
+1268  091E  12 09            .WORD L1058         ;  LINK TO BLK
+1269  0920  4A 08     IN     .WORD DOUSE
+1270  0922  18               .BYTE $18
+1271  0923            ;
+1272  0923            ;                             OUT
+1273  0923            ;                             SCREEN 36 LINE 12
+1274  0923            ;
+1275  0923  83        L1074  .BYTE $83,'OU',$D4
+1275  0924  4F 55
+1275  0926  D4
+1276  0927  1B 09            .WORD L1066         ;  LINK TO IN
+1277  0929  4A 08     OUT    .WORD DOUSE
+1278  092B  1A               .BYTE $1A
+1279  092C            ;
+1280  092C            ;                             SCR
+1281  092C            ;                             SCREEN 36 LINE 13
+1282  092C            ;
+1283  092C  83        L1082  .BYTE $83,'SC',$D2
+1283  092D  53 43
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0028
+
+LINE # LOC     CODE       LINE
+
+1283  092F  D2
+1284  0930  23 09            .WORD L1074         ;  LINK TO OUT
+1285  0932  4A 08     SCR    .WORD DOUSE
+1286  0934  1C               .BYTE $1C
+1287  0935            ;
+1288  0935            ;                             OFFSET
+1289  0935            ;                             SCREEN 37 LINE 1
+1290  0935            ;
+1291  0935  86        L1090  .BYTE $86,'OFFSE',$D4
+1291  0936  4F 46
+1291  0938  46 53 45
+1291  093B  D4
+1292  093C  2C 09            .WORD L1082         ;  LINK TO SCR
+1293  093E  4A 08     OFSET  .WORD DOUSE
+1294  0940  1E               .BYTE $1E
+1295  0941            ;
+1296  0941            ;                             CONTEXT
+1297  0941            ;                             SCREEN 37 LINE 2
+1298  0941            ;
+1299  0941  87        L1098  .BYTE $87,'CONTEX',$D4
+1299  0942  43 4F
+1299  0944  4E 54 45
+1299  0947  58
+1299  0948  D4
+1300  0949  35 09            .WORD L1090         ;  LINK TO OFFSET
+1301  094B  4A 08     CON    .WORD DOUSE
+1302  094D  20               .BYTE $20
+1303  094E            ;
+1304  094E            ;                             CURRENT
+1305  094E            ;                             SCREEN 37 LINE 3
+1306  094E            ;
+1307  094E  87        L1106  .BYTE $87,'CURREN',$D4
+1307  094F  43 55
+1307  0951  52 52 45
+1307  0954  4E
+1307  0955  D4
+1308  0956  41 09            .WORD L1098         ;  LINK TO CONTEXT
+1309  0958  4A 08     CURR   .WORD DOUSE
+1310  095A  22               .BYTE $22
+1311  095B            ;
+1312  095B            ;                             STATE
+1313  095B            ;                             SCREEN 37 LINE 4
+1314  095B            ;
+1315  095B  85        L1114  .BYTE $85,'STAT',$C5
+1315  095C  53 54
+1315  095E  41 54
+1315  0960  C5
+1316  0961  4E 09            .WORD L1106         ;  LINK TO CURRENT
+1317  0963  4A 08     STATE  .WORD DOUSE
+1318  0965  24               .BYTE $24
+1319  0966            ;
+1320  0966            ;                             BASE
+1321  0966            ;                             SCREEN 37 LINE 5
+1322  0966            ;
+1323  0966  84        L1122  .BYTE $84,'BAS',$C5
+1323  0967  42 41 53
+1323  096A  C5
+1324  096B  5B 09            .WORD L1114         ;  LINK TO STATE
+1325  096D  4A 08     BASE   .WORD DOUSE
+1326  096F  26               .BYTE $26
+1327  0970            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0029
+
+LINE # LOC     CODE       LINE
+
+1328  0970            ;                             DPL
+1329  0970            ;                             SCREEN 37 LINE 6
+1330  0970            ;
+1331  0970  83        L1130  .BYTE $83,'DP',$CC
+1331  0971  44 50
+1331  0973  CC
+1332  0974  66 09            .WORD L1122         ;  LINK TO BASE
+1333  0976  4A 08     DPL    .WORD DOUSE
+1334  0978  28               .BYTE $28
+1335  0979            ;
+1336  0979            ;                             FLD
+1337  0979            ;                             SCREEN 37 LINE 7
+1338  0979            ;
+1339  0979  83        L1138  .BYTE $83,'FL',$C4
+1339  097A  46 4C
+1339  097C  C4
+1340  097D  70 09            .WORD L1130         ;  LINK TO DPL
+1341  097F  4A 08     FLD    .WORD DOUSE
+1342  0981  2A               .BYTE $2A
+1343  0982            ;
+1344  0982            ;                             CSP
+1345  0982            ;                             SCREEN 37 LINE 8
+1346  0982            ;
+1347  0982  83        L1146  .BYTE $83,'CS',$D0
+1347  0983  43 53
+1347  0985  D0
+1348  0986  79 09            .WORD L1138         ;  LINK TO FLD
+1349  0988  4A 08     CSP    .WORD DOUSE
+1350  098A  2C               .BYTE $2C
+1351  098B            ;
+1352  098B            ;                             R#
+1353  098B            ;                             SCREEN 37 LINE 9
+1354  098B            ;
+1355  098B  82        L1154  .BYTE $82,'R',$A3
+1355  098C  52
+1355  098D  A3
+1356  098E  82 09            .WORD L1146         ;  LINK TO CSP
+1357  0990  4A 08     RNUM   .WORD DOUSE
+1358  0992  2E               .BYTE $2E
+1359  0993            ;
+1360  0993            ;                             HLD
+1361  0993            ;                             SCREEN 37 LINE 10
+1362  0993            ;
+1363  0993  83        L1162  .BYTE $83,'HL',$C4
+1363  0994  48 4C
+1363  0996  C4
+1364  0997  8B 09            .WORD L1154         ;  LINK TO R#
+1365  0999  4A 08     HLD    .WORD DOUSE
+1366  099B  30               .BYTE $30
+1367  099C            ;
+1368  099C            ;                             1+
+1369  099C            ;                             SCREEN 38 LINE 1
+1370  099C            ;
+1371  099C  82        L1170  .BYTE $82,'1',$AB
+1371  099D  31
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0030
+
+LINE # LOC     CODE       LINE
+
+1371  099E  AB
+1372  099F  93 09            .WORD L1162         ;  LINK TO HLD
+1373  09A1  D6 07     ONEP   .WORD DOCOL
+1374  09A3  65 08            .WORD ONE
+1375  09A5  99 06            .WORD PLUS
+1376  09A7  0C 06            .WORD SEMIS
+1377  09A9            ;
+1378  09A9            ;                             2+
+1379  09A9            ;                             SCREEN 38 LINE 2
+1380  09A9            ;
+1381  09A9  82        L1180  .BYTE $82,'2',$AB
+1381  09AA  32
+1381  09AB  AB
+1382  09AC  9C 09            .WORD L1170         ;  LINK TO 1+
+1383  09AE  D6 07     TWOP   .WORD DOCOL
+1384  09B0  6D 08            .WORD TWO
+1385  09B2  99 06            .WORD PLUS
+1386  09B4  0C 06            .WORD SEMIS
+1387  09B6            ;
+1388  09B6            ;                             HERE
+1389  09B6            ;                             SCREEN 38 LINE 3
+1390  09B6            ;
+1391  09B6  84        L1190  .BYTE $84,'HER',$C5
+1391  09B7  48 45 52
+1391  09BA  C5
+1392  09BB  A9 09            .WORD L1180         ;  LINK TO 2+
+1393  09BD  D6 07     HERE   .WORD DOCOL
+1394  09BF  01 09            .WORD DP
+1395  09C1  79 07            .WORD AT
+1396  09C3  0C 06            .WORD SEMIS
+1397  09C5            ;
+1398  09C5            ;                             ALLOT
+1399  09C5            ;                             SCREEN 38 LINE 4
+1400  09C5            ;
+1401  09C5  85        L1200  .BYTE $85,'ALLO',$D4
+1401  09C6  41 4C
+1401  09C8  4C 4F
+1401  09CA  D4
+1402  09CB  B6 09            .WORD L1190         ;  LINK TO HERE
+1403  09CD  D6 07     ALLOT  .WORD DOCOL
+1404  09CF  01 09            .WORD DP
+1405  09D1  49 07            .WORD PSTOR
+1406  09D3  0C 06            .WORD SEMIS
+1407  09D5            ;
+1408  09D5            ;                             ,
+1409  09D5            ;                             SCREEN 38 LINE 5
+1410  09D5            ;
+1411  09D5  81        L1210  .BYTE $81,$AC
+1411  09D6  AC
+1412  09D7  C5 09            .WORD L1200         ;  LINK TO ALLOT
+1413  09D9  D6 07     COMMA  .WORD DOCOL
+1414  09DB  BD 09            .WORD HERE
+1415  09DD  9D 07            .WORD STORE
+1416  09DF  6D 08            .WORD TWO
+1417  09E1  CD 09            .WORD ALLOT
+1418  09E3  0C 06            .WORD SEMIS
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0031
+
+LINE # LOC     CODE       LINE
+
+1419  09E5            ;
+1420  09E5            ;                             C,
+1421  09E5            ;                             SCREEN 38 LINE 6
+1422  09E5            ;
+1423  09E5  82        L1222  .BYTE $82,'C',$AC
+1423  09E6  43
+1423  09E7  AC
+1424  09E8  D5 09            .WORD L1210         ;  LINK TO ,
+1425  09EA  D6 07     CCOMM  .WORD DOCOL
+1426  09EC  BD 09            .WORD HERE
+1427  09EE  B5 07            .WORD CSTOR
+1428  09F0  65 08            .WORD ONE
+1429  09F2  CD 09            .WORD ALLOT
+1430  09F4  0C 06            .WORD SEMIS
+1431  09F6            ;
+1432  09F6            ;                             -
+1433  09F6            ;                             SCREEN 38 LINE 7
+1434  09F6            ;
+1435  09F6  81        L1234  .BYTE $81,$AD
+1435  09F7  AD
+1436  09F8  E5 09            .WORD L1222         ;  LINK TO C,
+1437  09FA  D6 07     SUB    .WORD DOCOL
+1438  09FC  D8 06            .WORD MINUS
+1439  09FE  99 06            .WORD PLUS
+1440  0A00  0C 06            .WORD SEMIS
+1441  0A02            ;
+1442  0A02            ;                             =
+1443  0A02            ;                             SCREEN 38 LINE 8
+1444  0A02            ;
+1445  0A02  81        L1244  .BYTE $81,$BD
+1445  0A03  BD
+1446  0A04  F6 09            .WORD L1234         ;  LINK TO -
+1447  0A06  D6 07     EQUAL  .WORD DOCOL
+1448  0A08  FA 09            .WORD SUB
+1449  0A0A  73 06            .WORD ZEQU
+1450  0A0C  0C 06            .WORD SEMIS
+1451  0A0E            ;
+1452  0A0E            ;                             U<
+1453  0A0E            ;                             Unsigned less than
+1454  0A0E            ;
+1455  0A0E  82        L1246  .BYTE $82,'U',$BC
+1455  0A0F  55
+1455  0A10  BC
+1456  0A11  02 0A            .WORD L1244
+1457  0A13  D6 07     ULESS  .WORD DOCOL
+1458  0A15  FA 09            .WORD SUB    subtract two values
+1459  0A17  88 06            .WORD ZLESS   test sign
+1460  0A19  0C 06            .WORD SEMIS
+1461  0A1B            ;
+1462  0A1B            ;                             <
+1463  0A1B            ;                              Altered from model
+1464  0A1B            ;                             SCREEN 38 LINE 9
+1465  0A1B            ;
+1466  0A1B  81        L1254  .BYTE $81,$BC
+1466  0A1C  BC
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0032
+
+LINE # LOC     CODE       LINE
+
+1467  0A1D  0E 0A            .WORD L1246    LINK TO U<
+1468  0A1F  21 0A     LESS   .WORD *+2
+1469  0A21  38               SEC
+1470  0A22  B5 02            LDA 2,X
+1471  0A24  F5 00            SBC 0,X      subtract
+1472  0A26  B5 03            LDA 3,X
+1473  0A28  F5 01            SBC 1,X
+1474  0A2A  94 03            STY 3,X          zero hi byte
+1475  0A2C  50 02            BVC L1258
+1476  0A2E  49 80            EOR #$80         correct overflow
+1477  0A30  10 01     L1258  BPL L1260
+1478  0A32  C8               INY              invert boolean
+1479  0A33  94 02     L1260  STY 2,X        leave boolean
+1480  0A35  4C EE 03         JMP POP
+1481  0A38            ;
+1482  0A38            ;                             >
+1483  0A38            ;                             SCREEN 38 LINE 10
+1484  0A38            ;
+1485  0A38  81        L1264  .BYTE $81,$BE
+1485  0A39  BE
+1486  0A3A  1B 0A            .WORD L1254         ;  LINK TO <
+1487  0A3C  D6 07     GREAT  .WORD DOCOL
+1488  0A3E  22 07            .WORD SWAP
+1489  0A40  1F 0A            .WORD LESS
+1490  0A42  0C 06            .WORD SEMIS
+1491  0A44            ;
+1492  0A44            ;                             ROT
+1493  0A44            ;                             SCREEN 38 LINE 11
+1494  0A44            ;
+1495  0A44  83        L1274  .BYTE $83,'RO',$D4
+1495  0A45  52 4F
+1495  0A47  D4
+1496  0A48  38 0A            .WORD L1264         ;  LINK TO >
+1497  0A4A  D6 07     ROT    .WORD DOCOL
+1498  0A4C  3A 06            .WORD TOR
+1499  0A4E  22 07            .WORD SWAP
+1500  0A50  4C 06            .WORD RFROM
+1501  0A52  22 07            .WORD SWAP
+1502  0A54  0C 06            .WORD SEMIS
+1503  0A56            ;
+1504  0A56            ;                             SPACE
+1505  0A56            ;                             SCREEN 38 LINE 12
+1506  0A56            ;
+1507  0A56  85        L1286  .BYTE $85,'SPAC',$C5
+1507  0A57  53 50
+1507  0A59  41 43
+1507  0A5B  C5
+1508  0A5C  44 0A            .WORD L1274         ;  LINK TO ROT
+1509  0A5E  D6 07     SPACE  .WORD DOCOL
+1510  0A60  7E 08            .WORD BL
+1511  0A62  D7 04            .WORD EMIT
+1512  0A64  0C 06            .WORD SEMIS
+1513  0A66            ;
+1514  0A66            ;                             -DUP
+1515  0A66            ;                             SCREEN 38 LINE 13
+1516  0A66            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0033
+
+LINE # LOC     CODE       LINE
+
+1517  0A66  84        L1296  .BYTE $84,'-DU',$D0
+1517  0A67  2D 44 55
+1517  0A6A  D0
+1518  0A6B  56 0A            .WORD L1286         ;  LINK TO SPACE
+1519  0A6D  D6 07     DDUP   .WORD DOCOL
+1520  0A6F  3A 07            .WORD DUP
+1521  0A71  56 03            .WORD ZBRAN
+1522  0A73  04 00     L1301  .WORD $4            L1303-L1301
+1523  0A75  3A 07            .WORD DUP
+1524  0A77  0C 06     L1303  .WORD SEMIS
+1525  0A79            ;
+1526  0A79            ;                             TRAVERSE
+1527  0A79            ;                             SCREEN 39 LINE 14
+1528  0A79            ;
+1529  0A79  88        L1308  .BYTE $88,'TRAVERS',$C5
+1529  0A7A  54 52
+1529  0A7C  41 56 45
+1529  0A7F  52 53
+1529  0A81  C5
+1530  0A82  66 0A            .WORD L1296         ;  LINK TO -DUP
+1531  0A84  D6 07     TRAV   .WORD DOCOL
+1532  0A86  22 07            .WORD SWAP
+1533  0A88  08 07     L1312  .WORD OVER
+1534  0A8A  99 06            .WORD PLUS
+1535  0A8C  67 02            .WORD CLIT
+1536  0A8E  7F               .BYTE $7F
+1537  0A8F  08 07            .WORD OVER
+1538  0A91  8E 07            .WORD CAT
+1539  0A93  1F 0A            .WORD LESS
+1540  0A95  56 03            .WORD ZBRAN
+1541  0A97  F1 FF     L1320  .WORD $FFF1         L1312-L1320
+1542  0A99  22 07            .WORD SWAP
+1543  0A9B  19 07            .WORD DROP
+1544  0A9D  0C 06            .WORD SEMIS
+1545  0A9F            ;
+1546  0A9F            ;                             LATEST
+1547  0A9F            ;                             SCREEN 39 LINE 6
+1548  0A9F            ;
+1549  0A9F  86        L1328  .BYTE $86,'LATES',$D4
+1549  0AA0  4C 41
+1549  0AA2  54 45 53
+1549  0AA5  D4
+1550  0AA6  79 0A            .WORD L1308         ;  LINK TO TRAVERSE
+1551  0AA8  D6 07     LATES  .WORD DOCOL
+1552  0AAA  58 09            .WORD CURR
+1553  0AAC  79 07            .WORD AT
+1554  0AAE  79 07            .WORD AT
+1555  0AB0  0C 06            .WORD SEMIS
+1556  0AB2            ;
+1557  0AB2            ;                             LFA
+1558  0AB2            ;                             SCREEN 39 LINE 11
+1559  0AB2            ;
+1560  0AB2  83        L1339  .BYTE $83,'LF',$C1
+1560  0AB3  4C 46
+1560  0AB5  C1
+1561  0AB6  9F 0A            .WORD L1328         ;  LINK TO LATEST
+1562  0AB8  D6 07     LFA    .WORD DOCOL
+1563  0ABA  67 02            .WORD CLIT
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0034
+
+LINE # LOC     CODE       LINE
+
+1564  0ABC  04               .BYTE 4
+1565  0ABD  FA 09            .WORD SUB
+1566  0ABF  0C 06            .WORD SEMIS
+1567  0AC1            ;
+1568  0AC1            ;                             CFA
+1569  0AC1            ;                             SCREEN 39 LINE 12
+1570  0AC1            ;
+1571  0AC1  83        L1350  .BYTE $83,'CF',$C1
+1571  0AC2  43 46
+1571  0AC4  C1
+1572  0AC5  B2 0A            .WORD L1339         ;  LINK TO LFA
+1573  0AC7  D6 07     CFA    .WORD DOCOL
+1574  0AC9  6D 08            .WORD TWO
+1575  0ACB  FA 09            .WORD SUB
+1576  0ACD  0C 06            .WORD SEMIS
+1577  0ACF            ;
+1578  0ACF            ;                             NFA
+1579  0ACF            ;                             SCREEN 39 LINE 13
+1580  0ACF            ;
+1581  0ACF  83        L1360  .BYTE $83,'NF',$C1
+1581  0AD0  4E 46
+1581  0AD2  C1
+1582  0AD3  C1 0A            .WORD L1350         ;  LINK TO CFA
+1583  0AD5  D6 07     NFA    .WORD DOCOL
+1584  0AD7  67 02            .WORD CLIT
+1585  0AD9  05               .BYTE $5
+1586  0ADA  FA 09            .WORD SUB
+1587  0ADC  2A 02            .WORD LIT,$FFFF
+1587  0ADE  FF FF
+1588  0AE0  84 0A            .WORD TRAV
+1589  0AE2  0C 06            .WORD SEMIS
+1590  0AE4            ;
+1591  0AE4            ;                             PFA
+1592  0AE4            ;                             SCREEN 39 LINE 1
+1593  0AE4            ;
+1594  0AE4  83        L1373  .BYTE $83,'PF',$C1
+1594  0AE5  50 46
+1594  0AE7  C1
+1595  0AE8  CF 0A            .WORD L1360         ;  LINK TO NFA
+1596  0AEA  D6 07     PFA    .WORD DOCOL
+1597  0AEC  65 08            .WORD ONE
+1598  0AEE  84 0A            .WORD TRAV
+1599  0AF0  67 02            .WORD CLIT
+1600  0AF2  05               .BYTE 5
+1601  0AF3  99 06            .WORD PLUS
+1602  0AF5  0C 06            .WORD SEMIS
+1603  0AF7            ;
+1604  0AF7            ;                             !CSP
+1605  0AF7            ;                             SCREEN 40 LINE 1
+1606  0AF7            ;
+1607  0AF7  84        L1386  .BYTE $84,'!CS',$D0
+1607  0AF8  21 43 53
+1607  0AFB  D0
+1608  0AFC  E4 0A            .WORD L1373          ;  LINK TO PFA
+1609  0AFE  D6 07     SCSP   .WORD DOCOL
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0035
+
+LINE # LOC     CODE       LINE
+
+1610  0B00  D9 05            .WORD SPAT
+1611  0B02  88 09            .WORD CSP
+1612  0B04  9D 07            .WORD STORE
+1613  0B06  0C 06            .WORD SEMIS
+1614  0B08            ;
+1615  0B08            ;                             ?ERROR
+1616  0B08            ;                             SCREEN 40 LINE 3
+1617  0B08            ;
+1618  0B08  86        L1397  .BYTE $86,'?ERRO',$D2
+1618  0B09  3F 45
+1618  0B0B  52 52 4F
+1618  0B0E  D2
+1619  0B0F  F7 0A            .WORD L1386         ;  LINK TO !CSP
+1620  0B11  D6 07     QERR   .WORD DOCOL
+1621  0B13  22 07            .WORD SWAP
+1622  0B15  56 03            .WORD ZBRAN
+1623  0B17  08 00     L1402  .WORD 8            L1406-L1402
+1624  0B19  CD 0F            .WORD ERROR
+1625  0B1B  37 03            .WORD BRAN
+1626  0B1D  04 00     L1405  .WORD 4            L1407-L1405
+1627  0B1F  19 07     L1406  .WORD DROP
+1628  0B21  0C 06     L1407  .WORD SEMIS
+1629  0B23            ;
+1630  0B23            ;                             ?COMP
+1631  0B23            ;                             SCREEN 40 LINE 6
+1632  0B23            ;
+1633  0B23  85        L1412  .BYTE $85,'?COM',$D0
+1633  0B24  3F 43
+1633  0B26  4F 4D
+1633  0B28  D0
+1634  0B29  08 0B            .WORD L1397         ;  LINK TO ?ERROR
+1635  0B2B  D6 07     QCOMP  .WORD DOCOL
+1636  0B2D  63 09            .WORD STATE
+1637  0B2F  79 07            .WORD AT
+1638  0B31  73 06            .WORD ZEQU
+1639  0B33  67 02            .WORD CLIT
+1640  0B35  11               .BYTE $11
+1641  0B36  11 0B            .WORD QERR
+1642  0B38  0C 06            .WORD SEMIS
+1643  0B3A            ;
+1644  0B3A            ;                             ?EXEC
+1645  0B3A            ;                             SCREEN 40 LINE 8
+1646  0B3A            ;
+1647  0B3A  85        L1426  .BYTE $85,'?EXE',$C3
+1647  0B3B  3F 45
+1647  0B3D  58 45
+1647  0B3F  C3
+1648  0B40  23 0B            .WORD L1412         ;  LINK TO ?COMP
+1649  0B42  D6 07     QEXEC  .WORD DOCOL
+1650  0B44  63 09            .WORD STATE
+1651  0B46  79 07            .WORD AT
+1652  0B48  67 02            .WORD CLIT
+1653  0B4A  12               .BYTE $12
+1654  0B4B  11 0B            .WORD QERR
+1655  0B4D  0C 06            .WORD SEMIS
+1656  0B4F            ;
+1657  0B4F            ;                             ?PAIRS
+1658  0B4F            ;                             SCREEN 40 LINE 10
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0036
+
+LINE # LOC     CODE       LINE
+
+1659  0B4F            ;
+1660  0B4F  86        L1439  .BYTE $86,'?PAIR',$D3
+1660  0B50  3F 50
+1660  0B52  41 49 52
+1660  0B55  D3
+1661  0B56  3A 0B            .WORD L1426         ;  LINK TO ?EXEC
+1662  0B58  D6 07     QPAIR  .WORD DOCOL
+1663  0B5A  FA 09            .WORD SUB
+1664  0B5C  67 02            .WORD CLIT
+1665  0B5E  13               .BYTE $13
+1666  0B5F  11 0B            .WORD QERR
+1667  0B61  0C 06            .WORD SEMIS
+1668  0B63            ;
+1669  0B63            ;                             ?CSP
+1670  0B63            ;                             SCREEN 40 LINE 12
+1671  0B63            ;
+1672  0B63  84        L1451  .BYTE $84,'?CS',$D0
+1672  0B64  3F 43 53
+1672  0B67  D0
+1673  0B68  4F 0B            .WORD L1439         ;  LINK TO ?PAIRS
+1674  0B6A  D6 07     QCSP   .WORD DOCOL
+1675  0B6C  D9 05            .WORD SPAT
+1676  0B6E  88 09            .WORD CSP
+1677  0B70  79 07            .WORD AT
+1678  0B72  FA 09            .WORD SUB
+1679  0B74  67 02            .WORD CLIT
+1680  0B76  14               .BYTE $14
+1681  0B77  11 0B            .WORD QERR
+1682  0B79  0C 06            .WORD SEMIS
+1683  0B7B            ;
+1684  0B7B            ;                             ?LOADING
+1685  0B7B            ;                             SCREEN 40 LINE 14
+1686  0B7B            ;
+1687  0B7B  88        L1466  .BYTE $88,'?LOADIN',$C7
+1687  0B7C  3F 4C
+1687  0B7E  4F 41 44
+1687  0B81  49 4E
+1687  0B83  C7
+1688  0B84  63 0B            .WORD L1451         ;  LINK TO ?CSP
+1689  0B86  D6 07     QLOAD  .WORD DOCOL
+1690  0B88  18 09            .WORD BLK
+1691  0B8A  79 07            .WORD AT
+1692  0B8C  73 06            .WORD ZEQU
+1693  0B8E  67 02            .WORD CLIT
+1694  0B90  16               .BYTE $16
+1695  0B91  11 0B            .WORD QERR
+1696  0B93  0C 06            .WORD SEMIS
+1697  0B95            ;
+1698  0B95            ;                             COMPILE
+1699  0B95            ;                             SCREEN 41 LINE 2
+1700  0B95            ;
+1701  0B95  87        L1480  .BYTE $87,'COMPIL',$C5
+1701  0B96  43 4F
+1701  0B98  4D 50 49
+1701  0B9B  4C
+1701  0B9C  C5
+1702  0B9D  7B 0B            .WORD L1466         ;  LINK TO ?LOADING
+1703  0B9F  D6 07     COMP   .WORD DOCOL
+1704  0BA1  2B 0B            .WORD QCOMP
+1705  0BA3  4C 06            .WORD RFROM
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0037
+
+LINE # LOC     CODE       LINE
+
+1706  0BA5  3A 07            .WORD DUP
+1707  0BA7  AE 09            .WORD TWOP
+1708  0BA9  3A 06            .WORD TOR
+1709  0BAB  79 07            .WORD AT
+1710  0BAD  D9 09            .WORD COMMA
+1711  0BAF  0C 06            .WORD SEMIS
+1712  0BB1            ;
+1713  0BB1            ;                             [
+1714  0BB1            ;                             SCREEN 41 LINE 5
+1715  0BB1            ;
+1716  0BB1  C1        L1495  .BYTE $C1,$DB
+1716  0BB2  DB
+1717  0BB3  95 0B            .WORD L1480         ;  LINK TO COMPILE
+1718  0BB5  D6 07     LBRAC  .WORD DOCOL
+1719  0BB7  5D 08            .WORD ZERO
+1720  0BB9  63 09            .WORD STATE
+1721  0BBB  9D 07            .WORD STORE
+1722  0BBD  0C 06            .WORD SEMIS
+1723  0BBF            ;
+1724  0BBF            ;
+1725  0BBF            ;                             ]
+1726  0BBF            ;                             SCREEN 41 LINE 7
+1727  0BBF            ;
+1728  0BBF  81        L1507  .BYTE $81,$DD
+1728  0BC0  DD
+1729  0BC1  B1 0B            .WORD L1495         ;  LINK TO [
+1730  0BC3  D6 07     RBRAC  .WORD DOCOL
+1731  0BC5  67 02            .WORD CLIT
+1732  0BC7  C0               .BYTE $C0
+1733  0BC8  63 09            .WORD STATE
+1734  0BCA  9D 07            .WORD STORE
+1735  0BCC  0C 06            .WORD SEMIS
+1736  0BCE            ;
+1737  0BCE            ;                             SMUDGE
+1738  0BCE            ;                             SCREEN 41 LINE 9
+1739  0BCE            ;
+1740  0BCE  86        L1519  .BYTE $86,'SMUDG',$C5
+1740  0BCF  53 4D
+1740  0BD1  55 44 47
+1740  0BD4  C5
+1741  0BD5  BF 0B            .WORD L1507         ;  LINK TO ]
+1742  0BD7  D6 07     SMUDG  .WORD DOCOL
+1743  0BD9  A8 0A            .WORD LATES
+1744  0BDB  67 02            .WORD CLIT
+1745  0BDD  20               .BYTE $20
+1746  0BDE  6A 07            .WORD TOGGL
+1747  0BE0  0C 06            .WORD SEMIS
+1748  0BE2            ;
+1749  0BE2            ;                             HEX
+1750  0BE2            ;                             SCREEN 41 LINE 11
+1751  0BE2            ;
+1752  0BE2  83        L1531  .BYTE $83,'HE',$D8
+1752  0BE3  48 45
+1752  0BE5  D8
+1753  0BE6  CE 0B            .WORD L1519         ;  LINK TO SMUDGE
+1754  0BE8  D6 07     HEX    .WORD DOCOL
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0038
+
+LINE # LOC     CODE       LINE
+
+1755  0BEA  67 02            .WORD CLIT
+1756  0BEC  10               .BYTE 16
+1757  0BED  6D 09            .WORD BASE
+1758  0BEF  9D 07            .WORD STORE
+1759  0BF1  0C 06            .WORD SEMIS
+1760  0BF3            ;
+1761  0BF3            ;                             DECIMAL
+1762  0BF3            ;                             SCREEN 41 LINE 13
+1763  0BF3            ;
+1764  0BF3  87        L1543  .BYTE $87,'DECIMA',$CC
+1764  0BF4  44 45
+1764  0BF6  43 49 4D
+1764  0BF9  41
+1764  0BFA  CC
+1765  0BFB  E2 0B            .WORD L1531         ;  LINK TO HEX
+1766  0BFD  D6 07     DECIM  .WORD DOCOL
+1767  0BFF  67 02            .WORD CLIT
+1768  0C01  0A               .BYTE 10
+1769  0C02  6D 09            .WORD BASE
+1770  0C04  9D 07            .WORD STORE
+1771  0C06  0C 06            .WORD SEMIS
+1772  0C08            ;
+1773  0C08            ;                             (;CODE)
+1774  0C08            ;                             SCREEN 42 LINE 2
+1775  0C08            ;
+1776  0C08  87        L1555  .BYTE $87,'(;CODE',$A9
+1776  0C09  28 3B
+1776  0C0B  43 4F 44
+1776  0C0E  45
+1776  0C0F  A9
+1777  0C10  F3 0B            .WORD L1543         ;  LINK TO DECIMAL
+1778  0C12  D6 07     PSCOD  .WORD DOCOL
+1779  0C14  4C 06            .WORD RFROM
+1780  0C16  A8 0A            .WORD LATES
+1781  0C18  EA 0A            .WORD PFA
+1782  0C1A  C7 0A            .WORD CFA
+1783  0C1C  9D 07            .WORD STORE
+1784  0C1E  0C 06            .WORD SEMIS
+1785  0C20            ;
+1786  0C20            ;                             ;CODE
+1787  0C20            ;                             SCREEN 42 LINE 6
+1788  0C20            ;
+1789  0C20  C5        L1568  .BYTE $C5,';COD',$C5
+1789  0C21  3B 43
+1789  0C23  4F 44
+1789  0C25  C5
+1790  0C26  08 0C            .WORD L1555         ;  LINK TO (;CODE)
+1791  0C28  D6 07            .WORD DOCOL
+1792  0C2A  6A 0B            .WORD QCSP
+1793  0C2C  9F 0B            .WORD COMP
+1794  0C2E  12 0C            .WORD PSCOD
+1795  0C30  B5 0B            .WORD LBRAC
+1796  0C32  D7 0B            .WORD SMUDG
+1797  0C34  0C 06            .WORD SEMIS
+1798  0C36            ;
+1799  0C36            ;
+1800  0C36            ;                             <BUILDS
+1801  0C36            ;                             SCREEN 43 LINE 2
+1802  0C36            ;
+1803  0C36  87        L1582  .BYTE $87,'<BUILD',$D3
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0039
+
+LINE # LOC     CODE       LINE
+
+1803  0C37  3C 42
+1803  0C39  55 49 4C
+1803  0C3C  44
+1803  0C3D  D3
+1804  0C3E  20 0C            .WORD L1568         ;  LINK TO ;CODE
+1805  0C40  D6 07     BUILD  .WORD DOCOL
+1806  0C42  5D 08            .WORD ZERO
+1807  0C44  0B 08            .WORD CONST
+1808  0C46  0C 06            .WORD SEMIS
+1809  0C48            ;
+1810  0C48            ;                             DOES>
+1811  0C48            ;                             SCREEN 43 LINE 4
+1812  0C48            ;
+1813  0C48  85        L1592  .BYTE $85,'DOES',$BE
+1813  0C49  44 4F
+1813  0C4B  45 53
+1813  0C4D  BE
+1814  0C4E  36 0C            .WORD L1582         ;  LINK TO <BUILDS
+1815  0C50  D6 07     DOES   .WORD DOCOL
+1816  0C52  4C 06            .WORD RFROM
+1817  0C54  A8 0A            .WORD LATES
+1818  0C56  EA 0A            .WORD PFA
+1819  0C58  9D 07            .WORD STORE
+1820  0C5A  12 0C            .WORD PSCOD
+1821  0C5C            ;
+1822  0C5C  A5 AF     DODOE  LDA IP+1
+1823  0C5E  48               PHA
+1824  0C5F  A5 AE            LDA IP
+1825  0C61  48               PHA
+1826  0C62  A0 02            LDY #2
+1827  0C64  B1 B1            LDA (W),Y
+1828  0C66  85 AE            STA IP
+1829  0C68  C8               INY
+1830  0C69  B1 B1            LDA (W),Y
+1831  0C6B  85 AF            STA IP+1
+1832  0C6D  18               CLC
+1833  0C6E  A5 B1            LDA W
+1834  0C70  69 04            ADC #4
+1835  0C72  48               PHA
+1836  0C73  A5 B2            LDA W+1
+1837  0C75  69 00            ADC #0
+1838  0C77  4C 3D 02         JMP PUSH
+1839  0C7A            ;
+1840  0C7A            ;                             COUNT
+1841  0C7A            ;                             SCREEN 44 LINE 1
+1842  0C7A            ;
+1843  0C7A  85        L1622  .BYTE $85,'COUN',$D4
+1843  0C7B  43 4F
+1843  0C7D  55 4E
+1843  0C7F  D4
+1844  0C80  48 0C            .WORD L1592         ;  LINK TO DOES>
+1845  0C82  D6 07     COUNT  .WORD DOCOL
+1846  0C84  3A 07            .WORD DUP
+1847  0C86  A1 09            .WORD ONEP
+1848  0C88  22 07            .WORD SWAP
+1849  0C8A  8E 07            .WORD CAT
+1850  0C8C  0C 06            .WORD SEMIS
+1851  0C8E            ;
+1852  0C8E            ;                             TYPE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0040
+
+LINE # LOC     CODE       LINE
+
+1853  0C8E            ;                             SCREEN 44 LINE 2
+1854  0C8E            ;
+1855  0C8E  84        L1634  .BYTE $84,'TYP',$C5
+1855  0C8F  54 59 50
+1855  0C92  C5
+1856  0C93  7A 0C            .WORD L1622         ;  LINK TO COUNT
+1857  0C95  D6 07     TYPE   .WORD DOCOL
+1858  0C97  6D 0A            .WORD DDUP
+1859  0C99  56 03            .WORD ZBRAN
+1860  0C9B  18 00     L1639  .WORD $18           L1651-L1639
+1861  0C9D  08 07            .WORD OVER
+1862  0C9F  99 06            .WORD PLUS
+1863  0CA1  22 07            .WORD SWAP
+1864  0CA3  DE 03            .WORD PDO
+1865  0CA5  F7 03     L1644  .WORD I
+1866  0CA7  8E 07            .WORD CAT
+1867  0CA9  D7 04            .WORD EMIT
+1868  0CAB  77 03            .WORD PLOOP
+1869  0CAD  F8 FF     L1648  .WORD $FFF8         L1644-L1648
+1870  0CAF  37 03            .WORD BRAN
+1871  0CB1  04 00     L1650  .WORD $4            L1652-L1650
+1872  0CB3  19 07     L1651  .WORD DROP
+1873  0CB5  0C 06     L1652  .WORD SEMIS
+1874  0CB7            ;
+1875  0CB7            ;                             -TRAILING
+1876  0CB7            ;                             SCREEN 44 LINE 5
+1877  0CB7            ;
+1878  0CB7  89        L1657  .BYTE $89,'-TRAILIN',$C7
+1878  0CB8  2D 54
+1878  0CBA  52 41 49
+1878  0CBD  4C 49 4E
+1878  0CC0  C7
+1879  0CC1  8E 0C            .WORD L1634         ;  LINK TO TYPE
+1880  0CC3  D6 07     DTRAI  .WORD DOCOL
+1881  0CC5  3A 07            .WORD DUP
+1882  0CC7  5D 08            .WORD ZERO
+1883  0CC9  DE 03            .WORD PDO
+1884  0CCB  08 07     L1663  .WORD OVER
+1885  0CCD  08 07            .WORD OVER
+1886  0CCF  99 06            .WORD PLUS
+1887  0CD1  65 08            .WORD ONE
+1888  0CD3  FA 09            .WORD SUB
+1889  0CD5  8E 07            .WORD CAT
+1890  0CD7  7E 08            .WORD BL
+1891  0CD9  FA 09            .WORD SUB
+1892  0CDB  56 03            .WORD ZBRAN
+1893  0CDD  08 00     L1672  .WORD 8             L1676-L1672
+1894  0CDF  1F 06            .WORD LEAVE
+1895  0CE1  37 03            .WORD BRAN
+1896  0CE3  06 00     L1675  .WORD 6             L1678-L1675
+1897  0CE5  65 08     L1676  .WORD ONE
+1898  0CE7  FA 09            .WORD SUB
+1899  0CE9  77 03     L1678  .WORD PLOOP
+1900  0CEB  E0 FF     L1679  .WORD $FFE0         L1663-L1679
+1901  0CED  0C 06            .WORD SEMIS
+1902  0CEF            ;
+1903  0CEF            ;                             (.")
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0041
+
+LINE # LOC     CODE       LINE
+
+1904  0CEF            ;                             SCREEN 44 LINE 8
+1905  0CEF            ;
+1906  0CEF  84        L1685  .BYTE $84,'(."',$A9
+1906  0CF0  28 2E 22
+1906  0CF3  A9
+1907  0CF4  B7 0C            .WORD L1657         ;  LINK TO -TRAILING
+1908  0CF6  D6 07     PDOTQ  .WORD DOCOL
+1909  0CF8  5D 06            .WORD R
+1910  0CFA  82 0C            .WORD COUNT
+1911  0CFC  3A 07            .WORD DUP
+1912  0CFE  A1 09            .WORD ONEP
+1913  0D00  4C 06            .WORD RFROM
+1914  0D02  99 06            .WORD PLUS
+1915  0D04  3A 06            .WORD TOR
+1916  0D06  95 0C            .WORD TYPE
+1917  0D08  0C 06            .WORD SEMIS
+1918  0D0A            ;
+1919  0D0A            ;                             ."
+1920  0D0A            ;                             SCREEN 44 LINE 12
+1921  0D0A            ;
+1922  0D0A  C2        L1701  .BYTE $C2,'.',$A2
+1922  0D0B  2E
+1922  0D0C  A2
+1923  0D0D  EF 0C            .WORD L1685         ;  LINK TO PDOTQ
+1924  0D0F  D6 07            .WORD DOCOL
+1925  0D11  67 02            .WORD CLIT
+1926  0D13  22               .BYTE $22
+1927  0D14  63 09            .WORD STATE
+1928  0D16  79 07            .WORD AT
+1929  0D18  56 03            .WORD ZBRAN
+1930  0D1A  14 00     L1709  .WORD $14           L1719-L1709
+1931  0D1C  9F 0B            .WORD COMP
+1932  0D1E  F6 0C            .WORD PDOTQ
+1933  0D20  70 0E            .WORD WORD
+1934  0D22  BD 09            .WORD HERE
+1935  0D24  8E 07            .WORD CAT
+1936  0D26  A1 09            .WORD ONEP
+1937  0D28  CD 09            .WORD ALLOT
+1938  0D2A  37 03            .WORD BRAN
+1939  0D2C  0A 00     L1718  .WORD $A            L1723-L1718
+1940  0D2E  70 0E     L1719  .WORD WORD
+1941  0D30  BD 09            .WORD HERE
+1942  0D32  82 0C            .WORD COUNT
+1943  0D34  95 0C            .WORD TYPE
+1944  0D36  0C 06     L1723  .WORD SEMIS
+1945  0D38            ;
+1946  0D38            ;
+1947  0D38            ;                             EXPECT
+1948  0D38            ;                             SCREEN 45 LINE 2
+1949  0D38            ;
+1950  0D38  86        L1729  .BYTE $86,'EXPEC',$D4
+1950  0D39  45 58
+1950  0D3B  50 45 43
+1950  0D3E  D4
+1951  0D3F  0A 0D            .WORD L1701         ;  LINK TO ."
+1952  0D41  D6 07     EXPEC  .WORD DOCOL
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0042
+
+LINE # LOC     CODE       LINE
+
+1953  0D43  08 07            .WORD OVER
+1954  0D45  99 06            .WORD PLUS
+1955  0D47  08 07            .WORD OVER
+1956  0D49  DE 03            .WORD PDO
+1957  0D4B  DF 04     L1736  .WORD KEY
+1958  0D4D  3A 07            .WORD DUP
+1959  0D4F  67 02            .WORD CLIT
+1960  0D51  0E               .BYTE $E
+1961  0D52  C6 08            .WORD PORIG
+1962  0D54  79 07            .WORD AT
+1963  0D56  06 0A            .WORD EQUAL
+1964  0D58  56 03            .WORD ZBRAN
+1965  0D5A  1F 00     L1744  .WORD $1F           L1760-L1744
+1966  0D5C  19 07            .WORD DROP
+1967  0D5E  67 02            .WORD CLIT
+1968  0D60  08               .BYTE 08
+1969  0D61  08 07            .WORD OVER
+1970  0D63  F7 03            .WORD I
+1971  0D65  06 0A            .WORD EQUAL
+1972  0D67  3A 07            .WORD DUP
+1973  0D69  4C 06            .WORD RFROM
+1974  0D6B  6D 08            .WORD TWO
+1975  0D6D  FA 09            .WORD SUB
+1976  0D6F  99 06            .WORD PLUS
+1977  0D71  3A 06            .WORD TOR
+1978  0D73  FA 09            .WORD SUB
+1979  0D75  37 03            .WORD BRAN
+1980  0D77  27 00     L1759  .WORD $27           L1779-L1759
+1981  0D79  3A 07     L1760  .WORD DUP
+1982  0D7B  67 02            .WORD CLIT
+1983  0D7D  0D               .BYTE $0D
+1984  0D7E  06 0A            .WORD EQUAL
+1985  0D80  56 03            .WORD ZBRAN
+1986  0D82  0E 00     L1765  .WORD $0E            L1772-L1765
+1987  0D84  1F 06            .WORD LEAVE
+1988  0D86  19 07            .WORD DROP
+1989  0D88  7E 08            .WORD BL
+1990  0D8A  5D 08            .WORD ZERO
+1991  0D8C  37 03            .WORD BRAN
+1992  0D8E  04 00     L1771  .WORD 04            L1773-L1771
+1993  0D90  3A 07     L1772  .WORD DUP
+1994  0D92  F7 03     L1773  .WORD I
+1995  0D94  B5 07            .WORD CSTOR
+1996  0D96  5D 08            .WORD ZERO
+1997  0D98  F7 03            .WORD I
+1998  0D9A  A1 09            .WORD ONEP
+1999  0D9C  9D 07            .WORD STORE
+2000  0D9E  D7 04     L1779  .WORD EMIT
+2001  0DA0  77 03            .WORD PLOOP
+2002  0DA2  A9 FF     L1781  .WORD $FFA9         L1736-L1781
+2003  0DA4  19 07            .WORD DROP
+2004  0DA6  0C 06            .WORD SEMIS
+2005  0DA8            ;
+2006  0DA8            ;                             QUERY
+2007  0DA8            ;                             SCREEN 45 LINE 9
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0043
+
+LINE # LOC     CODE       LINE
+
+2008  0DA8            ;
+2009  0DA8  85        L1788  .BYTE $85,'QUER',$D9
+2009  0DA9  51 55
+2009  0DAB  45 52
+2009  0DAD  D9
+2010  0DAE  38 0D            .WORD L1729         ;  LINK TO EXPECT
+2011  0DB0  D6 07     QUERY  .WORD DOCOL
+2012  0DB2  D6 08            .WORD TIB
+2013  0DB4  79 07            .WORD AT
+2014  0DB6  67 02            .WORD CLIT
+2015  0DB8  50               .BYTE 80     80 characters from terminal
+2016  0DB9  41 0D            .WORD EXPEC
+2017  0DBB  5D 08            .WORD ZERO
+2018  0DBD  20 09            .WORD IN
+2019  0DBF  9D 07            .WORD STORE
+2020  0DC1  0C 06            .WORD SEMIS
+2021  0DC3            ;
+2022  0DC3            ;                             X
+2023  0DC3            ;                             SCREEN 45 LINE 11
+2024  0DC3            ;                             Actually ASCII null
+2025  0DC3  C1        L1804  .BYTE $C1,$80
+2025  0DC4  80
+2026  0DC5  A8 0D            .WORD L1788         ;  LINK TO QUERY
+2027  0DC7  D6 07            .WORD DOCOL
+2028  0DC9  18 09            .WORD BLK
+2029  0DCB  79 07            .WORD AT
+2030  0DCD  56 03            .WORD ZBRAN
+2031  0DCF  2A 00     L1810  .WORD $2A           L1830-L1810
+2032  0DD1  65 08            .WORD ONE
+2033  0DD3  18 09            .WORD BLK
+2034  0DD5  49 07            .WORD PSTOR
+2035  0DD7  5D 08            .WORD ZERO
+2036  0DD9  20 09            .WORD IN
+2037  0DDB  9D 07            .WORD STORE
+2038  0DDD  18 09            .WORD BLK
+2039  0DDF  79 07            .WORD AT
+2040  0DE1  5D 08            .WORD ZERO,BSCR
+2040  0DE3  B8 08
+2041  0DE5  5B 05            .WORD USLAS
+2042  0DE7  19 07            .WORD DROP        fixed from model
+2043  0DE9  73 06            .WORD ZEQU
+2044  0DEB  56 03            .WORD ZBRAN
+2045  0DED  08 00     L1824  .WORD 8             L1828-L1824
+2046  0DEF  42 0B            .WORD QEXEC
+2047  0DF1  4C 06            .WORD RFROM
+2048  0DF3  19 07            .WORD DROP
+2049  0DF5  37 03     L1828  .WORD BRAN
+2050  0DF7  06 00     L1829  .WORD 6             L1832-L1829
+2051  0DF9  4C 06     L1830  .WORD RFROM
+2052  0DFB  19 07            .WORD DROP
+2053  0DFD  0C 06     L1832  .WORD SEMIS
+2054  0DFF            ;
+2055  0DFF            ;
+2056  0DFF            ;                             FILL
+2057  0DFF            ;                             SCREEN 46 LINE 1
+2058  0DFF            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0044
+
+LINE # LOC     CODE       LINE
+
+2059  0DFF  84        L1838  .BYTE $84,'FIL',$CC
+2059  0E00  46 49 4C
+2059  0E03  CC
+2060  0E04  C3 0D            .WORD L1804         ;  LINK TO X
+2061  0E06  D6 07     FILL   .WORD DOCOL
+2062  0E08  22 07            .WORD SWAP
+2063  0E0A  3A 06            .WORD TOR
+2064  0E0C  08 07            .WORD OVER
+2065  0E0E  B5 07            .WORD CSTOR
+2066  0E10  3A 07            .WORD DUP
+2067  0E12  A1 09            .WORD ONEP
+2068  0E14  4C 06            .WORD RFROM
+2069  0E16  65 08            .WORD ONE
+2070  0E18  FA 09            .WORD SUB
+2071  0E1A  FE 04            .WORD CMOVE
+2072  0E1C  0C 06            .WORD SEMIS
+2073  0E1E            ;
+2074  0E1E            ;                            ERASE
+2075  0E1E            ;                            SCREEN 46 LINE 4
+2076  0E1E            ;
+2077  0E1E  85        L1856  .BYTE $85,'ERAS',$C5
+2077  0E1F  45 52
+2077  0E21  41 53
+2077  0E23  C5
+2078  0E24  FF 0D            .WORD L1838         ;  LINK TO FILL
+2079  0E26  D6 07     ERASE  .WORD DOCOL
+2080  0E28  5D 08            .WORD ZERO
+2081  0E2A  06 0E            .WORD FILL
+2082  0E2C  0C 06            .WORD SEMIS
+2083  0E2E            ;
+2084  0E2E            ; BLANKS
+2085  0E2E            ; SCREEN 46 LINE 7
+2086  0E2E            ;
+2087  0E2E  86        L1866  .BYTE $86,'BLANK',$D3
+2087  0E2F  42 4C
+2087  0E31  41 4E 4B
+2087  0E34  D3
+2088  0E35  1E 0E            .WORD L1856         ;  LINK TO ERASE
+2089  0E37  D6 07     BLANK  .WORD DOCOL
+2090  0E39  7E 08            .WORD BL
+2091  0E3B  06 0E            .WORD FILL
+2092  0E3D  0C 06            .WORD SEMIS
+2093  0E3F            ;
+2094  0E3F            ;
+2095  0E3F             .FILE FOR3/1
+2096  0E3F            ;
+2097  0E3F            ;                             HOLD
+2098  0E3F            ;                             SCREEN 46 LINE 10
+2099  0E3F            ;
+2100  0E3F  84        L1876  .BYTE $84,'HOL',$C4
+2100  0E40  48 4F 4C
+2100  0E43  C4
+2101  0E44  2E 0E            .WORD L1866         ;  LINK TO BLANKS
+2102  0E46  D6 07     HOLD   .WORD DOCOL
+2103  0E48  2A 02            .WORD LIT,$FFFF
+2103  0E4A  FF FF
+2104  0E4C  99 09            .WORD HLD
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0045
+
+LINE # LOC     CODE       LINE
+
+2105  0E4E  49 07            .WORD PSTOR
+2106  0E50  99 09            .WORD HLD
+2107  0E52  79 07            .WORD AT
+2108  0E54  B5 07            .WORD CSTOR
+2109  0E56  0C 06            .WORD SEMIS
+2110  0E58            ;
+2111  0E58            ;                             PAD
+2112  0E58            ;                             SCREEN 46 LINE 13
+2113  0E58            ;
+2114  0E58  83        L1890  .BYTE $83,'PA',$C4
+2114  0E59  50 41
+2114  0E5B  C4
+2115  0E5C  3F 0E            .WORD L1876         ;  LINK TO HOLD
+2116  0E5E  D6 07     PAD    .WORD DOCOL
+2117  0E60  BD 09            .WORD HERE
+2118  0E62  67 02            .WORD CLIT
+2119  0E64  44               .BYTE 68  PAD is 68 bytes above here.
+2120  0E65  99 06            .WORD PLUS
+2121  0E67  0C 06            .WORD SEMIS
+2122  0E69            ;
+2123  0E69            ;                             WORD
+2124  0E69            ;                             SCREEN 47 LINE 1
+2125  0E69            ;
+2126  0E69  84        L1902  .BYTE $84,'WOR',$C4
+2126  0E6A  57 4F 52
+2126  0E6D  C4
+2127  0E6E  58 0E            .WORD L1890         ;  LINK TO PAD
+2128  0E70  D6 07     WORD   .WORD DOCOL
+2129  0E72  18 09            .WORD BLK
+2130  0E74  79 07            .WORD AT
+2131  0E76  56 03            .WORD ZBRAN
+2132  0E78  0C 00     L1908  .WORD $C            L1914-L1908
+2133  0E7A  18 09            .WORD BLK
+2134  0E7C  79 07            .WORD AT
+2135  0E7E  D5 14            .WORD BLOCK
+2136  0E80  37 03            .WORD BRAN
+2137  0E82  06 00     L1913  .WORD $6            L1916-L1913
+2138  0E84  D6 08     L1914  .WORD TIB
+2139  0E86  79 07            .WORD AT
+2140  0E88  20 09     L1916  .WORD IN
+2141  0E8A  79 07            .WORD AT
+2142  0E8C  99 06            .WORD PLUS
+2143  0E8E  22 07            .WORD SWAP
+2144  0E90  98 04            .WORD ENCL
+2145  0E92  BD 09            .WORD HERE
+2146  0E94  67 02            .WORD CLIT
+2147  0E96  22               .BYTE $22
+2148  0E97  37 0E            .WORD BLANK
+2149  0E99  20 09            .WORD IN
+2150  0E9B  49 07            .WORD PSTOR
+2151  0E9D  08 07            .WORD OVER
+2152  0E9F  FA 09            .WORD SUB
+2153  0EA1  3A 06            .WORD TOR
+2154  0EA3  5D 06            .WORD R
+2155  0EA5  BD 09            .WORD HERE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0046
+
+LINE # LOC     CODE       LINE
+
+2156  0EA7  B5 07            .WORD CSTOR
+2157  0EA9  99 06            .WORD PLUS
+2158  0EAB  BD 09            .WORD HERE
+2159  0EAD  A1 09            .WORD ONEP
+2160  0EAF  4C 06            .WORD RFROM
+2161  0EB1  FE 04            .WORD CMOVE
+2162  0EB3  0C 06            .WORD SEMIS
+2163  0EB5            ;
+2164  0EB5            ;                             UPPER
+2165  0EB5            ;                             SCREEN 47 LINE 12
+2166  0EB5            ;
+2167  0EB5  85        L1943  .BYTE $85,'UPPE',$D2
+2167  0EB6  55 50
+2167  0EB8  50 45
+2167  0EBA  D2
+2168  0EBB  69 0E            .WORD L1902         ;  LINK TO WORD
+2169  0EBD  D6 07     UPPER  .WORD DOCOL
+2170  0EBF  08 07            .WORD OVER         This routine converts text to u
+2171  0EC1  99 06            .WORD PLUS         case.  It allows interpretation
+2172  0EC3  22 07            .WORD SWAP         from a terminal without a shift
+2173  0EC5  DE 03            .WORD PDO          lock.
+2174  0EC7  F7 03     L1950  .WORD I
+2175  0EC9  8E 07            .WORD CAT
+2176  0ECB  67 02            .WORD CLIT
+2177  0ECD  5F               .BYTE $5F
+2178  0ECE  3C 0A            .WORD GREAT
+2179  0ED0  56 03            .WORD ZBRAN
+2180  0ED2  09 00     L1956  .WORD 09           L1961-L1956
+2181  0ED4  F7 03            .WORD I
+2182  0ED6  67 02            .WORD CLIT
+2183  0ED8  20               .BYTE $20
+2184  0ED9  6A 07            .WORD TOGGL
+2185  0EDB  77 03     L1961  .WORD PLOOP
+2186  0EDD  EA FF     L1962  .WORD $FFEA        L1950-L1962
+2187  0EDF  0C 06            .WORD SEMIS
+2188  0EE1            ;
+2189  0EE1            ;                             (NUMBER)
+2190  0EE1            ;                             SCREEN 48 LINE 1
+2191  0EE1            ;
+2192  0EE1  88        L1968  .BYTE $88,'(NUMBER',$A9
+2192  0EE2  28 4E
+2192  0EE4  55 4D 42
+2192  0EE7  45 52
+2192  0EE9  A9
+2193  0EEA  B5 0E            .WORD L1943         ;  LINK TO UPPER
+2194  0EEC  D6 07     PNUMB  .WORD DOCOL
+2195  0EEE  A1 09     L1971  .WORD ONEP
+2196  0EF0  3A 07            .WORD DUP
+2197  0EF2  3A 06            .WORD TOR
+2198  0EF4  8E 07            .WORD CAT
+2199  0EF6  6D 09            .WORD BASE
+2200  0EF8  79 07            .WORD AT
+2201  0EFA  01 04            .WORD DIGIT
+2202  0EFC  56 03            .WORD ZBRAN
+2203  0EFE  2C 00     L1979  .WORD $2C           L2001-L1979
+2204  0F00  22 07            .WORD SWAP
+2205  0F02  6D 09            .WORD BASE
+2206  0F04  79 07            .WORD AT
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0047
+
+LINE # LOC     CODE       LINE
+
+2207  0F06  23 05            .WORD USTAR
+2208  0F08  19 07            .WORD DROP
+2209  0F0A  4A 0A            .WORD ROT
+2210  0F0C  6D 09            .WORD BASE
+2211  0F0E  79 07            .WORD AT
+2212  0F10  23 05            .WORD USTAR
+2213  0F12  B2 06            .WORD DPLUS
+2214  0F14  76 09            .WORD DPL
+2215  0F16  79 07            .WORD AT
+2216  0F18  A1 09            .WORD ONEP
+2217  0F1A  56 03            .WORD ZBRAN
+2218  0F1C  08 00     L1994  .WORD 8             L1998-L1994
+2219  0F1E  65 08            .WORD ONE
+2220  0F20  76 09            .WORD DPL
+2221  0F22  49 07            .WORD PSTOR
+2222  0F24  4C 06     L1998  .WORD RFROM
+2223  0F26  37 03            .WORD BRAN
+2224  0F28  C6 FF     L2000  .WORD $FFC6         L1971-L2000
+2225  0F2A  4C 06     L2001  .WORD RFROM
+2226  0F2C  0C 06            .WORD SEMIS
+2227  0F2E            ;
+2228  0F2E            ;                             NUMBER
+2229  0F2E            ;                             SCREEN 48 LINE 6
+2230  0F2E            ;
+2231  0F2E  86        L2007  .BYTE $86,'NUMBE',$D2
+2231  0F2F  4E 55
+2231  0F31  4D 42 45
+2231  0F34  D2
+2232  0F35  E1 0E            .WORD L1968         ;  LINK TO (NUMBER)
+2233  0F37  D6 07     NUMBER .WORD DOCOL
+2234  0F39  5D 08            .WORD ZERO
+2235  0F3B  5D 08            .WORD ZERO
+2236  0F3D  4A 0A            .WORD ROT
+2237  0F3F  3A 07            .WORD DUP
+2238  0F41  A1 09            .WORD ONEP
+2239  0F43  8E 07            .WORD CAT
+2240  0F45  67 02            .WORD CLIT
+2241  0F47  2D               .BYTE $2D
+2242  0F48  06 0A            .WORD EQUAL
+2243  0F4A  3A 07            .WORD DUP
+2244  0F4C  3A 06            .WORD TOR
+2245  0F4E  99 06            .WORD PLUS
+2246  0F50  2A 02            .WORD LIT,$FFFF
+2246  0F52  FF FF
+2247  0F54  76 09     L2023  .WORD DPL
+2248  0F56  9D 07            .WORD STORE
+2249  0F58  EC 0E            .WORD PNUMB
+2250  0F5A  3A 07            .WORD DUP
+2251  0F5C  8E 07            .WORD CAT
+2252  0F5E  7E 08            .WORD BL
+2253  0F60  FA 09            .WORD SUB
+2254  0F62  56 03            .WORD ZBRAN
+2255  0F64  15 00     L2031  .WORD $15           L2042-L2031
+2256  0F66  3A 07            .WORD DUP
+2257  0F68  8E 07            .WORD CAT
+2258  0F6A  67 02            .WORD CLIT
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0048
+
+LINE # LOC     CODE       LINE
+
+2259  0F6C  2E               .BYTE $2E
+2260  0F6D  FA 09            .WORD SUB
+2261  0F6F  5D 08            .WORD ZERO
+2262  0F71  11 0B            .WORD QERR
+2263  0F73  5D 08            .WORD ZERO
+2264  0F75  37 03            .WORD BRAN
+2265  0F77  DD FF     L2041  .WORD $FFDD         L2023-L2041
+2266  0F79  19 07     L2042  .WORD DROP
+2267  0F7B  4C 06            .WORD RFROM
+2268  0F7D  56 03            .WORD ZBRAN
+2269  0F7F  04 00     L2045  .WORD 4             L2047-L2045
+2270  0F81  F1 06            .WORD DMINU
+2271  0F83  0C 06     L2047  .WORD SEMIS
+2272  0F85            ;
+2273  0F85            ;                             -FIND
+2274  0F85            ;                             SCREEN 48 LINE 12
+2275  0F85            ;
+2276  0F85  85        L2052  .BYTE $85,'-FIN',$C4
+2276  0F86  2D 46
+2276  0F88  49 4E
+2276  0F8A  C4
+2277  0F8B  2E 0F            .WORD L2007        ;  LINK TO NUMBER
+2278  0F8D  D6 07     DFIND  .WORD DOCOL
+2279  0F8F  7E 08            .WORD BL
+2280  0F91  70 0E            .WORD WORD
+2281  0F93  BD 09            .WORD HERE    ) Optional allowing free use
+2282  0F95  82 0C            .WORD COUNT   | case from terminal.
+2283  0F97  BD 0E            .WORD UPPER   )
+2284  0F99  BD 09            .WORD HERE
+2285  0F9B  4B 09            .WORD CON
+2286  0F9D  79 07            .WORD AT
+2287  0F9F  79 07            .WORD AT
+2288  0FA1  32 04            .WORD PFIND
+2289  0FA3  3A 07            .WORD DUP
+2290  0FA5  73 06            .WORD ZEQU
+2291  0FA7  56 03            .WORD ZBRAN
+2292  0FA9  0A 00     L2068  .WORD $A            L2073-L2068
+2293  0FAB  19 07            .WORD DROP
+2294  0FAD  BD 09            .WORD HERE
+2295  0FAF  A8 0A            .WORD LATES
+2296  0FB1  32 04            .WORD PFIND
+2297  0FB3  0C 06     L2073  .WORD SEMIS
+2298  0FB5            ;
+2299  0FB5            ;                             (ABORT)
+2300  0FB5            ;                             SCREEN 49 LINE 2
+2301  0FB5            ;
+2302  0FB5  87        L2078  .BYTE $87,'(ABORT',$A9
+2302  0FB6  28 41
+2302  0FB8  42 4F 52
+2302  0FBB  54
+2302  0FBC  A9
+2303  0FBD  85 0F            .WORD L2052         ;  LINK TO -FIND
+2304  0FBF  D6 07     PABOR  .WORD DOCOL
+2305  0FC1  1D 12            .WORD ABORT
+2306  0FC3  0C 06            .WORD SEMIS
+2307  0FC5            ;
+2308  0FC5            ;                             ERROR
+2309  0FC5            ;                             SCREEN 49 LINE 4
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0049
+
+LINE # LOC     CODE       LINE
+
+2310  0FC5            ;
+2311  0FC5  85        L2087  .BYTE $85,'ERRO',$D2
+2311  0FC6  45 52
+2311  0FC8  52 4F
+2311  0FCA  D2
+2312  0FCB  B5 0F            .WORD L2078         ;  LINK TO (ABORT)
+2313  0FCD  D6 07     ERROR  .WORD DOCOL
+2314  0FCF  EE 08            .WORD WARN
+2315  0FD1  79 07            .WORD AT
+2316  0FD3  88 06            .WORD ZLESS
+2317  0FD5  56 03            .WORD ZBRAN
+2318  0FD7  04 00     L2094  .WORD $4            L2096-L2094
+2319  0FD9  BF 0F            .WORD PABOR
+2320  0FDB  BD 09     L2096  .WORD HERE
+2321  0FDD  82 0C            .WORD COUNT
+2322  0FDF  95 0C            .WORD TYPE
+2323  0FE1  F6 0C            .WORD PDOTQ
+2324  0FE3  04               .BYTE 4,'  ? '
+2324  0FE4  20 20
+2324  0FE6  3F 20
+2325  0FE8  6C 15            .WORD MESS
+2326  0FEA  E8 05            .WORD SPSTO
+2327  0FEC  19 07            .WORD DROP,DROP    ; make room for 2 error
+2327  0FEE  19 07
+2328  0FF0  20 09            .WORD IN
+2329  0FF2  79 07            .WORD AT
+2330  0FF4  18 09            .WORD BLK
+2331  0FF6  79 07            .WORD AT
+2332  0FF8  EE 11            .WORD QUIT
+2333  0FFA  0C 06            .WORD SEMIS
+2334  0FFC            ;
+2335  0FFC            ;                             ID.
+2336  0FFC            ;                             SCREEN 49 LINE 9
+2337  0FFC            ;
+2338  0FFC  83        L2113  .BYTE $83,'ID',$AE
+2338  0FFD  49 44
+2338  0FFF  AE
+2339  1000  C5 0F            .WORD L2087         ;  LINK TO ERROR
+2340  1002  D6 07     IDDOT  .WORD DOCOL
+2341  1004  5E 0E            .WORD PAD
+2342  1006  67 02            .WORD CLIT
+2343  1008  20               .BYTE $20
+2344  1009  67 02            .WORD CLIT
+2345  100B  5F               .BYTE $5F
+2346  100C  06 0E            .WORD FILL
+2347  100E  3A 07            .WORD DUP
+2348  1010  EA 0A            .WORD PFA
+2349  1012  B8 0A            .WORD LFA
+2350  1014  08 07            .WORD OVER
+2351  1016  FA 09            .WORD SUB
+2352  1018  5E 0E            .WORD PAD
+2353  101A  22 07            .WORD SWAP
+2354  101C  FE 04            .WORD CMOVE
+2355  101E  5E 0E            .WORD PAD
+2356  1020  82 0C            .WORD COUNT
+2357  1022  67 02            .WORD CLIT
+2358  1024  1F               .BYTE $1F
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0050
+
+LINE # LOC     CODE       LINE
+
+2359  1025  98 05            .WORD ANDD
+2360  1027  95 0C            .WORD TYPE
+2361  1029  5E 0A            .WORD SPACE
+2362  102B  0C 06            .WORD SEMIS
+2363  102D            ;
+2364  102D            ;                             CREATE
+2365  102D            ;                             SCREEN 50 LINE 2
+2366  102D            ;
+2367  102D  86        L2142  .BYTE $86,'CREAT',$C5
+2367  102E  43 52
+2367  1030  45 41 54
+2367  1033  C5
+2368  1034  FC 0F            .WORD L2113         ;  LINK TO ID.
+2369  1036  D6 07     CREAT  .WORD DOCOL
+2370  1038  D6 08            .WORD TIB     )
+2371  103A  BD 09            .WORD HERE    | 6502 only, assures  room exists
+2372  103C  67 02            .WORD CLIT    | in dictionary.
+2373  103E  A0               .BYTE $A0     |
+2374  103F  99 06            .WORD PLUS    |
+2375  1041  13 0A            .WORD ULESS   |
+2376  1043  6D 08            .WORD TWO     |
+2377  1045  11 0B            .WORD QERR    )
+2378  1047  8D 0F            .WORD DFIND
+2379  1049  56 03            .WORD ZBRAN
+2380  104B  0F 00     L2155  .WORD $0F           L2163-L2155
+2381  104D  19 07            .WORD DROP
+2382  104F  D5 0A            .WORD NFA
+2383  1051  02 10            .WORD IDDOT
+2384  1053  67 02            .WORD CLIT
+2385  1055  04               .BYTE 4
+2386  1056  6C 15            .WORD MESS
+2387  1058  5E 0A            .WORD SPACE
+2388  105A  BD 09     L2163  .WORD HERE
+2389  105C  3A 07            .WORD DUP
+2390  105E  8E 07            .WORD CAT
+2391  1060  E1 08            .WORD WIDTH
+2392  1062  79 07            .WORD AT
+2393  1064  D2 12            .WORD MIN
+2394  1066  A1 09            .WORD ONEP
+2395  1068  CD 09            .WORD ALLOT
+2396  106A  01 09            .WORD DP      )  6502 only. The code field musn'
+2397  106C  8E 07            .WORD CAT     |   straddle page boundaries.
+2398  106E  67 02            .WORD CLIT    |
+2399  1070  FD               .BYTE $FD     |
+2400  1071  06 0A            .WORD EQUAL   |
+2401  1073  CD 09            .WORD ALLOT   )
+2402  1075  3A 07            .WORD DUP
+2403  1077  67 02            .WORD CLIT
+2404  1079  A0               .BYTE $A0
+2405  107A  6A 07            .WORD TOGGL
+2406  107C  BD 09            .WORD HERE
+2407  107E  65 08            .WORD ONE
+2408  1080  FA 09            .WORD SUB
+2409  1082  67 02            .WORD CLIT
+2410  1084  80               .BYTE $80
+2411  1085  6A 07            .WORD TOGGL
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0051
+
+LINE # LOC     CODE       LINE
+
+2412  1087  A8 0A            .WORD LATES
+2413  1089  D9 09            .WORD COMMA
+2414  108B  58 09            .WORD CURR
+2415  108D  79 07            .WORD AT
+2416  108F  9D 07            .WORD STORE
+2417  1091  BD 09            .WORD HERE
+2418  1093  AE 09            .WORD TWOP
+2419  1095  D9 09            .WORD COMMA
+2420  1097  0C 06            .WORD SEMIS
+2421  1099            ;
+2422  1099            ;                             [COMPILE]
+2423  1099            ;                             SCREEN 51 LINE 2
+2424  1099            ;
+2425  1099  C9        L2200  .BYTE $C9,'[COMPILE',$DD
+2425  109A  5B 43
+2425  109C  4F 4D 50
+2425  109F  49 4C 45
+2425  10A2  DD
+2426  10A3  2D 10            .WORD L2142         ;  LINK TO CREATE
+2427  10A5  D6 07            .WORD DOCOL
+2428  10A7  8D 0F            .WORD DFIND
+2429  10A9  73 06            .WORD ZEQU
+2430  10AB  5D 08            .WORD ZERO
+2431  10AD  11 0B            .WORD QERR
+2432  10AF  19 07            .WORD DROP
+2433  10B1  C7 0A            .WORD CFA
+2434  10B3  D9 09            .WORD COMMA
+2435  10B5  0C 06            .WORD SEMIS
+2436  10B7            ;
+2437  10B7            ;
+2438  10B7            ;                             LITERAL
+2439  10B7            ;                             SCREEN 51 LINE 5
+2440  10B7            ;
+2441  10B7  C7        L2216  .BYTE $C7,'LITERA',$CC
+2441  10B8  4C 49
+2441  10BA  54 45 52
+2441  10BD  41
+2441  10BE  CC
+2442  10BF  99 10            .WORD L2200         ;  LINK TO [COMPILE]
+2443  10C1  D6 07     LITER  .WORD DOCOL
+2444  10C3  63 09            .WORD STATE
+2445  10C5  79 07            .WORD AT
+2446  10C7  56 03            .WORD ZBRAN
+2447  10C9  08 00     L2222  .WORD 8             L2226-L2222
+2448  10CB  9F 0B            .WORD COMP
+2449  10CD  2A 02            .WORD LIT
+2450  10CF  D9 09            .WORD COMMA
+2451  10D1  0C 06     L2226  .WORD SEMIS
+2452  10D3            ;
+2453  10D3            ;
+2454  10D3            ;                             DLITERAL
+2455  10D3            ;                             SCREEN 51 LINE 8
+2456  10D3            ;
+2457  10D3  C8        L2232  .BYTE $C8,'DLITERA',$CC
+2457  10D4  44 4C
+2457  10D6  49 54 45
+2457  10D9  52 41
+2457  10DB  CC
+2458  10DC  B7 10            .WORD L2216         ;  LINK TO LITERAL
+2459  10DE  D6 07     DLIT   .WORD DOCOL
+2460  10E0  63 09            .WORD STATE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0052
+
+LINE # LOC     CODE       LINE
+
+2461  10E2  79 07            .WORD AT
+2462  10E4  56 03            .WORD ZBRAN
+2463  10E6  08 00     L2238  .WORD 8             L2242-L2238
+2464  10E8  22 07            .WORD SWAP
+2465  10EA  C1 10            .WORD LITER
+2466  10EC  C1 10            .WORD LITER
+2467  10EE  0C 06     L2242  .WORD SEMIS
+2468  10F0            ;
+2469  10F0            ;
+2470  10F0            ;                             ?STACK
+2471  10F0            ;                             SCREEN 51 LINE 13
+2472  10F0            ;
+2473  10F0  86        L2248  .BYTE $86,'?STAC',$CB
+2473  10F1  3F 53
+2473  10F3  54 41 43
+2473  10F6  CB
+2474  10F7  D3 10            .WORD L2232         ;  LINK TO DLITERAL
+2475  10F9  D6 07     QSTAC  .WORD DOCOL
+2476  10FB  67 02            .WORD CLIT
+2477  10FD  9E               .BYTE TOS
+2478  10FE  D9 05            .WORD SPAT
+2479  1100  13 0A            .WORD ULESS
+2480  1102  65 08            .WORD ONE
+2481  1104  11 0B            .WORD QERR
+2482  1106  D9 05            .WORD SPAT
+2483  1108  67 02            .WORD CLIT
+2484  110A  20               .BYTE BOS
+2485  110B  13 0A            .WORD ULESS
+2486  110D  67 02            .WORD CLIT
+2487  110F  07               .BYTE 7
+2488  1110  11 0B            .WORD QERR
+2489  1112  0C 06            .WORD SEMIS
+2490  1114            ;
+2491  1114            ;                             INTERPRET
+2492  1114            ;                             SCREEN 52 LINE 2
+2493  1114            ;
+2494  1114  89        L2269  .BYTE $89,'INTERPRE',$D4
+2494  1115  49 4E
+2494  1117  54 45 52
+2494  111A  50 52 45
+2494  111D  D4
+2495  111E  F0 10            .WORD L2248         ;  LINK TO ?STACK
+2496  1120  D6 07     INTER  .WORD DOCOL
+2497  1122  8D 0F     L2272  .WORD DFIND
+2498  1124  56 03            .WORD ZBRAN
+2499  1126  1E 00     L2274  .WORD $1E           L2289-L2274
+2500  1128  63 09            .WORD STATE
+2501  112A  79 07            .WORD AT
+2502  112C  1F 0A            .WORD LESS
+2503  112E  56 03            .WORD ZBRAN
+2504  1130  0A 00     L2279  .WORD $A            L2284-L2279
+2505  1132  C7 0A            .WORD CFA
+2506  1134  D9 09            .WORD COMMA
+2507  1136  37 03            .WORD BRAN
+2508  1138  06 00     L2283  .WORD $6            L2286-L2283
+2509  113A  C7 0A     L2284  .WORD CFA
+2510  113C  1F 03            .WORD EXEC
+2511  113E  F9 10     L2286  .WORD QSTAC
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0053
+
+LINE # LOC     CODE       LINE
+
+2512  1140  37 03            .WORD BRAN
+2513  1142  1C 00     L2288  .WORD $1C           L2302-L2288
+2514  1144  BD 09     L2289  .WORD HERE
+2515  1146  37 0F            .WORD NUMBER
+2516  1148  76 09            .WORD DPL
+2517  114A  79 07            .WORD AT
+2518  114C  A1 09            .WORD ONEP
+2519  114E  56 03            .WORD ZBRAN
+2520  1150  08 00     L2295  .WORD 8             L2299-L2295
+2521  1152  DE 10            .WORD DLIT
+2522  1154  37 03            .WORD BRAN
+2523  1156  06 00     L2298  .WORD $6            L2301-L2298
+2524  1158  19 07     L2299  .WORD DROP
+2525  115A  C1 10            .WORD LITER
+2526  115C  F9 10     L2301  .WORD QSTAC
+2527  115E  37 03     L2302  .WORD BRAN
+2528  1160  C2 FF     L2303  .WORD $FFC2         L2272-L2303
+2529  1162            ;
+2530  1162            ;
+2531  1162            ;                             IMMEDIATE
+2532  1162            ;                             SCREEN 53 LINE 1
+2533  1162            ;
+2534  1162  89        L2309  .BYTE $89,'IMMEDIAT',$C5
+2534  1163  49 4D
+2534  1165  4D 45 44
+2534  1168  49 41 54
+2534  116B  C5
+2535  116C  14 11            .WORD L2269         ;  LINK TO INTERPRET
+2536  116E  D6 07            .WORD DOCOL
+2537  1170  A8 0A            .WORD LATES
+2538  1172  67 02            .WORD CLIT
+2539  1174  40               .BYTE $40
+2540  1175  6A 07            .WORD TOGGL
+2541  1177  0C 06            .WORD SEMIS
+2542  1179            ;
+2543  1179            ;                             VOCABULARY
+2544  1179            ;                             SCREEN 53 LINE 4
+2545  1179            ;
+2546  1179  8A        L2321  .BYTE $8A,'VOCABULAR',$D9
+2546  117A  56 4F
+2546  117C  43 41 42
+2546  117F  55 4C 41
+2546  1182  52
+2546  1183  D9
+2547  1184  62 11            .WORD L2309         ;  LINK TO IMMEDIATE
+2548  1186  D6 07            .WORD DOCOL
+2549  1188  40 0C            .WORD BUILD
+2550  118A  2A 02            .WORD LIT,$A081
+2550  118C  81 A0
+2551  118E  D9 09            .WORD COMMA
+2552  1190  58 09            .WORD CURR
+2553  1192  79 07            .WORD AT
+2554  1194  C7 0A            .WORD CFA
+2555  1196  D9 09            .WORD COMMA
+2556  1198  BD 09            .WORD HERE
+2557  119A  0F 09            .WORD VOCL
+2558  119C  79 07            .WORD AT
+2559  119E  D9 09            .WORD COMMA
+2560  11A0  0F 09            .WORD VOCL
+2561  11A2  9D 07            .WORD STORE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0054
+
+LINE # LOC     CODE       LINE
+
+2562  11A4  50 0C            .WORD DOES
+2563  11A6  AE 09     DOVOC  .WORD TWOP
+2564  11A8  4B 09            .WORD CON
+2565  11AA  9D 07            .WORD STORE
+2566  11AC  0C 06            .WORD SEMIS
+2567  11AE            ;
+2568  11AE            ;                             FORTH
+2569  11AE            ;                             SCREEN 53 LINE 9
+2570  11AE            ;
+2571  11AE  C5        L2346  .BYTE $C5,'FORT',$C8
+2571  11AF  46 4F
+2571  11B1  52 54
+2571  11B3  C8
+2572  11B4  79 11            .WORD L2321         ;  LINK TO VOCABULARY
+2573  11B6  5C 0C     FORTH  .WORD DODOE
+2574  11B8  A6 11            .WORD DOVOC
+2575  11BA  81 A0            .WORD $A081
+2576  11BC  64 1A     XFOR   .WORD NTOP points to top name in FORTH
+2577  11BE  00 00     VL0    .WORD 0 last vocabulary link ends at zero
+2578  11C0            ;
+2579  11C0            ;                             DEFINITIONS
+2580  11C0            ;                             SCREEN 53 LINE 11
+2581  11C0            ;
+2582  11C0  8B        L2357  .BYTE $8B,'DEFINITION',$D3
+2582  11C1  44 45
+2582  11C3  46 49 4E
+2582  11C6  49 54 49
+2582  11C9  4F 4E
+2582  11CB  D3
+2583  11CC  AE 11            .WORD L2346         ;  LINK TO VOCABULARY
+2584  11CE  D6 07     DEFIN  .WORD DOCOL
+2585  11D0  4B 09            .WORD CON
+2586  11D2  79 07            .WORD AT
+2587  11D4  58 09            .WORD CURR
+2588  11D6  9D 07            .WORD STORE
+2589  11D8  0C 06            .WORD SEMIS
+2590  11DA            ;
+2591  11DA            ;                             (
+2592  11DA            ;                             SCREEN 53 LINE 14
+2593  11DA            ;
+2594  11DA  C1        L2369  .BYTE $C1,$A8
+2594  11DB  A8
+2595  11DC  C0 11            .WORD L2357         ;  LINK TO DEFINITIONS
+2596  11DE  D6 07            .WORD DOCOL
+2597  11E0  67 02            .WORD CLIT
+2598  11E2  29               .BYTE $29
+2599  11E3  70 0E            .WORD WORD
+2600  11E5  0C 06            .WORD SEMIS
+2601  11E7            ;
+2602  11E7            ;
+2603  11E7            ;                             QUIT
+2604  11E7            ;                             SCREEN 54 LINE 2
+2605  11E7            ;
+2606  11E7  84        L2381  .BYTE $84,'QUI',$D4
+2606  11E8  51 55 49
+2606  11EB  D4
+2607  11EC  DA 11            .WORD L2369         ;  LINK TO (
+2608  11EE  D6 07     QUIT   .WORD DOCOL
+2609  11F0  5D 08            .WORD ZERO
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0055
+
+LINE # LOC     CODE       LINE
+
+2610  11F2  18 09            .WORD BLK
+2611  11F4  9D 07            .WORD STORE
+2612  11F6  B5 0B            .WORD LBRAC
+2613  11F8  F8 05     L2388  .WORD RPSTO
+2614  11FA  F4 04            .WORD CR
+2615  11FC  B0 0D            .WORD QUERY
+2616  11FE  20 11            .WORD INTER
+2617  1200  63 09            .WORD STATE
+2618  1202  79 07            .WORD AT
+2619  1204  73 06            .WORD ZEQU
+2620  1206  56 03            .WORD ZBRAN
+2621  1208  07 00     L2396  .WORD 7            L2399-L2396
+2622  120A  F6 0C            .WORD PDOTQ
+2623  120C  02               .BYTE 2,'OK'
+2623  120D  4F 4B
+2624  120F  37 03     L2399  .WORD BRAN
+2625  1211  E7 FF     L2400  .WORD $FFE7         L2388-L2400
+2626  1213  0C 06            .WORD SEMIS
+2627  1215            ;
+2628  1215            ;                             ABORT
+2629  1215            ;                             SCREEN 54 LINE 7
+2630  1215            ;
+2631  1215  85        L2406  .BYTE $85,'ABOR',$D4
+2631  1216  41 42
+2631  1218  4F 52
+2631  121A  D4
+2632  121B  E7 11            .WORD L2381         ;  LINK TO QUIT
+2633  121D  D6 07     ABORT  .WORD DOCOL
+2634  121F  E8 05            .WORD SPSTO
+2635  1221  FD 0B            .WORD DECIM
+2636  1223  68 14            .WORD DR0
+2637  1225  F4 04            .WORD CR
+2638  1227  F6 0C            .WORD PDOTQ
+2639  1229  0E               .BYTE 14,'fig-FORTH  1.0'
+2639  122A  66 69
+2639  122C  67 2D 46
+2639  122F  4F 52 54
+2639  1232  48 20 20
+2639  1235  31 2E 30
+2640  1238  B6 11            .WORD FORTH
+2641  123A  CE 11            .WORD DEFIN
+2642  123C  EE 11            .WORD QUIT
+2643  123E            ;
+2644  123E            ;
+2645  123E            ;                             COLD
+2646  123E            ;                             SCREEN 55 LINE 1
+2647  123E            ;
+2648  123E  84        L2423  .BYTE $84,'COL',$C4
+2648  123F  43 4F 4C
+2648  1242  C4
+2649  1243  15 12            .WORD L2406         ;  LINK TO ABORT
+2650  1245  47 12     COLD   .WORD *+2
+2651  1247  AD 0C 02         LDA ORIG+$0C    ; from cold start area
+2652  124A  8D BC 11         STA FORTH+6
+2653  124D  AD 0D 02         LDA ORIG+$0D
+2654  1250  8D BD 11         STA FORTH+7
+2655  1253  A0 15            LDY #$15
+2656  1255  D0 02            BNE L2433
+2657  1257  A0 0F     WARM   LDY #$0F
+2658  1259  AD 10 02  L2433  LDA ORIG+$10
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0056
+
+LINE # LOC     CODE       LINE
+
+2659  125C  85 B3            STA UP
+2660  125E  AD 11 02         LDA ORIG+$11
+2661  1261  85 B4            STA UP+1
+2662  1263  B9 0C 02  L2437  LDA ORIG+$0C,Y
+2663  1266  91 B3            STA (UP),Y
+2664  1268  88               DEY
+2665  1269  10 F8            BPL L2437
+2666  126B  A9 12            LDA #>ABORT   ; actually #>(ABORT+2)
+2667  126D  85 AF            STA IP+1
+2668  126F  A9 1F            LDA #<ABORT+2
+2669  1271  85 AE            STA IP
+2670  1273  D8               CLD
+2671  1274  A9 6C            LDA #$6C
+2672  1276  85 B0            STA W-1
+2673  1278  4C FA 05         JMP RPSTO+2      And off we go!
+2674  127B            ;
+2675  127B            ;                             S->D
+2676  127B            ;                             SCREEN 56 LINE 1
+2677  127B            ;
+2678  127B  84        L2453  .BYTE $84,'S->',$C4
+2678  127C  53 2D 3E
+2678  127F  C4
+2679  1280  3E 12            .WORD L2423         ;  LINK TO COLD
+2680  1282  D6 07     STOD   .WORD DOCOL
+2681  1284  3A 07            .WORD DUP
+2682  1286  88 06            .WORD ZLESS
+2683  1288  D8 06            .WORD MINUS
+2684  128A  0C 06            .WORD SEMIS
+2685  128C            ;
+2686  128C            ;                             +-
+2687  128C            ;                             SCREEN 56 LINE 4
+2688  128C            ;
+2689  128C  82        L2464  .BYTE $82,'+',$AD
+2689  128D  2B
+2689  128E  AD
+2690  128F  7B 12            .WORD L2453         ;  LINK TO S->D
+2691  1291  D6 07     PM     .WORD DOCOL
+2692  1293  88 06            .WORD ZLESS
+2693  1295  56 03            .WORD ZBRAN
+2694  1297  04 00     L2469  .WORD 4            L2471-L2469
+2695  1299  D8 06            .WORD MINUS
+2696  129B  0C 06     L2471  .WORD SEMIS
+2697  129D            ;
+2698  129D            ;                             D+-
+2699  129D            ;                             SCREEN 56 LINE 6
+2700  129D            ;
+2701  129D  83        L2476  .BYTE $83,'D+',$AD
+2701  129E  44 2B
+2701  12A0  AD
+2702  12A1  8C 12            .WORD L2464         ;  LINK TO +-
+2703  12A3  D6 07     DPM    .WORD DOCOL
+2704  12A5  88 06            .WORD ZLESS
+2705  12A7  56 03            .WORD ZBRAN
+2706  12A9  04 00     L2481  .WORD 4            L2483-L2481
+2707  12AB  F1 06            .WORD DMINU
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0057
+
+LINE # LOC     CODE       LINE
+
+2708  12AD  0C 06     L2483  .WORD SEMIS
+2709  12AF            ;
+2710  12AF            ;                             ABS
+2711  12AF            ;                             SCREEN 56 LINE 9
+2712  12AF            ;
+2713  12AF  83        L2488  .BYTE $83,'AB',$D3
+2713  12B0  41 42
+2713  12B2  D3
+2714  12B3  9D 12            .WORD L2476         ;  LINK TO D+-
+2715  12B5  D6 07     ABS    .WORD DOCOL
+2716  12B7  3A 07            .WORD DUP
+2717  12B9  91 12            .WORD PM
+2718  12BB  0C 06            .WORD SEMIS
+2719  12BD            ;
+2720  12BD            ;                             DABS
+2721  12BD            ;                             SCREEN 56 LINE 10
+2722  12BD            ;
+2723  12BD  84        L2498  .BYTE $84,'DAB',$D3
+2723  12BE  44 41 42
+2723  12C1  D3
+2724  12C2  AF 12            .WORD L2488         ;  LINK TO ABS
+2725  12C4  D6 07     DABS   .WORD DOCOL
+2726  12C6  3A 07            .WORD DUP
+2727  12C8  A3 12            .WORD DPM
+2728  12CA  0C 06            .WORD SEMIS
+2729  12CC            ;
+2730  12CC            ;                             MIN
+2731  12CC            ;                             SCREEN 56 LINE 12
+2732  12CC            ;
+2733  12CC  83        L2508  .BYTE $83,'MI',$CE
+2733  12CD  4D 49
+2733  12CF  CE
+2734  12D0  BD 12            .WORD L2498         ;  LINK TO DABS
+2735  12D2  D6 07     MIN    .WORD DOCOL
+2736  12D4  08 07            .WORD OVER
+2737  12D6  08 07            .WORD OVER
+2738  12D8  3C 0A            .WORD GREAT
+2739  12DA  56 03            .WORD ZBRAN
+2740  12DC  04 00     L2515  .WORD 4             L2517-L2515
+2741  12DE  22 07            .WORD SWAP
+2742  12E0  19 07     L2517  .WORD DROP
+2743  12E2  0C 06            .WORD SEMIS
+2744  12E4            ;
+2745  12E4            ;                             MAX
+2746  12E4            ;                             SCREEN 56 LINE 14
+2747  12E4            ;
+2748  12E4  83        L2523  .BYTE $83,'MA',$D8
+2748  12E5  4D 41
+2748  12E7  D8
+2749  12E8  CC 12            .WORD L2508         ;  LINK TO MIN
+2750  12EA  D6 07     MAX    .WORD DOCOL
+2751  12EC  08 07            .WORD OVER
+2752  12EE  08 07            .WORD OVER
+2753  12F0  1F 0A            .WORD LESS
+2754  12F2  56 03            .WORD ZBRAN
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0058
+
+LINE # LOC     CODE       LINE
+
+2755  12F4  04 00     L2530  .WORD 4             L2532-L2530
+2756  12F6  22 07            .WORD SWAP
+2757  12F8  19 07     L2532  .WORD DROP
+2758  12FA  0C 06            .WORD SEMIS
+2759  12FC            ;
+2760  12FC            ;                             M*
+2761  12FC            ;                             SCREEN 57 LINE 1
+2762  12FC            ;
+2763  12FC  82        L2538  .BYTE $82,'M',$AA
+2763  12FD  4D
+2763  12FE  AA
+2764  12FF  E4 12            .WORD L2523         ;  LINK TO MAX
+2765  1301  D6 07     MSTAR  .WORD DOCOL
+2766  1303  08 07            .WORD OVER
+2767  1305  08 07            .WORD OVER
+2768  1307  C3 05            .WORD XOR
+2769  1309  3A 06            .WORD TOR
+2770  130B  B5 12            .WORD ABS
+2771  130D  22 07            .WORD SWAP
+2772  130F  B5 12            .WORD ABS
+2773  1311  23 05            .WORD USTAR
+2774  1313  4C 06            .WORD RFROM
+2775  1315  A3 12            .WORD DPM
+2776  1317  0C 06            .WORD SEMIS
+2777  1319            ;
+2778  1319            ;                             M/
+2779  1319            ;                             SCREEN 57 LINE 3
+2780  1319            ;
+2781  1319  82        L2556  .BYTE $82,'M',$AF
+2781  131A  4D
+2781  131B  AF
+2782  131C  FC 12            .WORD L2538         ;  LINK TO M*
+2783  131E  D6 07     MSLAS  .WORD DOCOL
+2784  1320  08 07            .WORD OVER
+2785  1322  3A 06            .WORD TOR
+2786  1324  3A 06            .WORD TOR
+2787  1326  C4 12            .WORD DABS
+2788  1328  5D 06            .WORD R
+2789  132A  B5 12            .WORD ABS
+2790  132C  5B 05            .WORD USLAS
+2791  132E  4C 06            .WORD RFROM
+2792  1330  5D 06            .WORD R
+2793  1332  C3 05            .WORD XOR
+2794  1334  91 12            .WORD PM
+2795  1336  22 07            .WORD SWAP
+2796  1338  4C 06            .WORD RFROM
+2797  133A  91 12            .WORD PM
+2798  133C  22 07            .WORD SWAP
+2799  133E  0C 06            .WORD SEMIS
+2800  1340            ;
+2801  1340            ;                             *
+2802  1340            ;                             SCREEN 57 LINE 7
+2803  1340            ;
+2804  1340  81        L2579  .BYTE $81,$AA
+2804  1341  AA
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0059
+
+LINE # LOC     CODE       LINE
+
+2805  1342  19 13            .WORD L2556         ;  LINK TO M/
+2806  1344  D6 07     STAR   .WORD DOCOL
+2807  1346  23 05            .WORD USTAR
+2808  1348  19 07            .WORD DROP
+2809  134A  0C 06            .WORD SEMIS
+2810  134C            ;
+2811  134C            ;                             /MOD
+2812  134C            ;                             SCREEN 57 LINE 8
+2813  134C            ;
+2814  134C  84        L2589  .BYTE $84,'/MO',$C4
+2814  134D  2F 4D 4F
+2814  1350  C4
+2815  1351  40 13            .WORD L2579         ;  LINK TO *
+2816  1353  D6 07     SLMOD  .WORD DOCOL
+2817  1355  3A 06            .WORD TOR
+2818  1357  82 12            .WORD STOD
+2819  1359  4C 06            .WORD RFROM
+2820  135B  1E 13            .WORD MSLAS
+2821  135D  0C 06            .WORD SEMIS
+2822  135F            ;
+2823  135F            ;                             /
+2824  135F            ;                             SCREEN 57 LINE 9
+2825  135F            ;
+2826  135F  81        L2601  .BYTE $81,$AF
+2826  1360  AF
+2827  1361  4C 13            .WORD L2589         ;  LINK TO /MOD
+2828  1363  D6 07     SLASH  .WORD DOCOL
+2829  1365  53 13            .WORD SLMOD
+2830  1367  22 07            .WORD SWAP
+2831  1369  19 07            .WORD DROP
+2832  136B  0C 06            .WORD SEMIS
+2833  136D            ;
+2834  136D            ;                             MOD
+2835  136D            ;                             SCREEN 57 LINE 10
+2836  136D            ;
+2837  136D  83        L2612  .BYTE $83,'MO',$C4
+2837  136E  4D 4F
+2837  1370  C4
+2838  1371  5F 13            .WORD L2601         ;  LINK TO /
+2839  1373  D6 07     MOD    .WORD DOCOL
+2840  1375  53 13            .WORD SLMOD
+2841  1377  19 07            .WORD DROP
+2842  1379  0C 06            .WORD SEMIS
+2843  137B            ;
+2844  137B            ;                             */MOD
+2845  137B            ;                             SCREEN 57 LINE 11
+2846  137B            ;
+2847  137B  85        L2622  .BYTE $85,'*/MO',$C4
+2847  137C  2A 2F
+2847  137E  4D 4F
+2847  1380  C4
+2848  1381  6D 13            .WORD L2612         ;  LINK TO MOD
+2849  1383  D6 07     SSMOD  .WORD DOCOL
+2850  1385  3A 06            .WORD TOR
+2851  1387  01 13            .WORD MSTAR
+2852  1389  4C 06            .WORD RFROM
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0060
+
+LINE # LOC     CODE       LINE
+
+2853  138B  1E 13            .WORD MSLAS
+2854  138D  0C 06            .WORD SEMIS
+2855  138F            ;
+2856  138F            ;                             */
+2857  138F            ;                             SCREEN 57 LINE 13
+2858  138F            ;
+2859  138F  82        L2634  .BYTE $82,'*',$AF
+2859  1390  2A
+2859  1391  AF
+2860  1392  7B 13            .WORD L2622         ;  LINK TO */MOD
+2861  1394  D6 07     SSLAS  .WORD DOCOL
+2862  1396  83 13            .WORD SSMOD
+2863  1398  22 07            .WORD SWAP
+2864  139A  19 07            .WORD DROP
+2865  139C  0C 06            .WORD SEMIS
+2866  139E            ;
+2867  139E            ;                             M/MOD
+2868  139E            ;                             SCREEN 57 LINE 14
+2869  139E            ;
+2870  139E  85        L2645  .BYTE $85,'M/MO',$C4
+2870  139F  4D 2F
+2870  13A1  4D 4F
+2870  13A3  C4
+2871  13A4  8F 13            .WORD L2634         ;  LINK TO */
+2872  13A6  D6 07     MSMOD  .WORD DOCOL
+2873  13A8  3A 06            .WORD TOR
+2874  13AA  5D 08            .WORD ZERO
+2875  13AC  5D 06            .WORD R
+2876  13AE  5B 05            .WORD USLAS
+2877  13B0  4C 06            .WORD RFROM
+2878  13B2  22 07            .WORD SWAP
+2879  13B4  3A 06            .WORD TOR
+2880  13B6  5B 05            .WORD USLAS
+2881  13B8  4C 06            .WORD RFROM
+2882  13BA  0C 06            .WORD SEMIS
+2883  13BC            ;
+2884  13BC            ;                             USE
+2885  13BC            ;                             SCREEN 58 LINE 1
+2886  13BC            ;
+2887  13BC  83        L2662  .BYTE $83,'US',$C5
+2887  13BD  55 53
+2887  13BF  C5
+2888  13C0  9E 13            .WORD L2645         ;  LINK TO M/MOD
+2889  13C2  31 08     USE    .WORD DOVAR
+2890  13C4  60 3B            .WORD DAREA
+2891  13C6            ;
+2892  13C6            ;                             PREV
+2893  13C6            ;                             SCREEN 58 LINE 2
+2894  13C6            ;
+2895  13C6  84        L2670  .BYTE $84,'PRE',$D6
+2895  13C7  50 52 45
+2895  13CA  D6
+2896  13CB  BC 13            .WORD L2662         ;  LINK TO USE
+2897  13CD  31 08     PREV   .WORD DOVAR
+2898  13CF  60 3B            .WORD DAREA
+2899  13D1            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0061
+
+LINE # LOC     CODE       LINE
+
+2900  13D1            ;                             +BUF
+2901  13D1            ;                             SCREEN 58 LINE 4
+2902  13D1            ;
+2903  13D1  84        L2678  .BYTE $84,'+BU',$C6
+2903  13D2  2B 42 55
+2903  13D5  C6
+2904  13D6  C6 13            .WORD L2670         ;  LINK TO PREV
+2905  13D8  D6 07     PBUF   .WORD DOCOL
+2906  13DA  2A 02            .WORD LIT
+2907  13DC  84 00            .WORD SSIZE+4    holds block #, one sector, two nu
+2908  13DE  99 06            .WORD PLUS
+2909  13E0  3A 07            .WORD DUP
+2910  13E2  A0 08            .WORD LIMIT
+2911  13E4  06 0A            .WORD EQUAL
+2912  13E6  56 03            .WORD ZBRAN
+2913  13E8  06 00     L2688  .WORD 6            L2691-L2688
+2914  13EA  19 07            .WORD DROP
+2915  13EC  94 08            .WORD FIRST
+2916  13EE  3A 07     L2691  .WORD DUP
+2917  13F0  CD 13            .WORD PREV
+2918  13F2  79 07            .WORD AT
+2919  13F4  FA 09            .WORD SUB
+2920  13F6  0C 06            .WORD SEMIS
+2921  13F8            ;
+2922  13F8            ;                             UPDATE
+2923  13F8            ;                             SCREEN 58 LINE 8
+2924  13F8            ;
+2925  13F8  86        L2700  .BYTE $86,'UPDAT',$C5
+2925  13F9  55 50
+2925  13FB  44 41 54
+2925  13FE  C5
+2926  13FF  D1 13            .WORD L2678         ;  LINK TO +BUF
+2927  1401  D6 07     UPDAT  .WORD DOCOL
+2928  1403  CD 13            .WORD PREV
+2929  1405  79 07            .WORD AT
+2930  1407  79 07            .WORD AT
+2931  1409  2A 02            .WORD LIT,$8000
+2931  140B  00 80
+2932  140D  AD 05            .WORD OR
+2933  140F  CD 13            .WORD PREV
+2934  1411  79 07            .WORD AT
+2935  1413  9D 07            .WORD STORE
+2936  1415  0C 06            .WORD SEMIS
+2937  1417            ;
+2938  1417            ;                            FLUSH
+2939  1417            ;
+2940  1417  85        L2705  .BYTE $85,'FLUS',$C8
+2940  1418  46 4C
+2940  141A  55 53
+2940  141C  C8
+2941  141D  F8 13            .WORD L2700        ; LINK TO UPDATE
+2942  141F  D6 07            .WORD DOCOL
+2943  1421  A0 08            .WORD LIMIT,FIRST,SUB
+2943  1423  94 08
+2943  1425  FA 09
+2944  1427  AC 08            .WORD BBUF,CLIT
+2944  1429  67 02
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0062
+
+LINE # LOC     CODE       LINE
+
+2945  142B  04               .BYTE 4
+2946  142C  99 06            .WORD PLUS,SLASH,ONEP
+2946  142E  63 13
+2946  1430  A1 09
+2947  1432  5D 08            .WORD ZERO,PDO
+2947  1434  DE 03
+2948  1436  2A 02     L2835  .WORD LIT,$7FFF,BUFFR
+2948  1438  FF 7F
+2948  143A  8D 14
+2949  143C  19 07            .WORD DROP,PLOOP
+2949  143E  77 03
+2950  1440  F6 FF     L2839  .WORD $FFF6       L2835-L2839
+2951  1442  0C 06            .WORD SEMIS
+2952  1444            ;
+2953  1444            ;
+2954  1444            ;                             EMPTY-BUFFERS
+2955  1444            ;                             SCREEN 58 LINE 11
+2956  1444            ;
+2957  1444  8D        L2716  .BYTE $8D,'EMPTY-BUFFER',$D3
+2957  1445  45 4D
+2957  1447  50 54 59
+2957  144A  2D 42 55
+2957  144D  46 46 45
+2957  1450  52
+2957  1451  D3
+2958  1452  17 14            .WORD L2705         ;  LINK TO FLUSH
+2959  1454  D6 07            .WORD DOCOL
+2960  1456  94 08            .WORD FIRST
+2961  1458  A0 08            .WORD LIMIT
+2962  145A  08 07            .WORD OVER
+2963  145C  FA 09            .WORD SUB
+2964  145E  26 0E            .WORD ERASE
+2965  1460  0C 06            .WORD SEMIS
+2966  1462            ;
+2967  1462            ;                             DR0
+2968  1462            ;                             SCREEN 58 LINE 14
+2969  1462            ;
+2970  1462  83        L2729  .BYTE $83,'DR',$B0
+2970  1463  44 52
+2970  1465  B0
+2971  1466  44 14            .WORD L2716         ;  LINK TO EMPTY-BUFFERS
+2972  1468  D6 07     DR0    .WORD DOCOL
+2973  146A  5D 08            .WORD ZERO
+2974  146C  3E 09            .WORD OFSET
+2975  146E  9D 07            .WORD STORE
+2976  1470  0C 06            .WORD SEMIS
+2977  1472            ;
+2978  1472            ;                             DR1
+2979  1472            ;                             SCREEN 58 LINE 15
+2980  1472            ;
+2981  1472  83        L2740  .BYTE $83,'DR',$B1
+2981  1473  44 52
+2981  1475  B1
+2982  1476  62 14            .WORD L2729         ;  LINK TO DR0
+2983  1478  D6 07            .WORD DOCOL
+2984  147A  2A 02            .WORD LIT,SECTR    sectors per drive
+2984  147C  20 03
+2985  147E  3E 09            .WORD OFSET
+2986  1480  9D 07            .WORD STORE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0063
+
+LINE # LOC     CODE       LINE
+
+2987  1482  0C 06            .WORD SEMIS
+2988  1484            ;
+2989  1484            ;                             BUFFER
+2990  1484            ;                             SCREEN 59 LINE 1
+2991  1484            ;
+2992  1484  86        L2751  .BYTE $86,'BUFFE',$D2
+2992  1485  42 55
+2992  1487  46 46 45
+2992  148A  D2
+2993  148B  72 14            .WORD L2740         ;  LINK TO DR1
+2994  148D  D6 07     BUFFR  .WORD DOCOL
+2995  148F  C2 13            .WORD USE
+2996  1491  79 07            .WORD AT
+2997  1493  3A 07            .WORD DUP
+2998  1495  3A 06            .WORD TOR
+2999  1497  D8 13     L2758  .WORD PBUF
+3000  1499  56 03            .WORD ZBRAN
+3001  149B  FC FF     L2760  .WORD $FFFC         L2758-L2760
+3002  149D  C2 13            .WORD USE
+3003  149F  9D 07            .WORD STORE
+3004  14A1  5D 06            .WORD R
+3005  14A3  79 07            .WORD AT
+3006  14A5  88 06            .WORD ZLESS
+3007  14A7  56 03            .WORD ZBRAN
+3008  14A9  14 00     L2767  .WORD $14           L2776-L2767
+3009  14AB  5D 06            .WORD R
+3010  14AD  AE 09            .WORD TWOP
+3011  14AF  5D 06            .WORD R
+3012  14B1  79 07            .WORD AT
+3013  14B3  2A 02            .WORD LIT,$7FFF
+3013  14B5  FF 7F
+3014  14B7  98 05            .WORD ANDD
+3015  14B9  5D 08            .WORD ZERO
+3016  14BB  89 16            .WORD RSLW
+3017  14BD  5D 06     L2776  .WORD R
+3018  14BF  9D 07            .WORD STORE
+3019  14C1  5D 06            .WORD R
+3020  14C3  CD 13            .WORD PREV
+3021  14C5  9D 07            .WORD STORE
+3022  14C7  4C 06            .WORD RFROM
+3023  14C9  AE 09            .WORD TWOP
+3024  14CB  0C 06            .WORD SEMIS
+3025  14CD            ;
+3026  14CD            ;                             BLOCK
+3027  14CD            ;                             SCREEN 60 LINE 1
+3028  14CD            ;
+3029  14CD  85        L2788  .BYTE $85,'BLOC',$CB
+3029  14CE  42 4C
+3029  14D0  4F 43
+3029  14D2  CB
+3030  14D3  84 14            .WORD L2751         ;  LINK TO BUFFER
+3031  14D5  D6 07     BLOCK  .WORD DOCOL
+3032  14D7  3E 09            .WORD OFSET
+3033  14D9  79 07            .WORD AT
+3034  14DB  99 06            .WORD PLUS
+3035  14DD  3A 06            .WORD TOR
+3036  14DF  CD 13            .WORD PREV
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0064
+
+LINE # LOC     CODE       LINE
+
+3037  14E1  79 07            .WORD AT
+3038  14E3  3A 07            .WORD DUP
+3039  14E5  79 07            .WORD AT
+3040  14E7  5D 06            .WORD R
+3041  14E9  FA 09            .WORD SUB
+3042  14EB  3A 07            .WORD DUP
+3043  14ED  99 06            .WORD PLUS
+3044  14EF  56 03            .WORD ZBRAN
+3045  14F1  34 00     L2804  .WORD $34           L2830-L2804
+3046  14F3  D8 13     L2805  .WORD PBUF
+3047  14F5  73 06            .WORD ZEQU
+3048  14F7  56 03            .WORD ZBRAN
+3049  14F9  14 00     L2808  .WORD $14           L2818-L2808
+3050  14FB  19 07            .WORD DROP
+3051  14FD  5D 06            .WORD R
+3052  14FF  8D 14            .WORD BUFFR
+3053  1501  3A 07            .WORD DUP
+3054  1503  5D 06            .WORD R
+3055  1505  65 08            .WORD ONE
+3056  1507  89 16            .WORD RSLW
+3057  1509  6D 08            .WORD TWO
+3058  150B  FA 09            .WORD SUB
+3059  150D  3A 07     L2818  .WORD DUP
+3060  150F  79 07            .WORD AT
+3061  1511  5D 06            .WORD R
+3062  1513  FA 09            .WORD SUB
+3063  1515  3A 07            .WORD DUP
+3064  1517  99 06            .WORD PLUS
+3065  1519  73 06            .WORD ZEQU
+3066  151B  56 03            .WORD ZBRAN
+3067  151D  D6 FF     L2826  .WORD $FFD6         L2805-L2826
+3068  151F  3A 07            .WORD DUP
+3069  1521  CD 13            .WORD PREV
+3070  1523  9D 07            .WORD STORE
+3071  1525  4C 06     L2830  .WORD RFROM
+3072  1527  19 07            .WORD DROP
+3073  1529  AE 09            .WORD TWOP
+3074  152B  0C 06            .WORD SEMIS       ; END OF BLOCK
+3075  152D            ;
+3076  152D            ;
+3077  152D             .FILE FOR4/2
+3078  152D            ; START OF FORTH4
+3079  152D            ;
+3080  152D            ;
+3081  152D            ;
+3082  152D            ;                             (LINE)
+3083  152D            ;                             SCREEN 61 LINE 2
+3084  152D            ;
+3085  152D  86        L2838  .BYTE $86,'(LINE',$A9
+3085  152E  28 4C
+3085  1530  49 4E 45
+3085  1533  A9
+3086  1534  CD 14            .WORD L2788         ;  LINK TO BLOCK
+3087  1536  D6 07     PLINE  .WORD DOCOL
+3088  1538  3A 06            .WORD TOR
+3089  153A  88 08            .WORD CSLL
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0065
+
+LINE # LOC     CODE       LINE
+
+3090  153C  AC 08            .WORD BBUF
+3091  153E  83 13            .WORD SSMOD
+3092  1540  4C 06            .WORD RFROM
+3093  1542  B8 08            .WORD BSCR
+3094  1544  44 13            .WORD STAR
+3095  1546  99 06            .WORD PLUS
+3096  1548  D5 14            .WORD BLOCK
+3097  154A  99 06            .WORD PLUS
+3098  154C  88 08            .WORD CSLL
+3099  154E  0C 06            .WORD SEMIS
+3100  1550            ;
+3101  1550            ;                             .LINE
+3102  1550            ;                             SCREEN 61 LINE 6
+3103  1550            ;
+3104  1550  85        L2857  .BYTE $85,'.LIN',$C5
+3104  1551  2E 4C
+3104  1553  49 4E
+3104  1555  C5
+3105  1556  2D 15            .WORD L2838         ;  LINK TO (LINE)
+3106  1558  D6 07     DLINE  .WORD DOCOL
+3107  155A  36 15            .WORD PLINE
+3108  155C  C3 0C            .WORD DTRAI
+3109  155E  95 0C            .WORD TYPE
+3110  1560  0C 06            .WORD SEMIS
+3111  1562            ;
+3112  1562            ;                             MESSAGE
+3113  1562            ;                             SCREEN 61 LINE 9
+3114  1562            ;
+3115  1562  87        L2868  .BYTE $87,'MESSAG',$C5
+3115  1563  4D 45
+3115  1565  53 53 41
+3115  1568  47
+3115  1569  C5
+3116  156A  50 15            .WORD L2857         ;  LINK TO .LINE
+3117  156C  D6 07     MESS   .WORD DOCOL
+3118  156E  EE 08            .WORD WARN
+3119  1570  79 07            .WORD AT
+3120  1572  56 03            .WORD ZBRAN
+3121  1574  1B 00     L2874  .WORD $1B           L2888-L2874
+3122  1576  6D 0A            .WORD DDUP
+3123  1578  56 03            .WORD ZBRAN
+3124  157A  11 00     L2877  .WORD $11           L2886-L2877
+3125  157C  67 02            .WORD CLIT
+3126  157E  04               .BYTE 4
+3127  157F  3E 09            .WORD OFSET
+3128  1581  79 07            .WORD AT
+3129  1583  B8 08            .WORD BSCR
+3130  1585  63 13            .WORD SLASH
+3131  1587  FA 09            .WORD SUB
+3132  1589  58 15            .WORD DLINE
+3133  158B  37 03     L2886  .WORD BRAN
+3134  158D  0D 00     L2887  .WORD 13            L2891-L2887
+3135  158F  F6 0C     L2888  .WORD PDOTQ
+3136  1591  06               .BYTE 6,'MSG # '
+3136  1592  4D 53
+3136  1594  47 20 23
+3136  1597  20
+3137  1598  5D 19            .WORD DOT
+3138  159A  0C 06     L2891  .WORD SEMIS
+3139  159C            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0066
+
+LINE # LOC     CODE       LINE
+
+3140  159C            ;                             LOAD
+3141  159C            ;                             SCREEN 62 LINE 2
+3142  159C            ;
+3143  159C  84        L2896  .BYTE $84,'LOA',$C4
+3143  159D  4C 4F 41
+3143  15A0  C4
+3144  15A1  62 15            .WORD L2868         ;  LINK TO MESSAGE
+3145  15A3  D6 07     LOAD   .WORD DOCOL
+3146  15A5  18 09            .WORD BLK
+3147  15A7  79 07            .WORD AT
+3148  15A9  3A 06            .WORD TOR
+3149  15AB  20 09            .WORD IN
+3150  15AD  79 07            .WORD AT
+3151  15AF  3A 06            .WORD TOR
+3152  15B1  5D 08            .WORD ZERO
+3153  15B3  20 09            .WORD IN
+3154  15B5  9D 07            .WORD STORE
+3155  15B7  B8 08            .WORD BSCR
+3156  15B9  44 13            .WORD STAR
+3157  15BB  18 09            .WORD BLK
+3158  15BD  9D 07            .WORD STORE
+3159  15BF  20 11            .WORD INTER
+3160  15C1  4C 06            .WORD RFROM
+3161  15C3  20 09            .WORD IN
+3162  15C5  9D 07            .WORD STORE
+3163  15C7  4C 06            .WORD RFROM
+3164  15C9  18 09            .WORD BLK
+3165  15CB  9D 07            .WORD STORE
+3166  15CD  0C 06            .WORD SEMIS
+3167  15CF            ;
+3168  15CF            ;                             -->
+3169  15CF            ;                             SCREEN 62 LINE 6
+3170  15CF            ;
+3171  15CF  C3        L2924  .BYTE $C3,'--',$BE
+3171  15D0  2D 2D
+3171  15D2  BE
+3172  15D3  9C 15            .WORD L2896         ;  LINK TO LOAD
+3173  15D5  D6 07            .WORD DOCOL
+3174  15D7  86 0B            .WORD QLOAD
+3175  15D9  5D 08            .WORD ZERO
+3176  15DB  20 09            .WORD IN
+3177  15DD  9D 07            .WORD STORE
+3178  15DF  B8 08            .WORD BSCR
+3179  15E1  18 09            .WORD BLK
+3180  15E3  79 07            .WORD AT
+3181  15E5  08 07            .WORD OVER
+3182  15E7  73 13            .WORD MOD
+3183  15E9  FA 09            .WORD SUB
+3184  15EB  18 09            .WORD BLK
+3185  15ED  49 07            .WORD PSTOR
+3186  15EF  0C 06            .WORD SEMIS
+3187  15F1            ;
+3188  15F1            ;     XEMIT writes one ascii
+3189  15F1            ;
+3190  15F1  98        XEMIT  TYA
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0067
+
+LINE # LOC     CODE       LINE
+
+3191  15F2  38               SEC
+3192  15F3  A0 1A            LDY #$1A
+3193  15F5  71 B3            ADC (UP),Y
+3194  15F7  91 B3            STA (UP),Y
+3195  15F9  C8               INY         ; bump user variable OUT
+3196  15FA  A9 00            LDA #0
+3197  15FC  71 B3            ADC (UP),Y
+3198  15FE  91 B3            STA (UP),Y
+3199  1600  B5 00            LDA 0,X     ; fetch character to output
+3200  1602  86 B5            STX XSAVE
+3201  1604  20 C1 D2         JSR OUTCH   ; and display it
+3202  1607  A6 B5            LDX XSAVE
+3203  1609  4C EE 03         JMP POP
+3204  160C            ;
+3205  160C            ;      XKEY reads one terminal keystroke to stack
+3206  160C            ;
+3207  160C  86 B5     XKEY   STX XSAVE
+3208  160E  20 DC D1         JSR INCH       ;    might otherwise clobber it while
+3209  1611  A6 B5            LDX XSAVE      ;    inputing a character to accumulator
+3210  1613  4C DC 05         JMP PUSH0A
+3211  1616            ;
+3212  1616            ;      XQTER leaves a boolean representing terminal break
+3213  1616            ;
+3214  1616  AD 00 C0  XQTER  LDA $C000   ;  System dependent port test
+3215  1619  CD 01 C0         CMP $C001
+3216  161C  29 01            AND #1
+3217  161E  4C DC 05         JMP PUSH0A
+3218  1621            ;
+3219  1621            ;        XCR displays a CR and LF to terminal
+3220  1621            ;
+3221  1621  86 B5     XCR    STX XSAVE
+3222  1623  20 F1 D0         JSR TCR      ; Use monitor call
+3223  1626  A6 B5            LDX XSAVE
+3224  1628  4C 44 02         JMP NEXT
+3225  162B            ;
+3226  162B            ;                            -DISC
+3227  162B            ;                            Machine level sector read/write
+3228  162B  85        L3030  .BYTE $85,'-DIS',$C3
+3228  162C  2D 44
+3228  162E  49 53
+3228  1630  C3
+3229  1631  CF 15            .WORD L2924            ; Link to -->
+3230  1633  35 16     DDISC  .WORD *+2
+3231  1635  B5 00            LDA 0,X
+3232  1637  8D 0C C6         STA $C60C
+3233  163A  8D 0D C6         STA $C60D     ; Store sector number
+3234  163D  B5 02            LDA 2,X
+3235  163F  8D 0A C6         STA $C60A
+3236  1642  8D 0B C6         STA $C60B     ; Store track number
+3237  1645  B5 04            LDA 4,X
+3238  1647  8D CD C4         STA $C4CD
+3239  164A  8D CE C4         STA $C4CE     ; Store drive number
+3240  164D  86 B5            STX XSAVE
+3241  164F  AD DA C4         LDA $C4DA     ; Sense read or write
+3242  1652  D0 06            BNE L3032
+3243  1654  20 FE E1         JSR $E1FE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0068
+
+LINE # LOC     CODE       LINE
+
+3244  1657  4C 5D 16         JMP L3040
+3245  165A  20 62 E2  L3032  JSR $E262
+3246  165D  20 EF E3  L3040  JSR $E3EF      ; Head up motor off
+3247  1660  A6 B5            LDX XSAVE
+3248  1662  AD E1 C4         LDA $C4E1      ; Report error code
+3249  1665  95 04            STA 4,X
+3250  1667  4C EC 03         JMP POPTWO
+3251  166A            ;
+3252  166A            ;                              -BCD
+3253  166A            ;                             Convert binary value to BCD
+3254  166A            ;
+3255  166A  84        L3050  .BYTE $84,'-BC',$C4
+3255  166B  2D 42 43
+3255  166E  C4
+3256  166F  2B 16            .WORD L3030       ; link to -DISC
+3257  1671  D6 07     DBCD   .WORD DOCOL
+3258  1673  5D 08            .WORD ZERO,CLIT
+3258  1675  67 02
+3259  1677  0A               .BYTE 10
+3260  1678  5B 05            .WORD USLAS,CLIT
+3260  167A  67 02
+3261  167C  10               .BYTE 16
+3262  167D  44 13            .WORD STAR,OR,SEMIS
+3262  167F  AD 05
+3262  1681  0C 06
+3263  1683            ;
+3264  1683            ;                                R/W
+3265  1683            ;                                Read or write one sector
+3266  1683  83        L3060  .BYTE $83,'R/',$D7
+3266  1684  52 2F
+3266  1686  D7
+3267  1687  6A 16            .WORD L3050       ; link to -BCD
+3268  1689  D6 07     RSLW   .WORD DOCOL
+3269  168B  73 06            .WORD ZEQU,LIT,$C4DA,CSTOR
+3269  168D  2A 02
+3269  168F  DA C4
+3269  1691  B5 07
+3270  1693  22 07            .WORD SWAP,ZERO,STORE
+3270  1695  5D 08
+3270  1697  9D 07
+3271  1699  5D 08            .WORD ZERO,OVER,GREAT,OVER
+3271  169B  08 07
+3271  169D  3C 0A
+3271  169F  08 07
+3272  16A1  2A 02            .WORD LIT,SECTL-1,GREAT,OR,CLIT
+3272  16A3  3F 06
+3272  16A5  3C 0A
+3272  16A7  AD 05
+3272  16A9  67 02
+3273  16AB  06               .BYTE 6
+3274  16AC  11 0B            .WORD QERR
+3275  16AE  5D 08            .WORD ZERO,LIT,SECTR,USLAS,ONEP
+3275  16B0  2A 02
+3275  16B2  20 03
+3275  16B4  5B 05
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0069
+
+LINE # LOC     CODE       LINE
+
+3275  16B6  A1 09
+3276  16B8  22 07            .WORD SWAP,ZERO,CLIT
+3276  16BA  5D 08
+3276  16BC  67 02
+3277  16BE  12               .BYTE $12
+3278  16BF  5B 05            .WORD USLAS,DBCD,SWAP,ONEP
+3278  16C1  71 16
+3278  16C3  22 07
+3278  16C5  A1 09
+3279  16C7  71 16            .WORD DBCD,DDISC,CLIT
+3279  16C9  33 16
+3279  16CB  67 02
+3280  16CD  08               .BYTE 8
+3281  16CE  11 0B            .WORD QERR
+3282  16D0  0C 06            .WORD SEMIS
+3283  16D2            ;
+3284  16D2            ;
+3285  16D2            ;
+3286  16D2  0C 06            .WORD SEMIS
+3287  16D4            ;
+3288  16D4            ;                             '
+3289  16D4            ;                             SCREEN 72 LINE 2
+3290  16D4            ;
+3291  16D4  C1        L3202  .BYTE $C1,$A7
+3291  16D5  A7
+3292  16D6  83 16            .WORD L3060         ;  LINK TO R/W
+3293  16D8  D6 07     TICK   .WORD DOCOL
+3294  16DA  8D 0F            .WORD DFIND
+3295  16DC  73 06            .WORD ZEQU
+3296  16DE  5D 08            .WORD ZERO
+3297  16E0  11 0B            .WORD QERR
+3298  16E2  19 07            .WORD DROP
+3299  16E4  C1 10            .WORD LITER
+3300  16E6  0C 06            .WORD SEMIS
+3301  16E8            ;
+3302  16E8            ;
+3303  16E8            ;                             FORGET
+3304  16E8            ;                             Altered from Model
+3305  16E8            ;                             SCREEN 72 LINE 6
+3306  16E8            ;
+3307  16E8  86        L3217  .BYTE $86,'FORGE',$D4
+3307  16E9  46 4F
+3307  16EB  52 47 45
+3307  16EE  D4
+3308  16EF  D4 16            .WORD L3202    LINK TO ' TICK
+3309  16F1  D6 07     FORG   .WORD DOCOL
+3310  16F3  D8 16            .WORD TICK,NFA,DUP
+3310  16F5  D5 0A
+3310  16F7  3A 07
+3311  16F9  F9 08            .WORD FENCE,AT,ULESS,CLIT
+3311  16FB  79 07
+3311  16FD  13 0A
+3311  16FF  67 02
+3312  1701  15               .BYTE $15
+3313  1702  11 0B            .WORD QERR,TOR,VOCL,AT
+3313  1704  3A 06
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0070
+
+LINE # LOC     CODE       LINE
+
+3313  1706  0F 09
+3313  1708  79 07
+3314  170A  5D 06     L3220  .WORD R,OVER,ULESS
+3314  170C  08 07
+3314  170E  13 0A
+3315  1710  56 03            .WORD ZBRAN,L3225-*
+3315  1712  12 00
+3316  1714  B6 11            .WORD FORTH,DEFIN,AT,DUP
+3316  1716  CE 11
+3316  1718  79 07
+3316  171A  3A 07
+3317  171C  0F 09            .WORD VOCL,STORE
+3317  171E  9D 07
+3318  1720  37 03            .WORD BRAN,$FFFF-24+1      L3220-*
+3318  1722  E8 FF
+3319  1724  3A 07     L3225  .WORD DUP,CLIT
+3319  1726  67 02
+3320  1728  04               .BYTE 4
+3321  1729  FA 09            .WORD SUB
+3322  172B  EA 0A     L3228  .WORD PFA,LFA,AT
+3322  172D  B8 0A
+3322  172F  79 07
+3323  1731  3A 07            .WORD DUP,R,ULESS
+3323  1733  5D 06
+3323  1735  13 0A
+3324  1737  56 03            .WORD ZBRAN,$FFFF-14+1     L3228-*
+3324  1739  F2 FF
+3325  173B  08 07            .WORD OVER,TWO,SUB,STORE
+3325  173D  6D 08
+3325  173F  FA 09
+3325  1741  9D 07
+3326  1743  79 07            .WORD AT,DDUP,ZEQU
+3326  1745  6D 0A
+3326  1747  73 06
+3327  1749  56 03            .WORD ZBRAN,$FFFF-39+1     L3225-*
+3327  174B  D9 FF
+3328  174D  4C 06            .WORD RFROM,DP,STORE
+3328  174F  01 09
+3328  1751  9D 07
+3329  1753  0C 06            .WORD SEMIS
+3330  1755            ;
+3331  1755            ;                             BACK
+3332  1755            ;                             SCREEN 73 LINE 1
+3333  1755            ;
+3334  1755  84        L3250  .BYTE $84,'BAC',$CB
+3334  1756  42 41 43
+3334  1759  CB
+3335  175A  E8 16            .WORD L3217         ;  LINK TO FORGET
+3336  175C  D6 07     BACK   .WORD DOCOL
+3337  175E  BD 09            .WORD HERE
+3338  1760  FA 09            .WORD SUB
+3339  1762  D9 09            .WORD COMMA
+3340  1764  0C 06            .WORD SEMIS
+3341  1766            ;
+3342  1766            ;                             BEGIN
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0071
+
+LINE # LOC     CODE       LINE
+
+3343  1766            ;                             SCREEN 73 LINE 3
+3344  1766            ;
+3345  1766  C5        L3261  .BYTE $C5,'BEGI',$CE
+3345  1767  42 45
+3345  1769  47 49
+3345  176B  CE
+3346  176C  55 17            .WORD L3250  ;  LINK TO BACK
+3347  176E  D6 07            .WORD DOCOL
+3348  1770  2B 0B            .WORD QCOMP
+3349  1772  BD 09            .WORD HERE
+3350  1774  65 08            .WORD ONE
+3351  1776  0C 06            .WORD SEMIS
+3352  1778            ;
+3353  1778            ;
+3354  1778            ;                             ENDIF
+3355  1778            ;                             SCREEN 73 LINE 5
+3356  1778            ;
+3357  1778  C5        L3273  .BYTE $C5,'ENDI',$C6
+3357  1779  45 4E
+3357  177B  44 49
+3357  177D  C6
+3358  177E  66 17            .WORD L3261         ;  LINK TO BEGIN
+3359  1780  D6 07     ENDIF  .WORD DOCOL
+3360  1782  2B 0B            .WORD QCOMP
+3361  1784  6D 08            .WORD TWO
+3362  1786  58 0B            .WORD QPAIR
+3363  1788  BD 09            .WORD HERE
+3364  178A  08 07            .WORD OVER
+3365  178C  FA 09            .WORD SUB
+3366  178E  22 07            .WORD SWAP
+3367  1790  9D 07            .WORD STORE
+3368  1792  0C 06            .WORD SEMIS
+3369  1794            ;
+3370  1794            ;
+3371  1794            ;                             THEN
+3372  1794            ;                             SCREEN 73 LINE 7
+3373  1794            ;
+3374  1794  C4        L3290  .BYTE $C4,'THE',$CE
+3374  1795  54 48 45
+3374  1798  CE
+3375  1799  78 17            .WORD L3273         ;  LINK TO ENDIF
+3376  179B  D6 07            .WORD DOCOL
+3377  179D  80 17            .WORD ENDIF
+3378  179F  0C 06            .WORD SEMIS
+3379  17A1            ;
+3380  17A1            ;
+3381  17A1            ;                             DO
+3382  17A1            ;                             SCREEN 73 LINE 9
+3383  17A1            ;
+3384  17A1  C2        L3300  .BYTE $C2,'D',$CF
+3384  17A2  44
+3384  17A3  CF
+3385  17A4  94 17            .WORD L3290         ;  LINK TO THEN
+3386  17A6  D6 07            .WORD DOCOL
+3387  17A8  9F 0B            .WORD COMP
+3388  17AA  DE 03            .WORD PDO
+3389  17AC  BD 09            .WORD HERE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0072
+
+LINE # LOC     CODE       LINE
+
+3390  17AE  75 08            .WORD THREE
+3391  17B0  0C 06            .WORD SEMIS
+3392  17B2            ;
+3393  17B2            ;
+3394  17B2            ;                             LOOP
+3395  17B2            ;                             SCREEN 73 LINE 11
+3396  17B2            ;
+3397  17B2  C4        L3313  .BYTE $C4,'LOO',$D0
+3397  17B3  4C 4F 4F
+3397  17B6  D0
+3398  17B7  A1 17            .WORD L3300         ;  LINK TO DO
+3399  17B9  D6 07            .WORD DOCOL
+3400  17BB  75 08            .WORD THREE
+3401  17BD  58 0B            .WORD QPAIR
+3402  17BF  9F 0B            .WORD COMP
+3403  17C1  77 03            .WORD PLOOP
+3404  17C3  5C 17            .WORD BACK
+3405  17C5  0C 06            .WORD SEMIS
+3406  17C7            ;
+3407  17C7            ;
+3408  17C7            ;                             +LOOP
+3409  17C7            ;                             SCREEN 73 LINE 13
+3410  17C7            ;
+3411  17C7  C5        L3327  .BYTE $C5,'+LOO',$D0
+3411  17C8  2B 4C
+3411  17CA  4F 4F
+3411  17CC  D0
+3412  17CD  B2 17            .WORD L3313         ;  LINK TO LOOP
+3413  17CF  D6 07            .WORD DOCOL
+3414  17D1  75 08            .WORD THREE
+3415  17D3  58 0B            .WORD QPAIR
+3416  17D5  9F 0B            .WORD COMP
+3417  17D7  A7 03            .WORD PPLOO
+3418  17D9  5C 17            .WORD BACK
+3419  17DB  0C 06            .WORD SEMIS
+3420  17DD            ;
+3421  17DD            ;
+3422  17DD            ;                             UNTIL
+3423  17DD            ;                             SCREEN 73 LINE 15
+3424  17DD            ;
+3425  17DD  C5        L3341  .BYTE $C5,'UNTI',$CC
+3425  17DE  55 4E
+3425  17E0  54 49
+3425  17E2  CC
+3426  17E3  C7 17            .WORD L3327         ;  LINK TO +LOOP
+3427  17E5  D6 07     UNTIL  .WORD DOCOL
+3428  17E7  65 08            .WORD ONE
+3429  17E9  58 0B            .WORD QPAIR
+3430  17EB  9F 0B            .WORD COMP
+3431  17ED  56 03            .WORD ZBRAN
+3432  17EF  5C 17            .WORD BACK
+3433  17F1  0C 06            .WORD SEMIS
+3434  17F3            ;
+3435  17F3            ;
+3436  17F3            ;                             END
+3437  17F3            ;                             SCREEN 74 LINE 1
+3438  17F3            ;
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0073
+
+LINE # LOC     CODE       LINE
+
+3439  17F3  C3        L3355  .BYTE $C3,'EN',$C4
+3439  17F4  45 4E
+3439  17F6  C4
+3440  17F7  DD 17            .WORD L3341         ;  LINK TO UNTIL
+3441  17F9  D6 07            .WORD DOCOL
+3442  17FB  E5 17            .WORD UNTIL
+3443  17FD  0C 06            .WORD SEMIS
+3444  17FF            ;
+3445  17FF            ;
+3446  17FF            ;                             AGAIN
+3447  17FF            ;                             SCREEN 74 LINE 3
+3448  17FF            ;
+3449  17FF  C5        L3365  .BYTE $C5,'AGAI',$CE
+3449  1800  41 47
+3449  1802  41 49
+3449  1804  CE
+3450  1805  F3 17            .WORD L3355            LINK TO END
+3451  1807  D6 07     AGAIN  .WORD DOCOL
+3452  1809  65 08            .WORD ONE
+3453  180B  58 0B            .WORD QPAIR
+3454  180D  9F 0B            .WORD COMP
+3455  180F  37 03            .WORD BRAN
+3456  1811  5C 17            .WORD BACK
+3457  1813  0C 06            .WORD SEMIS
+3458  1815            ;
+3459  1815            ;
+3460  1815            ;                             REPEAT
+3461  1815            ;                             SCREEN 74 LINE 5
+3462  1815            ;
+3463  1815  C6        L3379  .BYTE $C6,'REPEA',$D4
+3463  1816  52 45
+3463  1818  50 45 41
+3463  181B  D4
+3464  181C  FF 17            .WORD L3365         ;  LINK TO AGAIN
+3465  181E  D6 07            .WORD DOCOL
+3466  1820  3A 06            .WORD TOR
+3467  1822  3A 06            .WORD TOR
+3468  1824  07 18            .WORD AGAIN
+3469  1826  4C 06            .WORD RFROM
+3470  1828  4C 06            .WORD RFROM
+3471  182A  6D 08            .WORD TWO
+3472  182C  FA 09            .WORD SUB
+3473  182E  80 17            .WORD ENDIF
+3474  1830  0C 06            .WORD SEMIS
+3475  1832            ;
+3476  1832            ;
+3477  1832            ;                             IF
+3478  1832            ;                             SCREEN 74 LINE 8
+3479  1832            ;
+3480  1832  C2        L3396  .BYTE $C2,'I',$C6
+3480  1833  49
+3480  1834  C6
+3481  1835  15 18            .WORD L3379         ;  LINK TO REPEAT
+3482  1837  D6 07     IF     .WORD DOCOL
+3483  1839  9F 0B            .WORD COMP
+3484  183B  56 03            .WORD ZBRAN
+3485  183D  BD 09            .WORD HERE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0074
+
+LINE # LOC     CODE       LINE
+
+3486  183F  5D 08            .WORD ZERO
+3487  1841  D9 09            .WORD COMMA
+3488  1843  6D 08            .WORD TWO
+3489  1845  0C 06            .WORD SEMIS
+3490  1847            ;
+3491  1847            ;
+3492  1847            ;                             ELSE
+3493  1847            ;                             SCREEN 74 LINE 10
+3494  1847            ;
+3495  1847  C4        L3411  .BYTE $C4,'ELS',$C5
+3495  1848  45 4C 53
+3495  184B  C5
+3496  184C  32 18            .WORD L3396         ;  LINK TO IF
+3497  184E  D6 07            .WORD DOCOL
+3498  1850  6D 08            .WORD TWO
+3499  1852  58 0B            .WORD QPAIR
+3500  1854  9F 0B            .WORD COMP
+3501  1856  37 03            .WORD BRAN
+3502  1858  BD 09            .WORD HERE
+3503  185A  5D 08            .WORD ZERO
+3504  185C  D9 09            .WORD COMMA
+3505  185E  22 07            .WORD SWAP
+3506  1860  6D 08            .WORD TWO
+3507  1862  80 17            .WORD ENDIF
+3508  1864  6D 08            .WORD TWO
+3509  1866  0C 06            .WORD SEMIS
+3510  1868            ;
+3511  1868            ;
+3512  1868            ;                             WHILE
+3513  1868            ;                             SCREEN 74 LINE 13
+3514  1868            ;
+3515  1868  C5        L3431  .BYTE $C5,'WHIL',$C5
+3515  1869  57 48
+3515  186B  49 4C
+3515  186D  C5
+3516  186E  47 18            .WORD L3411         ;  LINK TO ELSE
+3517  1870  D6 07            .WORD DOCOL
+3518  1872  37 18            .WORD IF
+3519  1874  AE 09            .WORD TWOP
+3520  1876  0C 06            .WORD SEMIS
+3521  1878            ;
+3522  1878            ;
+3523  1878            ;                             SPACES
+3524  1878            ;                             SCREEN 75 LINE 1
+3525  1878            ;
+3526  1878  86        L3442  .BYTE $86,'SPACE',$D3
+3526  1879  53 50
+3526  187B  41 43 45
+3526  187E  D3
+3527  187F  68 18            .WORD L3431         ;  LINK TO WHILE
+3528  1881  D6 07     SPACS  .WORD DOCOL
+3529  1883  5D 08            .WORD ZERO
+3530  1885  EA 12            .WORD MAX
+3531  1887  6D 0A            .WORD DDUP
+3532  1889  56 03            .WORD ZBRAN
+3533  188B  0C 00     L3449  .WORD $0C           L3455-L3449
+3534  188D  5D 08            .WORD ZERO
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0075
+
+LINE # LOC     CODE       LINE
+
+3535  188F  DE 03            .WORD PDO
+3536  1891  5E 0A     L3452  .WORD SPACE
+3537  1893  77 03            .WORD PLOOP
+3538  1895  FC FF     L3454  .WORD $FFFC         L3452-L3454
+3539  1897  0C 06     L3455  .WORD SEMIS
+3540  1899            ;
+3541  1899            ;                             <#
+3542  1899            ;                             SCREEN 75 LINE 3
+3543  1899            ;
+3544  1899  82        L3460  .BYTE $82,'<',$A3
+3544  189A  3C
+3544  189B  A3
+3545  189C  78 18            .WORD L3442         ;  LINK TO SPACES
+3546  189E  D6 07     BDIGS  .WORD DOCOL
+3547  18A0  5E 0E            .WORD PAD
+3548  18A2  99 09            .WORD HLD
+3549  18A4  9D 07            .WORD STORE
+3550  18A6  0C 06            .WORD SEMIS
+3551  18A8            ;
+3552  18A8            ;                             #>
+3553  18A8            ;                             SCREEN 75 LINE 5
+3554  18A8            ;
+3555  18A8  82        L3471  .BYTE $82,'#',$BE
+3555  18A9  23
+3555  18AA  BE
+3556  18AB  99 18            .WORD L3460         ;  LINK TO <#
+3557  18AD  D6 07     EDIGS  .WORD DOCOL
+3558  18AF  19 07            .WORD DROP
+3559  18B1  19 07            .WORD DROP
+3560  18B3  99 09            .WORD HLD
+3561  18B5  79 07            .WORD AT
+3562  18B7  5E 0E            .WORD PAD
+3563  18B9  08 07            .WORD OVER
+3564  18BB  FA 09            .WORD SUB
+3565  18BD  0C 06            .WORD SEMIS
+3566  18BF            ;
+3567  18BF            ;                             SIGN
+3568  18BF            ;                             SCREEN 75 LINE 7
+3569  18BF            ;
+3570  18BF  84        L3486  .BYTE $84,'SIG',$CE
+3570  18C0  53 49 47
+3570  18C3  CE
+3571  18C4  A8 18            .WORD L3471         ;  LINK TO #>
+3572  18C6  D6 07     SIGN   .WORD DOCOL
+3573  18C8  4A 0A            .WORD ROT
+3574  18CA  88 06            .WORD ZLESS
+3575  18CC  56 03            .WORD ZBRAN
+3576  18CE  07 00     L3492  .WORD $7            L3496-L3492
+3577  18D0  67 02            .WORD CLIT
+3578  18D2  2D               .BYTE $2D
+3579  18D3  46 0E            .WORD HOLD
+3580  18D5  0C 06     L3496  .WORD SEMIS
+3581  18D7            ;
+3582  18D7            ;                             #
+3583  18D7            ;                             SCREEN 75 LINE 9
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0076
+
+LINE # LOC     CODE       LINE
+
+3584  18D7            ;
+3585  18D7  81        L3501  .BYTE $81,$A3
+3585  18D8  A3
+3586  18D9  BF 18            .WORD L3486         ;  LINK TO SIGN
+3587  18DB  D6 07     DIG    .WORD DOCOL
+3588  18DD  6D 09            .WORD BASE
+3589  18DF  79 07            .WORD AT
+3590  18E1  A6 13            .WORD MSMOD
+3591  18E3  4A 0A            .WORD ROT
+3592  18E5  67 02            .WORD CLIT
+3593  18E7  09               .BYTE 9
+3594  18E8  08 07            .WORD OVER
+3595  18EA  1F 0A            .WORD LESS
+3596  18EC  56 03            .WORD ZBRAN
+3597  18EE  07 00     L3513  .WORD 7            L3517-L3513
+3598  18F0  67 02            .WORD CLIT
+3599  18F2  07               .BYTE 7
+3600  18F3  99 06            .WORD PLUS
+3601  18F5  67 02     L3517  .WORD CLIT
+3602  18F7  30               .BYTE $30
+3603  18F8  99 06            .WORD PLUS
+3604  18FA  46 0E            .WORD HOLD
+3605  18FC  0C 06            .WORD SEMIS
+3606  18FE            ;
+3607  18FE            ;                             #S
+3608  18FE            ;                             SCREEN 75 LINE 12
+3609  18FE            ;
+3610  18FE  82        L3526  .BYTE $82,'#',$D3
+3610  18FF  23
+3610  1900  D3
+3611  1901  D7 18            .WORD L3501         ;  LINK TO #
+3612  1903  D6 07     DIGS   .WORD DOCOL
+3613  1905  DB 18     L3529  .WORD DIG
+3614  1907  08 07            .WORD OVER
+3615  1909  08 07            .WORD OVER
+3616  190B  AD 05            .WORD OR
+3617  190D  73 06            .WORD ZEQU
+3618  190F  56 03            .WORD ZBRAN
+3619  1911  F4 FF     L3535  .WORD $FFF4         L3529-L3535
+3620  1913  0C 06            .WORD SEMIS
+3621  1915            ;
+3622  1915            ;                             D.R
+3623  1915            ;                             SCREEN 76 LINE 1
+3624  1915            ;
+3625  1915  83        L3541  .BYTE $83,'D.',$D2
+3625  1916  44 2E
+3625  1918  D2
+3626  1919  FE 18            .WORD L3526         ;  LINK TO #S
+3627  191B  D6 07     DDOTR  .WORD DOCOL
+3628  191D  3A 06            .WORD TOR
+3629  191F  22 07            .WORD SWAP
+3630  1921  08 07            .WORD OVER
+3631  1923  C4 12            .WORD DABS
+3632  1925  9E 18            .WORD BDIGS
+3633  1927  03 19            .WORD DIGS
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0077
+
+LINE # LOC     CODE       LINE
+
+3634  1929  C6 18            .WORD SIGN
+3635  192B  AD 18            .WORD EDIGS
+3636  192D  4C 06            .WORD RFROM
+3637  192F  08 07            .WORD OVER
+3638  1931  FA 09            .WORD SUB
+3639  1933  81 18            .WORD SPACS
+3640  1935  95 0C            .WORD TYPE
+3641  1937  0C 06            .WORD SEMIS
+3642  1939            ;
+3643  1939            ;                             D.
+3644  1939            ;                             SCREEN 76 LINE 5
+3645  1939            ;
+3646  1939  82        L3562  .BYTE $82,'D',$AE
+3646  193A  44
+3646  193B  AE
+3647  193C  15 19            .WORD L3541         ;  LINK TO D.R
+3648  193E  D6 07     DDOT   .WORD DOCOL
+3649  1940  5D 08            .WORD ZERO
+3650  1942  1B 19            .WORD DDOTR
+3651  1944  5E 0A            .WORD SPACE
+3652  1946  0C 06            .WORD SEMIS
+3653  1948            ;
+3654  1948            ;                             .R
+3655  1948            ;                             SCREEN 76 LINE 7
+3656  1948            ;
+3657  1948  82        L3573  .BYTE $82,'.',$D2
+3657  1949  2E
+3657  194A  D2
+3658  194B  39 19            .WORD L3562         LINK TO D.
+3659  194D  D6 07     DOTR   .WORD DOCOL
+3660  194F  3A 06            .WORD TOR
+3661  1951  82 12            .WORD STOD
+3662  1953  4C 06            .WORD RFROM
+3663  1955  1B 19            .WORD DDOTR
+3664  1957  0C 06            .WORD SEMIS
+3665  1959            ;
+3666  1959            ;                             .
+3667  1959            ;                             SCREEN 76 LINE 9
+3668  1959            ;
+3669  1959  81        L3585  .BYTE $81,$AE
+3669  195A  AE
+3670  195B  48 19            .WORD L3573         ;  LINK TO .R
+3671  195D  D6 07     DOT    .WORD DOCOL
+3672  195F  82 12            .WORD STOD
+3673  1961  3E 19            .WORD DDOT
+3674  1963  0C 06            .WORD SEMIS
+3675  1965            ;
+3676  1965            ;                             ?
+3677  1965            ;                             SCREEN 76 LINE 11
+3678  1965            ;
+3679  1965  81        L3595  .BYTE $81,$BF
+3679  1966  BF
+3680  1967  59 19            .WORD L3585         ;  LINK TO .
+3681  1969  D6 07     QUES   .WORD DOCOL
+3682  196B  79 07            .WORD AT
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0078
+
+LINE # LOC     CODE       LINE
+
+3683  196D  5D 19            .WORD DOT
+3684  196F  0C 06            .WORD SEMIS
+3685  1971            ;
+3686  1971            ;                             LIST
+3687  1971            ;                             SCREEN 77 LINE 2
+3688  1971            ;
+3689  1971  84        L3605  .BYTE $84,'LIS',$D4
+3689  1972  4C 49 53
+3689  1975  D4
+3690  1976  65 19            .WORD L3595         ;  LINK TO ?
+3691  1978  D6 07     LIST   .WORD DOCOL
+3692  197A  FD 0B            .WORD DECIM
+3693  197C  F4 04            .WORD CR
+3694  197E  3A 07            .WORD DUP
+3695  1980  32 09            .WORD SCR
+3696  1982  9D 07            .WORD STORE
+3697  1984  F6 0C            .WORD PDOTQ
+3698  1986  06               .BYTE 6,'SCR # '
+3698  1987  53 43
+3698  1989  52 20 23
+3698  198C  20
+3699  198D  5D 19            .WORD DOT
+3700  198F  67 02            .WORD CLIT
+3701  1991  10               .BYTE 16
+3702  1992  5D 08            .WORD ZERO
+3703  1994  DE 03            .WORD PDO
+3704  1996  F4 04     L3620  .WORD CR
+3705  1998  F7 03            .WORD I
+3706  199A  75 08            .WORD THREE
+3707  199C  4D 19            .WORD DOTR
+3708  199E  5E 0A            .WORD SPACE
+3709  19A0  F7 03            .WORD I
+3710  19A2  32 09            .WORD SCR
+3711  19A4  79 07            .WORD AT
+3712  19A6  58 15            .WORD DLINE
+3713  19A8  77 03            .WORD PLOOP
+3714  19AA  EC FF     L3630  .WORD $FFEC         L3620-L3630
+3715  19AC  F4 04            .WORD CR
+3716  19AE  0C 06            .WORD SEMIS
+3717  19B0            ;
+3718  19B0            ;                             INDEX
+3719  19B0            ;                             SCREEN 77 LINE 7
+3720  19B0            ;
+3721  19B0  85        L3637  .BYTE $85,'INDE',$D8
+3721  19B1  49 4E
+3721  19B3  44 45
+3721  19B5  D8
+3722  19B6  71 19            .WORD L3605         ;  LINK TO LIST
+3723  19B8  D6 07            .WORD DOCOL
+3724  19BA  F4 04            .WORD CR
+3725  19BC  A1 09            .WORD ONEP
+3726  19BE  22 07            .WORD SWAP
+3727  19C0  DE 03            .WORD PDO
+3728  19C2  F4 04     L3647  .WORD CR
+3729  19C4  F7 03            .WORD I
+3730  19C6  75 08            .WORD THREE
+3731  19C8  4D 19            .WORD DOTR
+3732  19CA  5E 0A            .WORD SPACE
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0079
+
+LINE # LOC     CODE       LINE
+
+3733  19CC  5D 08            .WORD ZERO
+3734  19CE  F7 03            .WORD I
+3735  19D0  58 15            .WORD DLINE
+3736  19D2  ED 04            .WORD QTERM
+3737  19D4  56 03            .WORD ZBRAN
+3738  19D6  04 00     L3657  .WORD 4             L3659-L3657
+3739  19D8  1F 06            .WORD LEAVE
+3740  19DA  77 03     L3659  .WORD PLOOP
+3741  19DC  E6 FF     L3660  .WORD $FFE6         L3647-L3660
+3742  19DE  67 02            .WORD CLIT
+3743  19E0  0C               .BYTE $0C     FORM FEED FOR PRINTER
+3744  19E1  D7 04            .WORD EMIT
+3745  19E3  0C 06            .WORD SEMIS
+3746  19E5            ;
+3747  19E5            ;                             TRIAD
+3748  19E5            ;                             SCREEN 77 LINE 12
+3749  19E5            ;
+3750  19E5  85        L3666  .BYTE $85,'TRIA',$C4
+3750  19E6  54 52
+3750  19E8  49 41
+3750  19EA  C4
+3751  19EB  B0 19            .WORD L3637         ;  LINK TO INDEX
+3752  19ED  D6 07            .WORD DOCOL
+3753  19EF  75 08            .WORD THREE
+3754  19F1  63 13            .WORD SLASH
+3755  19F3  75 08            .WORD THREE
+3756  19F5  44 13            .WORD STAR
+3757  19F7  75 08            .WORD THREE
+3758  19F9  08 07            .WORD OVER
+3759  19FB  99 06            .WORD PLUS
+3760  19FD  22 07            .WORD SWAP
+3761  19FF  DE 03            .WORD PDO
+3762  1A01  F4 04     L3681  .WORD CR
+3763  1A03  F7 03            .WORD I
+3764  1A05  78 19            .WORD LIST
+3765  1A07  77 03            .WORD PLOOP
+3766  1A09  F8 FF     L3685  .WORD $FFF8         L3681-L3685
+3767  1A0B  F4 04            .WORD CR
+3768  1A0D  67 02            .WORD CLIT
+3769  1A0F  0F               .BYTE $F
+3770  1A10  6C 15            .WORD MESS
+3771  1A12  F4 04            .WORD CR
+3772  1A14  67 02            .WORD CLIT
+3773  1A16  0C               .BYTE $0C     FORM FEED FOR PRINTER
+3774  1A17  D7 04            .WORD EMIT
+3775  1A19  0C 06            .WORD SEMIS
+3776  1A1B            ;
+3777  1A1B            ;                             VLIST
+3778  1A1B            ;                             SCREEN 78 LINE 2
+3779  1A1B            ;
+3780  1A1B  85        L3696  .BYTE $85,'VLIS',$D4
+3780  1A1C  56 4C
+3780  1A1E  49 53
+3780  1A20  D4
+3781  1A21  E5 19            .WORD L3666         ;  LINK TO TRIAD
+3782  1A23  D6 07     VLIST  .WORD DOCOL
+3783  1A25  67 02            .WORD CLIT
+
+fig-FORTH for 6502, Rel 1.1   ......PAGE 0080
+
+LINE # LOC     CODE       LINE
+
+3784  1A27  80               .BYTE $80
+3785  1A28  29 09            .WORD OUT
+3786  1A2A  9D 07            .WORD STORE
+3787  1A2C  4B 09            .WORD CON
+3788  1A2E  79 07            .WORD AT
+3789  1A30  79 07            .WORD AT
+3790  1A32  29 09     L3706  .WORD OUT
+3791  1A34  79 07            .WORD AT
+3792  1A36  88 08            .WORD CSLL
+3793  1A38  3C 0A            .WORD GREAT
+3794  1A3A  56 03            .WORD ZBRAN
+3795  1A3C  0A 00     L3711  .WORD $A            L3716-L3711
+3796  1A3E  F4 04            .WORD CR
+3797  1A40  5D 08            .WORD ZERO
+3798  1A42  29 09            .WORD OUT
+3799  1A44  9D 07            .WORD STORE
+3800  1A46  3A 07     L3716  .WORD DUP
+3801  1A48  02 10            .WORD IDDOT
+3802  1A4A  5E 0A            .WORD SPACE
+3803  1A4C  5E 0A            .WORD SPACE
+3804  1A4E  EA 0A            .WORD PFA
+3805  1A50  B8 0A            .WORD LFA
+3806  1A52  79 07            .WORD AT
+3807  1A54  3A 07            .WORD DUP
+3808  1A56  73 06            .WORD ZEQU
+3809  1A58  ED 04            .WORD QTERM
+3810  1A5A  AD 05            .WORD OR
+3811  1A5C  56 03            .WORD ZBRAN
+3812  1A5E  D4 FF     L3728  .WORD $FFD4         L3706-L3728
+3813  1A60  19 07            .WORD DROP
+3814  1A62  0C 06            .WORD SEMIS
+3815  1A64            ;
+3816  1A64            ;                             MON
+3817  1A64            ;                             SCREEN 79 LINE 3
+3818  1A64            ;
+3819  1A64  83        NTOP   .BYTE $83,'MO',$CE
+3819  1A65  4D 4F
+3819  1A67  CE
+3820  1A68  1B 1A            .WORD L3696         ;  LINK TO VLIST
+3821  1A6A  6C 1A     MON    .WORD *+2
+3822  1A6C  86 B5            STX XSAVE
+3823  1A6E  00               BRK             BREAK TO MONITOR WHICH IS ASSU
+3824  1A6F  A6 B5            LDX XSAVE       TO SAVE THIS AS RE-ENTRY POINT
+3825  1A71  4C 44 02         JMP NEXT
+3826  1A74            ;
+3827  1A74            TOP    .END FOR1/1  ; END OF LISTING
+
+ERRORS = 0000 <0000>
