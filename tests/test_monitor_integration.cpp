@@ -42,6 +42,7 @@ public:
         testDosFileVerbs();
         testDosTransfer();
         testDosUtils();
+        testDosDrawers();
         testRunDiskProgram();
         testRunOverride();
         testRunNotFound();
@@ -246,7 +247,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.1", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.2", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -278,6 +279,73 @@ public:
         computer.getPia()->addKeypress(' ');   // resume past the single page break
         computer.run(3000000);
         verifyResponse("L25", "MORE pages through a long file after a keypress");
+    }
+
+    // Drawers (one-level FAT16 subdirectories). All drawers are created at
+    // runtime (the image builder is root-only), exercising the write engine.
+    void testDosDrawers() {
+        mountDisk({}); // empty formatted disk
+        // Create a drawer; it lists with the <D> tag.
+        sendCommand("NEWDRAWER UTILS", 400000);
+        verifyResponse("DRAWER CREATED", "NEWDRAWER creates a drawer");
+        sendCommand("CATALOG");
+        verifyResponse("UTILS", "CATALOG lists the drawer");
+        verifyResponse("<D>", "CATALOG marks a drawer with <D>");
+
+        // Enter it (prompt shows the name) and create a file inside.
+        sendCommand("OPEN UTILS");
+        verifyResponse("UTILS]", "OPEN switches to the drawer (prompt shows it)");
+        computer.getMemory()->write(0x0900, 'Z');
+        sendCommand("SAVE INDRW.BIN,0900-0900", 400000);
+        verifyResponse("SAVED", "SAVE writes into the open drawer");
+        sendCommand("CATALOG");
+        verifyResponse("INDRW.BIN", "CATALOG inside the drawer lists its file");
+
+        // Back to root: the drawer's file is not visible there.
+        sendCommand("CLOSE");
+        sendCommand("CLS");
+        sendCommand("CATALOG");
+        verifyAbsent("INDRW.BIN", "the drawer's file is hidden from root");
+
+        // Cross-checks resolved through the current dir: a drawer is not a file.
+        sendCommand("TYPE UTILS");
+        verifyResponse("FILE NOT FOUND", "TYPE refuses a drawer (not a file)");
+
+        // One-level guard: can't make a drawer inside a drawer.
+        sendCommand("OPEN UTILS");
+        sendCommand("NEWDRAWER INNER");
+        verifyResponse("NOT IN ROOT", "NEWDRAWER is rejected inside a drawer");
+        sendCommand("CLOSE");
+
+        // DROPDRAWER refuses a non-empty drawer, then succeeds once emptied.
+        sendCommand("CLS");
+        sendCommand("DROPDRAWER UTILS");
+        verifyResponse("DRAWER NOT EMPTY", "DROPDRAWER refuses a non-empty drawer");
+        sendCommand("OPEN UTILS");
+        sendCommand("ERASE INDRW.BIN");
+        sendCommand("CLOSE");
+        sendCommand("DROPDRAWER UTILS", 400000);
+        verifyResponse("DRAWER DROPPED", "DROPDRAWER removes an empty drawer");
+        sendCommand("CLS");
+        sendCommand("CATALOG");
+        verifyAbsent("UTILS", "the dropped drawer is gone from CATALOG");
+
+        // Growable directory: a drawer's directory chains a 2nd cluster past 14
+        // files (16 entries/cluster - ./..). Create 15 to force the growth and
+        // confirm the 15th (which lives in the new cluster) lists.
+        sendCommand("NEWDRAWER BIG", 400000);
+        sendCommand("OPEN BIG");
+        for (int i = 1; i <= 15; ++i) {
+            char cmd[32];
+            std::snprintf(cmd, sizeof(cmd), "SAVE D%d.B,0900-0900", i);
+            computer.getMemory()->write(0x0900, static_cast<uint8_t>('0' + (i % 10)));
+            sendCommand(cmd, 600000);
+        }
+        sendCommand("CLS");
+        sendCommand("CATALOG", 1500000);
+        verifyResponse("D15.B", "growable drawer lists a file in its 2nd cluster");
+        // tidy up so later tests see a clean disk
+        sendCommand("CLOSE");
     }
 
     // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).

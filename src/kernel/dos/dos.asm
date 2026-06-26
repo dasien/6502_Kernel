@@ -113,7 +113,11 @@ DOS_F_OFF        = $0317                ; word: byte offset within the sector (0
 DOS_F_LEFT       = $0319                ; 4 bytes: file bytes remaining ($0319-$031C)
 ; scratch + buffers
 DOS_TMP          = $031D                ; word: general 16-bit scratch
-DOS_TMP2         = $031F                ; word: general 16-bit scratch
+; NOTE: DOS_TMP2 must NOT live at $031F: its high byte ($0320) would alias
+; DOS_ENTRY+0. Subdirectory enumeration does a FAT read (which uses DOS_TMP2)
+; between reading a directory entry and inspecting it, so any overlap corrupts
+; the entry's name. Relocated below DOS_ENTRY's neighbours, into free state.
+DOS_TMP2         = $037C                ; word: general 16-bit scratch ($037C-$037D)
 DOS_ENTRY        = $0320                ; 32-byte current directory entry ($0320-$033F)
 DOS_NAME83       = $0340                ; 11-byte 8.3 match buffer ($0340-$034A)
 ; mount geometry for allocation
@@ -135,6 +139,15 @@ DOS_SH_NAMEIDX   = $0363                ; shell: index of an argument name in MO
 DOS_SH_HASADDR   = $0364                ; shell: LOAD given an explicit address?
 DOS_SH_NAMEIDX2  = $0365                ; shell: second arg index (COPY destination)
 DOS_FREE_CNT     = $0366                ; word: FREE free-cluster accumulator ($0366-$0367)
+; ---- drawers: current directory + directory-iterator + path-resolution state ----
+DOS_CWD_CLUS     = $0368                ; word: current dir first cluster (0 = root)
+DOS_CWD_NAME     = $036A                ; 9 bytes: prompt display name ($036A-$0372, NUL-term)
+DOS_DIR_MODE     = $0373                ; dir iterator mode: 0 = root region, 1 = subdir chain
+DOS_DIR_CLUS     = $0374                ; word: subdir iterator's current cluster
+DOS_DIR_SIC      = $0376                ; byte: sector index within the dir cluster
+DOS_TGT_CLUS     = $0377                ; word: resolved target dir cluster (0 = root)
+DOS_RES_NAMEPTR  = $0379                ; word: ptr to bare 8.3 name after path prefix
+DOS_W_ATTR       = $037B                ; byte: attribute for the next dir entry written
 
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
@@ -147,6 +160,7 @@ DIR_SIZE         = $1C                  ; 4 bytes: file size
 
 ATTR_LFN         = $0F                  ; (attr & $0F)==$0F -> long-file-name entry
 ATTR_VOLUME      = $08                  ; volume-label bit
+ATTR_DIRECTORY   = $10                  ; subdirectory ("drawer") bit
 DIRENT_END       = $00                  ; name[0]: end of directory
 DIRENT_DELETED   = $E5                  ; name[0]: deleted entry
 
@@ -167,8 +181,11 @@ DOS_SIGNATURE:
 ;        launch-by-name (phase 4)
 ;   1.1  utility commands (COPY, DISKFREE, MEMMAP, VERSION, MORE, wildcard
 ;        CATALOG) + shared decimal conversion via the kernel ABI
+;   1.2  one-level subdirectories ("drawers"): NEWDRAWER/OPEN/CLOSE/DROPDRAWER,
+;        a unified root/subdir directory iterator, and path resolution
+;        (FILE / DRAWER/FILE / /FILE) for the file verbs
 DOS_VERSION:
-    .BYTE $01, $01                      ; version 1.1 (major, minor)
+    .BYTE $01, $02                      ; version 1.2 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -200,6 +217,14 @@ _DOS_WARM:
     LDX #$FF
     TXS
 _DOS_PROMPT:
+    LDA DOS_CWD_NAME                    ; in a drawer? show its name before ']'
+    BEQ @bracket
+    LDA #<DOS_CWD_NAME
+    STA MON_MSG_PTR_LO
+    LDA #>DOS_CWD_NAME
+    STA MON_MSG_PTR_HI
+    JSR K_PRINT_MESSAGE
+@bracket:
     LDA #']'                            ; ']' distinguishes the DOS prompt from the monitor's
     JSR K_PRINT_CHAR
     JSR K_READ_LINE                     ; -> MON_CMDBUF, length MON_CMDLEN
@@ -328,6 +353,30 @@ _DOS_DISPATCH:
     BCS @n16
     JMP _DOS_DO_MEM
 @n16:
+    LDA #<KW_NEWDRAWER
+    LDX #>KW_NEWDRAWER
+    JSR _DOS_VERB_MATCH
+    BCS @n17
+    JMP _DOS_DO_NEWDRAWER
+@n17:
+    LDA #<KW_OPEN
+    LDX #>KW_OPEN
+    JSR _DOS_VERB_MATCH
+    BCS @n18
+    JMP _DOS_DO_OPEN
+@n18:
+    LDA #<KW_CLOSE
+    LDX #>KW_CLOSE
+    JSR _DOS_VERB_MATCH
+    BCS @n19
+    JMP _DOS_DO_CLOSE
+@n19:
+    LDA #<KW_DROPDRAWER
+    LDX #>KW_DROPDRAWER
+    JSR _DOS_VERB_MATCH
+    BCS @n20
+    JMP _DOS_DO_DROPDRAWER
+@n20:
     ; No built-in command matched - launch a program by name. A leading '&'
     ; forces the disk path (skip the ROM-module check); otherwise modules win.
     LDX #$00                            ; name starts at offset 0...
@@ -465,6 +514,9 @@ _DOS_DO_CAT:
     STA MON_MSG_PTR_HI
     JSR K_PRINT_MESSAGE
 @loop:
+    LDA DOS_ENTRY+DIR_NAME              ; hide the '.'/'..' drawer pseudo-entries
+    CMP #'.'
+    BEQ @skip
     JSR _DOS_NAME_MATCH                 ; DOS_NAME83 template vs DOS_ENTRY
     BCS @skip
     JSR _DOS_PRINT_ENTRY
@@ -519,6 +571,9 @@ _DOS_PRINT_ENTRY:
     INY
     BRA @pad
 @size:
+    LDA DOS_ENTRY+DIR_ATTR              ; a drawer prints "<D>" instead of a size
+    AND #ATTR_DIRECTORY
+    BNE @drawer
     LDA DOS_ENTRY+$1C                   ; copy the 32-bit size to DOS_W_SIZE
     STA DOS_W_SIZE
     LDA DOS_ENTRY+$1D
@@ -531,6 +586,17 @@ _DOS_PRINT_ENTRY:
     LDX #>DOS_W_SIZE
     LDY #$08
     JSR K_PRINT_DEC
+    JMP K_PRINT_NEWLINE
+@drawer:
+    LDX #5                              ; right-justify "<D>" in the 8-col field
+@dsp:
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    DEX
+    BNE @dsp
+    LDA #<MSG_DOS_DIRTAG
+    LDX #>MSG_DOS_DIRTAG
+    JSR _DOS_PMSG
     JMP K_PRINT_NEWLINE
 
 ; ----------------------------------------------------------------
@@ -979,6 +1045,179 @@ _DOS_DO_MEM:
     LDA #<MSG_DOS_MEM
     LDX #>MSG_DOS_MEM
     JMP _DOS_PERR
+
+; ----------------------------------------------------------------
+; _DOS_DO_NEWDRAWER - NEWDRAWER name: create a drawer in root
+; ----------------------------------------------------------------
+_DOS_DO_NEWDRAWER:
+    LDA DOS_CWD_CLUS                    ; one level: only from root
+    ORA DOS_CWD_CLUS+1
+    BEQ :+
+    JMP @notroot
+:
+    JSR _DOS_ARGSTART
+    BCC :+
+    JMP @usage
+:
+    JSR _DOS_ARG_TO_NAME83              ; null-terminate at EOL, Y -> DOS_NAME83
+    JSR _FS_ENSURE_MOUNT
+    BCS @diskerr
+    STZ DOS_TGT_CLUS                    ; reject if the name already exists in root
+    STZ DOS_TGT_CLUS+1
+    JSR _DOS_DIR_FIND_EXISTING
+    BCC @exists
+    JSR _DOS_ALLOC_CLUSTER              ; allocate the drawer's first cluster
+    BCS @diskerr
+    LDA DOS_ARG_CLUS
+    STA DOS_NEW_CLUS
+    STA DOS_DIR_CLUS
+    LDA DOS_ARG_CLUS+1
+    STA DOS_NEW_CLUS+1
+    STA DOS_DIR_CLUS+1
+    JSR _DOS_DIRCLUS_TO_LBA
+    JSR _DOS_INIT_DRAWER_CLUSTER        ; write '.'/'..' + zero-fill
+    BCS @freeerr
+    STZ DOS_TGT_CLUS                    ; create the root entry (attr $10)
+    STZ DOS_TGT_CLUS+1
+    JSR _DOS_DIR_FIND_FOR_WRITE
+    BCS @freeerr                        ; root full -> free the orphan cluster
+    LDA DOS_NEW_CLUS
+    STA DOS_W_FIRST_CLUS
+    LDA DOS_NEW_CLUS+1
+    STA DOS_W_FIRST_CLUS+1
+    STZ DOS_W_SIZE
+    STZ DOS_W_SIZE+1
+    STZ DOS_W_SIZE+2
+    STZ DOS_W_SIZE+3
+    LDA #ATTR_DIRECTORY
+    STA DOS_W_ATTR
+    JSR _DOS_DIR_WRITE_ENTRY
+    BCS @freeerr
+    LDA #<MSG_DOS_DRAWER_NEW
+    LDX #>MSG_DOS_DRAWER_NEW
+    JMP _DOS_PERR
+@freeerr:
+    LDA DOS_NEW_CLUS                    ; free the orphaned cluster
+    STA DOS_ARG_CLUS
+    LDA DOS_NEW_CLUS+1
+    STA DOS_ARG_CLUS+1
+    JSR _DOS_FREE_CHAIN
+@diskerr:
+    JMP _DOS_PERR_WRITE
+@exists:
+    LDA #<MSG_DOS_EXISTS
+    LDX #>MSG_DOS_EXISTS
+    JMP _DOS_PERR
+@notroot:
+    LDA #<MSG_DOS_NOTROOT
+    LDX #>MSG_DOS_NOTROOT
+    JMP _DOS_PERR
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_OPEN - OPEN name: enter a drawer (resolves in root)
+; ----------------------------------------------------------------
+_DOS_DO_OPEN:
+    JSR _DOS_ARGSTART
+    BCS @usage
+    JSR _DOS_ARG_TO_NAME83
+    STZ DOS_TGT_CLUS                    ; find the drawer in root
+    STZ DOS_TGT_CLUS+1
+    JSR _DOS_DIR_FIND_EXISTING
+    BCS @nodrawer
+    LDA DOS_ENTRY+DIR_ATTR
+    AND #ATTR_DIRECTORY
+    BEQ @nodrawer                       ; exists but is a file
+    LDA DOS_ENTRY+DIR_CLUSTER_LO        ; switch the current directory
+    STA DOS_CWD_CLUS
+    LDA DOS_ENTRY+DIR_CLUSTER_LO+1
+    STA DOS_CWD_CLUS+1
+    JSR _DOS_SET_CWD_NAME
+    JMP K_PRINT_NEWLINE                 ; fresh prompt shows the drawer
+@nodrawer:
+    LDA #<MSG_DOS_NODRAWER
+    LDX #>MSG_DOS_NODRAWER
+    JMP _DOS_PERR
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_CLOSE - CLOSE: return to the root directory
+; ----------------------------------------------------------------
+_DOS_DO_CLOSE:
+    STZ DOS_CWD_CLUS
+    STZ DOS_CWD_CLUS+1
+    STZ DOS_CWD_NAME
+    JMP K_PRINT_NEWLINE
+
+; ----------------------------------------------------------------
+; _DOS_DO_DROPDRAWER - DROPDRAWER name: remove an empty drawer
+; ----------------------------------------------------------------
+_DOS_DO_DROPDRAWER:
+    LDA DOS_CWD_CLUS                    ; one level: only from root
+    ORA DOS_CWD_CLUS+1
+    BNE @notroot
+    JSR _DOS_ARGSTART
+    BCS @usage
+    JSR _DOS_ARG_TO_NAME83
+    STZ DOS_TGT_CLUS
+    STZ DOS_TGT_CLUS+1
+    JSR _DOS_DIR_FIND_EXISTING          ; find the drawer entry in root
+    BCS @nodrawer
+    LDA DOS_ENTRY+DIR_ATTR
+    AND #ATTR_DIRECTORY
+    BEQ @nodrawer
+    LDA DOS_ENTRY+DIR_CLUSTER_LO        ; stash the drawer's first cluster
+    STA DOS_NEW_CLUS
+    STA DOS_TGT_CLUS
+    LDA DOS_ENTRY+DIR_CLUSTER_LO+1
+    STA DOS_NEW_CLUS+1
+    STA DOS_TGT_CLUS+1
+    JSR _DOS_DRAWER_EMPTY               ; only '.'/'..' inside?
+    BCS @notempty
+    STZ DOS_TGT_CLUS                    ; re-find the root entry (empty-scan moved state)
+    STZ DOS_TGT_CLUS+1
+    JSR _DOS_DIR_FIND_EXISTING
+    BCS @nodrawer
+    LDA DOS_NEW_CLUS                    ; free the drawer's cluster chain
+    STA DOS_ARG_CLUS
+    LDA DOS_NEW_CLUS+1
+    STA DOS_ARG_CLUS+1
+    JSR _DOS_FREE_CHAIN
+    JSR _DOS_MARK_DELETED               ; delete the root entry
+    LDA #<MSG_DOS_DRAWER_DROP
+    LDX #>MSG_DOS_DRAWER_DROP
+    JMP _DOS_PERR
+@notempty:
+    LDA #<MSG_DOS_NOTEMPTY
+    LDX #>MSG_DOS_NOTEMPTY
+    JMP _DOS_PERR
+@nodrawer:
+    LDA #<MSG_DOS_NODRAWER
+    LDX #>MSG_DOS_NODRAWER
+    JMP _DOS_PERR
+@notroot:
+    LDA #<MSG_DOS_NOTROOT
+    LDX #>MSG_DOS_NOTROOT
+    JMP _DOS_PERR
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; _DOS_ARG_TO_NAME83 - In: Y = arg start index in MON_CMDBUF. Null-terminates the
+; line, points DOS_PTR at the arg, parses it to DOS_NAME83. Preserves nothing.
+_DOS_ARG_TO_NAME83:
+    LDX MON_CMDLEN
+    LDA #$00
+    STA MON_CMDBUF,X
+    TYA
+    CLC
+    ADC #<MON_CMDBUF
+    STA DOS_PTR
+    LDA #>MON_CMDBUF
+    ADC #$00
+    STA DOS_PTR+1
+    JMP _DOS_PARSE_NAME83               ; tail
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_FREE - DISKFREE: report free disk space in bytes and KB
@@ -1448,6 +1687,7 @@ _DOS_RUN_FILE:
 MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
 MSG_DOS_HELP:    .BYTE "CATALOG TYPE MORE SAVE LOAD COPY", $0D, $0A
                  .BYTE "ERASE RENAME IMPORT EXPORT", $0D, $0A
+                 .BYTE "NEWDRAWER OPEN CLOSE DROPDRAWER", $0D, $0A
                  .BYTE "DISKFREE MEMMAP VERSION CLS MON HELP", $0D, $0A, 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
 MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
@@ -1479,6 +1719,13 @@ MSG_DOS_FREE1:   .BYTE "DISK FREE: ", 0
 MSG_DOS_FREE2:   .BYTE " BYTES (", 0
 MSG_DOS_FREE3:   .BYTE " KB)", $0D, $0A, 0
 MSG_DOS_MORE:    .BYTE "--MORE--", 0
+MSG_DOS_DIRTAG:  .BYTE "<D>", 0
+MSG_DOS_DRAWER_NEW:  .BYTE "DRAWER CREATED", $0D, $0A, 0
+MSG_DOS_DRAWER_DROP: .BYTE "DRAWER DROPPED", $0D, $0A, 0
+MSG_DOS_NOTEMPTY:.BYTE "DRAWER NOT EMPTY", $0D, $0A, 0
+MSG_DOS_NODRAWER:.BYTE "NO SUCH DRAWER", $0D, $0A, 0
+MSG_DOS_NOTROOT: .BYTE "NOT IN ROOT", $0D, $0A, 0
+MSG_DOS_EXISTS:  .BYTE "NAME EXISTS", $0D, $0A, 0
 KW_CLS:          .BYTE "CLS", 0
 KW_CLEAR:        .BYTE "CLEAR", 0
 KW_BANKS:        .BYTE "BANKS", 0
@@ -1498,6 +1745,10 @@ KW_DISKFREE:     .BYTE "DISKFREE", 0
 KW_MORE:         .BYTE "MORE", 0
 KW_VERSION:      .BYTE "VERSION", 0
 KW_MEMMAP:       .BYTE "MEMMAP", 0
+KW_NEWDRAWER:    .BYTE "NEWDRAWER", 0
+KW_OPEN:         .BYTE "OPEN", 0
+KW_CLOSE:        .BYTE "CLOSE", 0
+KW_DROPDRAWER:   .BYTE "DROPDRAWER", 0
 
 ; ================================================================
 ; BLOCK DEVICE PRIMITIVES
@@ -1748,6 +1999,9 @@ _FS_MOUNT:
 @setmount:
     LDA #1
     STA DOS_MOUNTED
+    STZ DOS_CWD_CLUS                    ; a freshly mounted volume starts at root
+    STZ DOS_CWD_CLUS+1
+    STZ DOS_CWD_NAME
     CLC
     RTS
 
@@ -1763,6 +2017,27 @@ _FS_MOUNT:
 _FS_DIR_FIRST:
     JSR _FS_ENSURE_MOUNT
     BCS @err
+    LDA DOS_CWD_CLUS                    ; enumerate the current directory
+    STA DOS_TGT_CLUS
+    LDA DOS_CWD_CLUS+1
+    STA DOS_TGT_CLUS+1
+    JSR _DOS_DIR_OPEN
+    BRA _FS_DIR_NEXT
+@err:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_DIR_OPEN - arm the directory iterator for DOS_TGT_CLUS
+; ----------------------------------------------------------------
+; In: DOS_TGT_CLUS = directory first cluster (0 = root). Root mode is bounded by
+; the entry count (DOS_DIR_LEFT); subdir mode walks the cluster chain and ends on
+; the $00 marker / chain EOC. Assumes the volume is already mounted.
+_DOS_DIR_OPEN:
+    LDA DOS_TGT_CLUS
+    ORA DOS_TGT_CLUS+1
+    BNE @subdir
+    STZ DOS_DIR_MODE                    ; mode 0: fixed root region
     LDA DOS_ROOT_START
     STA DOS_DIR_LBA
     LDA DOS_ROOT_START+1
@@ -1772,33 +2047,56 @@ _FS_DIR_FIRST:
     STA DOS_DIR_LEFT
     LDA DOS_ROOT_ENTS+1
     STA DOS_DIR_LEFT+1
-    BRA _FS_DIR_NEXT
-@err:
-    SEC
     RTS
+@subdir:
+    LDA #$01                            ; mode 1: subdirectory cluster chain
+    STA DOS_DIR_MODE
+    LDA DOS_TGT_CLUS
+    STA DOS_DIR_CLUS
+    LDA DOS_TGT_CLUS+1
+    STA DOS_DIR_CLUS+1
+    STZ DOS_DIR_SIC
+    STZ DOS_DIR_IDX
+    JMP _DOS_DIRCLUS_TO_LBA             ; DOS_DIR_CLUS -> DOS_DIR_LBA (tail)
+
+; _FS_DIR_FIRST_TGT - like _FS_DIR_FIRST but scans the directory named by
+; DOS_TGT_CLUS (already set; volume assumed mounted). Returns the first entry.
+_FS_DIR_FIRST_TGT:
+    JSR _DOS_DIR_OPEN
+    BRA _FS_DIR_NEXT
 
 ; ----------------------------------------------------------------
-; _FS_DIR_NEXT - return the next valid root-directory entry
+; _FS_DIR_NEXT - return the next valid entry in the open directory
 ; ----------------------------------------------------------------
-; Skips deleted, long-file-name, and volume-label entries; stops at the
-; end-of-directory marker. Out: carry clear and DOS_ENTRY filled, or carry set
-; when no more entries.
+; Skips deleted / LFN / volume entries; stops at the end-of-directory marker
+; (root mode also stops when the entry count is exhausted; subdir mode also at
+; chain EOC, signalled by DOS_DIR_MODE = 2). Out: carry clear and DOS_ENTRY
+; filled, or carry set when no more entries.
 _FS_DIR_NEXT:
 @loop:
-    LDA DOS_DIR_LEFT                    ; entries remaining?
+    LDA DOS_DIR_MODE
+    BEQ @rootcount                      ; mode 0 = root
+    CMP #$02
+    BEQ @end                            ; mode 2 = subdir chain exhausted
+    BRA @have                           ; mode 1 = subdir active
+@rootcount:
+    LDA DOS_DIR_LEFT                    ; root: entries remaining?
     ORA DOS_DIR_LEFT+1
     BNE @have
+@end:
     SEC
     RTS
 @have:
     JSR _DOS_READ_DIR_ENTRY             ; DOS_DIR_LBA/IDX -> DOS_ENTRY
-    BCS @stop                           ; read error -> end
-    JSR _DOS_DIR_ADVANCE                ; bump cursor, decrement DOS_DIR_LEFT
+    BCS @end                            ; read error -> end
+    JSR _DOS_DIR_ADVANCE                ; bump cursor (root: dec LEFT; subdir: chain)
     LDA DOS_ENTRY+DIR_NAME
     BNE @notend
     ; end-of-directory marker: no more entries
     STZ DOS_DIR_LEFT
     STZ DOS_DIR_LEFT+1
+    LDA #$02                            ; mark exhausted (harmless in root mode)
+    STA DOS_DIR_MODE
     SEC
     RTS
 @notend:
@@ -1811,10 +2109,7 @@ _FS_DIR_NEXT:
     LDA DOS_ENTRY+DIR_ATTR
     AND #ATTR_VOLUME
     BNE @loop                           ; volume label -> skip
-    CLC                                 ; valid entry
-    RTS
-@stop:
-    SEC
+    CLC                                 ; valid entry (file or drawer)
     RTS
 
 ; ----------------------------------------------------------------
@@ -1854,7 +2149,13 @@ _DOS_READ_DIR_ENTRY:
 ; ----------------------------------------------------------------
 ; _DOS_DIR_ADVANCE - advance the directory cursor by one entry
 ; ----------------------------------------------------------------
+; Root mode (DOS_DIR_MODE=0): step within the contiguous root region and
+; decrement DOS_DIR_LEFT. Subdir mode (1): step the sector within the cluster,
+; following the FAT chain at a cluster boundary; set mode 2 at chain EOC.
 _DOS_DIR_ADVANCE:
+    LDA DOS_DIR_MODE
+    BNE @sub
+    ; ---- root region ----
     INC DOS_DIR_IDX
     LDA DOS_DIR_IDX
     CMP #16                             ; 16 entries per 512-byte sector
@@ -1869,6 +2170,72 @@ _DOS_DIR_ADVANCE:
     DEC DOS_DIR_LEFT+1
 @declo:
     DEC DOS_DIR_LEFT
+    RTS
+@sub:
+    ; ---- subdirectory cluster chain ----
+    INC DOS_DIR_IDX
+    LDA DOS_DIR_IDX
+    CMP #16
+    BCC @sdone                          ; still inside this sector
+    STZ DOS_DIR_IDX
+    INC DOS_DIR_SIC                     ; next sector of the cluster
+    LDA DOS_DIR_SIC
+    CMP DOS_SEC_PER_CLUS
+    BCC @ssect                          ; still inside this cluster
+    ; cluster boundary: follow the FAT chain to the next cluster
+    LDA DOS_DIR_CLUS
+    STA DOS_ARG_CLUS
+    LDA DOS_DIR_CLUS+1
+    STA DOS_ARG_CLUS+1
+    JSR _DOS_READ_FAT_ENTRY             ; DOS_ARG_VAL = FAT[cluster]
+    BCS @sexhaust
+    LDA DOS_ARG_VAL+1                   ; end-of-chain ($FFF8..$FFFF)?
+    CMP #>FAT_EOC
+    BCC @schain
+    LDA DOS_ARG_VAL
+    CMP #<FAT_EOC
+    BCS @sexhaust
+@schain:
+    LDA DOS_ARG_VAL
+    STA DOS_DIR_CLUS
+    LDA DOS_ARG_VAL+1
+    STA DOS_DIR_CLUS+1
+    STZ DOS_DIR_SIC
+    JMP _DOS_DIRCLUS_TO_LBA             ; recompute DOS_DIR_LBA (tail)
+@ssect:
+    INC DOS_DIR_LBA                     ; clusters are contiguous sectors
+    BNE @sdone
+    INC DOS_DIR_LBA+1
+@sdone:
+    RTS
+@sexhaust:
+    LDA #$02                            ; chain ended: next _FS_DIR_NEXT stops
+    STA DOS_DIR_MODE
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_DIRCLUS_TO_LBA - DOS_DIR_CLUS -> DOS_DIR_LBA (first sector of cluster)
+; ----------------------------------------------------------------
+; Reuses _DOS_CLUS_TO_LBA's math but preserves the open-file cursor DOS_F_CLUS
+; (directory walks must not disturb a file's cluster pointer).
+_DOS_DIRCLUS_TO_LBA:
+    LDA DOS_F_CLUS
+    PHA
+    LDA DOS_F_CLUS+1
+    PHA
+    LDA DOS_DIR_CLUS
+    STA DOS_F_CLUS
+    LDA DOS_DIR_CLUS+1
+    STA DOS_F_CLUS+1
+    JSR _DOS_CLUS_TO_LBA                ; -> DOS_F_LBA
+    LDA DOS_F_LBA
+    STA DOS_DIR_LBA
+    LDA DOS_F_LBA+1
+    STA DOS_DIR_LBA+1
+    PLA
+    STA DOS_F_CLUS+1
+    PLA
+    STA DOS_F_CLUS
     RTS
 
 ; ================================================================
@@ -1890,12 +2257,18 @@ _FS_OPEN:
     STA DOS_PTR
     STX DOS_PTR+1
     STY DOS_W_MODE                      ; Y = mode: 0 = read, non-zero = write
+    JSR _DOS_RESOLVE_PATH               ; full path -> DOS_TGT_CLUS + bare name
+    BCS @err
+    LDA DOS_RES_NAMEPTR                 ; parse the bare 8.3 name
+    STA DOS_PTR
+    LDA DOS_RES_NAMEPTR+1
+    STA DOS_PTR+1
     JSR _DOS_PARSE_NAME83               ; -> DOS_NAME83 (11-byte 8.3)
     LDA DOS_W_MODE
     BEQ @read_mode
-    JMP _FS_OPEN_WRITE
+    JMP _FS_OPEN_WRITE                  ; write into DOS_TGT_CLUS
 @read_mode:
-    JSR _FS_DIR_FIRST                   ; mounts; first entry in DOS_ENTRY
+    JSR _FS_DIR_FIRST_TGT               ; scan DOS_TGT_CLUS; first entry in DOS_ENTRY
     BCS @err
 @check:
     LDY #$00
@@ -1906,7 +2279,11 @@ _FS_OPEN:
     INY
     CPY #11
     BNE @cmp
-    BRA @found                          ; all 11 bytes matched
+    ; name matched: a drawer ($10) is not a file -> keep scanning
+    LDA DOS_ENTRY+DIR_ATTR
+    AND #ATTR_DIRECTORY
+    BNE @nextent
+    BRA @found                          ; all 11 bytes matched, and it's a file
 @nextent:
     JSR _FS_DIR_NEXT
     BCC @check
@@ -2012,7 +2389,9 @@ _FS_CLOSE:
 _FS_OPEN_WRITE:
     JSR _FS_ENSURE_MOUNT
     BCS @err
-    JSR _DOS_DIR_FIND_FOR_WRITE         ; sets DOS_W_DIRENT_*; frees old chain if reusing
+    LDA #$20                            ; files carry the archive attribute
+    STA DOS_W_ATTR
+    JSR _DOS_DIR_FIND_FOR_WRITE         ; sets DOS_W_DIRENT_* in DOS_TGT_CLUS
     BCS @err                            ; directory full
     STZ DOS_W_FIRST_CLUS                ; no data clusters yet
     STZ DOS_W_FIRST_CLUS+1
@@ -2283,22 +2662,23 @@ _DOS_FREE_CHAIN:
 ; _DOS_DIR_FIND_FOR_WRITE - locate the directory slot for DOS_NAME83
 ; ----------------------------------------------------------------
 ; Reuses an existing entry of the same name (and frees its old cluster chain),
-; otherwise appends at the end-of-directory slot. Sets DOS_W_DIRENT_LBA/IDX.
-; Carry set if the directory is full. (Deleted slots are not reclaimed yet.)
+; otherwise appends at the end-of-directory slot. Scans the directory given by
+; DOS_TGT_CLUS (0 = root). A subdirectory that runs out of slots grows by a
+; cluster; the fixed root reports DIR FULL. Sets DOS_W_DIRENT_LBA/IDX. Carry set
+; if full / disk full. (Deleted slots are not reclaimed yet.)
 _DOS_DIR_FIND_FOR_WRITE:
-    LDA DOS_ROOT_START
-    STA DOS_DIR_LBA
-    LDA DOS_ROOT_START+1
-    STA DOS_DIR_LBA+1
-    STZ DOS_DIR_IDX
-    LDA DOS_ROOT_ENTS
-    STA DOS_DIR_LEFT
-    LDA DOS_ROOT_ENTS+1
-    STA DOS_DIR_LEFT+1
+    JSR _DOS_DIR_OPEN                   ; arm iterator on DOS_TGT_CLUS
 @loop:
+    LDA DOS_DIR_MODE
+    BEQ @rootcount                      ; root: bounded by the entry count
+    CMP #$02
+    BEQ @grow                           ; subdir chain ended with no free slot
+    BRA @read
+@rootcount:
     LDA DOS_DIR_LEFT
     ORA DOS_DIR_LEFT+1
-    BEQ @full
+    BEQ @full                           ; root is fixed -> DIR FULL
+@read:
     JSR _DOS_READ_DIR_ENTRY            ; DOS_ENTRY = slot at DOS_DIR_LBA/IDX
     BCS @full
     LDA DOS_ENTRY+DIR_NAME
@@ -2325,6 +2705,10 @@ _DOS_DIR_FIND_FOR_WRITE:
 @next:
     JSR _DOS_DIR_ADVANCE
     BRA @loop
+@grow:
+    JSR _DOS_DIR_GROW                   ; allocate+chain+zero a new dir cluster
+    BCS @full
+    ; fall through: cursor now at the new (zeroed) cluster's first slot
 @usehere:
     JSR _DOS_SAVE_DIRENT_POS
     CLC
@@ -2352,9 +2736,18 @@ _DOS_SAVE_DIRENT_POS:
 _FS_DELETE:
     STA DOS_PTR
     STX DOS_PTR+1
-    JSR _DOS_PARSE_NAME83
-    JSR _DOS_DIR_FIND_EXISTING          ; -> DOS_W_DIRENT_*, DOS_ENTRY
+    JSR _DOS_RESOLVE_PATH               ; path -> DOS_TGT_CLUS + bare name
     BCS @err
+    LDA DOS_RES_NAMEPTR
+    STA DOS_PTR
+    LDA DOS_RES_NAMEPTR+1
+    STA DOS_PTR+1
+    JSR _DOS_PARSE_NAME83
+    JSR _DOS_DIR_FIND_EXISTING          ; -> DOS_W_DIRENT_*, DOS_ENTRY (in DOS_TGT_CLUS)
+    BCS @err
+    LDA DOS_ENTRY+DIR_ATTR              ; refuse to ERASE a drawer (use DROPDRAWER)
+    AND #ATTR_DIRECTORY
+    BNE @err
     LDA DOS_ENTRY+DIR_CLUSTER_LO        ; free the cluster chain
     STA DOS_ARG_CLUS
     LDA DOS_ENTRY+DIR_CLUSTER_LO+1
@@ -2365,25 +2758,25 @@ _FS_DELETE:
     SEC
     RTS
 
-; _DOS_DIR_FIND_EXISTING - scan the root directory for DOS_NAME83.
-; Out: carry clear with DOS_W_DIRENT_* = the slot and DOS_ENTRY = the entry, or
-; carry set if not mounted / not found. (Shared by delete and rename.)
+; _DOS_DIR_FIND_EXISTING - scan the directory DOS_TGT_CLUS (0 = root) for
+; DOS_NAME83. Out: carry clear with DOS_W_DIRENT_* = the slot and DOS_ENTRY =
+; the entry, or carry set if not mounted / not found. (Shared by open/delete/
+; rename and the drawer verbs; the caller sets DOS_TGT_CLUS.)
 _DOS_DIR_FIND_EXISTING:
     JSR _FS_ENSURE_MOUNT
     BCS @no
-    LDA DOS_ROOT_START
-    STA DOS_DIR_LBA
-    LDA DOS_ROOT_START+1
-    STA DOS_DIR_LBA+1
-    STZ DOS_DIR_IDX
-    LDA DOS_ROOT_ENTS
-    STA DOS_DIR_LEFT
-    LDA DOS_ROOT_ENTS+1
-    STA DOS_DIR_LEFT+1
+    JSR _DOS_DIR_OPEN                   ; arm iterator on DOS_TGT_CLUS
 @loop:
+    LDA DOS_DIR_MODE
+    BEQ @rootcount
+    CMP #$02
+    BEQ @no                             ; subdir chain exhausted
+    BRA @read
+@rootcount:
     LDA DOS_DIR_LEFT
     ORA DOS_DIR_LEFT+1
     BEQ @no
+@read:
     JSR _DOS_READ_DIR_ENTRY
     BCS @no
     LDA DOS_ENTRY+DIR_NAME
@@ -2413,10 +2806,16 @@ _DOS_DIR_FIND_EXISTING:
 _FS_RENAME:
     STA DOS_PTR
     STX DOS_PTR+1
-    JSR _DOS_PARSE_NAME83               ; old -> DOS_NAME83
-    JSR _DOS_DIR_FIND_EXISTING          ; locate the slot
+    JSR _DOS_RESOLVE_PATH               ; old path -> DOS_TGT_CLUS + bare name
     BCS @err
-    LDA DOS_PTR2                        ; new -> DOS_NAME83
+    LDA DOS_RES_NAMEPTR
+    STA DOS_PTR
+    LDA DOS_RES_NAMEPTR+1
+    STA DOS_PTR+1
+    JSR _DOS_PARSE_NAME83               ; old -> DOS_NAME83
+    JSR _DOS_DIR_FIND_EXISTING          ; locate the slot (in DOS_TGT_CLUS)
+    BCS @err
+    LDA DOS_PTR2                        ; new (a plain name in the same dir) -> DOS_NAME83
     STA DOS_PTR
     LDA DOS_PTR2+1
     STA DOS_PTR+1
@@ -2515,7 +2914,7 @@ _DOS_DIR_WRITE_ENTRY:
     INY
     CPY #11
     BNE @nm
-    LDA #$20                            ; $0B attribute = archive
+    LDA DOS_W_ATTR                      ; $0B attribute (archive for files, $10 drawer)
     STA BLK_DATA
     LDX #14                             ; $0C-$19 reserved/time/date + cluster-hi = 0
 @z:
@@ -2542,6 +2941,309 @@ _DOS_DIR_WRITE_ENTRY:
     RTS
 @err:
     SEC
+    RTS
+
+; ================================================================
+; FILESYSTEM: DRAWERS (one-level subdirectories)
+; ================================================================
+
+; ----------------------------------------------------------------
+; _DOS_RESOLVE_PATH - map a path to (target dir cluster, bare 8.3 name)
+; ----------------------------------------------------------------
+; In: DOS_PTR -> a null-terminated name, optionally with one '/' separator:
+;   FILE        -> current dir (DOS_CWD_CLUS)
+;   /FILE       -> root
+;   DRAWER/FILE -> the named root-level drawer
+; Out: DOS_TGT_CLUS = directory cluster (0=root), DOS_RES_NAMEPTR -> the bare
+; name; carry set on error (two-level path, drawer not found / not a drawer).
+; For the DRAWER/ case the '/' in the buffer is overwritten with NUL (callers
+; pass writable buffers; ABI callers pass bare names and never hit this path).
+_DOS_RESOLVE_PATH:
+    JSR _FS_ENSURE_MOUNT
+    BCS @err
+    LDY #$00
+@find1:
+    LDA (DOS_PTR),Y                     ; first '/'?
+    BEQ @bare                           ; none -> bare name (current dir)
+    CMP #'/'
+    BEQ @gotslash
+    INY
+    BRA @find1
+@gotslash:
+    STY DOS_SH_NAMEIDX                  ; slash index
+    INY
+@find2:
+    LDA (DOS_PTR),Y                     ; reject a second '/' (one level only)
+    BEQ @oneslash
+    CMP #'/'
+    BEQ @err
+    INY
+    BRA @find2
+@oneslash:
+    LDA DOS_SH_NAMEIDX                  ; DOS_RES_NAMEPTR = DOS_PTR + slashidx + 1
+    SEC
+    ADC DOS_PTR
+    STA DOS_RES_NAMEPTR
+    LDA DOS_PTR+1
+    ADC #$00
+    STA DOS_RES_NAMEPTR+1
+    LDA DOS_SH_NAMEIDX
+    BNE @drawer                         ; non-zero slash index -> DRAWER/FILE
+    STZ DOS_TGT_CLUS                    ; leading '/' -> root
+    STZ DOS_TGT_CLUS+1
+    CLC
+    RTS
+@drawer:
+    LDY DOS_SH_NAMEIDX                  ; terminate the drawer name at the '/'
+    LDA #$00
+    STA (DOS_PTR),Y
+    JSR _DOS_PARSE_NAME83               ; drawer name -> DOS_NAME83
+    STZ DOS_TGT_CLUS                    ; look it up in root
+    STZ DOS_TGT_CLUS+1
+    JSR _DOS_DIR_FIND_EXISTING
+    BCS @err
+    LDA DOS_ENTRY+DIR_ATTR              ; must be a drawer
+    AND #ATTR_DIRECTORY
+    BEQ @err
+    LDA DOS_ENTRY+DIR_CLUSTER_LO
+    STA DOS_TGT_CLUS
+    LDA DOS_ENTRY+DIR_CLUSTER_LO+1
+    STA DOS_TGT_CLUS+1
+    CLC
+    RTS
+@bare:
+    LDA DOS_CWD_CLUS
+    STA DOS_TGT_CLUS
+    LDA DOS_CWD_CLUS+1
+    STA DOS_TGT_CLUS+1
+    LDA DOS_PTR
+    STA DOS_RES_NAMEPTR
+    LDA DOS_PTR+1
+    STA DOS_RES_NAMEPTR+1
+    CLC
+    RTS
+@err:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_DIR_GROW - extend the open subdirectory by one zeroed cluster
+; ----------------------------------------------------------------
+; Allocate a cluster, chain it onto DOS_DIR_CLUS (the chain's last cluster),
+; zero it, and point the iterator at its first slot. Carry set on disk-full.
+_DOS_DIR_GROW:
+    JSR _DOS_ALLOC_CLUSTER              ; DOS_ARG_CLUS = new (marked EOC)
+    BCS @full
+    LDA DOS_ARG_CLUS
+    STA DOS_NEW_CLUS
+    LDA DOS_ARG_CLUS+1
+    STA DOS_NEW_CLUS+1
+    LDA DOS_DIR_CLUS                    ; FAT[old last cluster] = new
+    STA DOS_ARG_CLUS
+    LDA DOS_DIR_CLUS+1
+    STA DOS_ARG_CLUS+1
+    LDA DOS_NEW_CLUS
+    STA DOS_ARG_VAL
+    LDA DOS_NEW_CLUS+1
+    STA DOS_ARG_VAL+1
+    JSR _DOS_WRITE_FAT_ENTRY
+    BCS @full
+    LDA DOS_NEW_CLUS                    ; iterator now in the new cluster
+    STA DOS_DIR_CLUS
+    LDA DOS_NEW_CLUS+1
+    STA DOS_DIR_CLUS+1
+    STZ DOS_DIR_SIC
+    STZ DOS_DIR_IDX
+    LDA #$01                            ; back to active subdir mode (was exhausted)
+    STA DOS_DIR_MODE
+    JSR _DOS_DIRCLUS_TO_LBA
+    JMP _DOS_ZERO_DIR_CLUSTER           ; zero it so unused slots read $00 (tail)
+@full:
+    SEC
+    RTS
+
+; _DOS_ZERO_DIR_CLUSTER - zero every sector of the cluster at DOS_DIR_LBA.
+_DOS_ZERO_DIR_CLUSTER:
+    LDA DOS_DIR_LBA
+    STA DOS_TMP2
+    LDA DOS_DIR_LBA+1
+    STA DOS_TMP2+1
+    LDX DOS_SEC_PER_CLUS
+    ; fall through
+
+; _DOS_ZERO_SECTORS - zero X consecutive sectors starting at LBA DOS_TMP2.
+_DOS_ZERO_SECTORS:
+    CPX #$00
+    BEQ @done
+@sec:
+    PHX
+    LDA DOS_TMP2
+    STA BLK_LBA                         ; resets the data-port index to 0
+    LDA DOS_TMP2+1
+    STA BLK_LBA+1
+    LDA #<512
+    STA DOS_TMP
+    LDA #>512
+    STA DOS_TMP+1
+    JSR _DOS_BLKZERO_N
+    LDA #BLK_CMD_WRITE
+    STA BLK_CMD
+    LDA BLK_STATUS
+    BNE @err
+    INC DOS_TMP2
+    BNE @n
+    INC DOS_TMP2+1
+@n:
+    PLX
+    DEX
+    BNE @sec
+@done:
+    CLC
+    RTS
+@err:
+    PLX
+    SEC
+    RTS
+
+; _DOS_BLKZERO_N - write DOS_TMP (16-bit) zero bytes to the BLK_DATA port.
+_DOS_BLKZERO_N:
+@l:
+    LDA DOS_TMP
+    ORA DOS_TMP+1
+    BEQ @done
+    STZ BLK_DATA
+    LDA DOS_TMP
+    BNE @declo
+    DEC DOS_TMP+1
+@declo:
+    DEC DOS_TMP
+    BRA @l
+@done:
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_INIT_DRAWER_CLUSTER - write '.'/'..' into a fresh drawer cluster
+; ----------------------------------------------------------------
+; In: DOS_DIR_CLUS = the drawer's first cluster, DOS_DIR_LBA = its first sector.
+; Fills the first sector with the '.' (self) and '..' (root) entries then zeros;
+; zeros any remaining sectors of the cluster. Carry set on a write error.
+_DOS_INIT_DRAWER_CLUSTER:
+    LDA DOS_DIR_LBA
+    STA BLK_LBA
+    LDA DOS_DIR_LBA+1
+    STA BLK_LBA+1
+    ; '.' entry: name '.'+10 spaces, attr $10, cluster = self, size 0
+    LDA #'.'
+    STA BLK_DATA
+    LDX #10
+@d1:
+    LDA #' '
+    STA BLK_DATA
+    DEX
+    BNE @d1
+    LDA #ATTR_DIRECTORY
+    STA BLK_DATA
+    LDX #14                             ; $0C-$19 (incl cluster-hi) = 0
+@d1z:
+    STZ BLK_DATA
+    DEX
+    BNE @d1z
+    LDA DOS_DIR_CLUS
+    STA BLK_DATA
+    LDA DOS_DIR_CLUS+1
+    STA BLK_DATA
+    LDX #4                              ; size = 0
+@d1s:
+    STZ BLK_DATA
+    DEX
+    BNE @d1s
+    ; '..' entry: name '..'+9 spaces, attr $10, cluster = 0 (root), size 0
+    LDA #'.'
+    STA BLK_DATA
+    LDA #'.'
+    STA BLK_DATA
+    LDX #9
+@d2:
+    LDA #' '
+    STA BLK_DATA
+    DEX
+    BNE @d2
+    LDA #ATTR_DIRECTORY
+    STA BLK_DATA
+    LDX #14
+@d2z:
+    STZ BLK_DATA
+    DEX
+    BNE @d2z
+    STZ BLK_DATA                        ; cluster = 0
+    STZ BLK_DATA
+    LDX #4
+@d2s:
+    STZ BLK_DATA
+    DEX
+    BNE @d2s
+    LDA #<448                           ; zero the rest of the sector (512-64)
+    STA DOS_TMP
+    LDA #>448
+    STA DOS_TMP+1
+    JSR _DOS_BLKZERO_N
+    LDA #BLK_CMD_WRITE
+    STA BLK_CMD
+    LDA BLK_STATUS
+    BNE @err
+    LDA DOS_SEC_PER_CLUS                ; zero any remaining sectors of the cluster
+    CMP #2
+    BCC @done
+    LDA DOS_DIR_LBA
+    CLC
+    ADC #1
+    STA DOS_TMP2
+    LDA DOS_DIR_LBA+1
+    ADC #0
+    STA DOS_TMP2+1
+    LDX DOS_SEC_PER_CLUS
+    DEX
+    JMP _DOS_ZERO_SECTORS               ; tail (carry reflects result)
+@done:
+    CLC
+    RTS
+@err:
+    SEC
+    RTS
+
+; _DOS_DRAWER_EMPTY - is the drawer in DOS_TGT_CLUS empty (only '.'/'..')?
+; Out: carry clear = empty, carry set = has a live entry.
+_DOS_DRAWER_EMPTY:
+    JSR _FS_DIR_FIRST_TGT
+    BCS @empty
+@chk:
+    LDA DOS_ENTRY+DIR_NAME              ; '.' and '..' both start with '.'
+    CMP #'.'                            ; (8.3 names can't start with '.')
+    BNE @notempty
+    JSR _FS_DIR_NEXT
+    BCC @chk
+@empty:
+    CLC
+    RTS
+@notempty:
+    SEC
+    RTS
+
+; _DOS_SET_CWD_NAME - copy DOS_NAME83's base (to first space, max 8) to the
+; prompt display name DOS_CWD_NAME (null-terminated).
+_DOS_SET_CWD_NAME:
+    LDX #$00
+@c:
+    LDA DOS_NAME83,X
+    CMP #' '
+    BEQ @end
+    STA DOS_CWD_NAME,X
+    INX
+    CPX #8
+    BNE @c
+@end:
+    LDA #$00
+    STA DOS_CWD_NAME,X
     RTS
 
 ; ================================================================

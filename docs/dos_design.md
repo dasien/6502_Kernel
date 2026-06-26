@@ -25,7 +25,21 @@ RTC; only a ~60 Hz timer IRQ). `BANKS` lists the ROM modules. Decimal conversion
 promoted to the BIOS ABI (kernel v3.12): `K_PRINT_DEC` ($FF27, 32-bit → decimal,
 right-justifiable) and `K_PARSE_DEC` ($FF2A, decimal → 16-bit). The monitor's `H:`/`D:`
 and the DOS (`CATALOG` sizes, `DISKFREE`) all share these — one implementation each.
-Next: drawers / 80-column.
+
+**Drawers — one level of subdirectories (DOS v1.2, Phase 1).** `NEWDRAWER name`,
+`OPEN name`, `CLOSE`, `DROPDRAWER name` (empty only). A current-directory pointer
+(`DOS_CWD_CLUS`, 0 = root) plus a unified directory iterator that walks either the
+fixed root region or a subdirectory's **cluster chain** (growable: a full drawer
+directory chains another cluster). Path resolution (`FILE` = current dir,
+`DRAWER/FILE` = a named root drawer, `/FILE` = root) is wired into `_FS_OPEN`/
+`_FS_DELETE`/`_FS_RENAME`, so the file verbs act in the current drawer (and bare
+names keep the `FS_OPEN` ABI working for launched programs). `CATALOG` tags drawers
+`<D>` and hides `.`/`..`; the prompt shows the open drawer (`UTILS]`). Drawers are
+created at runtime (the `mkfat16`/test image builder is root-only). One level only:
+drawers can't nest. Phase 2 (next): `/` cross-drawer `COPY` + a new `MOVE` command.
+Note: this surfaced and fixed a latent overlap where `DOS_TMP2` aliased
+`DOS_ENTRY+0` (harmless until subdir enumeration interleaved a FAT read with entry
+inspection). 80-column display is the remaining DOS-arc item after drawers.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
