@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.11
+; Version:      3.12
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -199,6 +199,12 @@
 ;                   command.
 ; 2026-06-25  v3.11 Registered FIG-Forth 6502 as module bank 3 ("FORTH") in
 ;                   MODULE_DIR. Launched by name from the DOS; listed by BANKS.
+; 2026-06-26  v3.12 Promoted decimal conversion to the BIOS ABI: K_PRINT_DEC
+;                   ($FF27, 32-bit value -> decimal, right-justifiable) and
+;                   K_PARSE_DEC ($FF2A, decimal string -> 16-bit). The monitor
+;                   H:/D: now share these; the DOS uses K_PRINT_DEC for CATALOG
+;                   sizes and DISKFREE. PARSE_DECIMAL_VALUE no longer prints (it
+;                   returns an error code); H: dropped its private double-dabble.
 ;
 ; ================================================================
 
@@ -240,6 +246,10 @@ DEC_TEMP_HI        = $36           ; Decimal conversion temporary high byte
 DEC_DIGIT_IDX      = $37           ; Decimal digit index/counter
 DEC_RESULT_LO      = $38           ; Decimal conversion result low byte
 DEC_RESULT_HI      = $39           ; Decimal conversion result high byte
+; PRINT_DEC (32-bit decimal) reuses the same $35-$39 workspace (it never runs
+; concurrently with the H:/D: parse/print): $35-$38 = value, $39 = digit count.
+DEC32_VAL          = $35           ; 4-byte little-endian value ($35-$38)
+DEC32_CNT          = $39           ; digit count
 
 ; ================================================================
 ; MONITOR VARIABLES
@@ -2054,9 +2064,9 @@ CMD_DECIMAL_TO_HEX:
     ; Initialize digit counter
     STZ DEC_DIGIT_IDX
 
-    ; Call decimal parser
+    ; Call decimal parser (now a pure primitive: carry set = error, A = code)
     JSR PARSE_DECIMAL_VALUE
-    BCS CMD_DEC_ERROR           ; If error, error flag already set
+    BCS CMD_DEC_ERROR
 
     ; Success - print result
     LDA #'$'
@@ -2073,7 +2083,42 @@ CMD_DECIMAL_TO_HEX:
     RTS
 
 CMD_DEC_ERROR:
-    ; Error flag and message already set by parser
+    ; A = error code (1 = invalid digit -> VALUE?, 2 = overflow -> RANGE?). The
+    ; parser no longer prints; the command maps the code to a monitor message.
+    PHA
+    LDA #$01
+    STA MON_ERROR_FLAG
+    PLA
+    CMP #$02
+    BEQ @range
+    JMP PRINT_VALUE_ERROR       ; tail
+@range:
+    JMP PRINT_RANGE_ERROR       ; tail
+
+; ================================================================
+; PARSE_DEC_ABI - decimal string -> 16-bit value (ABI $FF2A)
+; ================================================================
+; In:  X = index into MON_CMDBUF where the decimal digits start.
+; Out: MON_CURRADDR_LO/HI = the 16-bit value; X = index past the last digit;
+;      carry clear = ok, carry set = error with A = code (1 = invalid/no digits,
+;      2 = overflow > 65535). Prints nothing - the caller decides how to react.
+PARSE_DEC_ABI:
+    STX MON_PARSE_PTR
+    STZ DEC_RESULT_LO
+    STZ DEC_RESULT_HI
+    STZ DEC_DIGIT_IDX
+    JSR PARSE_DECIMAL_VALUE
+    BCS @err
+    LDA DEC_RESULT_LO
+    STA MON_CURRADDR_LO
+    LDA DEC_RESULT_HI
+    STA MON_CURRADDR_HI
+    LDX MON_PARSE_PTR
+    CLC
+    RTS
+@err:
+    LDX MON_PARSE_PTR           ; A = error code preserved from the parser
+    SEC
     RTS
 
 ; ================================================================
@@ -2130,10 +2175,10 @@ PARSE_DEC_NO_CARRY:
     BRA PARSE_DEC_LOOP
 
 PARSE_DEC_INVALID:
-    ; Invalid character - this is a value error
+    ; Invalid character. No printing here (this is an ABI primitive); return a
+    ; value-error code so the caller can react. PARSE_ERR_VALUE = 1.
+    STX MON_PARSE_PTR
     LDA #$01
-    STA MON_ERROR_FLAG
-    JSR PRINT_VALUE_ERROR       ; Use standard error printer
     SEC
     RTS
 
@@ -2141,11 +2186,10 @@ PARSE_DEC_OVERFLOW:
     ; Reached from the MULTIPLY_BY_10 overflow path with the digit still pushed.
     PLA                         ; discard the pushed digit to balance the stack
 PARSE_DEC_RANGE_ERR:
-    ; Overflow detected - this is a range error. Entered directly (no PLA) from
-    ; the high-byte-carry path, where the digit has already been pulled.
-    LDA #$01
-    STA MON_ERROR_FLAG
-    JSR PRINT_RANGE_ERROR       ; Use standard error printer
+    ; Overflow detected. Entered directly (no PLA) from the high-byte-carry path,
+    ; where the digit has already been pulled. PARSE_ERR_RANGE = 2.
+    STX MON_PARSE_PTR
+    LDA #$02
     SEC
     RTS
 
@@ -2159,10 +2203,9 @@ PARSE_DEC_DONE:
     RTS
 
 PARSE_DEC_NO_DIGITS:
-    ; No digits found - value error
+    ; No digits found - value error (code 1)
+    STX MON_PARSE_PTR
     LDA #$01
-    STA MON_ERROR_FLAG
-    JSR PRINT_VALUE_ERROR
     SEC
     RTS
 
@@ -2217,106 +2260,93 @@ MULT10_OVERFLOW:
 ; HEX TO DECIMAL CONVERSION COMMAND
 ; ================================================================
 
-; Main conversion routine
+; Main conversion routine (the monitor's H: command)
 ; Input: MON_CURRADDR_HI/LO = 16-bit value to convert
 ; Output: Decimal value printed to screen as #NNNNN
-; Modifies: A, X, Y, DEC_TEMP_*, DEC_RESULT_*, DEC_DIGIT_IDX
-; Method: binary -> BCD by the "double-dabble" shift-and-add algorithm, using
-;         the CPU's decimal mode so each doubling carries between BCD digits
-;         automatically. Fixed 16 iterations regardless of magnitude (the old
-;         repeated-subtraction DIVIDE_BY_10 took up to ~7300 passes for $FFFF).
+; Modifies: A, X, Y, the $35-$39 decimal workspace
+; Now a thin wrapper over the shared kernel PRINT_DEC ($FF27): build a 32-bit
+; value (16-bit zero-extended) and print it with no field padding.
 CMD_HEX_TO_DECIMAL:
-    LDA #'#'                    ; All results are prefixed with '#'
+    LDA #'#'                    ; all results are prefixed with '#'
     JSR PRINT_CHAR
-
-    ; Special case: value is zero -> print "0"
-    LDA MON_CURRADDR_LO
-    ORA MON_CURRADDR_HI
-    BNE @nonzero
-    LDA #'0'
-    JSR PRINT_CHAR
-    JMP @done
-
-@nonzero:
-    ; Copy the value into the binary shift register
-    LDA MON_CURRADDR_LO
-    STA DEC_TEMP_LO
+    LDA MON_CURRADDR_LO         ; 4-byte little-endian value in the workspace
+    STA DEC32_VAL
     LDA MON_CURRADDR_HI
-    STA DEC_TEMP_HI
+    STA DEC32_VAL+1
+    STZ DEC32_VAL+2
+    STZ DEC32_VAL+3
+    LDA #<DEC32_VAL             ; pointer = the workspace itself
+    LDX #>DEC32_VAL
+    LDY #$00                    ; no field padding
+    JSR PRINT_DEC
+    JMP PRINT_NEWLINE           ; tail: newline after result
 
-    ; Clear the 3-byte packed-BCD accumulator (holds up to 5 digits):
-    ;   DEC_RESULT_LO = digits 1-2 (units/tens)
-    ;   DEC_RESULT_HI = digits 3-4 (hundreds/thousands)
-    ;   DEC_DIGIT_IDX = digit 5    (ten-thousands)
-    STZ DEC_RESULT_LO
-    STZ DEC_RESULT_HI
-    STZ DEC_DIGIT_IDX
-
-    ; Double-dabble: for each of the 16 bits (MSB first), shift it out of the
-    ; binary value into carry, then double the BCD accumulator with that carry.
-    ; Decimal mode makes ADC perform the per-digit BCD correction.
-    LDX #16
-    SED
-@bit:
-    ASL DEC_TEMP_LO             ; carry = next-highest bit of the value
-    ROL DEC_TEMP_HI
-    LDA DEC_RESULT_LO           ; BCD = BCD + BCD + carry
-    ADC DEC_RESULT_LO
-    STA DEC_RESULT_LO
-    LDA DEC_RESULT_HI
-    ADC DEC_RESULT_HI
-    STA DEC_RESULT_HI
-    LDA DEC_DIGIT_IDX
-    ADC DEC_DIGIT_IDX
-    STA DEC_DIGIT_IDX
-    DEX
-    BNE @bit
-    CLD
-
-    ; Print the five digits MSB-first, suppressing leading zeros. Y = 0 while
-    ; still in the leading zeros, 1 once a significant digit has been printed.
-    LDY #0
-    LDA DEC_DIGIT_IDX           ; digit 5 (ten-thousands)
-    AND #$0F
-    JSR PRINT_DEC_DIGIT
-    LDA DEC_RESULT_HI           ; digit 4 (thousands)
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    JSR PRINT_DEC_DIGIT
-    LDA DEC_RESULT_HI           ; digit 3 (hundreds)
-    AND #$0F
-    JSR PRINT_DEC_DIGIT
-    LDA DEC_RESULT_LO           ; digit 2 (tens)
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    JSR PRINT_DEC_DIGIT
-    LDA DEC_RESULT_LO           ; digit 1 (units)
-    AND #$0F
-    JSR PRINT_DEC_DIGIT
-
-@done:
-    JSR PRINT_NEWLINE           ; Print newline after result
+; ================================================================
+; PRINT_DEC - print a 32-bit value in decimal, right-justified (ABI $FF27)
+; ================================================================
+; In:  A/X = pointer to a 4-byte little-endian value
+;      Y   = minimum field width (0 = none; pad with leading spaces)
+; Out: the decimal number is printed (leading zeros suppressed; 0 prints "0")
+; Modifies: A, X, Y, JUMP_VECTOR, and the $35-$39 decimal workspace.
+; Method: bit-serial divide-by-10, pushing digits onto the stack, then padding
+;         to the field width and emitting them high-to-low.
+PRINT_DEC:
+    STA JUMP_VECTOR             ; source pointer for the copy
+    STX JUMP_VECTOR+1
+    PHY                         ; save the field width
+    LDY #$00
+@cp:
+    LDA (JUMP_VECTOR),Y         ; copy the value into the workspace (destructive divide)
+    STA DEC32_VAL,Y
+    INY
+    CPY #$04
+    BNE @cp
+    PLY                         ; restore the field width
+    STZ DEC32_CNT
+@gen:
+    JSR DIV10_32                ; A = next decimal digit (low first); value /= 10
+    ORA #'0'
+    PHA
+    INC DEC32_CNT
+    LDA DEC32_VAL               ; quotient == 0 -> done generating
+    ORA DEC32_VAL+1
+    ORA DEC32_VAL+2
+    ORA DEC32_VAL+3
+    BNE @gen
+@pad:
+    CPY DEC32_CNT               ; pad with spaces while width > digit count
+    BCC @emit
+    BEQ @emit
+    LDA #ASCII_SPACE
+    JSR PRINT_CHAR              ; preserves X and Y
+    DEY
+    BRA @pad
+@emit:
+    PLA                         ; emit the digits high-to-low
+    JSR PRINT_CHAR
+    DEC DEC32_CNT
+    BNE @emit
     RTS
 
-; Print one decimal digit with leading-zero suppression.
-; In:  A = digit value (0-9); Y = 0 while leading zeros are still being skipped.
-; Out: digit printed unless it is a leading zero; Y set to 1 once any digit has
-;      been printed. Relies on PRINT_CHAR preserving Y across calls.
-PRINT_DEC_DIGIT:
-    TAX                         ; remember the digit (sets Z if it is zero)
-    BNE @emit                   ; nonzero digit -> always print
-    CPY #0
-    BEQ @skip                   ; still suppressing leading zeros -> skip it
-@emit:
-    TXA
-    ORA #'0'                    ; digit 0-9 -> ASCII '0'-'9'
-    JSR PRINT_CHAR
-    LDY #1                      ; a significant digit has now been printed
-@skip:
+; DIV10_32 - divide DEC32_VAL (32-bit) by 10 in place; remainder -> A. Clobbers X.
+; Bit-serial long division: shift the dividend left 32 times into the remainder;
+; whenever the remainder >= 10, subtract 10 and set the freed low (quotient) bit.
+DIV10_32:
+    LDA #$00                    ; remainder
+    LDX #32
+@l:
+    ASL DEC32_VAL
+    ROL DEC32_VAL+1
+    ROL DEC32_VAL+2
+    ROL DEC32_VAL+3
+    ROL                         ; remainder = (remainder << 1) | carry
+    CMP #10
+    BCC @s
+    SBC #10                     ; remainder -= 10 (carry set by CMP)
+    INC DEC32_VAL               ; set the quotient's low bit (was 0)
+@s:
+    DEX
+    BNE @l
     RTS
 
 
@@ -3408,6 +3438,8 @@ K_PRINT_HEX_BYTE:JMP PRINT_HEX_BYTE     ; $FF1B
 K_MON_ENTRY:     JMP MONITOR_MAIN       ; $FF1E - DOS launches the monitor here
 K_LAUNCH_BY_NAME:JMP LAUNCH_BY_NAME     ; $FF21 - DOS launches a module by name
 K_LIST_MODULES:  JMP LIST_MODULES       ; $FF24 - print the module catalog (BANKS)
+K_PRINT_DEC:     JMP PRINT_DEC          ; $FF27 - print a 32-bit value in decimal
+K_PARSE_DEC:     JMP PARSE_DEC_ABI      ; $FF2A - parse a decimal string from MON_CMDBUF
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================
