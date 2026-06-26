@@ -41,6 +41,7 @@ public:
         testDosShell();
         testDosFileVerbs();
         testDosTransfer();
+        testDosUtils();
         testRunDiskProgram();
         testRunOverride();
         testRunNotFound();
@@ -229,6 +230,54 @@ public:
         // EXPORT of a missing file fails before any host I/O.
         sendCommand("EXPORT NOPE.TXT");
         verifyResponse("FILE NOT FOUND", "EXPORT of a missing file reports not found");
+    }
+
+    // DOS utility batch: VER, MEM, FREE, COPY, wildcard CATALOG, MORE (incl. its
+    // pager). Runs at the DOS prompt.
+    void testDosUtils() {
+        std::string greet = "HOWDY\r\n";
+        std::string note  = "NOTE\r\n";
+        std::string longtxt;
+        for (int i = 1; i <= 25; ++i) longtxt += "L" + std::to_string(i) + "\r\n";
+        mountDisk({{"GREET.TXT", std::vector<uint8_t>(greet.begin(), greet.end())},
+                   {"ZEBRA.DAT", std::vector<uint8_t>(30, 'Z')},
+                   {"NOTE.TXT",  std::vector<uint8_t>(note.begin(), note.end())},
+                   {"LONG.TXT",  std::vector<uint8_t>(longtxt.begin(), longtxt.end())}});
+
+        // VERSION / MEMMAP are static info commands.
+        sendCommand("VERSION");
+        verifyResponse("MFC/OS 1.1", "VERSION reports the OS version from DOS_VERSION");
+        sendCommand("MEMMAP");
+        verifyResponse("USER RAM", "MEMMAP shows the memory map");
+
+        // DISKFREE scans the FAT and reports free space (decimal bytes + KB).
+        sendCommand("DISKFREE", 400000);
+        verifyResponse("DISK FREE", "DISKFREE reports free space");
+
+        // COPY duplicates a file (read into RAM, write back out).
+        sendCommand("COPY GREET.TXT,COPYOF.TXT", 400000);
+        verifyResponse("COPIED", "COPY reports COPIED");
+        sendCommand("TYPE COPYOF.TXT");
+        verifyResponse("HOWDY", "COPY's destination has the source's contents");
+
+        // Wildcard CATALOG: *.TXT lists the .TXT files but not ZEBRA.DAT.
+        sendCommand("CLS");
+        sendCommand("CAT *.TXT");
+        verifyResponse("GREET.TXT", "Wildcard CAT lists matching .TXT files");
+        verifyAbsent("ZEBRA", "Wildcard CAT excludes non-matching files");
+
+        // MORE on a short file prints it (no pager pause needed).
+        sendCommand("CLS");
+        sendCommand("MORE NOTE.TXT");
+        verifyResponse("NOTE", "MORE prints a short file");
+
+        // MORE on a 25-line file pauses once (--MORE--); a queued space resumes it
+        // through to the last line. Queue the command, then the space, then run.
+        sendCommand("CLS");
+        for (char c : std::string("MORE LONG.TXT\r")) computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress(' ');   // resume past the single page break
+        computer.run(3000000);
+        verifyResponse("L25", "MORE pages through a long file after a keypress");
     }
 
     // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).

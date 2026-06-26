@@ -45,6 +45,8 @@ K_PRINT_HEX_BYTE = $FF1B                ; A -> two hex digits
 K_MON_ENTRY      = $FF1E                ; launch the monitor (returns via Q -> DOS_WARM)
 K_LAUNCH_BY_NAME = $FF21                ; A/X=name -> launch a ROM module, or carry set
 K_LIST_MODULES   = $FF24                ; print the module catalog (BANKS command)
+K_GET_KEYSTROKE  = $FF09                ; non-blocking key read: C set + A = key
+K_PRINT_DEC      = $FF27                ; A/X = ptr to 4-byte LE value, Y = field width
 
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
@@ -131,6 +133,8 @@ DOS_NEW_CLUS     = $035F                ; word: freshly allocated cluster (chain
 DOS_FREE_NEXT    = $0361                ; word: next-cluster stash (free-chain walk)
 DOS_SH_NAMEIDX   = $0363                ; shell: index of an argument name in MON_CMDBUF
 DOS_SH_HASADDR   = $0364                ; shell: LOAD given an explicit address?
+DOS_SH_NAMEIDX2  = $0365                ; shell: second arg index (COPY destination)
+DOS_FREE_CNT     = $0366                ; word: FREE free-cluster accumulator ($0366-$0367)
 
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
@@ -155,8 +159,16 @@ DIRENT_DELETED   = $E5                  ; name[0]: deleted entry
 ; mapped at $9000, and so a future loader can sanity-check the image.
 DOS_SIGNATURE:
     .BYTE "MFC-DOS", $00
+; DOS version (major, minor). History:
+;   0.1  initial resident ROM stub (phase 2.1)
+;   0.2  FAT16 read: mount, directory, file read (phase 2)
+;   0.3  FAT16 write + erase (phase 3)
+;   1.0  the DOS shell: boot-into-MFC/OS, file verbs, IMPORT/EXPORT,
+;        launch-by-name (phase 4)
+;   1.1  utility commands (COPY, DISKFREE, MEMMAP, VERSION, MORE, wildcard
+;        CATALOG) + shared decimal conversion via the kernel ABI
 DOS_VERSION:
-    .BYTE $00, $01                      ; version 0.1 (major, minor)
+    .BYTE $01, $01                      ; version 1.1 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -286,6 +298,36 @@ _DOS_DISPATCH:
     BCS @n11
     JMP _DOS_DO_EXPORT
 @n11:
+    LDA #<KW_COPY
+    LDX #>KW_COPY
+    JSR _DOS_VERB_MATCH
+    BCS @n12
+    JMP _DOS_DO_COPY
+@n12:
+    LDA #<KW_DISKFREE
+    LDX #>KW_DISKFREE
+    JSR _DOS_VERB_MATCH
+    BCS @n13
+    JMP _DOS_DO_FREE
+@n13:
+    LDA #<KW_MORE
+    LDX #>KW_MORE
+    JSR _DOS_VERB_MATCH
+    BCS @n14
+    JMP _DOS_DO_MORE
+@n14:
+    LDA #<KW_VERSION
+    LDX #>KW_VERSION
+    JSR _DOS_VERB_MATCH
+    BCS @n15
+    JMP _DOS_DO_VER
+@n15:
+    LDA #<KW_MEMMAP
+    LDX #>KW_MEMMAP
+    JSR _DOS_VERB_MATCH
+    BCS @n16
+    JMP _DOS_DO_MEM
+@n16:
     ; No built-in command matched - launch a program by name. A leading '&'
     ; forces the disk path (skip the ROM-module check); otherwise modules win.
     LDX #$00                            ; name starts at offset 0...
@@ -385,14 +427,48 @@ _DOS_DO_MON:
     JMP K_MON_ENTRY
 
 ; ----------------------------------------------------------------
-; _DOS_DO_CAT - list files with sizes
+; _DOS_DO_CAT - list files with sizes; optional wildcard pattern
 ; ----------------------------------------------------------------
+; "CATALOG" / "CAT" lists everything; "CAT *.TXT" / "CAT AB?.*" filters by an
+; 8.3 wildcard ('*' = rest of field, '?' = any one char). On entry Y = index of
+; the delimiter after the verb (from _DOS_VERB_MATCH).
 _DOS_DO_CAT:
+    JSR _DOS_ARGSTART                   ; Y -> first arg char (carry set = no arg)
+    BCC @havearg
+    LDX #$00                            ; no pattern: match-all template ("???????????")
+@allf:
+    LDA #'?'
+    STA DOS_NAME83,X
+    INX
+    CPX #11
+    BNE @allf
+    BRA @scan
+@havearg:
+    LDX MON_CMDLEN                      ; null-terminate the pattern at end-of-line
+    LDA #$00
+    STA MON_CMDBUF,X
+    TYA                                 ; DOS_PTR = &MON_CMDBUF[Y]
+    CLC
+    ADC #<MON_CMDBUF
+    STA DOS_PTR
+    LDA #>MON_CMDBUF
+    ADC #$00
+    STA DOS_PTR+1
+    JSR _DOS_PARSE_PATTERN83            ; -> DOS_NAME83 (template, '?' = wildcard)
+@scan:
     JSR K_PRINT_NEWLINE
     JSR _FS_DIR_FIRST
     BCS @none
+    LDA #<MSG_DOS_CATHDR                ; column header
+    STA MON_MSG_PTR_LO
+    LDA #>MSG_DOS_CATHDR
+    STA MON_MSG_PTR_HI
+    JSR K_PRINT_MESSAGE
 @loop:
+    JSR _DOS_NAME_MATCH                 ; DOS_NAME83 template vs DOS_ENTRY
+    BCS @skip
     JSR _DOS_PRINT_ENTRY
+@skip:
     JSR _FS_DIR_NEXT
     BCC @loop
     RTS
@@ -403,44 +479,58 @@ _DOS_DO_CAT:
     STA MON_MSG_PTR_HI
     JMP K_PRINT_MESSAGE
 
-; Print one DOS_ENTRY as "NAME.EXT  <8 hex size>" + newline.
+; Print one DOS_ENTRY as "NAME.EXT" (left, padded to col 13) + decimal byte size
+; (right-justified in an 8-col field) + newline. Y counts characters printed so
+; far on the line (K_PRINT_CHAR preserves X and Y).
 _DOS_PRINT_ENTRY:
+    LDY #$00                            ; chars printed on this line
     LDX #$00                            ; base name (stop at first space)
 @base:
     LDA DOS_ENTRY,X
     CMP #ASCII_SPACE
     BEQ @ext
     JSR K_PRINT_CHAR
+    INY
     INX
     CPX #$08
     BNE @base
 @ext:
     LDA DOS_ENTRY+8                     ; extension?
     CMP #ASCII_SPACE
-    BEQ @size
+    BEQ @pad
     LDA #'.'
     JSR K_PRINT_CHAR
+    INY
     LDX #$08
 @extloop:
     LDA DOS_ENTRY,X
     CMP #ASCII_SPACE
-    BEQ @size
+    BEQ @pad
     JSR K_PRINT_CHAR
+    INY
     INX
     CPX #$0B
     BNE @extloop
-@size:
+@pad:
+    CPY #13                             ; pad the name field to column 13
+    BCS @size
     LDA #ASCII_SPACE
     JSR K_PRINT_CHAR
-    JSR K_PRINT_CHAR
-    LDA DOS_ENTRY+$1F                   ; 32-bit size, high byte first
-    JSR K_PRINT_HEX_BYTE
-    LDA DOS_ENTRY+$1E
-    JSR K_PRINT_HEX_BYTE
+    INY
+    BRA @pad
+@size:
+    LDA DOS_ENTRY+$1C                   ; copy the 32-bit size to DOS_W_SIZE
+    STA DOS_W_SIZE
     LDA DOS_ENTRY+$1D
-    JSR K_PRINT_HEX_BYTE
-    LDA DOS_ENTRY+$1C
-    JSR K_PRINT_HEX_BYTE
+    STA DOS_W_SIZE+1
+    LDA DOS_ENTRY+$1E
+    STA DOS_W_SIZE+2
+    LDA DOS_ENTRY+$1F
+    STA DOS_W_SIZE+3
+    LDA #<DOS_W_SIZE                    ; print size, right-justified in 8 columns
+    LDX #>DOS_W_SIZE
+    LDY #$08
+    JSR K_PRINT_DEC
     JMP K_PRINT_NEWLINE
 
 ; ----------------------------------------------------------------
@@ -854,6 +944,460 @@ _DOS_DO_EXPORT:
     JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
+; _DOS_DO_VER - print the OS version, read from the DOS_VERSION bytes
+; ----------------------------------------------------------------
+; "MFC/OS <major>.<minor>", with major/minor taken from DOS_VERSION (the single
+; source of truth) and formatted via the shared decimal printer K_PRINT_DEC.
+_DOS_DO_VER:
+    JSR K_PRINT_NEWLINE
+    LDA #<MSG_DOS_VER                   ; "MFC/OS "
+    LDX #>MSG_DOS_VER
+    JSR _DOS_PMSG
+    LDA DOS_VERSION                     ; major
+    JSR _DOS_PRINT_BYTE_DEC
+    LDA #'.'
+    JSR K_PRINT_CHAR
+    LDA DOS_VERSION+1                   ; minor
+    JSR _DOS_PRINT_BYTE_DEC
+    JMP K_PRINT_NEWLINE
+
+; _DOS_PRINT_BYTE_DEC - print the byte in A as decimal (via K_PRINT_DEC).
+_DOS_PRINT_BYTE_DEC:
+    STA DOS_W_SIZE                      ; zero-extend the byte to 32 bits
+    STZ DOS_W_SIZE+1
+    STZ DOS_W_SIZE+2
+    STZ DOS_W_SIZE+3
+    LDA #<DOS_W_SIZE
+    LDX #>DOS_W_SIZE
+    LDY #$00                            ; no field padding
+    JMP K_PRINT_DEC                     ; tail
+
+; ----------------------------------------------------------------
+; _DOS_DO_MEM - print the memory map
+; ----------------------------------------------------------------
+_DOS_DO_MEM:
+    LDA #<MSG_DOS_MEM
+    LDX #>MSG_DOS_MEM
+    JMP _DOS_PERR
+
+; ----------------------------------------------------------------
+; _DOS_DO_FREE - DISKFREE: report free disk space in bytes and KB
+; ----------------------------------------------------------------
+; Scans the FAT a sector at a time (256 entries each), counting zero (free)
+; entries for clusters 2..DOS_MAX_CLUS. This reads each FAT sector once instead
+; of re-reading per cluster, so it is far faster than a per-cluster walk.
+; State: DOS_FREE_CNT = free clusters, DOS_TMP = current cluster number,
+; DOS_TMP2 = current FAT sector LBA, DOS_SH_NAMEIDX = entry-low scratch.
+_DOS_DO_FREE:
+    JSR _FS_ENSURE_MOUNT
+    BCC :+
+    JMP @err
+:
+    STZ DOS_FREE_CNT
+    STZ DOS_FREE_CNT+1
+    STZ DOS_TMP                         ; cluster number = 0
+    STZ DOS_TMP+1
+    LDA DOS_FAT_START                   ; first FAT sector
+    STA DOS_TMP2
+    LDA DOS_FAT_START+1
+    STA DOS_TMP2+1
+@sector:
+    LDA DOS_TMP2
+    LDX DOS_TMP2+1
+    JSR _DOS_READ_SECTOR
+    BCS @done                           ; read error -> stop
+    LDY #$00                            ; 256 entries per 512-byte FAT sector
+@entry:
+    LDA DOS_TMP+1                       ; cluster number > DOS_MAX_CLUS -> done
+    CMP DOS_MAX_CLUS+1
+    BCC @inrange
+    BNE @done
+    LDA DOS_TMP
+    CMP DOS_MAX_CLUS
+    BEQ @inrange
+    BCS @done
+@inrange:
+    LDA BLK_DATA                        ; entry low byte
+    STA DOS_SH_NAMEIDX
+    LDA BLK_DATA                        ; entry high byte
+    ORA DOS_SH_NAMEIDX                  ; entry == 0 (free)?
+    BNE @used
+    LDA DOS_TMP+1                       ; only count real data clusters (>= 2)
+    BNE @free
+    LDA DOS_TMP
+    CMP #$02
+    BCC @used
+@free:
+    INC DOS_FREE_CNT
+    BNE @used
+    INC DOS_FREE_CNT+1
+@used:
+    INC DOS_TMP                         ; cluster number++
+    BNE @nc
+    INC DOS_TMP+1
+@nc:
+    INY                                 ; next entry in this sector
+    BNE @entry
+    INC DOS_TMP2                         ; next FAT sector
+    BNE @sector
+    INC DOS_TMP2+1
+    BRA @sector
+@done:
+    ; free_sectors (DOS_TMP) = DOS_FREE_CNT * SectorsPerCluster
+    STZ DOS_TMP
+    STZ DOS_TMP+1
+    LDX DOS_SEC_PER_CLUS
+    BEQ @kb
+@mul:
+    CLC
+    LDA DOS_TMP
+    ADC DOS_FREE_CNT
+    STA DOS_TMP
+    LDA DOS_TMP+1
+    ADC DOS_FREE_CNT+1
+    STA DOS_TMP+1
+    DEX
+    BNE @mul
+@kb:
+    LDA DOS_TMP+1                       ; KB (DOS_TMP2) = free_sectors / 2 (non-destructive)
+    LSR
+    STA DOS_TMP2+1
+    LDA DOS_TMP
+    ROR
+    STA DOS_TMP2
+    ; free_bytes (DOS_W_SIZE, 32-bit) = free_sectors << 9
+    LDA DOS_TMP
+    STA DOS_W_SIZE
+    LDA DOS_TMP+1
+    STA DOS_W_SIZE+1
+    STZ DOS_W_SIZE+2
+    STZ DOS_W_SIZE+3
+    LDX #$09
+@shl:
+    ASL DOS_W_SIZE
+    ROL DOS_W_SIZE+1
+    ROL DOS_W_SIZE+2
+    ROL DOS_W_SIZE+3
+    DEX
+    BNE @shl
+    JSR K_PRINT_NEWLINE
+    LDA #<MSG_DOS_FREE1                 ; "DISK FREE: "
+    LDX #>MSG_DOS_FREE1
+    JSR _DOS_PMSG
+    LDA #<DOS_W_SIZE                    ; bytes (decimal, no padding)
+    LDX #>DOS_W_SIZE
+    LDY #$00
+    JSR K_PRINT_DEC
+    LDA #<MSG_DOS_FREE2                 ; " BYTES ("
+    LDX #>MSG_DOS_FREE2
+    JSR _DOS_PMSG
+    LDA DOS_TMP2                        ; KB -> DOS_W_SIZE (32-bit)
+    STA DOS_W_SIZE
+    LDA DOS_TMP2+1
+    STA DOS_W_SIZE+1
+    STZ DOS_W_SIZE+2
+    STZ DOS_W_SIZE+3
+    LDA #<DOS_W_SIZE
+    LDX #>DOS_W_SIZE
+    LDY #$00
+    JSR K_PRINT_DEC
+    LDA #<MSG_DOS_FREE3                 ; " KB)" + newline
+    LDX #>MSG_DOS_FREE3
+    JMP _DOS_PMSG
+@err:
+    JMP _DOS_PERR_NOFILE                ; not mounted
+
+; _DOS_PMSG - set MON_MSG_PTR from A/X and print (no leading newline).
+_DOS_PMSG:
+    STA MON_MSG_PTR_LO
+    STX MON_MSG_PTR_HI
+    JMP K_PRINT_MESSAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_COPY - COPY SRC,DST : duplicate a file via a RAM buffer
+; ----------------------------------------------------------------
+; The filesystem allows only one open file at a time (reads and writes both
+; stream through the block device's single sector buffer), so COPY reads SRC
+; fully into user RAM ($0800..$8FFF), then writes it to DST. Files larger than
+; the ~34KB buffer report "FILE TOO BIG". On entry Y = delimiter after the verb.
+_DOS_DO_COPY:
+    JSR _DOS_ARGSTART
+    BCC :+
+    JMP @usage
+:
+    STY DOS_SH_NAMEIDX                  ; SRC name start
+@findc:
+    CPY MON_CMDLEN
+    BCC :+
+    JMP @usage
+:
+    LDA MON_CMDBUF,Y
+    CMP #','
+    BEQ @gotc
+    INY
+    BRA @findc
+@gotc:
+    LDA #$00
+    STA MON_CMDBUF,Y                    ; terminate SRC at the comma
+    INY
+@dskip:
+    CPY MON_CMDLEN                      ; skip spaces before DST
+    BCC :+
+    JMP @usage
+:
+    LDA MON_CMDBUF,Y
+    CMP #ASCII_SPACE
+    BNE @dgot
+    INY
+    BRA @dskip
+@dgot:
+    STY DOS_SH_NAMEIDX2                 ; DST name start
+    LDX MON_CMDLEN                      ; terminate DST at end-of-line
+    LDA #$00
+    STA MON_CMDBUF,X
+    LDA DOS_SH_NAMEIDX                  ; open SRC for reading
+    LDX #>MON_CMDBUF
+    LDY #$00
+    JSR _FS_OPEN
+    BCS @notfound
+    LDA #$00                            ; buffer cursor = $0800
+    STA MON_CURRADDR_LO
+    LDA #$08
+    STA MON_CURRADDR_HI
+@rl:
+    JSR _FS_GETB
+    BCS @rdone
+    PHA                                 ; save the byte
+    LDA MON_CURRADDR_HI
+    CMP #$90                            ; reached $9000 -> buffer full
+    BCS @toobig
+    PLA
+    LDY #$00
+    STA (MON_CURRADDR_LO),Y
+    INC MON_CURRADDR_LO
+    BNE @rl
+    INC MON_CURRADDR_HI
+    BRA @rl
+@rdone:
+    JSR _FS_CLOSE
+    LDA MON_CURRADDR_LO                 ; remember where the data ends
+    STA MON_ENDADDR_LO
+    LDA MON_CURRADDR_HI
+    STA MON_ENDADDR_HI
+    LDA DOS_SH_NAMEIDX2                 ; open DST for writing
+    LDX #>MON_CMDBUF
+    LDY #$01
+    JSR _FS_OPEN
+    BCS @werr
+    LDA #$00                            ; replay the buffer from $0800
+    STA MON_CURRADDR_LO
+    LDA #$08
+    STA MON_CURRADDR_HI
+@wl:
+    LDA MON_CURRADDR_LO                 ; cursor == end?
+    CMP MON_ENDADDR_LO
+    BNE @wput
+    LDA MON_CURRADDR_HI
+    CMP MON_ENDADDR_HI
+    BEQ @wdone
+@wput:
+    LDY #$00
+    LDA (MON_CURRADDR_LO),Y
+    JSR _FS_PUTB
+    BCS @werr
+    INC MON_CURRADDR_LO
+    BNE @wl
+    INC MON_CURRADDR_HI
+    BRA @wl
+@wdone:
+    JSR _FS_CLOSE
+    BCS @werr
+    LDA #<MSG_DOS_COPIED
+    LDX #>MSG_DOS_COPIED
+    JMP _DOS_PERR
+@toobig:
+    PLA                                 ; balance the saved byte
+    JSR _FS_CLOSE
+    LDA #<MSG_DOS_TOOBIG
+    LDX #>MSG_DOS_TOOBIG
+    JMP _DOS_PERR
+@notfound:
+    JMP _DOS_PERR_NOFILE
+@werr:
+    JMP _DOS_PERR_WRITE
+@usage:
+    JMP _DOS_PERR_USAGE
+
+; ----------------------------------------------------------------
+; _DOS_DO_MORE - MORE NAME : like TYPE, but pause every screenful
+; ----------------------------------------------------------------
+; On entry Y = delimiter after the verb. Pages after 22 lines: prints a prompt,
+; waits for a key (ESC aborts, anything else continues). DOS_TMP = line count.
+_DOS_DO_MORE:
+    JSR _DOS_ARGSTART
+    BCC :+
+    JMP @noname
+:
+    LDX MON_CMDLEN                      ; null-terminate the name
+    LDA #$00
+    STA MON_CMDBUF,X
+    TYA
+    LDX #>MON_CMDBUF
+    LDY #$00                            ; read mode
+    JSR _FS_OPEN
+    BCS @notfound
+    JSR K_PRINT_NEWLINE
+    STZ DOS_TMP                         ; lines printed on this page
+@rd:
+    JSR _FS_GETB
+    BCS @eof
+    CMP #ASCII_CR                       ; ignore CR (newline on LF, handles CRLF/LF)
+    BEQ @rd
+    CMP #ASCII_LF
+    BNE @putc
+    JSR K_PRINT_NEWLINE
+    INC DOS_TMP
+    LDA DOS_TMP
+    CMP #22                             ; full screenful?
+    BCC @rd
+    JSR _DOS_PAGE_PAUSE                 ; carry set = user pressed ESC (abort)
+    BCS @abort
+    STZ DOS_TMP
+    BRA @rd
+@putc:
+    JSR K_PRINT_CHAR
+    BRA @rd
+@abort:
+    JSR K_PRINT_NEWLINE
+@eof:
+    JMP _FS_CLOSE                       ; tail (returns to _DOS_PROMPT)
+@notfound:
+@noname:
+    JMP _DOS_PERR_NOFILE
+
+; _DOS_PAGE_PAUSE - print the pager prompt, wait for a key. Carry set if the key
+; was ESC (caller should abort); carry clear to continue. Clears the prompt line.
+_DOS_PAGE_PAUSE:
+    LDA #<MSG_DOS_MORE
+    LDX #>MSG_DOS_MORE
+    JSR _DOS_PMSG
+    JSR _DOS_WAITKEY
+    PHA
+    LDA #ASCII_CR                       ; return to column 0 and clear the prompt
+    JSR K_PRINT_CHAR
+    LDX #$08
+@clr:
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    DEX
+    BNE @clr
+    LDA #ASCII_CR
+    JSR K_PRINT_CHAR
+    PLA
+    CMP #$1B                            ; ESC?
+    BEQ @esc
+    CLC
+    RTS
+@esc:
+    SEC
+    RTS
+
+; _DOS_WAITKEY - block until a key is pressed; return it in A.
+_DOS_WAITKEY:
+    JSR K_GET_KEYSTROKE                 ; non-blocking: C set + A = key when ready
+    BCC _DOS_WAITKEY
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_PARSE_PATTERN83 - (DOS_PTR) wildcard "NAME.EXT" -> DOS_NAME83 template
+; ----------------------------------------------------------------
+; Like _DOS_PARSE_NAME83, but '*' fills the rest of the current field (base or
+; extension) with '?' so _DOS_NAME_MATCH treats those positions as wildcards.
+_DOS_PARSE_PATTERN83:
+    LDX #$00
+@fill:
+    LDA #' '                            ; space-fill (literal-match by default)
+    STA DOS_NAME83,X
+    INX
+    CPX #11
+    BNE @fill
+    LDY #$00                            ; source index
+    LDX #$00                            ; dest index (base 0..7)
+@base:
+    LDA (DOS_PTR),Y
+    BEQ @done
+    CMP #'.'
+    BEQ @dot
+    CMP #'*'
+    BEQ @starb
+    JSR _DOS_UPCASE
+    CPX #8
+    BCS @nextb
+    STA DOS_NAME83,X
+    INX
+@nextb:
+    INY
+    BRA @base
+@starb:
+    CPX #8                              ; fill the rest of the base with '?'
+    BCS @starbd
+    LDA #'?'
+    STA DOS_NAME83,X
+    INX
+    BRA @starb
+@starbd:
+    INY                                 ; consume '*'
+    BRA @base
+@dot:
+    INY
+    LDX #8                              ; dest = extension (8..10)
+@ext:
+    LDA (DOS_PTR),Y
+    BEQ @done
+    CMP #'*'
+    BEQ @stare
+    JSR _DOS_UPCASE
+    CPX #11
+    BCS @nexte
+    STA DOS_NAME83,X
+    INX
+@nexte:
+    INY
+    BRA @ext
+@stare:
+    CPX #11                             ; fill the rest of the extension with '?'
+    BCS @stared
+    LDA #'?'
+    STA DOS_NAME83,X
+    INX
+    BRA @stare
+@stared:
+    INY
+    BRA @ext
+@done:
+    RTS
+
+; _DOS_NAME_MATCH - compare the DOS_NAME83 template against DOS_ENTRY's 8.3 name.
+; '?' in the template matches any character. Out: carry clear = match.
+_DOS_NAME_MATCH:
+    LDY #$00
+@l:
+    LDA DOS_NAME83,Y
+    CMP #'?'
+    BEQ @skip
+    CMP DOS_ENTRY,Y
+    BNE @no
+@skip:
+    INY
+    CPY #11
+    BNE @l
+    CLC
+    RTS
+@no:
+    SEC
+    RTS
+
+; ----------------------------------------------------------------
 ; _DOS_RUN_FILE - load and run a disk program (.PRG) by name
 ; ----------------------------------------------------------------
 ; In: A/X = pointer to a null-terminated file name. The file begins with a
@@ -902,13 +1446,15 @@ _DOS_RUN_FILE:
 ; DOS shell strings
 ; ----------------------------------------------------------------
 MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
-MSG_DOS_HELP:    .BYTE "CATALOG TYPE SAVE LOAD ERASE RENAME", $0D, $0A
-                 .BYTE "IMPORT EXPORT CLS MON HELP", $0D, $0A, 0
+MSG_DOS_HELP:    .BYTE "CATALOG TYPE MORE SAVE LOAD COPY", $0D, $0A
+                 .BYTE "ERASE RENAME IMPORT EXPORT", $0D, $0A
+                 .BYTE "DISKFREE MEMMAP VERSION CLS MON HELP", $0D, $0A, 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
 MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
 MSG_DOS_NOFILE:  .BYTE "FILE NOT FOUND", $0D, $0A, 0
 MSG_DOS_USAGE:   .BYTE "USAGE: SAVE F,SSSS-EEEE / LOAD F[,AAAA]", $0D, $0A
-                 .BYTE "       ERASE F / RENAME OLD,NEW", $0D, $0A, 0
+                 .BYTE "       ERASE F / RENAME OLD,NEW", $0D, $0A
+                 .BYTE "       COPY SRC,DST", $0D, $0A, 0
 MSG_DOS_SAVED:   .BYTE "SAVED", $0D, $0A, 0
 MSG_DOS_LOADED:  .BYTE "LOADED", $0D, $0A, 0
 MSG_DOS_ERASED:  .BYTE "ERASED", $0D, $0A, 0
@@ -917,6 +1463,22 @@ MSG_DOS_IMPORTED:.BYTE "IMPORTED", $0D, $0A, 0
 MSG_DOS_EXPORTED:.BYTE "EXPORTED", $0D, $0A, 0
 MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 MSG_DOS_HOSTERR: .BYTE "HOST I/O ERROR", $0D, $0A, 0
+MSG_DOS_COPIED:  .BYTE "COPIED", $0D, $0A, 0
+MSG_DOS_TOOBIG:  .BYTE "FILE TOO BIG", $0D, $0A, 0
+MSG_DOS_VER:     .BYTE "MFC/OS ", 0      ; version number appended from DOS_VERSION
+MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
+                 .BYTE "$0100-$01FF STACK", $0D, $0A
+                 .BYTE "$0200-$03FF SYSTEM VARS", $0D, $0A
+                 .BYTE "$0400-$07FF SCREEN", $0D, $0A
+                 .BYTE "$0800-$8FFF USER RAM   (34K)", $0D, $0A
+                 .BYTE "$9000-$AFFF DOS ROM    (8K)", $0D, $0A
+                 .BYTE "$B000-$DFFF MODULES    (12K)", $0D, $0A
+                 .BYTE "$E000-$FFFF KERNEL ROM (8K)", $0D, $0A, 0
+MSG_DOS_CATHDR:  .BYTE "NAME            BYTES", $0D, $0A, 0
+MSG_DOS_FREE1:   .BYTE "DISK FREE: ", 0
+MSG_DOS_FREE2:   .BYTE " BYTES (", 0
+MSG_DOS_FREE3:   .BYTE " KB)", $0D, $0A, 0
+MSG_DOS_MORE:    .BYTE "--MORE--", 0
 KW_CLS:          .BYTE "CLS", 0
 KW_CLEAR:        .BYTE "CLEAR", 0
 KW_BANKS:        .BYTE "BANKS", 0
@@ -931,6 +1493,11 @@ KW_ERASE:        .BYTE "ERASE", 0
 KW_RENAME:       .BYTE "RENAME", 0
 KW_IMPORT:       .BYTE "IMPORT", 0
 KW_EXPORT:       .BYTE "EXPORT", 0
+KW_COPY:         .BYTE "COPY", 0
+KW_DISKFREE:     .BYTE "DISKFREE", 0
+KW_MORE:         .BYTE "MORE", 0
+KW_VERSION:      .BYTE "VERSION", 0
+KW_MEMMAP:       .BYTE "MEMMAP", 0
 
 ; ================================================================
 ; BLOCK DEVICE PRIMITIVES

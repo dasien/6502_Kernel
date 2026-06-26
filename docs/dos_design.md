@@ -12,7 +12,20 @@ boots into the **MFC/OS** shell (`]` prompt) with `CATALOG`/`TYPE`/`SAVE`/`LOAD`
 transfer is now DOS `IMPORT`/`EXPORT`). **Phase 4 COMPLETE:** launch-by-name runs
 `BASIC`/`ASM` and disk `.PRG` programs (`&` forces the disk version), each returning to
 `]`; the `B:` bank menu is retired. Kernel v3.8. **The assemble → SAVE → run loop is
-closed.** Next: Phase 5 (the editor). Identity: OS = **MFC/OS**, `]` prompt.
+closed.** Identity: OS = **MFC/OS**, `]` prompt.
+
+**Utility commands added** (post-phase-4): `COPY SRC,DST` (via a RAM buffer — the
+filesystem is single-open, so COPY reads the source fully into `$0800` then writes it
+out; files > ~34 KB report `FILE TOO BIG`), `DISKFREE` (free space in decimal bytes +
+KB; scans each FAT sector once), `MEMMAP` (the full memory map with region sizes),
+`VERSION`, `MORE NAME` (paged `TYPE`, `--MORE--` every 22 lines, ESC aborts), and
+**wildcards** in `CATALOG`/`CAT` (`*` and `?`, 8.3). `CATALOG` now prints a `NAME /
+BYTES` header with decimal sizes in aligned columns. `DATE`/`TIME` are deferred (no
+RTC; only a ~60 Hz timer IRQ). `BANKS` lists the ROM modules. Decimal conversion was
+promoted to the BIOS ABI (kernel v3.12): `K_PRINT_DEC` ($FF27, 32-bit → decimal,
+right-justifiable) and `K_PARSE_DEC` ($FF2A, decimal → 16-bit). The monitor's `H:`/`D:`
+and the DOS (`CATALOG` sizes, `DISKFREE`) all share these — one implementation each.
+Next: drawers / 80-column.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the
