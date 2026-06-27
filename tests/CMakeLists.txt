@@ -187,6 +187,33 @@ target_include_directories(acia_xmodem_tests PRIVATE
 
 target_compile_features(acia_xmodem_tests PRIVATE cxx_std_20)
 
+# Regression test for the kernel PRINT_CHAR ABI contract (preserves A/X/Y,
+# returns A=char, drops control chars without rendering a glyph). Runs the real
+# kernel ROM and calls PRINT_CHAR via the $FF00 jump table.
+add_executable(print_char_tests
+    test_print_char.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(print_char_tests gtest_main gtest)
+
+target_include_directories(print_char_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(print_char_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -243,6 +270,10 @@ add_test(NAME monitor_integration
 # Add the ACIA + XMODEM spike test to CTest
 add_test(NAME acia_xmodem
     COMMAND acia_xmodem_tests)
+
+# Add the PRINT_CHAR ABI-contract regression test to CTest
+add_test(NAME print_char
+    COMMAND print_char_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom

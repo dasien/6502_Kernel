@@ -8226,7 +8226,7 @@ StrTab:
       .word LAB_FCER          ; initial user function vector ("Function call" error)
       .byte $00               ; default NULL count
       .byte $00               ; clear terminal position
-      .byte $00               ; default terminal width byte
+      .byte $50               ; default terminal width byte (80 columns)
       .byte $F2               ; default limit for TAB = 14
       .word Ram_base          ; start of user RAM
 EndTab:

@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.12
+; Version:      3.13
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -205,6 +205,13 @@
 ;                   H:/D: now share these; the DOS uses K_PRINT_DEC for CATALOG
 ;                   sizes and DISKFREE. PARSE_DECIMAL_VALUE no longer prints (it
 ;                   returns an error code); H: dropped its private double-dabble.
+; 2026-06-27  v3.13 80-column display (phase B): the screen moved out of the 64K
+;                   map and behind the VIC register port ($FE2D-$FE36). SCREEN_WIDTH
+;                   is now 80; the old 16-bit SCREEN_PTR is gone (its ZP is now the
+;                   VID_CELL/VID_TMP cell-index scratch). PRINT_CHAR/newline/backspace
+;                   write through VREG_CHAR at cell = CURSOR_Y*80+CURSOR_X; SCROLL and
+;                   CLEAR are single chip-side commands (VCMD_SCROLL_UP / VCMD_CLEAR).
+;                   The displayed cursor is pushed to VREG_CURSOR. BASIC TWidth -> 80.
 ;
 ; ================================================================
 
@@ -227,10 +234,14 @@ MON_CURRADDR_HI    = $15           ; Current address high byte (was $01)
 MON_MSG_PTR_LO     = $16           ; Message pointer low byte (was $02)
 MON_MSG_PTR_HI     = $17           ; Message pointer high byte (was $03)
 JUMP_VECTOR        = $18           ; Indirect jump vector (2 bytes: $18-$19) (was $04-$05)
-SCREEN_PTR_LO      = $1A           ; Current screen memory pointer low (was $06)
-SCREEN_PTR_HI      = $1B           ; Current screen memory pointer high (was $07)
-; $1C-$20 (5 bytes) free — were the scroll source/dest pointers and byte counter,
-; no longer needed now that SCROLL_SCREEN uses absolute,X page copies.
+; $1A-$1D: video cell-index scratch. The screen left the 64K map (it lives behind
+; the VIC register port now), so the old 16-bit SCREEN_PTR is gone; these hold the
+; computed cell index (CURSOR_Y*80 + CURSOR_X) and a temporary while computing it.
+VID_CELL_LO        = $1A           ; computed cell index low
+VID_CELL_HI        = $1B           ; computed cell index high
+VID_TMP_LO         = $1C           ; cell-computation temporary low
+VID_TMP_HI         = $1D           ; cell-computation temporary high
+; $1E-$20 (3 bytes) free.
 CMD_LINE_COUNT     = $21           ; Lines printed by current command (was $0D)
 PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
 RNG_SEED           = $23           ; Random number generator seed (was $0F)
@@ -297,9 +308,10 @@ MON_MODE_WRITE     = 1             ; Write mode
 ; Monitor Display Constants
 MON_BYTES_PER_LINE = 8             ; Number of bytes displayed per line
 
-; Screen and I/O Constants for Monitor
-SCREEN_START       = $0400         ; Screen memory start
-SCREEN_WIDTH       = 40            ; Characters per line
+; Screen and I/O Constants for Monitor. The screen lives behind the VIC register
+; port (not in the 64K map); the kernel tracks the logical cursor in CURSOR_X/Y
+; and writes through VREG_* (see SCREEN OUTPUT routines below).
+SCREEN_WIDTH       = 80            ; Characters per line
 SCREEN_HEIGHT      = 25            ; Lines on screen
 LINES_PER_PAGE     = 24            ; Full screen height
 
@@ -346,6 +358,28 @@ MODULE_BANK        = $FE23         ; bank-select register for the $B000-$DFFF wi
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
 MODULE_WINDOW_END  = $DFFF         ; last byte of the bankable module window
+
+; VDC-style video register port ($FE2D-$FE36). The 80x25 character and color
+; planes live inside the VIC, NOT in the 64K map. Set a cell index via
+; VREG_ADDR_LO/HI, then read/write the auto-incrementing VREG_CHAR/VREG_COLOR
+; data ports. VREG_ATTR is the current-attribute latch applied to VREG_CHAR
+; writes; VREG_CMD drives chip-side block ops; VREG_CURSOR_LO/HI position the
+; displayed cursor (high-byte bit7 = hidden). See docs/kernel_memory_map.md.
+VREG_ADDR_LO       = $FE2D         ; cell index low (0..1999)
+VREG_ADDR_HI       = $FE2E         ; cell index high
+VREG_CHAR          = $FE2F         ; char data port (auto-increments index)
+VREG_COLOR         = $FE30         ; color data port (auto-increments index)
+VREG_ATTR          = $FE31         ; current attribute latch
+VREG_CMD           = $FE32         ; command engine
+VREG_STATUS        = $FE33         ; 0 = ready
+VREG_CURSOR_LO     = $FE34         ; cursor cell low
+VREG_CURSOR_HI     = $FE35         ; cursor cell high (bit7 = hidden)
+VREG_CMD_PARAM     = $FE36         ; command parameter / fill char
+
+VCMD_CLEAR         = $01           ; fill whole screen (char=param, color=latch)
+VCMD_SCROLL_UP     = $02           ; scroll up one row, blank bottom
+VCMD_SCROLL_DOWN   = $03           ; scroll down one row, blank top
+VCMD_FILL_ROW      = $04           ; fill the row of the current cell
 
 ; File command codes
 FILE_LOAD_CMD      = $01           ; Load file command
@@ -434,12 +468,7 @@ CLEAR_MON_VAR_LOOP:
     ; Initialize cursor position to top-left of screen
     STZ CURSOR_X                ; Set cursor X to 0
     STZ CURSOR_Y                ; Set cursor Y to 0
-
-    ; Initialize screen pointer to start of screen memory
-    LDA #<SCREEN_START          ; Load low byte of screen start ($00)
-    STA SCREEN_PTR_LO           ; Store in screen pointer
-    LDA #>SCREEN_START          ; Load high byte of screen start ($04)
-    STA SCREEN_PTR_HI           ; Store in screen pointer
+    JSR UPDATE_CURSOR           ; position the displayed hardware cursor
 
     CLI                         ; Enable interrupts
 
@@ -611,231 +640,187 @@ HEX_QUAD_ERROR:
 ; MONITOR SCREEN OUTPUT AND INPUT ROUTINES
 ; ================================================================
 
-; Scroll screen up by one line (40 characters).
-; Copies rows 1-24 over rows 0-23 with four absolute,X loops (one per screen
-; page), then blanks the bottom line. Faster than a byte-by-byte indirect copy
-; and needs no scroll pointer/counter variables. The copy runs the full 256
-; bytes of each page; the few bytes past row 24 ($07E8-$07FF) are off-screen
-; padding and the bottom line is overwritten with spaces immediately after.
+; Compute the linear cell index for the logical cursor: cell = CURSOR_Y*80 + X.
+; Result in VID_CELL_LO/HI. Uses A and the VID_TMP scratch only (X/Y preserved,
+; so it is safe to call from PRINT_CHAR which must preserve Y for PRINT_MESSAGE).
+; 80 = 64 + 16, so Y*80 = (Y<<6) + (Y<<4): build Y<<4, copy it, shift on to Y<<6,
+; then add the saved Y<<4 and finally CURSOR_X.
+COMPUTE_CELL:
+    LDA CURSOR_Y
+    STA VID_CELL_LO
+    STZ VID_CELL_HI
+    ASL VID_CELL_LO             ; *2
+    ROL VID_CELL_HI
+    ASL VID_CELL_LO             ; *4
+    ROL VID_CELL_HI
+    ASL VID_CELL_LO             ; *8
+    ROL VID_CELL_HI
+    ASL VID_CELL_LO             ; *16  (= Y<<4)
+    ROL VID_CELL_HI
+    LDA VID_CELL_LO             ; save Y*16
+    STA VID_TMP_LO
+    LDA VID_CELL_HI
+    STA VID_TMP_HI
+    ASL VID_CELL_LO             ; *32
+    ROL VID_CELL_HI
+    ASL VID_CELL_LO             ; *64  (= Y<<6)
+    ROL VID_CELL_HI
+    CLC                         ; Y*64 + Y*16 = Y*80
+    LDA VID_CELL_LO
+    ADC VID_TMP_LO
+    STA VID_CELL_LO
+    LDA VID_CELL_HI
+    ADC VID_TMP_HI
+    STA VID_CELL_HI
+    CLC                         ; + CURSOR_X
+    LDA VID_CELL_LO
+    ADC CURSOR_X
+    STA VID_CELL_LO
+    LDA VID_CELL_HI
+    ADC #$00
+    STA VID_CELL_HI
+    RTS
+
+; Point the data-port cell index (VREG_ADDR) at the logical cursor cell so the
+; next VREG_CHAR write lands there. Preserves X/Y.
+SET_VREG_ADDR:
+    JSR COMPUTE_CELL
+    LDA VID_CELL_LO
+    STA VREG_ADDR_LO
+    LDA VID_CELL_HI
+    STA VREG_ADDR_HI
+    RTS
+
+; Move the displayed hardware cursor to the logical cursor cell. Preserves X/Y.
+UPDATE_CURSOR:
+    JSR COMPUTE_CELL
+    LDA VID_CELL_LO
+    STA VREG_CURSOR_LO
+    LDA VID_CELL_HI
+    STA VREG_CURSOR_HI         ; bit7 clear => cursor visible
+    RTS
+
+; Scroll the screen up one line. The VIC does the row shift and blanks the bottom
+; line chip-side (one command), so the CPU no longer copies ~2000 bytes. Uses A.
 SCROLL_SCREEN:
-    PHX                         ; Save registers (X is the copy index)
-    PHY
-
-    ; Shift each screen page up by one row ($28). The four pages MUST be copied
-    ; sequentially (not interleaved): each page reads the first row of the next
-    ; page as its source, so that page must still hold its original bytes. An
-    ; interleaved loop overwrites the next page's first row before this page reads
-    ; it, corrupting every byte that spans a page boundary.
-    LDX #$00
-SCROLL_P0:
-    LDA $0428,X                 ; page 0: $0400 <- $0428
-    STA $0400,X
-    INX
-    BNE SCROLL_P0
-    LDX #$00
-SCROLL_P1:
-    LDA $0528,X                 ; page 1
-    STA $0500,X
-    INX
-    BNE SCROLL_P1
-    LDX #$00
-SCROLL_P2:
-    LDA $0628,X                 ; page 2
-    STA $0600,X
-    INX
-    BNE SCROLL_P2
-    LDX #$00
-SCROLL_P3:
-    LDA $0728,X                 ; page 3
-    STA $0700,X
-    INX
-    BNE SCROLL_P3
-
-    ; Clear line 24
-    LDY #SCREEN_WIDTH-1
     LDA #ASCII_SPACE
-
-CLEAR_BOTTOM:
-    STA $07C0,Y
-    DEY
-    BPL CLEAR_BOTTOM
-
-    ; Restore registers
-    PLY
-    PLX
+    STA VREG_CMD_PARAM          ; bottom line filled with spaces
+    LDA #VCMD_SCROLL_UP
+    STA VREG_CMD
     RTS
 
-; Clears all 1024 bytes of screen memory (4 pages of 256 bytes each)
-; Input: None
-; Modifies: A, X
+; Clear the whole screen (chip-side fill) and home the cursor. Uses A.
 CLEAR_SCREEN:
-    LDA #$20                    ; Load space character once
-    LDX #$00                    ; Initialize index
-
-CLEAR_SCREEN_LOOP:
-    STA $0400,X                 ; Clear screen memory page 1
-    STA $0500,X                 ; Clear screen memory page 2
-    STA $0600,X                 ; Clear screen memory page 3
-    STA $0700,X                 ; Clear screen memory page 4
-    INX                         ; Increment to next position
-    STA $0400,X                 ; Clear screen memory page 1
-    STA $0500,X                 ; Clear screen memory page 2
-    STA $0600,X                 ; Clear screen memory page 3
-    STA $0700,X                 ; Clear screen memory page 4
-
-    INX                         ; Increment for next iteration
-    BNE CLEAR_SCREEN_LOOP       ; Loop until X wraps to 0
-
-    ; Reset screen pointer to start of screen
-    LDA #<SCREEN_START          ; Low byte of $0400
-    STA SCREEN_PTR_LO
-    LDA #>SCREEN_START          ; High byte of $0400
-    STA SCREEN_PTR_HI
-
-    ; Reset cursor position to (0, 0)
-    STZ CURSOR_X
+    LDA #ASCII_SPACE
+    STA VREG_CMD_PARAM
+    LDA #VCMD_CLEAR
+    STA VREG_CMD
+    STZ CURSOR_X                ; Reset cursor position to (0, 0)
     STZ CURSOR_Y
-
+    JSR UPDATE_CURSOR
     RTS
 
-; Scroll up one line and re-home the cursor/screen pointer to the bottom line.
+; Scroll up one line and re-home the cursor to the bottom line.
 ; Shared by PRINT_CHAR's line-wrap and carriage-return scroll paths.
 SCROLL_AND_HOME_BOTTOM:
     JSR SCROLL_SCREEN           ; Scroll everything up one line
     LDA #SCREEN_HEIGHT-1        ; Stay on bottom line (Y = 24)
     STA CURSOR_Y
-    LDA #<($0400 + 24 * 40)     ; Screen pointer to start of bottom line ($07C0)
-    STA SCREEN_PTR_LO
-    LDA #>($0400 + 24 * 40)
-    STA SCREEN_PTR_HI
+    STZ CURSOR_X                ; start of the bottom line
     RTS
 
 ; Print a single character to screen at current cursor position
 ; Input: A = character to print (ASCII value)
-; Output: Character displayed on screen, cursor and screen pointer advanced
-; Modifies: A, X, Y, CURSOR_X/Y, SCREEN_PTR_LO/HI
-; Note: Handles special characters (CR, backspace), automatic scrolling, cursor wrapping
+; Output: Character written through the VIC port; CURSOR_X/Y and displayed cursor
+;         advanced.
+; Modifies: CURSOR_X/Y, VID_CELL/TMP scratch. PRESERVES A, X and Y. A is returned
+;           unchanged because callers depend on it: EhBASIC's LAB_PRNA does
+;           `JSR V_OUTP / CMP #$0D` to detect the CR it just printed (and reset
+;           TPos), and PRINT_MESSAGE relies on Y. The input character is held on
+;           the stack across the whole routine and restored at every exit.
+; Note: Handles special characters (CR, backspace), automatic scrolling, wrapping
 PRINT_CHAR:
+    PHA                         ; preserve the character across the whole routine
     CMP #ASCII_CR               ; Is it carriage return?
     BEQ PRINT_CHAR_NEWLINE      ; Handle newline
 
     CMP #ASCII_LF               ; Is it line feed?
     BNE PRINT_CHAR_CHECK_BS     ; Not LF; keep checking
-    RTS                         ; Ignore LF: CR alone performs the newline, so a
-                                ; CR+LF sequence (EhBASIC LAB_CRLF, kernel messages)
-                                ; produces a single newline, not a double space
+    PLA                         ; Ignore LF (CR alone performs the newline, so a
+    RTS                         ; CR+LF sequence yields a single newline); restore A
 
 PRINT_CHAR_CHECK_BS:
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ PRINT_CHAR_BACKSPACE    ; Handle backspace
 
-    STA (SCREEN_PTR_LO)         ; Store character (65C02 zero-page indirect; Y untouched)
+    ; Other control characters (< space) produce no glyph -- terminal behavior.
+    ; This drops things like BELL ($07), which EhBASIC emits on every keypress
+    ; once its 71-char input buffer is full; rendering it would show garbage.
+    CMP #ASCII_SPACE            ; Is it below space ($20)?
+    BCC PRINT_CHAR_DONE         ; If so, ignore it (PRINT_CHAR_DONE restores A)
 
-    ; Advance screen pointer
-    INC SCREEN_PTR_LO           ; Increment low byte
-    BNE PRINT_CHAR_NO_CARRY     ; If no carry, continue
-    INC SCREEN_PTR_HI           ; Increment high byte if carry
+    JSR SET_VREG_ADDR           ; point the port at the cursor cell
+    PLA                         ; recover the character...
+    PHA                         ; ...keeping a copy on the stack for the exit
+    STA VREG_CHAR               ; write the glyph (chip auto-advances its index)
 
-PRINT_CHAR_NO_CARRY:
     INC CURSOR_X                ; Advance cursor X position
-
-    ; Check for line wrap (X >= 40)
-    PHA                         ; Save character
     LDA CURSOR_X
-    CMP #SCREEN_WIDTH           ; Check if X >= 40
-    PLA                         ; Restore character
-    BCC PRINT_CHAR_DONE         ; If not, we're done
+    CMP #SCREEN_WIDTH           ; Check if X >= 80
+    BCC PRINT_CHAR_ADV_DONE     ; If not, just reposition the cursor
 
-    ; Handle line wrap: reset X to 0, increment Y
-    STZ CURSOR_X                ; Reset X to 0
-    INC CURSOR_Y                ; Move to next line
-
-    ; Check if we need to scroll screen
+    ; Line wrap: reset X to 0, advance to the next line, scroll if past the bottom
+    STZ CURSOR_X
+    INC CURSOR_Y
     LDA CURSOR_Y
-    CMP #SCREEN_HEIGHT          ; Have we gone past line 24?
-    BCC PRINT_CHAR_DONE         ; If not, we're done
-
-    ; Need to scroll
+    CMP #SCREEN_HEIGHT          ; Past line 24?
+    BCC PRINT_CHAR_ADV_DONE
     JSR SCROLL_AND_HOME_BOTTOM  ; scroll up one line and re-home to the bottom line
 
+PRINT_CHAR_ADV_DONE:
+    JSR UPDATE_CURSOR           ; move the displayed cursor to the new position
 PRINT_CHAR_DONE:
+    PLA                         ; restore A = the character that was printed
     RTS
 
 PRINT_CHAR_NEWLINE:
-    ; Handle carriage return - move to next line
-    TYA                         ; Transfer Y to A
-    PHA                         ; Push Y register onto stack
-
-    ; Calculate remaining characters to next line
-    LDA #SCREEN_WIDTH           ; Load screen width (40)
-    SEC
-    SBC CURSOR_X                ; Subtract current X position
-
-    ; Advance screen pointer by remaining characters
-    CLC
-    ADC SCREEN_PTR_LO           ; Add to low byte
-    STA SCREEN_PTR_LO           ; Store result
-    LDA #$00                    ; Clear A
-    ADC SCREEN_PTR_HI           ; Add any carry to high byte
-    STA SCREEN_PTR_HI           ; Store result
-
-    ; Update cursor position
-    STZ CURSOR_X                ; Reset X to beginning of line
-    INC CURSOR_Y                ; Move to next line
-
-    ; Check if we need to scroll screen
+    ; Carriage return: go to the start of the next line, scrolling if needed.
+    STZ CURSOR_X
+    INC CURSOR_Y
     LDA CURSOR_Y
-    CMP #SCREEN_HEIGHT          ; Have we gone past line 24?
-    BCC PRINT_CHAR_NEWLINE_DONE ; If not, we're done
-
-    ; Need to scroll
+    CMP #SCREEN_HEIGHT          ; Past line 24?
+    BCC PRINT_CHAR_NEWLINE_DONE
     JSR SCROLL_AND_HOME_BOTTOM  ; scroll up one line and re-home to the bottom line
 
 PRINT_CHAR_NEWLINE_DONE:
-    PLA                         ; Pull Y register from stack
-    TAY                         ; Transfer A to Y
+    JSR UPDATE_CURSOR
+    PLA                         ; restore A = $0D (EhBASIC's CMP #$0D depends on it)
     RTS
 
 PRINT_CHAR_BACKSPACE:
-    ; Handle backspace - move cursor back and clear character
-    ; Check if we're at beginning of current line
+    ; Handle backspace - move cursor back and clear the character there.
     LDA CURSOR_X
     BNE PRINT_BACKSPACE_SAME_LINE ; If X>0, backspace within current line
 
-    ; At beginning of line - check if we can go to previous line
+    ; At beginning of line - check if we can go to the previous line
     LDA CURSOR_Y
-    BEQ PRINT_CHAR_DONE         ; If Y=0, we're at top-left, can't go back
+    BEQ PRINT_CHAR_DONE         ; If Y=0, we're at top-left, can't go back (restores A)
 
-    ; Move to end of previous line
     DEC CURSOR_Y                ; Move up one line
-    LDA #SCREEN_WIDTH-1         ; Move to end of line (position 39)
+    LDA #SCREEN_WIDTH-1         ; Move to end of line (position 79)
     STA CURSOR_X
-
-    ; Decrement screen pointer to end of previous line
-    LDA SCREEN_PTR_LO           ; Get current screen pointer low
-    BNE PRINT_BACKSPACE_CROSS_NO_BORROW ; If not zero, no borrow needed
-    DEC SCREEN_PTR_HI           ; Decrement high byte if borrow
-
-PRINT_BACKSPACE_CROSS_NO_BORROW:
-    DEC SCREEN_PTR_LO           ; Decrement low byte (moves to end of previous line)
-    JMP PRINT_BACKSPACE_CLEAR_CHAR ; Clear the character
+    JMP PRINT_BACKSPACE_CLEAR_CHAR
 
 PRINT_BACKSPACE_SAME_LINE:
-    ; Move cursor back one position on same line
-    DEC CURSOR_X                ; Decrement cursor X position
-
-    ; Decrement screen pointer
-    LDA SCREEN_PTR_LO           ; Get current screen pointer low
-    BNE PRINT_BACKSPACE_NO_BORROW ; If not zero, no borrow needed
-    DEC SCREEN_PTR_HI           ; Decrement high byte if borrow
-
-PRINT_BACKSPACE_NO_BORROW:
-    DEC SCREEN_PTR_LO           ; Decrement low byte
+    DEC CURSOR_X                ; Move cursor back one position on the same line
 
 PRINT_BACKSPACE_CLEAR_CHAR:
-    ; Clear the character at the new position by writing a space.
-    LDA #ASCII_SPACE            ; Load space character
-    STA (SCREEN_PTR_LO)         ; Store space (65C02 zero-page indirect; Y untouched)
+    ; Clear the character at the new position by writing a space through the port.
+    JSR SET_VREG_ADDR
+    LDA #ASCII_SPACE
+    STA VREG_CHAR
+    JSR UPDATE_CURSOR
+    PLA                         ; restore A = the backspace character
     RTS                         ; Done with backspace
 
 ; Print a newline (carriage return)
@@ -870,14 +855,10 @@ PRINT_NEWLINE_PAGED_DONE:
     RTS
 
 HANDLE_PAGE_BREAK:
-    ; Save cursor state
+    ; Save cursor state (printing the prompt below moves it)
     LDA CURSOR_X
     PHA
     LDA CURSOR_Y
-    PHA
-    LDA SCREEN_PTR_LO
-    PHA
-    LDA SCREEN_PTR_HI
     PHA
 
     ; Print prompt on current line (before it scrolls away)
@@ -899,15 +880,12 @@ PAGE_ABORT:
     STA PAGE_ABORT_FLAG         ; Set abort flag
 
 PAGE_CONTINUE:
-    ; Restore cursor state
-    PLA
-    STA SCREEN_PTR_HI
-    PLA
-    STA SCREEN_PTR_LO
+    ; Restore cursor state and reposition the displayed cursor
     PLA
     STA CURSOR_Y
     PLA
     STA CURSOR_X
+    JSR UPDATE_CURSOR
     RTS
 
 ; Print null-terminated string using indirect addressing
