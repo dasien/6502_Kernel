@@ -188,8 +188,9 @@ DOS_SIGNATURE:
 ;        a unified root/subdir directory iterator, and path resolution
 ;        (FILE / DRAWER/FILE / /FILE) for the file verbs
 ;   1.3  cross-drawer COPY (qualified src/dst paths) + new MOVE command
+;   1.4  blank line between a command's output and the next prompt (shell polish)
 DOS_VERSION:
-    .BYTE $01, $03                      ; version 1.3 (major, minor)
+    .BYTE $01, $04                      ; version 1.4 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -237,7 +238,8 @@ _DOS_PROMPT:
     JMP _DOS_PROMPT                     ; empty line
 @run:
     JSR _DOS_DISPATCH
-    JMP _DOS_PROMPT
+    JSR K_PRINT_NEWLINE                 ; blank line between a command's output
+    JMP _DOS_PROMPT                     ; and the next prompt (not on empty input)
 
 ; ----------------------------------------------------------------
 ; _DOS_DISPATCH - match the typed verb and run its handler
