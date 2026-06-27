@@ -435,8 +435,8 @@ private:
         auto& screen_buffer = computer.getVideoChip()->getScreenBuffer();
         std::string content;
 
-        // Convert screen buffer to string
-        for (int i = 0; i < 40 * 25; ++i) {
+        // Convert screen buffer to string (80x25 = kScreenSize cells)
+        for (int i = 0; i < Computer::VIC::kScreenSize; ++i) {
             uint8_t ch = screen_buffer[i];
             if (ch >= 0x20 && ch <= 0x7E) {
                 content += static_cast<char>(ch);

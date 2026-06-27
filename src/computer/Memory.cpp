@@ -40,7 +40,13 @@ namespace Computer
             return acia_->read(address);
         }
 
-        // Check if this is a video memory read
+        // Check if this is a VIC video-register read ($FE2D-$FE36)
+        if (video_chip_ && VIC::isVideoRegAddress(address))
+        {
+            return video_chip_->read(address);
+        }
+
+        // Check if this is a video memory read (legacy 40-col compat window)
         if (video_chip_ && video_chip_->isScreenAddress(address))
         {
             return video_chip_->readScreen(address);
@@ -95,7 +101,14 @@ namespace Computer
             return;
         }
 
-        // Check if this is a video memory write
+        // Check if this is a VIC video-register write ($FE2D-$FE36)
+        if (video_chip_ && VIC::isVideoRegAddress(address))
+        {
+            video_chip_->write(address, value);
+            return;
+        }
+
+        // Check if this is a video memory write (legacy 40-col compat window)
         if (video_chip_ && video_chip_->isScreenAddress(address))
         {
             video_chip_->writeScreen(address, value);

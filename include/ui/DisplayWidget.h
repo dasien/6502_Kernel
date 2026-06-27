@@ -65,11 +65,18 @@ private:
     bool show_cursor_;
     QTimer* cursor_timer_;
     
+    // 16-entry color palette (8 base + 8 bright) for the attribute planes.
+    QColor palette_[16];
+
     // Helper methods
     void setupFont();
     void calculateCharacterSize();
+    void initPalette();
+    // Resolve a cell's foreground/background QColors from its glyph + attribute
+    // byte (handles reverse-video, bright, and the legacy char-bit7 reverse).
+    void resolveCellColors(uint8_t glyph, uint8_t attr, QColor& fg, QColor& bg) const;
     QChar asciiToChar(uint8_t ascii_code) const;
-    void drawCharacterAt(QPainter& painter, int x, int y, uint8_t character);
+    void drawCharacterAt(QPainter& painter, int x, int y, uint8_t glyph, uint8_t attr);
     void drawCursor(QPainter& painter);
     uint8_t qtKeyToAscii(QKeyEvent* event) const;
 };

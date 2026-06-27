@@ -13,14 +13,15 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, Computer::Memory* memory
     , refresh_timer_(new QTimer(this))
     , background_color_(Qt::black)
     , foreground_color_(Qt::green)
-    , char_width_(11)   // Significantly reduced for much tighter character spacing
-    , char_height_(19)  // 25 rows × 19px = 475px (close to 480px for 4:3 aspect ratio)
+    , char_width_(8)    // 80 cols × 8px = 640 (classic VGA 80×25 text geometry)
+    , char_height_(16)  // 25 rows × 16px = 400
     , refresh_rate_hz_(60)
     , needs_full_redraw_(true)
     , has_focus_(false)
     , show_cursor_(false)
     , cursor_timer_(new QTimer(this))
 {
+    initPalette();
     setupFont();
     calculateCharacterSize();
 
@@ -117,20 +118,18 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
     
     QPainter painter(this);
     painter.fillRect(rect(), background_color_);
-    
+
     // Set up painter for character rendering
     painter.setFont(character_font_);
     painter.setPen(foreground_color_);
-    
+
     for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
     {
         for (int x = 0; x < Computer::VIC::kScreenWidth; ++x)
         {
             const uint8_t character = video_chip_->getCharacterAt(x, y);
-            if (character != 0x00) // Don't draw null characters
-            {
-                drawCharacterAt(painter, x, y, character);
-            }
+            const uint8_t attr = video_chip_->getColorAt(x, y);
+            drawCharacterAt(painter, x, y, character, attr);
         }
     }
     
@@ -201,18 +200,71 @@ void DisplayWidget::setupFont()
 
     character_font_.setFixedPitch(true);
     character_font_.setStyleHint(QFont::TypeWriter);
-    character_font_.setPixelSize(17); // Properly sized for 11x19px character cells
+    character_font_.setPixelSize(14); // Sized for the 8x16px character cells (80x25)
     character_font_.setWeight(QFont::Normal); // Keep normal weight for authentic feel
 }
 
 void DisplayWidget::calculateCharacterSize()
 {
-    // Keep our explicitly set 11x19 pixel grid - don't let font metrics override it
-    // This ensures we maintain the intended 440x475 display dimensions (very tight char spacing)
-    // (40 columns × 11 pixels = 440, 25 rows × 19 pixels = 475)
+    // Keep the explicitly set 8x16 pixel grid - don't let font metrics override it.
+    // This maintains the intended 640x400 display (80 cols × 8px = 640,
+    // 25 rows × 16px = 400 -- classic VGA 80x25 text geometry).
+    // char_width_ and char_height_ are set in the constructor - don't change them.
+}
 
-    // char_width_ and char_height_ are already set in constructor - don't change them!
-    // Dramatically reduced char_width_ from 16 to 11 pixels for much tighter character spacing
+void DisplayWidget::initPalette()
+{
+    // Standard 8-color ANSI palette (indices 0-7) plus bright variants (8-15).
+    // The attribute byte selects fg (bits 0-2) and bg (bits 3-5); bit 6 brightens
+    // the foreground. Index 2 (green) is the system default to match the classic
+    // green-on-black look.
+    palette_[0]  = QColor(0,   0,   0);   // black
+    palette_[1]  = QColor(170, 0,   0);   // red
+    palette_[2]  = QColor(0,   170, 0);   // green
+    palette_[3]  = QColor(170, 85,  0);   // yellow/brown
+    palette_[4]  = QColor(0,   0,   170); // blue
+    palette_[5]  = QColor(170, 0,   170); // magenta
+    palette_[6]  = QColor(0,   170, 170); // cyan
+    palette_[7]  = QColor(170, 170, 170); // white/gray
+    palette_[8]  = QColor(85,  85,  85);  // bright black (gray)
+    palette_[9]  = QColor(255, 85,  85);  // bright red
+    palette_[10] = QColor(85,  255, 85);  // bright green
+    palette_[11] = QColor(255, 255, 85);  // bright yellow
+    palette_[12] = QColor(85,  85,  255); // bright blue
+    palette_[13] = QColor(255, 85,  255); // bright magenta
+    palette_[14] = QColor(85,  255, 255); // bright cyan
+    palette_[15] = QColor(255, 255, 255); // bright white
+}
+
+void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
+                                      QColor& fg, QColor& bg) const
+{
+    // Reverse video comes from either the attribute reverse bit (register-written
+    // cells) or the legacy char-bit7 (cells written through the 40-col compat
+    // window). Either way the glyph itself is masked to 7 bits when drawn.
+    const bool reverse = (attr & Computer::VIC::kAttrReverse) || (glyph & 0x80);
+
+    if (attr == Computer::VIC::kDefaultAttr && !(glyph & 0x80))
+    {
+        // Exact default attribute: use the configured colors so the display is
+        // pixel-identical to the pre-color era (green on black).
+        fg = foreground_color_;
+        bg = background_color_;
+        return;
+    }
+
+    const int fg_index = (attr & Computer::VIC::kAttrFgMask) +
+                         ((attr & Computer::VIC::kAttrBright) ? 8 : 0);
+    const int bg_index = (attr & Computer::VIC::kAttrBgMask) >> Computer::VIC::kAttrBgShift;
+    fg = palette_[fg_index & 0x0F];
+    bg = palette_[bg_index & 0x07];
+
+    if (reverse)
+    {
+        const QColor tmp = fg;
+        fg = bg;
+        bg = tmp;
+    }
 }
 
 QChar DisplayWidget::asciiToChar(const uint8_t ascii_code) const
@@ -233,33 +285,31 @@ QChar DisplayWidget::asciiToChar(const uint8_t ascii_code) const
     }
 }
 
-void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y, const uint8_t character)
+void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
+                                    const uint8_t glyph, const uint8_t attr)
 {
-    // Bit 7 set => reverse video (inverse): the glyph comes from the low 7 bits
-    // and the foreground/background colours are swapped (classic 8-bit style).
-    const bool reverse = (character & 0x80) != 0;
-    const QChar ch = asciiToChar(character & 0x7F);
+    QColor fg, bg;
+    resolveCellColors(glyph, attr, fg, bg);
+    const QChar ch = asciiToChar(glyph & 0x7F);
 
     const int pixel_x = x * char_width_;
 
-    // Better baseline calculation for larger font - center vertically in the cell
+    // Center the glyph vertically within the cell.
     const QFontMetrics metrics(character_font_);
     const int font_height = metrics.height();
     const int font_ascent = metrics.ascent();
     const int vertical_offset = (char_height_ - font_height) / 2 + font_ascent;
     const int pixel_y = y * char_height_ + vertical_offset;
 
-    if (reverse)
+    // Paint the cell background only when it differs from the global background
+    // (which was already filled for the whole widget) to keep repaints cheap.
+    if (bg != background_color_)
     {
-        painter.fillRect(pixel_x, y * char_height_, char_width_, char_height_, foreground_color_);
-        painter.setPen(background_color_);
-        painter.drawText(pixel_x, pixel_y, QString(ch));
-        painter.setPen(foreground_color_);
+        painter.fillRect(pixel_x, y * char_height_, char_width_, char_height_, bg);
     }
-    else
-    {
-        painter.drawText(pixel_x, pixel_y, QString(ch));
-    }
+    painter.setPen(fg);
+    painter.drawText(pixel_x, pixel_y, QString(ch));
+    painter.setPen(foreground_color_);
 }
 
 void DisplayWidget::drawCursor(QPainter& painter)
