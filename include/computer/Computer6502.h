@@ -14,6 +14,7 @@
 #include "VIC.h"
 #include "PIA.h"
 #include "BlockDevice.h"
+#include "Acia.h"
 
 namespace Computer
 {
@@ -102,6 +103,16 @@ namespace Computer
         }
 
         /**
+         * @brief Get pointer to the serial ACIA
+         * @return Acia* Pointer to the $FE29-$FE2C serial port
+         * @note Used to drive the "other end of the wire" (host RX/TX FIFOs)
+         */
+        Acia *getAcia()
+        {
+            return &acia;
+        }
+
+        /**
          * @brief Get pointer to the peripheral interface adapter (PIA)
          * @return PIA* Pointer to the PIA for keyboard and file operations
          * @note Used primarily for testing and input simulation
@@ -142,6 +153,7 @@ namespace Computer
         VIC video_chip; ///< VIC-II video chip for screen output
         PIA pia; ///< Peripheral Interface Adapter for I/O
         BlockDevice block_device; ///< Block device backing the FAT16 disk image
+        Acia acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
         Memory memory; ///< 64KB system memory with memory-mapped I/O
         CPU6502 cpu; ///< MOS 65C02 microprocessor
         ResetCircuit reset_circuit; ///< Reset circuit for system initialization

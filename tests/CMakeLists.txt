@@ -37,6 +37,7 @@ add_executable(cpu_alu_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
 )
@@ -59,6 +60,7 @@ add_executable(memory_banking_tests
     test_memory_banking.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
@@ -83,6 +85,7 @@ add_executable(block_device_tests
     test_block_device.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
@@ -109,6 +112,7 @@ add_executable(dos_blockio_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -137,6 +141,7 @@ add_executable(dos_fat16_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -157,6 +162,31 @@ target_include_directories(dos_fat16_tests PRIVATE
 
 target_compile_features(dos_fat16_tests PRIVATE cxx_std_20)
 
+# Spike: emulated 6551 ACIA + ported XMODEM receiver (headless end-to-end)
+add_executable(acia_xmodem_tests
+    test_acia_xmodem.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(acia_xmodem_tests gtest_main gtest)
+
+target_include_directories(acia_xmodem_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(acia_xmodem_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -164,6 +194,7 @@ add_executable(monitor_integration_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -208,6 +239,10 @@ add_test(NAME dos_fat16_tests
 # Add integration test to CTest
 add_test(NAME monitor_integration
     COMMAND monitor_integration_tests)
+
+# Add the ACIA + XMODEM spike test to CTest
+add_test(NAME acia_xmodem
+    COMMAND acia_xmodem_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom

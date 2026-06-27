@@ -115,6 +115,31 @@ if(CA65_FOUND AND LD65_FOUND)
     )
 
     # ================================================================
+    # XMODEM spike blob (serial/6551 ACIA proof; not a kernel module)
+    # ================================================================
+    # Daryl Rictor's XMODEM/CRC (vendor/xmodem), retargeted to the $FE29 ACIA and
+    # relocated to $2000. A flat binary the headless ACIA test loads into RAM.
+    # Assembled with --ignore-case (the original mixes label case).
+
+    set(XMODEM_DIR ${CMAKE_SOURCE_DIR}/vendor/xmodem)
+    set(XMODEM_ASM_SOURCE ${XMODEM_DIR}/xmodem.s)
+    set(XMODEM_CONFIG ${XMODEM_DIR}/xmodem.cfg)
+
+    set(XMODEM_OBJECT ${CMAKE_BINARY_DIR}/kernel/xmodem.o)
+    set(XMODEM_BIN ${CMAKE_BINARY_DIR}/kernel/xmodem.bin)
+    set(XMODEM_MAP ${CMAKE_BINARY_DIR}/kernel/xmodem.map)
+
+    add_custom_target(xmodem_bin ALL
+        COMMAND ca65 --ignore-case ${XMODEM_ASM_SOURCE} -o ${XMODEM_OBJECT}
+        COMMAND ld65 -C ${XMODEM_CONFIG} ${XMODEM_OBJECT} -o ${XMODEM_BIN} -m ${XMODEM_MAP}
+        COMMAND ${CMAKE_COMMAND} -E echo "XMODEM spike blob built ($2000)"
+        COMMENT "Building XMODEM spike blob"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+        DEPENDS ${XMODEM_ASM_SOURCE} ${XMODEM_CONFIG}
+        VERBATIM
+    )
+
+    # ================================================================
     # MFC-DOS Resident ROM Build Target ($9000-$AFFF, always mapped)
     # ================================================================
 

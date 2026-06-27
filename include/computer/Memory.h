@@ -15,6 +15,7 @@ namespace Computer
     class VIC;
     class PIA;
     class BlockDevice;
+    class Acia;
 
     /**
      * @class Memory
@@ -125,6 +126,12 @@ namespace Computer
         void setBlockDevice(BlockDevice *block_device);
 
         /**
+         * @brief Set or update the ACIA (serial UART) for memory-mapped I/O
+         * @param acia Pointer to Acia instance ($FE29-$FE2C)
+         */
+        void setAcia(Acia *acia);
+
+        /**
          * @brief Install the always-mapped DOS ROM image ($9000-$AFFF)
          * @param image DOS ROM image; truncated/zero-padded to 8KB
          * @note Once installed the region is read-only (writes ignored). Passing
@@ -168,6 +175,7 @@ namespace Computer
         VIC *video_chip_;             ///< Pointer to VIC for memory-mapped video I/O
         PIA *pia_;                    ///< Pointer to PIA for memory-mapped peripheral I/O
         BlockDevice *block_device_ = nullptr; ///< Block device ($FE24-$FE28), or null
+        Acia *acia_ = nullptr;                ///< Serial ACIA ($FE29-$FE2C), or null
 
         /// Module ROM images, indexed by bank (1..255). Each entry is either
         /// empty (no module installed) or exactly kModuleWindowSize bytes.

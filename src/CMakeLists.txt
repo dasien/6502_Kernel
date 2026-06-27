@@ -5,6 +5,7 @@ set(SOURCES
     main.cpp
     computer/Memory.cpp
     computer/BlockDevice.cpp
+    computer/Acia.cpp
     computer/CPU6502.cpp
     computer/ResetCircuit.cpp
     computer/TimingCircuit.cpp

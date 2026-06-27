@@ -2,6 +2,7 @@
 #include "VIC.h"
 #include "PIA.h"
 #include "BlockDevice.h"
+#include "Acia.h"
 
 #include <algorithm>
 
@@ -31,6 +32,12 @@ namespace Computer
         if (block_device_ && BlockDevice::isBlockAddress(address))
         {
             return block_device_->read(address);
+        }
+
+        // Check if this is an ACIA (serial) register read ($FE29-$FE2C)
+        if (acia_ && Acia::isAciaAddress(address))
+        {
+            return acia_->read(address);
         }
 
         // Check if this is a video memory read
@@ -78,6 +85,13 @@ namespace Computer
         if (block_device_ && BlockDevice::isBlockAddress(address))
         {
             block_device_->write(address, value);
+            return;
+        }
+
+        // Check if this is an ACIA (serial) register write ($FE29-$FE2C)
+        if (acia_ && Acia::isAciaAddress(address))
+        {
+            acia_->write(address, value);
             return;
         }
 
@@ -138,6 +152,11 @@ namespace Computer
     void Memory::setBlockDevice(BlockDevice *block_device)
     {
         block_device_ = block_device;
+    }
+
+    void Memory::setAcia(Acia *acia)
+    {
+        acia_ = acia;
     }
 
     void Memory::loadBank(uint8_t bank, const std::vector<uint8_t> &image)

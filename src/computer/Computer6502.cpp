@@ -24,6 +24,9 @@ namespace Computer
         // Route the block-device registers ($FE24-$FE28) through memory. The
         // image is created on first write, so a missing disk.img is harmless.
         memory.setBlockDevice(&block_device);
+
+        // Route the ACIA (serial) registers ($FE29-$FE2C) through memory.
+        memory.setAcia(&acia);
     }
 
     void Computer6502::showFatalError(const std::string& message)

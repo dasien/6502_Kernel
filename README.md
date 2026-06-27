@@ -212,6 +212,10 @@ or studied:
   conversion/verification tooling live under `vendor/fig-forth/`.
 - **cc65** — the 6502 C cross-compiler and toolchain used to build the C
   programs (`CHESS.PRG`, the Scott Adams games). <https://cc65.github.io/>
+- **XMODEM/CRC for the 65C02** by **Daryl Rictor** (2002) — the serial
+  file-transfer routine behind the emulated 6551 ACIA spike. We retarget its
+  built-in 6551 driver to our memory-mapped ACIA and relocate it for the host
+  test harness; the pristine original is kept under `vendor/xmodem/`.
 
 See `docs/cc65_to_prg.md` for the C-to-`.PRG` build pipeline.
 
