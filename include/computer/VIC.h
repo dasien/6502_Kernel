@@ -43,11 +43,6 @@ namespace Computer
         static constexpr uint16_t kScreenHeight = 25;
         static constexpr uint16_t kScreenSize = kScreenWidth * kScreenHeight; // 2000
 
-        // Legacy 40-column memory-mapped window (transitional compat shim).
-        static constexpr uint16_t kCompatWidth = 40;
-        static constexpr uint16_t kScreenMemoryStart = 0x0400;
-        static constexpr uint16_t kScreenMemoryEnd = 0x07E7; // $0400 + 40*25 - 1
-
         // VDC-style register port in the always-mapped I/O page (after the ACIA
         // at $FE2C). See class docs for the access protocol.
         static constexpr uint16_t kRegAddrLo = 0xFE2D;   ///< cell index low (W)
@@ -89,11 +84,6 @@ namespace Computer
         // mutable and read() stays const (preserving Memory::read's const contract).
         [[nodiscard]] uint8_t read(uint16_t address) const;
         void write(uint16_t address, uint8_t value);
-
-        // --- Legacy 40-col memory-mapped window (transitional) ---
-        [[nodiscard]] bool isScreenAddress(uint16_t address) const;
-        void writeScreen(uint16_t address, uint8_t value);
-        [[nodiscard]] uint8_t readScreen(uint16_t address) const;
 
         // --- Display buffer access (for the host renderer) ---
         [[nodiscard]] const std::array<uint8_t, kScreenSize> &getScreenBuffer() const;

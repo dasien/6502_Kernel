@@ -40,16 +40,11 @@ namespace Computer
             return acia_->read(address);
         }
 
-        // Check if this is a VIC video-register read ($FE2D-$FE36)
+        // Check if this is a VIC video-register read ($FE2D-$FE36). The screen
+        // itself is not in the 64K map -- it lives behind this register port.
         if (video_chip_ && VIC::isVideoRegAddress(address))
         {
             return video_chip_->read(address);
-        }
-
-        // Check if this is a video memory read (legacy 40-col compat window)
-        if (video_chip_ && video_chip_->isScreenAddress(address))
-        {
-            return video_chip_->readScreen(address);
         }
 
         // DOS ROM: always-mapped read-only region. Falls through to RAM when no
@@ -101,17 +96,11 @@ namespace Computer
             return;
         }
 
-        // Check if this is a VIC video-register write ($FE2D-$FE36)
+        // Check if this is a VIC video-register write ($FE2D-$FE36). The screen
+        // itself is not in the 64K map -- it lives behind this register port.
         if (video_chip_ && VIC::isVideoRegAddress(address))
         {
             video_chip_->write(address, value);
-            return;
-        }
-
-        // Check if this is a video memory write (legacy 40-col compat window)
-        if (video_chip_ && video_chip_->isScreenAddress(address))
-        {
-            video_chip_->writeScreen(address, value);
             return;
         }
 

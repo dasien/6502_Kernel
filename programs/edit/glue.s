@@ -4,12 +4,16 @@
 ;   char INCH(void)     -- blocking key read; returns the key AS TYPED (the
 ;                          kernel preserves case as of v3.9). X=0.
 ;   void QUITDOS(void)  -- return to the DOS ] prompt.
-; The editor writes the 40x25 screen RAM at $0400 directly, so no output glue
-; is needed here.
+; The 80x25 screen lives behind the VIC register port (not in the 64K map), so
+; the editor renders through the video helpers below: set the cell index with
+; vaddr(), then stream glyphs with vputc() (the port auto-increments). vgetc()
+; reads a cell back (for the reverse-video read-modify-write), and vhidecur()
+; hides the kernel's hardware cursor so only the editor's block cursor shows.
 ; ============================================================================
 
 .export _INCH, _INCH_NB, _QUITDOS
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
+.export _vaddr, _vputc, _vgetc, _vhidecur
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (also resets the kernel cursor)
@@ -19,7 +23,45 @@ FS_PUTB         = $AF09         ; A=byte; C set = error
 FS_CLOSE        = $AF0C
 DOS_WARM        = $AF1E
 
+; VIC video register port (chars/colors live behind these, not in the map).
+VREG_ADDR_LO    = $FE2D         ; cell index low (0..1999)
+VREG_ADDR_HI    = $FE2E         ; cell index high
+VREG_CHAR       = $FE2F         ; char data port; bit7 => reverse; auto-increments
+VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
+
 .segment "CODE"
+
+; void vaddr(unsigned int cell) -- point the data port at a cell (A=lo, X=hi).
+.proc _vaddr
+        sta     VREG_ADDR_LO
+        stx     VREG_ADDR_HI
+        rts
+.endproc
+
+; void vputc(unsigned char ch) -- write a glyph at the current cell (A=ch). bit7
+; set means reverse video; the port stores the 7-bit glyph + reverse attribute
+; and auto-advances the cell index, so a run can be streamed after one vaddr().
+.proc _vputc
+        sta     VREG_CHAR
+        rts
+.endproc
+
+; unsigned char vgetc(void) -- read the glyph at the current cell (-> A, X=0);
+; advances the cell index. Used for the reverse-video read-modify-write.
+.proc _vgetc
+        lda     VREG_CHAR
+        ldx     #$00
+        rts
+.endproc
+
+; void vhidecur(void) -- hide the kernel hardware cursor (the editor draws its
+; own reverse-video block cursor). Returning to DOS re-shows it on the next
+; PRINT_CHAR (UPDATE_CURSOR clears the hidden bit).
+.proc _vhidecur
+        lda     #$80
+        sta     VREG_CURSOR_HI
+        rts
+.endproc
 
 .proc _INCH
 @wait:  jsr     K_GET_KEYSTROKE

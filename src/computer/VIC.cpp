@@ -161,49 +161,6 @@ namespace Computer
     }
 
     // ---------------------------------------------------------------------
-    // Legacy 40-column memory-mapped window (transitional compat shim).
-    // Maps a $0400-based 40-col offset into the top-left 40 columns of the
-    // 80-col character plane so an unmodified kernel keeps rendering.
-    // ---------------------------------------------------------------------
-
-    bool VIC::isScreenAddress(const uint16_t address) const
-    {
-        return address >= kScreenMemoryStart && address <= kScreenMemoryEnd;
-    }
-
-    void VIC::writeScreen(const uint16_t address, const uint8_t value)
-    {
-        if (!isScreenAddress(address))
-        {
-            return;
-        }
-        const uint16_t old_offset = address - kScreenMemoryStart; // 0..999 (40-col)
-        const uint16_t x = old_offset % kCompatWidth;
-        const uint16_t y = old_offset / kCompatWidth;
-        if (y < kScreenHeight)
-        {
-            screen_buffer_[y * kScreenWidth + x] = value;
-            dirty_flag_ = true;
-        }
-    }
-
-    uint8_t VIC::readScreen(const uint16_t address) const
-    {
-        if (!isScreenAddress(address))
-        {
-            return 0x00;
-        }
-        const uint16_t old_offset = address - kScreenMemoryStart;
-        const uint16_t x = old_offset % kCompatWidth;
-        const uint16_t y = old_offset / kCompatWidth;
-        if (y < kScreenHeight)
-        {
-            return screen_buffer_[y * kScreenWidth + x];
-        }
-        return 0x00;
-    }
-
-    // ---------------------------------------------------------------------
     // Display buffer access (host renderer).
     // ---------------------------------------------------------------------
 

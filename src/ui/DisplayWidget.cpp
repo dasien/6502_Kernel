@@ -314,22 +314,19 @@ void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
 
 void DisplayWidget::drawCursor(QPainter& painter)
 {
-    // The kernel tracks the text cursor in CURSOR_X ($0276) / CURSOR_Y ($0277),
-    // kept current for both the monitor and BASIC (all output flows through
-    // PRINT_CHAR), so the on-screen cursor follows the typing point.
-    if (!memory_)
+    // The VIC owns the hardware cursor: the kernel pushes its cell to VREG_CURSOR
+    // on every PRINT_CHAR, and full-screen programs (the editor) can hide it. The
+    // cell is a linear 0..1999 index; bit15 of the high byte means hidden.
+    uint16_t cursor_index = 0;
+    bool hidden = false;
+    video_chip_->getCursorCell(cursor_index, hidden);
+    if (hidden || cursor_index >= Computer::VIC::kScreenSize)
     {
         return;
     }
 
-    const int cursor_x = memory_->read(0x0276);
-    const int cursor_y = memory_->read(0x0277);
-
-    // Guard against any out-of-range value
-    if (cursor_x >= Computer::VIC::kScreenWidth || cursor_y >= Computer::VIC::kScreenHeight)
-    {
-        return;
-    }
+    const int cursor_x = cursor_index % Computer::VIC::kScreenWidth;
+    const int cursor_y = cursor_index / Computer::VIC::kScreenWidth;
 
     const int pixel_x = cursor_x * char_width_;
 

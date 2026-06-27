@@ -1,8 +1,9 @@
 /*
  *  EDIT -- a minimal full-screen text editor for MFC-DOS (kilo-inspired).
  *
- *  Renders directly to the 40x25 screen RAM at $0400 (no ANSI/terminal), reads
- *  keys via the kernel (GET_KEYSTROKE, case-preserving), and edits a document
+ *  Renders the 80x25 screen through the VIC register port (vaddr/vputc/vgetc in
+ *  glue.s; the screen is not in the 64K map), reads keys via the kernel
+ *  (GET_KEYSTROKE, case-preserving), and edits a document
  *  held as dynamically-allocated lines (kilo's erow model): a fixed array of
  *  row descriptors, each pointing at a malloc'd string sized to its content, so
  *  capacity is bounded by total text (the heap) rather than a per-line width or
@@ -17,7 +18,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define COLS      40
+#define COLS      80
 #define TEXTROWS  24            /* rows 0..23 are text; row 24 is the status line */
 #define MAXROWS   600           /* line-descriptor slots (text itself is on the heap) */
 
@@ -31,6 +32,16 @@ int  dgetb(void);               /* next byte 0..255, or -1 at EOF */
 char dputb(char c);
 void dclose(void);
 
+/* ---- VIC video port (glue.s); the screen is not memory-mapped ---- */
+void vaddr(unsigned int cell);  /* point the data port at a cell (0..1999) */
+void vputc(unsigned char ch);   /* write a glyph (bit7 = reverse); auto-advances */
+unsigned char vgetc(void);      /* read the glyph at the current cell; advances */
+void vhidecur(void);            /* hide the kernel hardware cursor */
+
+/* Set reverse-video on the cell at linear index idx (read-modify-write): read
+   the glyph back, then rewrite it with bit7 set. */
+static void orcell(int idx) { unsigned char c; vaddr(idx); c = vgetc(); vaddr(idx); vputc(c | 0x80); }
+
 /* logical keys returned by readkey() for nav (above the byte range) */
 #define K_LEFT  1001
 #define K_RIGHT 1002
@@ -41,8 +52,6 @@ void dclose(void);
 #define K_PGUP  1007
 #define K_PGDN  1008
 #define K_ESC   1009
-
-unsigned char *const SCREEN = (unsigned char *)0x0400;
 
 typedef struct { char *chars; int len; int cap; } erow;
 erow row[MAXROWS];              /* row[i].chars == 0 for an empty line */
@@ -88,28 +97,29 @@ static void appendnum(char *buf, int *pi, int v)
 /* "EDIT name* Lx/y Cz  <msg>" on the reverse-video bottom row */
 static void status(void)
 {
-    char buf[64];
+    char buf[COLS];
     char *nm = curname[0] ? curname : "[new]";
     int i = 0, c;
-    for (c = 0; c < 64; c++) buf[c] = ' ';
+    for (c = 0; c < COLS; c++) buf[c] = ' ';
     buf[i++] = 'E'; buf[i++] = 'D'; buf[i++] = 'I'; buf[i++] = 'T'; buf[i++] = ' ';
     { char *p = nm; while (*p && i < 18) buf[i++] = *p++; }
     if (dirty) buf[i++] = '*';
     buf[i++] = ' '; buf[i++] = 'L'; appendnum(buf, &i, cy + 1);
     buf[i++] = '/'; appendnum(buf, &i, numrows);
     buf[i++] = ' '; buf[i++] = 'C'; appendnum(buf, &i, cx + 1);
-    if (statusmsg[0]) { char *p = statusmsg; buf[i++] = ' '; while (*p && i < 63) buf[i++] = *p++; }
-    for (c = 0; c < COLS; c++) SCREEN[TEXTROWS * COLS + c] = buf[c] | 0x80;
+    if (statusmsg[0]) { char *p = statusmsg; buf[i++] = ' '; while (*p && i < COLS - 1) buf[i++] = *p++; }
+    vaddr(TEXTROWS * COLS);
+    for (c = 0; c < COLS; c++) vputc(buf[c] | 0x80);
 }
 
 /* paint one screen text row r (0..TEXTROWS-1), windowed horizontally at coloff */
 static void paint_row(int r)
 {
     int fr = rowoff + r, c, sc, len = 0;
-    unsigned char *p = SCREEN + r * COLS;
     char *src = 0;
     if (fr < numrows) { src = row[fr].chars; len = row[fr].len; }
-    for (c = 0; c < COLS; c++) { sc = coloff + c; p[c] = (sc < len) ? (unsigned char)src[sc] : ' '; }
+    vaddr(r * COLS);
+    for (c = 0; c < COLS; c++) { sc = coloff + c; vputc((sc < len) ? (unsigned char)src[sc] : ' '); }
 }
 
 static void refresh(void)
@@ -127,7 +137,7 @@ static void refresh(void)
     } else {
         paint_row(cy - rowoff);                 /* typing: only the cursor's row */
     }
-    SCREEN[(cy - rowoff) * COLS + (cx - coloff)] |= 0x80;   /* block cursor */
+    orcell((cy - rowoff) * COLS + (cx - coloff));   /* block cursor */
     status();
 }
 
@@ -211,9 +221,10 @@ static int prompt(char *label, char *buf, int max)
     int len = 0, k, i, c;
     for (;;) {
         i = 0;
-        { char *p = label; while (*p) SCREEN[TEXTROWS * COLS + i++] = (*p++) | 0x80; }
-        for (c = 0; c < len; c++) SCREEN[TEXTROWS * COLS + i++] = buf[c] | 0x80;
-        while (i < COLS) SCREEN[TEXTROWS * COLS + i++] = ' ' | 0x80;
+        vaddr(TEXTROWS * COLS);
+        { char *p = label; while (*p) { vputc((*p++) | 0x80); i++; } }
+        for (c = 0; c < len; c++) { vputc(buf[c] | 0x80); i++; }
+        while (i < COLS) { vputc(' ' | 0x80); i++; }
         k = readkey();
         if (k == K_ESC) return 0;
         if (k == 0x0D || k == 0x0A) { buf[len] = 0; return 1; }
@@ -305,11 +316,12 @@ static void draw_search(char *q, int qlen)
     if (cx >= coloff + COLS) coloff = cx - COLS + 1;
     for (r = 0; r < TEXTROWS; r++) paint_row(r);
     base = (cy - rowoff) * COLS + (cx - coloff);
-    if (search_found) for (c = 0; c < qlen && (cx - coloff) + c < COLS; c++) SCREEN[base + c] |= 0x80;
-    else SCREEN[base] |= 0x80;                  /* just the cursor when no match */
-    { char *p = "Search: "; while (*p) SCREEN[TEXTROWS * COLS + i++] = (*p++) | 0x80; }
-    for (c = 0; c < qlen; c++) SCREEN[TEXTROWS * COLS + i++] = q[c] | 0x80;
-    while (i < COLS) SCREEN[TEXTROWS * COLS + i++] = ' ' | 0x80;
+    if (search_found) for (c = 0; c < qlen && (cx - coloff) + c < COLS; c++) orcell(base + c);
+    else orcell(base);                          /* just the cursor when no match */
+    vaddr(TEXTROWS * COLS);
+    { char *p = "Search: "; while (*p) { vputc((*p++) | 0x80); i++; } }
+    for (c = 0; c < qlen; c++) { vputc(q[c] | 0x80); i++; }
+    while (i < COLS) { vputc(' ' | 0x80); i++; }
 }
 
 static void search(void)
@@ -333,9 +345,9 @@ int main(void)
 {
     int k;
     row[0].chars = 0; row[0].len = 0; row[0].cap = 0; numrows = 1;
-    /* Park the kernel's blinking cursor off-screen (drawCursor skips x>=40) so
-       only the editor's block cursor shows. */
-    *(unsigned char *)0x0276 = 40;
+    /* Hide the kernel hardware cursor so only the editor's reverse-video block
+       cursor shows; returning to DOS re-shows it on the next PRINT_CHAR. */
+    vhidecur();
     for (;;) {
         refresh();
         k = readkey();
