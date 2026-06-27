@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.13
+; Version:      3.14
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -18,7 +18,7 @@
 ; ROM (Used):      ~3975 bytes
 ;   CODE segment:  $E000-$EF62 (3939 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
-;   JUMPS segment: $FF00-$FF1D (30 bytes) - kernel API jump table (10 entries)
+;   JUMPS segment: $FF00-$FF2F (48 bytes) - kernel API jump table (16 entries)
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
 ; Zero Page:    placed above EhBASIC's $00-$13 and below its ~$5B-$FF (~21 bytes used)
@@ -212,6 +212,11 @@
 ;                   write through VREG_CHAR at cell = CURSOR_Y*80+CURSOR_X; SCROLL and
 ;                   CLEAR are single chip-side commands (VCMD_SCROLL_UP / VCMD_CLEAR).
 ;                   The displayed cursor is pushed to VREG_CURSOR. BASIC TWidth -> 80.
+; 2026-06-27  v3.14 80-column display (phase C): exposed the color/attribute latch
+;                   as K_SET_ATTR ($FF2D, A -> VREG_ATTR). Subsequent PRINT_CHAR
+;                   output takes that attribute (byte = [R][BR][bg:3][fg:3]; default
+;                   $02 = green on black). Appended to the jump table so all prior
+;                   $FF00 offsets stay byte-stable. The ANSI terminal will use this.
 ;
 ; ================================================================
 
@@ -475,10 +480,15 @@ CLEAR_MON_VAR_LOOP:
 ; ================================================================
 ; MONITOR START/WELCOME MESSAAGE
 ; ================================================================
-    ; Display welcome message
+    ; Display welcome message in bright cyan to show off the color plane,
+    ; then restore the default green so the DOS banner and prompt look normal.
+    LDA #$40 | $06              ; bright (bit6) + cyan foreground (6), black bg
+    JSR SET_ATTR
     LDA #<MSG_WELCOME
     LDY #>MSG_WELCOME
     JSR PRINT_MSG_AY
+    LDA #$02                    ; default attribute: green (fg=2) on black
+    JSR SET_ATTR
 
     ; Boot into the MFC/OS DOS shell (always-mapped DOS ROM). The monitor is now
     ; a tool launched from the DOS by MON; it returns here via DOS_WARM.
@@ -698,6 +708,15 @@ UPDATE_CURSOR:
     STA VREG_CURSOR_LO
     LDA VID_CELL_HI
     STA VREG_CURSOR_HI         ; bit7 clear => cursor visible
+    RTS
+
+; Set the current color/attribute latch (VREG_ATTR). Subsequent VREG_CHAR writes
+; (i.e. PRINT_CHAR output) take this attribute. Byte = [R][BR][bg:3][fg:3]; the
+; power-on/clear default is $02 (green on black). Exposed as K_SET_ATTR ($FF2D)
+; so color-aware programs and the forthcoming ANSI terminal can set colors.
+; Input: A = attribute byte. Preserves X/Y (A is consumed).
+SET_ATTR:
+    STA VREG_ATTR
     RTS
 
 ; Scroll the screen up one line. The VIC does the row shift and blanks the bottom
@@ -3418,6 +3437,7 @@ K_LAUNCH_BY_NAME:JMP LAUNCH_BY_NAME     ; $FF21 - DOS launches a module by name
 K_LIST_MODULES:  JMP LIST_MODULES       ; $FF24 - print the module catalog (BANKS)
 K_PRINT_DEC:     JMP PRINT_DEC          ; $FF27 - print a 32-bit value in decimal
 K_PARSE_DEC:     JMP PARSE_DEC_ABI      ; $FF2A - parse a decimal string from MON_CMDBUF
+K_SET_ATTR:      JMP SET_ATTR           ; $FF2D - set the color/attribute latch (VREG_ATTR)
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

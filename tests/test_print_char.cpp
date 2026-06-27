@@ -30,6 +30,7 @@ namespace
 {
     constexpr uint16_t kPrintChar = 0xFF00;   // K_PRINT_CHAR (JMP PRINT_CHAR)
     constexpr uint16_t kClearScreen = 0xFF0C; // K_CLEAR_SCREEN (JMP CLEAR_SCREEN)
+    constexpr uint16_t kSetAttr = 0xFF2D;     // K_SET_ATTR (JMP SET_ATTR)
     constexpr uint16_t kReturnMarker = 0xABCD;
 
     class PrintCharTest : public ::testing::Test
@@ -75,6 +76,7 @@ namespace
         }
 
         uint8_t cellAt(int x, int y) { return computer.getVideoChip()->getCharacterAt(x, y); }
+        uint8_t colorAt(int x, int y) { return computer.getVideoChip()->getColorAt(x, y); }
     };
 
     // A printable character is written and A/X/Y are preserved across the call.
@@ -111,5 +113,20 @@ namespace
         EXPECT_EQ(cellAt(0, 0), before) << "BEL must not paint a glyph";
         EXPECT_EQ(computer.getMemory()->read(0x0276), 0x00)
             << "BEL must not advance the cursor (CURSOR_X stays 0)";
+    }
+
+    // K_SET_ATTR ($FF2D) sets the attribute latch; the next printed glyph carries
+    // it into the color plane. (Phase C: the ANSI terminal's color hook.)
+    TEST_F(PrintCharTest, SetAttrColorsTheNextGlyph)
+    {
+        callKernel(kClearScreen, 0x20);
+        const uint8_t attr = 0x15; // fg=5 (magenta), bg=2 (green), no bright/reverse
+        callKernel(kSetAttr, attr);
+        callKernel(kPrintChar, 'Z');
+
+        EXPECT_EQ(cellAt(0, 0), 'Z');
+        EXPECT_EQ(colorAt(0, 0), attr) << "the printed cell should take the latched attribute";
+        // A cell that was not written keeps the clear-time default ($02).
+        EXPECT_EQ(colorAt(1, 0), VIC::kDefaultAttr);
     }
 }
