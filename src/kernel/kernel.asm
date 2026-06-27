@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.14
+; Version:      3.15
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -217,6 +217,9 @@
 ;                   output takes that attribute (byte = [R][BR][bg:3][fg:3]; default
 ;                   $02 = green on black). Appended to the jump table so all prior
 ;                   $FF00 offsets stay byte-stable. The ANSI terminal will use this.
+; 2026-06-27  v3.15 80-column display (phase E): re-centered the boot welcome
+;                   message for 80 columns (28 leading spaces); R:/T:/Z: memory
+;                   dumps now show 16 bytes per line (was 8) to use the width.
 ;
 ; ================================================================
 
@@ -311,7 +314,7 @@ MON_MODE_CMD       = 0             ; Command mode
 MON_MODE_WRITE     = 1             ; Write mode
 
 ; Monitor Display Constants
-MON_BYTES_PER_LINE = 8             ; Number of bytes displayed per line
+MON_BYTES_PER_LINE = 16            ; Bytes per dump line (16 fits the 80-col screen)
 
 ; Screen and I/O Constants for Monitor. The screen lives behind the VIC register
 ; port (not in the 64K map); the kernel tracks the logical cursor in CURSOR_X/Y
@@ -3345,7 +3348,7 @@ MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
 MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
-MSG_WELCOME:         .BYTE "       -=MFC 6502 OPERATIONAL=-", $0D, $0A, 0
+MSG_WELCOME:         .BYTE "                            -=MFC 6502 OPERATIONAL=-", $0D, $0A, 0
 MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
 MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
 

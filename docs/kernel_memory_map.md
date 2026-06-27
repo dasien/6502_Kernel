@@ -13,16 +13,18 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0000-$00FF` | 256 B | **Zero page** — shared between EhBASIC and the monitor (see split below) |
 | `$0100-$01FF` | 256 B | **Stack** — grows down from `$01FF` |
 | `$0200-$03FF` | 512 B | **System variables** — BASIC page-2 vars + monitor variables/buffers |
-| `$0400-$07E7` | 1000 B | **Screen RAM** — 40×25 text (`$07E8-$07FF` is unused padding) |
+| `$0400-$07FF` | 1 KB | **Free RAM** — formerly the 40×25 screen; the screen now lives behind the VIC register port (see below), so this is unused RAM |
 | `$0800-$8FFF` | ~34 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$8000-$8FFF` (source) and `$7E00-$7FFF` (symbols) while building |
 | `$9000-$AFFF` | 8 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem; DOS shell later) |
 | `$B000-$DFFF` | 12 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
 | `$E000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
 | `$FE00-$FE28` | — | **PIA** I/O + `MODULE_BANK` ($FE23) + block-device registers ($FE24-$FE28) — within the kernel region |
 
-There is **no** VIC-II / SID / CIA / color memory. The screen is plain RAM at
-`$0400` rendered by the host display; the keyboard and file I/O are exposed
-through a small PIA-style register block at `$FE00`. The `$B000-$DFFF` window is
+There is no SID / CIA. The **VIC** is an 80×25 color text chip whose character
+and color planes live *inside the chip* (not in the 64K map) and are reached
+through a VDC-style register port at `$FE2D-$FE36` (see the I/O section). The
+keyboard and file I/O are exposed through a small PIA-style register block at
+`$FE00`. The `$B000-$DFFF` window is
 a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
 RAM (bank 0) or one of up to 255 pre-loaded ROM modules. See
 `module_slot_design.md`. The `$9000-$AFFF` **DOS ROM** is an always-mapped (never
@@ -107,12 +109,34 @@ the two never run at the same time.
 Note: `DEC_DIGIT_BUFFER` ($027D) deliberately aliases `MON_SEARCH_PATTERN` —
 the D:/H: and X: commands never run at the same time.
 
-## Screen RAM (`$0400-$07E7`)
+## Video (VIC) register port (`$FE2D-$FE36`)
 
-| Range | Purpose |
-|-------|---------|
-| `$0400-$07E7` | 1000 bytes — 40×25 character display (written as ASCII) |
-| `$07E8-$07FF` | 24 bytes — unused padding to the page boundary |
+The 80×25 screen is **not** in the 64K address space. The VIC owns two parallel
+cell planes — a character plane (one 7-bit ASCII byte per cell) and a color
+plane (one attribute byte per cell) — reached through an auto-incrementing
+register port, the same idiom as the block device. Set a cell index via
+`VREG_ADDR_LO/HI`, then read/write the `VREG_CHAR` / `VREG_COLOR` data ports
+(each access advances the index, wrapping at 2000). `VREG_CMD` runs chip-side
+block ops so the CPU never copies the screen.
+
+| Address | Register | Purpose |
+|---------|----------|---------|
+| `$FE2D` | `VREG_ADDR_LO` | Cell index low (0–1999) |
+| `$FE2E` | `VREG_ADDR_HI` | Cell index high |
+| `$FE2F` | `VREG_CHAR` | Char data port (bit 7 → reverse); auto-increments |
+| `$FE30` | `VREG_COLOR` | Color/attribute data port; auto-increments |
+| `$FE31` | `VREG_ATTR` | Current attribute latch applied to `VREG_CHAR` writes |
+| `$FE32` | `VREG_CMD` | `1`=clear, `2`=scroll up, `3`=scroll down, `4`=fill row |
+| `$FE33` | `VREG_STATUS` | `0` = ready |
+| `$FE34` | `VREG_CURSOR_LO` | Hardware cursor cell low |
+| `$FE35` | `VREG_CURSOR_HI` | Cursor cell high; bit 7 = cursor hidden |
+| `$FE36` | `VREG_CMD_PARAM` | Command parameter / fill character |
+
+Attribute byte: `[R][BR][bg:3][fg:3]` — bit 7 reverse, bit 6 bright, bits 5–3
+background (0–7), bits 2–0 foreground (0–7). Power-on/clear default is `$02`
+(green on black). The kernel tracks the logical cursor in `CURSOR_X/Y`
+(`$0276/$0277`) and writes the screen through this port; `K_SET_ATTR` (`$FF2D`)
+sets the color latch.
 
 ## I/O — PIA (`$FE00-$FE23`)
 
@@ -152,7 +176,7 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 |---------|-------|---------|
 | `CODE` | `$E000-$EF62` (3939 B) | Monitor code and data |
 | `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK`) |
-| `JUMPS` | `$FF00-$FF1D` (30 B) | Kernel API jump table (10 entries) |
+| `JUMPS` | `$FF00-$FF2F` (48 B) | Kernel API jump table (16 entries) |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
 | (free) | ~`$EF63-$FDFF` | ~3.6 KB unused |
 
@@ -170,6 +194,12 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 | `$FF15` | `K_READ_LINE` | `READ_COMMAND_LINE` — edited line input (backspace/ESC) → `MON_CMDBUF`/`MON_CMDLEN` |
 | `$FF18` | `K_PARSE_HEX` | `HEX_QUAD_TO_ADDR` — X = offset in `MON_CMDBUF` → `MON_CURRADDR`, carry set if invalid |
 | `$FF1B` | `K_PRINT_HEX_BYTE` | `PRINT_HEX_BYTE` — print A as two hex digits |
+| `$FF1E` | `K_MON_ENTRY` | `MONITOR_MAIN` — DOS launches the monitor here (`MON`) |
+| `$FF21` | `K_LAUNCH_BY_NAME` | `LAUNCH_BY_NAME` — DOS launches a module by name |
+| `$FF24` | `K_LIST_MODULES` | `LIST_MODULES` — print the module catalog (`BANKS`) |
+| `$FF27` | `K_PRINT_DEC` | `PRINT_DEC` — print a 32-bit value in decimal |
+| `$FF2A` | `K_PARSE_DEC` | `PARSE_DEC_ABI` — parse a decimal string from `MON_CMDBUF` |
+| `$FF2D` | `K_SET_ATTR` | `SET_ATTR` — set the color/attribute latch (`VREG_ATTR`) |
 
 The jump table is also the **module ABI**: a ROM module reaches kernel services
 only through these entries, so it is independent of where the kernel's internal
@@ -213,7 +243,9 @@ file-stream LOAD/SAVE routines).
 | Symbol | Value | Purpose |
 |--------|-------|---------|
 | `STACK_TOP` | `$FF` | Initial stack pointer |
-| `SCREEN_START` | `$0400` | Start of screen RAM |
-| `SCREEN_WIDTH` | `40` | Characters per line |
+| `SCREEN_WIDTH` | `80` | Characters per line |
 | `SCREEN_HEIGHT` | `25` | Lines on screen |
 | `LINES_PER_PAGE` | `24` | Paging threshold |
+
+(The screen is no longer memory-mapped; the kernel writes it through the VIC
+register port at `$FE2D-$FE36` and tracks the logical cursor in `CURSOR_X/Y`.)

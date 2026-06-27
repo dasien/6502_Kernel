@@ -189,8 +189,9 @@ DOS_SIGNATURE:
 ;        (FILE / DRAWER/FILE / /FILE) for the file verbs
 ;   1.3  cross-drawer COPY (qualified src/dst paths) + new MOVE command
 ;   1.4  blank line between a command's output and the next prompt (shell polish)
+;   1.5  MEMMAP reflects 80-col: screen moved behind the VIC port; $0400 is free RAM
 DOS_VERSION:
-    .BYTE $01, $04                      ; version 1.4 (major, minor)
+    .BYTE $01, $05                      ; version 1.5 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -1765,11 +1766,12 @@ MSG_DOS_VER:     .BYTE "MFC/OS ", 0      ; version number appended from DOS_VERS
 MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
                  .BYTE "$0100-$01FF STACK", $0D, $0A
                  .BYTE "$0200-$03FF SYSTEM VARS", $0D, $0A
-                 .BYTE "$0400-$07FF SCREEN", $0D, $0A
+                 .BYTE "$0400-$07FF FREE RAM   (1K)", $0D, $0A
                  .BYTE "$0800-$8FFF USER RAM   (34K)", $0D, $0A
                  .BYTE "$9000-$AFFF DOS ROM    (8K)", $0D, $0A
                  .BYTE "$B000-$DFFF MODULES    (12K)", $0D, $0A
-                 .BYTE "$E000-$FFFF KERNEL ROM (8K)", $0D, $0A, 0
+                 .BYTE "$E000-$FFFF KERNEL ROM (8K)", $0D, $0A
+                 .BYTE "$FE2D-$FE36 VIDEO PORT (VIC)", $0D, $0A, 0
 MSG_DOS_CATHDR:  .BYTE "NAME            BYTES", $0D, $0A, 0
 MSG_DOS_FREE1:   .BYTE "DISK FREE: ", 0
 MSG_DOS_FREE2:   .BYTE " BYTES (", 0

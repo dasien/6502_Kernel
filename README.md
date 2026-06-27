@@ -94,7 +94,7 @@ The monitor provides clear, consistent error messages:
 - **$0000-$00FF**: Zero Page (system workspace; monitor uses $14-$39, EhBASIC uses the rest)
 - **$0100-$01FF**: Stack memory
 - **$0200-$03FF**: Monitor variables and command buffers
-- **$0400-$07E7**: Screen memory (40x25 display buffer)
+- **$0400-$07FF**: Free RAM (formerly the screen; the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE36`, not in the address map)
 - **$0800-$AFFF**: User RAM (module working RAM; EhBASIC program/variable space)
 - **$B000-$DFFF**: Module window (12 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC is bank 1)
 - **$E000-$FFFF**: Kernel ROM (8 KB; CODE ~3,900 bytes, rest free for growth)
@@ -116,6 +116,9 @@ User programs can access kernel services via the jump table at $FF00:
 | $FF0C | CLEAR_SCREEN | Clear display |
 | $FF0F | GET_RANDOM_NUMBER | Generate random byte |
 | $FF12 | RETURN_FROM_MODULE | Module exit point — unmaps the bank, returns to monitor (BASIC `BYE`) |
+| $FF2D | SET_ATTR | Set the color/attribute latch for subsequent output (A = `[R][BR][bg:3][fg:3]`) |
+
+(Abridged — see [docs/kernel_memory_map.md](docs/kernel_memory_map.md) for the full 16-entry table, including the decimal-conversion and module-launch services.)
 
 ### File I/O Interface
 
