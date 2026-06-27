@@ -28,6 +28,7 @@ MainWindow::MainWindow(QWidget* parent)
     , flags_values_label_(nullptr)
     , status_timer_(new QTimer(this))
     , computer_(new Computer::Computer6502())
+    , modem_(nullptr)
     , execution_timer_(new QTimer(this))
     , irq_timer_(new QTimer(this))
     , is_running_(false)
@@ -39,6 +40,10 @@ MainWindow::MainWindow(QWidget* parent)
     
     // Auto-start system powered on and running
     computer_->power_on();
+
+    // Emulated Hayes modem: bridges the ACIA to TCP (the terminal dials BBSes).
+    modem_ = new Modem(computer_->getAcia(), this);
+
     display_widget_->startRefresh();
     display_widget_->setFocus();
     is_running_ = true;
@@ -264,6 +269,9 @@ void MainWindow::connectSignals()
                 computer_->run(1);
                 execution_cycle_count_++;
             }
+            // Pump the modem once per tick: drain the ACIA TX into the
+            // protocol (inbound socket data arrives via Qt signals).
+            if (modem_) modem_->poll();
         }
     });
 }

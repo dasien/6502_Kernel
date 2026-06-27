@@ -10,10 +10,10 @@ if(APPLE)
     )
 endif()
 
-# Try to find Qt6 first, then fall back to Qt5
-find_package(Qt6 QUIET COMPONENTS Core Widgets)
+# Try to find Qt6 first, then fall back to Qt5 (Network: terminal TCP/modem)
+find_package(Qt6 QUIET COMPONENTS Core Widgets Network)
 if(NOT Qt6_FOUND)
-    find_package(Qt5 QUIET COMPONENTS Core Widgets)
+    find_package(Qt5 QUIET COMPONENTS Core Widgets Network)
     if(NOT Qt5_FOUND)
         message(WARNING "Neither Qt6 nor Qt5 found. Building console-only version.")
         message(STATUS "To build with GUI support, install Qt6 or Qt5:")

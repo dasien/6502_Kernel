@@ -214,6 +214,23 @@ target_include_directories(print_char_tests PRIVATE
 
 target_compile_features(print_char_tests PRIVATE cxx_std_20)
 
+# ModemProtocol unit tests (Hayes AT parser + telnet IAC filter). Pure logic,
+# NO Qt Network -- exercises the protocol via a mock host.
+add_executable(modem_tests
+    test_modem.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ModemProtocol.cpp
+)
+
+target_link_libraries(modem_tests gtest_main gtest)
+
+target_include_directories(modem_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(modem_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -274,6 +291,10 @@ add_test(NAME acia_xmodem
 # Add the PRINT_CHAR ABI-contract regression test to CTest
 add_test(NAME print_char
     COMMAND print_char_tests)
+
+# Add the ModemProtocol (AT parser + telnet IAC) unit tests to CTest
+add_test(NAME modem
+    COMMAND modem_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom

@@ -6,6 +6,7 @@ set(SOURCES
     computer/Memory.cpp
     computer/BlockDevice.cpp
     computer/Acia.cpp
+    computer/ModemProtocol.cpp
     computer/CPU6502.cpp
     computer/ResetCircuit.cpp
     computer/TimingCircuit.cpp
@@ -19,16 +20,19 @@ set(SOURCES
 set(QT_HEADERS)
 
 if(QT_FOUND)
-    # Add Qt-specific source files
+    # Add Qt-specific source files. Modem.cpp links Qt Network and is GUI-only;
+    # it must never reach the headless test targets (which compile the bare ACIA).
     list(APPEND SOURCES
         ui/DisplayWidget.cpp
         ui/MainWindow.cpp
+        computer/Modem.cpp
     )
 
     # Add Qt headers for MOC processing
     list(APPEND QT_HEADERS
         ${CMAKE_SOURCE_DIR}/include/ui/DisplayWidget.h
         ${CMAKE_SOURCE_DIR}/include/ui/MainWindow.h
+        ${CMAKE_SOURCE_DIR}/include/computer/Modem.h
     )
 endif()
 
@@ -45,9 +49,9 @@ target_include_directories(6502-kernel PRIVATE
 if(QT_FOUND)
     # Link Qt libraries and define QT_GUI
     if(QT_VERSION EQUAL 6)
-        target_link_libraries(6502-kernel Qt6::Core Qt6::Widgets)
+        target_link_libraries(6502-kernel Qt6::Core Qt6::Widgets Qt6::Network)
     else()
-        target_link_libraries(6502-kernel Qt5::Core Qt5::Widgets)
+        target_link_libraries(6502-kernel Qt5::Core Qt5::Widgets Qt5::Network)
     endif()
     
     # Define QT_GUI to enable Qt code paths
