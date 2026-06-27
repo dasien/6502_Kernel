@@ -36,10 +36,21 @@ directory chains another cluster). Path resolution (`FILE` = current dir,
 names keep the `FS_OPEN` ABI working for launched programs). `CATALOG` tags drawers
 `<D>` and hides `.`/`..`; the prompt shows the open drawer (`UTILS]`). Drawers are
 created at runtime (the `mkfat16`/test image builder is root-only). One level only:
-drawers can't nest. Phase 2 (next): `/` cross-drawer `COPY` + a new `MOVE` command.
-Note: this surfaced and fixed a latent overlap where `DOS_TMP2` aliased
-`DOS_ENTRY+0` (harmless until subdir enumeration interleaved a FAT read with entry
-inspection). 80-column display is the remaining DOS-arc item after drawers.
+drawers can't nest. Note: this surfaced and fixed a latent overlap where
+`DOS_TMP2` aliased `DOS_ENTRY+0` (harmless until subdir enumeration interleaved a
+FAT read with entry inspection).
+
+**Drawers Phase 2 (DOS v1.3).** Cross-drawer file motion: `COPY` takes qualified
+paths on either side (e.g. `COPY GAMES/CHESS.PRG,/CHESS.PRG`) — it gets this for
+free since path resolution lives in `_FS_OPEN`. New `MOVE SRC,DST` shares COPY's
+RAM-buffer path then deletes the source (same dir → effectively a rename; across
+drawers → a move), guarded against `MOVE A,A`. Path resolution was given its own
+scratch byte (`DOS_RES_SLASH`) so it no longer clobbers the SRC offset COPY/MOVE
+hold in `DOS_SH_NAMEIDX`. Also added a FAT **allocation rover** (`DOS_ALLOC_HINT`):
+cluster allocation resumes where the last one stopped instead of rescanning from
+cluster 2, turning a multi-cluster write from O(file x used-clusters) FAT reads
+into ~O(file) — copying a several-KB program is now snappy instead of seconds.
+80-column display is the remaining DOS-arc item after drawers.
 
 The pivot: the machine **boots into a DOS** — a command shell with a filesystem,
 like an Apple II / TRS-80 / Kaypro (CP/M). BASIC, the assembler/disassembler, the

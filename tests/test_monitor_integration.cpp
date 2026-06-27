@@ -43,6 +43,7 @@ public:
         testDosTransfer();
         testDosUtils();
         testDosDrawers();
+        testDosCrossDrawer();
         testRunDiskProgram();
         testRunOverride();
         testRunNotFound();
@@ -247,7 +248,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.2", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.3", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -346,6 +347,55 @@ public:
         verifyResponse("D15.B", "growable drawer lists a file in its 2nd cluster");
         // tidy up so later tests see a clean disk
         sendCommand("CLOSE");
+    }
+
+    // Cross-drawer COPY (qualified paths) + the new MOVE command.
+    void testDosCrossDrawer() {
+        mountDisk({}); // empty disk
+        computer.getMemory()->write(0x0900, 'H');
+        computer.getMemory()->write(0x0901, 'I');
+        sendCommand("SAVE A.TXT,0900-0901", 400000);
+        sendCommand("NEWDRAWER BOX", 400000);
+
+        // COPY root -> drawer, then read it back inside the drawer.
+        sendCommand("COPY A.TXT,BOX/B.TXT", 600000);
+        verifyResponse("COPIED", "COPY root -> drawer");
+        sendCommand("OPEN BOX");
+        sendCommand("TYPE B.TXT");
+        verifyResponse("HI", "copied file readable in the drawer");
+        sendCommand("CLOSE");
+
+        // COPY drawer -> root, contents intact.
+        sendCommand("COPY BOX/B.TXT,/C.TXT", 600000);
+        verifyResponse("COPIED", "COPY drawer -> root");
+        sendCommand("TYPE C.TXT");
+        verifyResponse("HI", "drawer->root copy has the right contents");
+
+        // MOVE root -> drawer: source disappears from root, lands in the drawer.
+        sendCommand("MOVE C.TXT,BOX/D.TXT", 600000);
+        verifyResponse("MOVED", "MOVE root -> drawer reports MOVED");
+        sendCommand("CLS"); sendCommand("CATALOG");
+        verifyAbsent("C.TXT", "MOVE removed the source from root");
+        sendCommand("OPEN BOX"); sendCommand("CLS"); sendCommand("CATALOG");
+        verifyResponse("D.TXT", "MOVE created the file in the drawer");
+        sendCommand("CLOSE");
+
+        // MOVE drawer -> root.
+        sendCommand("MOVE BOX/B.TXT,/E.TXT", 600000);
+        verifyResponse("MOVED", "MOVE drawer -> root reports MOVED");
+        sendCommand("CLS"); sendCommand("CATALOG");
+        verifyResponse("E.TXT", "moved file is now in root");
+
+        // Same-dir MOVE behaves like a rename.
+        sendCommand("MOVE A.TXT,F.TXT", 600000);
+        verifyResponse("MOVED", "same-dir MOVE renames");
+        sendCommand("CLS"); sendCommand("CATALOG");
+        verifyResponse("F.TXT", "renamed file present");
+        verifyAbsent("A.TXT", "old name gone after same-dir MOVE");
+
+        // A two-level path is rejected.
+        sendCommand("COPY A/B/C.TXT,X.TXT");
+        verifyResponse("FILE NOT FOUND", "two-level path is rejected");
     }
 
     // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).

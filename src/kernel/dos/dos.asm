@@ -148,6 +148,9 @@ DOS_DIR_SIC      = $0376                ; byte: sector index within the dir clus
 DOS_TGT_CLUS     = $0377                ; word: resolved target dir cluster (0 = root)
 DOS_RES_NAMEPTR  = $0379                ; word: ptr to bare 8.3 name after path prefix
 DOS_W_ATTR       = $037B                ; byte: attribute for the next dir entry written
+DOS_RES_SLASH    = $037E                ; byte: path-resolution slash-index scratch
+DOS_ALLOC_HINT   = $037F                ; word: next-free-cluster rover ($037F-$0380)
+DOS_ALLOC_WRAP   = $0381                ; byte: alloc scan has wrapped past the end
 
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
@@ -184,8 +187,9 @@ DOS_SIGNATURE:
 ;   1.2  one-level subdirectories ("drawers"): NEWDRAWER/OPEN/CLOSE/DROPDRAWER,
 ;        a unified root/subdir directory iterator, and path resolution
 ;        (FILE / DRAWER/FILE / /FILE) for the file verbs
+;   1.3  cross-drawer COPY (qualified src/dst paths) + new MOVE command
 DOS_VERSION:
-    .BYTE $01, $02                      ; version 1.2 (major, minor)
+    .BYTE $01, $03                      ; version 1.3 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -377,6 +381,12 @@ _DOS_DISPATCH:
     BCS @n20
     JMP _DOS_DO_DROPDRAWER
 @n20:
+    LDA #<KW_MOVE
+    LDX #>KW_MOVE
+    JSR _DOS_VERB_MATCH
+    BCS @n21
+    JMP _DOS_DO_MOVE
+@n21:
     ; No built-in command matched - launch a program by name. A leading '&'
     ; forces the disk path (skip the ROM-module check); otherwise modules win.
     LDX #$00                            ; name starts at offset 0...
@@ -1360,6 +1370,13 @@ _DOS_PMSG:
 ; fully into user RAM ($0800..$8FFF), then writes it to DST. Files larger than
 ; the ~34KB buffer report "FILE TOO BIG". On entry Y = delimiter after the verb.
 _DOS_DO_COPY:
+    STZ DOS_SH_HASADDR                  ; 0 = copy (source kept)
+    BRA _DOS_COPY_COMMON
+; _DOS_DO_MOVE - MOVE SRC,DST : copy then delete the source (shares COPY's body)
+_DOS_DO_MOVE:
+    LDA #$01                            ; 1 = move (delete source after copying)
+    STA DOS_SH_HASADDR
+_DOS_COPY_COMMON:
     JSR _DOS_ARGSTART
     BCC :+
     JMP @usage
@@ -1398,7 +1415,9 @@ _DOS_DO_COPY:
     LDX #>MON_CMDBUF
     LDY #$00
     JSR _FS_OPEN
-    BCS @notfound
+    BCC :+
+    JMP @notfound
+:
     LDA #$00                            ; buffer cursor = $0800
     STA MON_CURRADDR_LO
     LDA #$08
@@ -1451,6 +1470,18 @@ _DOS_DO_COPY:
 @wdone:
     JSR _FS_CLOSE
     BCS @werr
+    LDA DOS_SH_HASADDR                  ; move? delete the source
+    BEQ @copied
+    JSR _DOS_STR_EQ                     ; ...unless SRC and DST name the same thing
+    BCS @moved
+    LDA DOS_SH_NAMEIDX
+    LDX #>MON_CMDBUF
+    JSR _FS_DELETE
+@moved:
+    LDA #<MSG_DOS_MOVED
+    LDX #>MSG_DOS_MOVED
+    JMP _DOS_PERR
+@copied:
     LDA #<MSG_DOS_COPIED
     LDX #>MSG_DOS_COPIED
     JMP _DOS_PERR
@@ -1466,6 +1497,28 @@ _DOS_DO_COPY:
     JMP _DOS_PERR_WRITE
 @usage:
     JMP _DOS_PERR_USAGE
+
+; _DOS_STR_EQ - compare the two null-terminated names at MON_CMDBUF[DOS_SH_NAMEIDX]
+; and MON_CMDBUF[DOS_SH_NAMEIDX2]. Carry set if identical (guards MOVE A,A from
+; deleting its own target). Clobbers A/X/Y.
+_DOS_STR_EQ:
+    LDX DOS_SH_NAMEIDX
+    LDY DOS_SH_NAMEIDX2
+@l:
+    LDA MON_CMDBUF,X
+    CMP MON_CMDBUF,Y
+    BNE @ne
+    CMP #$00                            ; matched through the terminator -> equal
+    BEQ @eq
+    INX
+    INY
+    BRA @l
+@eq:
+    SEC
+    RTS
+@ne:
+    CLC
+    RTS
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_MORE - MORE NAME : like TYPE, but pause every screenful
@@ -1686,7 +1739,7 @@ _DOS_RUN_FILE:
 ; ----------------------------------------------------------------
 MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
 MSG_DOS_HELP:    .BYTE "CATALOG TYPE MORE SAVE LOAD COPY", $0D, $0A
-                 .BYTE "ERASE RENAME IMPORT EXPORT", $0D, $0A
+                 .BYTE "MOVE ERASE RENAME IMPORT EXPORT", $0D, $0A
                  .BYTE "NEWDRAWER OPEN CLOSE DROPDRAWER", $0D, $0A
                  .BYTE "DISKFREE MEMMAP VERSION CLS MON HELP", $0D, $0A, 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
@@ -1704,6 +1757,7 @@ MSG_DOS_EXPORTED:.BYTE "EXPORTED", $0D, $0A, 0
 MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 MSG_DOS_HOSTERR: .BYTE "HOST I/O ERROR", $0D, $0A, 0
 MSG_DOS_COPIED:  .BYTE "COPIED", $0D, $0A, 0
+MSG_DOS_MOVED:   .BYTE "MOVED", $0D, $0A, 0
 MSG_DOS_TOOBIG:  .BYTE "FILE TOO BIG", $0D, $0A, 0
 MSG_DOS_VER:     .BYTE "MFC/OS ", 0      ; version number appended from DOS_VERSION
 MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
@@ -1741,6 +1795,7 @@ KW_RENAME:       .BYTE "RENAME", 0
 KW_IMPORT:       .BYTE "IMPORT", 0
 KW_EXPORT:       .BYTE "EXPORT", 0
 KW_COPY:         .BYTE "COPY", 0
+KW_MOVE:         .BYTE "MOVE", 0
 KW_DISKFREE:     .BYTE "DISKFREE", 0
 KW_MORE:         .BYTE "MORE", 0
 KW_VERSION:      .BYTE "VERSION", 0
@@ -2002,6 +2057,9 @@ _FS_MOUNT:
     STZ DOS_CWD_CLUS                    ; a freshly mounted volume starts at root
     STZ DOS_CWD_CLUS+1
     STZ DOS_CWD_NAME
+    LDA #$02                            ; allocation rover starts at the first data cluster
+    STA DOS_ALLOC_HINT
+    STZ DOS_ALLOC_HINT+1
     CLC
     RTS
 
@@ -2587,19 +2645,34 @@ _DOS_INC_SIZE:
 ; _DOS_ALLOC_CLUSTER - find a free FAT entry, mark it EOC, return it
 ; ----------------------------------------------------------------
 ; Out: DOS_ARG_CLUS = allocated cluster; carry set if the disk is full.
+; Scans from the DOS_ALLOC_HINT rover (the cluster just past the last allocation)
+; rather than restarting at cluster 2 every call, so writing a multi-cluster file
+; is O(file) FAT reads instead of O(file x used-clusters). On reaching the end it
+; wraps once to cluster 2 to pick up clusters freed below the rover.
 _DOS_ALLOC_CLUSTER:
-    LDA #$02                            ; clusters start at 2
+    STZ DOS_ALLOC_WRAP
+    LDA DOS_ALLOC_HINT                  ; start from the rover
     STA DOS_ARG_CLUS
-    STZ DOS_ARG_CLUS+1
+    LDA DOS_ALLOC_HINT+1
+    STA DOS_ARG_CLUS+1
 @scan:
     LDA DOS_ARG_CLUS+1                  ; DOS_ARG_CLUS <= DOS_MAX_CLUS ?
     CMP DOS_MAX_CLUS+1
     BCC @check
-    BNE @full
+    BNE @atend
     LDA DOS_ARG_CLUS
     CMP DOS_MAX_CLUS
-    BEQ @check
-    BCS @full
+    BEQ @check                          ; ARG == MAX (valid, inclusive)
+    BCC @check                          ; ARG < MAX (valid)
+    ; DOS_ARG_CLUS > DOS_MAX_CLUS
+@atend:
+    LDA DOS_ALLOC_WRAP                  ; already wrapped once -> disk full
+    BNE @full
+    INC DOS_ALLOC_WRAP                  ; wrap to cluster 2 and rescan the low range
+    LDA #$02
+    STA DOS_ARG_CLUS
+    STZ DOS_ARG_CLUS+1
+    BRA @scan
 @check:
     JSR _DOS_READ_FAT_ENTRY            ; DOS_ARG_VAL = FAT[DOS_ARG_CLUS]
     BCS @full
@@ -2611,6 +2684,13 @@ _DOS_ALLOC_CLUSTER:
     INC DOS_ARG_CLUS+1
     BRA @scan
 @found:
+    LDA DOS_ARG_CLUS                    ; advance the rover past this cluster
+    CLC
+    ADC #$01
+    STA DOS_ALLOC_HINT
+    LDA DOS_ARG_CLUS+1
+    ADC #$00
+    STA DOS_ALLOC_HINT+1
     LDA #$FF                            ; mark EOC
     STA DOS_ARG_VAL
     STA DOS_ARG_VAL+1
@@ -2626,6 +2706,9 @@ _DOS_ALLOC_CLUSTER:
 ; _DOS_FREE_CHAIN - free the cluster chain starting at DOS_ARG_CLUS
 ; ----------------------------------------------------------------
 _DOS_FREE_CHAIN:
+    LDA #$02                            ; rewind the rover so freed clusters get reused
+    STA DOS_ALLOC_HINT
+    STZ DOS_ALLOC_HINT+1
 @loop:
     LDA DOS_ARG_CLUS+1                  ; stop at EOC ($FFF8..$FFFF)
     CMP #>FAT_EOC
@@ -2970,7 +3053,7 @@ _DOS_RESOLVE_PATH:
     INY
     BRA @find1
 @gotslash:
-    STY DOS_SH_NAMEIDX                  ; slash index
+    STY DOS_RES_SLASH                  ; slash index
     INY
 @find2:
     LDA (DOS_PTR),Y                     ; reject a second '/' (one level only)
@@ -2980,21 +3063,21 @@ _DOS_RESOLVE_PATH:
     INY
     BRA @find2
 @oneslash:
-    LDA DOS_SH_NAMEIDX                  ; DOS_RES_NAMEPTR = DOS_PTR + slashidx + 1
+    LDA DOS_RES_SLASH                  ; DOS_RES_NAMEPTR = DOS_PTR + slashidx + 1
     SEC
     ADC DOS_PTR
     STA DOS_RES_NAMEPTR
     LDA DOS_PTR+1
     ADC #$00
     STA DOS_RES_NAMEPTR+1
-    LDA DOS_SH_NAMEIDX
+    LDA DOS_RES_SLASH
     BNE @drawer                         ; non-zero slash index -> DRAWER/FILE
     STZ DOS_TGT_CLUS                    ; leading '/' -> root
     STZ DOS_TGT_CLUS+1
     CLC
     RTS
 @drawer:
-    LDY DOS_SH_NAMEIDX                  ; terminate the drawer name at the '/'
+    LDY DOS_RES_SLASH                  ; terminate the drawer name at the '/'
     LDA #$00
     STA (DOS_PTR),Y
     JSR _DOS_PARSE_NAME83               ; drawer name -> DOS_NAME83
