@@ -45,7 +45,7 @@ int  SavedRoom;
 int  RoomSaved[16];
 int  Options;
 int  Redraw;
-int  Width = 40;                /* MFC-DOS screen is 40 columns */
+int  Width = 80;                /* MFC-DOS screen is 80 columns */
 int  OutputPos = 0;
 long BitFlags = 0;
 
@@ -56,7 +56,7 @@ static char up(char c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }
 /* strcasecmp / strncasecmp come from cc65's <string.h>. */
 
 /* ------------------------------------------------------------------ */
-/* output: word-wrap to the 40-column console                          */
+/* output: word-wrap to the 80-column console                          */
 /* ------------------------------------------------------------------ */
 static void Newline(void) { OUTCH('\n'); OutputPos = 0; }
 
