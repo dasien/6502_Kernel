@@ -219,6 +219,13 @@ or studied:
   file-transfer routine behind the emulated 6551 ACIA spike. We retarget its
   built-in 6551 driver to our memory-mapped ACIA and relocate it for the host
   test harness; the pristine original is kept under `vendor/xmodem/`.
+- **IBM VGA 8×16 CP437 font** — the character generator ROM behind the 80×25
+  display (full CP437: box-drawing, blocks, accented, symbols). The raw bitmap
+  of the IBM VGA ROM font is public domain (U.S. copyright protects scalable
+  outline programs, not bitmap font data). The dump comes from **VileR**'s
+  `vga-text-mode-fonts` collection (<https://int10h.org/>), gratefully
+  acknowledged; the pristine `VGA8.F16` and the header generator are under
+  `vendor/cp437font/`.
 
 See `docs/cc65_to_prg.md` for the C-to-`.PRG` build pipeline.
 

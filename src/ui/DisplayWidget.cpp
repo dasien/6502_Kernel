@@ -1,4 +1,6 @@
 #include "DisplayWidget.h"
+#include "Cp437Font.h"
+#include <QImage>
 #include <QPainter>
 #include <QFontMetrics>
 #include <QResizeEvent>
@@ -22,7 +24,7 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, Computer::Memory* memory
     , cursor_timer_(new QTimer(this))
 {
     initPalette();
-    setupFont();
+    // Glyphs render from the embedded CP437 character ROM (no QFont).
     calculateCharacterSize();
 
     // Set initial widget size based on character dimensions
@@ -119,10 +121,8 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     painter.fillRect(rect(), background_color_);
 
-    // Set up painter for character rendering
-    painter.setFont(character_font_);
-    painter.setPen(foreground_color_);
-
+    // Glyphs are blitted from the CP437 character ROM (see drawCharacterAt);
+    // no QFont is involved.
     for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
     {
         for (int x = 0; x < Computer::VIC::kScreenWidth; ++x)
@@ -266,22 +266,25 @@ void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
     }
 }
 
-QChar DisplayWidget::asciiToChar(const uint8_t ascii_code) const
+// Blit one 8x16 glyph from the CP437 character ROM into a cell: each scanline
+// byte's bits select fg (1) or bg (0). The cell is exactly 8x16, so the image
+// maps 1:1 (no scaling).
+void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
+                              const uint8_t glyph, const QColor& fg, const QColor& bg)
 {
-    // Handle standard ASCII printable characters
-    if (ascii_code >= 0x20 && ascii_code <= 0x7E)
+    const QRgb fg_rgb = fg.rgb();
+    const QRgb bg_rgb = bg.rgb();
+    const uint8_t* rows = &Computer::kCp437Font[glyph * 16];
+
+    QImage img(8, 16, QImage::Format_RGB32);
+    for (int r = 0; r < 16; ++r)
     {
-        return QChar(ascii_code);
+        const uint8_t bits = rows[r];
+        QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(r));
+        for (int c = 0; c < 8; ++c)
+            line[c] = (bits & (0x80 >> c)) ? fg_rgb : bg_rgb;
     }
-    
-    // Handle some common non-printable characters
-    switch (ascii_code)
-    {
-        case 0x00: return QChar(' '); // Null -> space
-        case 0x0A: return QChar(' '); // LF -> space (should be handled by display logic)
-        case 0x0D: return QChar(' '); // CR -> space (should be handled by display logic)
-        default: return QChar(0x2592); // Medium shade block for unknown characters
-    }
+    painter.drawImage(x * char_width_, y * char_height_, img);
 }
 
 void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
@@ -289,26 +292,7 @@ void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
 {
     QColor fg, bg;
     resolveCellColors(glyph, attr, fg, bg);
-    const QChar ch = asciiToChar(glyph & 0x7F);
-
-    const int pixel_x = x * char_width_;
-
-    // Center the glyph vertically within the cell.
-    const QFontMetrics metrics(character_font_);
-    const int font_height = metrics.height();
-    const int font_ascent = metrics.ascent();
-    const int vertical_offset = (char_height_ - font_height) / 2 + font_ascent;
-    const int pixel_y = y * char_height_ + vertical_offset;
-
-    // Paint the cell background only when it differs from the global background
-    // (which was already filled for the whole widget) to keep repaints cheap.
-    if (bg != background_color_)
-    {
-        painter.fillRect(pixel_x, y * char_height_, char_width_, char_height_, bg);
-    }
-    painter.setPen(fg);
-    painter.drawText(pixel_x, pixel_y, QString(ch));
-    painter.setPen(foreground_color_);
+    blitGlyph(painter, x, y, glyph, fg, bg);
 }
 
 void DisplayWidget::drawCursor(QPainter& painter)
@@ -327,20 +311,14 @@ void DisplayWidget::drawCursor(QPainter& painter)
     const int cursor_x = cursor_index % Computer::VIC::kScreenWidth;
     const int cursor_y = cursor_index / Computer::VIC::kScreenWidth;
 
-    const int pixel_x = cursor_x * char_width_;
-
-    // Block cursor: inverse-video the cell (matching the editor's cursor) -- a
-    // filled foreground block with the cell's glyph redrawn in the background
-    // colour. Blink toggles it, so the character under it stays readable.
-    painter.fillRect(pixel_x, cursor_y * char_height_, char_width_, char_height_,
-                     foreground_color_);
-    const uint8_t cell = video_chip_->getCharacterAt(cursor_x, cursor_y);
-    const QChar ch = asciiToChar(cell & 0x7F);
-    const QFontMetrics metrics(character_font_);
-    const int vertical_offset = (char_height_ - metrics.height()) / 2 + metrics.ascent();
-    painter.setPen(background_color_);
-    painter.drawText(pixel_x, cursor_y * char_height_ + vertical_offset, QString(ch));
-    painter.setPen(foreground_color_);
+    // Block cursor: re-blit the cell's glyph with foreground/background swapped
+    // (inverse video). Blink toggles it, so the character under it stays
+    // readable. Colors come from the cell's own attribute.
+    const uint8_t glyph = video_chip_->getCharacterAt(cursor_x, cursor_y);
+    const uint8_t attr = video_chip_->getColorAt(cursor_x, cursor_y);
+    QColor fg, bg;
+    resolveCellColors(glyph, attr, fg, bg);
+    blitGlyph(painter, cursor_x, cursor_y, glyph, bg, fg); // swapped = inverse
 }
 
 void DisplayWidget::keyPressEvent(QKeyEvent* event)

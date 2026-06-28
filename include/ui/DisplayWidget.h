@@ -75,7 +75,9 @@ private:
     // Resolve a cell's foreground/background QColors from its glyph + attribute
     // byte (handles reverse-video, bright, and the legacy char-bit7 reverse).
     void resolveCellColors(uint8_t glyph, uint8_t attr, QColor& fg, QColor& bg) const;
-    QChar asciiToChar(uint8_t ascii_code) const;
+    // Blit one 8x16 CP437 glyph (from the character ROM) into a cell.
+    void blitGlyph(QPainter& painter, int x, int y, uint8_t glyph,
+                   const QColor& fg, const QColor& bg);
     void drawCharacterAt(QPainter& painter, int x, int y, uint8_t glyph, uint8_t attr);
     void drawCursor(QPainter& painter);
     uint8_t qtKeyToAscii(QKeyEvent* event) const;
