@@ -140,6 +140,30 @@ if(CA65_FOUND AND LD65_FOUND)
     )
 
     # ================================================================
+    # TERM serial-terminal blob (for the headless ANSI test)
+    # ================================================================
+    # The serial ANSI terminal (programs/term), built with cl65 (C + glue) as a
+    # flat $0800 image and staged in the kernel build dir so the headless ANSI
+    # test loads it at ../kernel/term.bin. (TERM.PRG for the disk is produced by
+    # programs/term/build.sh.)
+    find_program(CL65_FOUND cl65)
+    if(CL65_FOUND)
+        set(TERM_DIR ${CMAKE_SOURCE_DIR}/programs/term)
+        set(TERM_BIN ${CMAKE_BINARY_DIR}/kernel/term.bin)
+        add_custom_target(term_bin ALL
+            COMMAND cl65 -t none --signed-chars -O -C ${TERM_DIR}/term.cfg
+                    ${TERM_DIR}/term.c ${TERM_DIR}/glue.s -o ${TERM_BIN}
+            COMMAND ${CMAKE_COMMAND} -E echo "TERM terminal blob built ($0800)"
+            COMMENT "Building TERM terminal blob"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+            DEPENDS ${TERM_DIR}/term.c ${TERM_DIR}/glue.s ${TERM_DIR}/term.cfg
+            VERBATIM
+        )
+    else()
+        message(STATUS "cl65 not found - skipping TERM terminal blob (term_bin)")
+    endif()
+
+    # ================================================================
     # MFC-DOS Resident ROM Build Target ($9000-$AFFF, always mapped)
     # ================================================================
 

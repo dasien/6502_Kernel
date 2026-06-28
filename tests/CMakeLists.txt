@@ -231,6 +231,32 @@ target_include_directories(modem_tests PRIVATE
 
 target_compile_features(modem_tests PRIVATE cxx_std_20)
 
+# Headless test of the 6502 serial terminal's ANSI engine (programs/term).
+# Runs the real TERM blob; the C++ side feeds ANSI and asserts on the screen.
+add_executable(term_ansi_tests
+    test_term_ansi.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(term_ansi_tests gtest_main gtest)
+
+target_include_directories(term_ansi_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(term_ansi_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -295,6 +321,10 @@ add_test(NAME print_char
 # Add the ModemProtocol (AT parser + telnet IAC) unit tests to CTest
 add_test(NAME modem
     COMMAND modem_tests)
+
+# Add the serial-terminal ANSI engine test to CTest
+add_test(NAME term_ansi
+    COMMAND term_ansi_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom
