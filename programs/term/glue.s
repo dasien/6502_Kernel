@@ -13,9 +13,14 @@
 .export _INCH, _INCH_NB, _QUITDOS
 .export _vaddr, _vputc, _vattr, _vcursor, _vfill, _vcmd
 .export _acia_init, _acia_get, _acia_put
+.export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (resets the kernel cursor)
+FS_OPEN         = $AF03         ; A/X=name ptr, Y=mode(0 read/1 write); C=err
+FS_GETB         = $AF06         ; -> C clear + A=byte, or C set = EOF
+FS_PUTB         = $AF09         ; A=byte; C set = error
+FS_CLOSE        = $AF0C
 DOS_WARM        = $AF1E         ; DOS shell re-entry
 
 ; VIC video register port (the 80x25 screen lives behind these).
@@ -130,4 +135,59 @@ ACIA_CONTROL    = $FE2C
         pla
         sta     ACIA_DATA
         rts
+.endproc
+
+; ---- DOS FAT16 file I/O (same contract as the EDIT editor) -----------------
+; char dopen_read(char *name)  -- A/X = name ptr; 0 = ok, 1 = error
+.proc _dopen_read
+        ldy     #$00
+        jsr     FS_OPEN
+        bcs     @err
+        lda     #$00
+        ldx     #$00
+        rts
+@err:   lda     #$01
+        ldx     #$00
+        rts
+.endproc
+
+; char dopen_write(char *name) -- A/X = name ptr; 0 = ok, 1 = error
+.proc _dopen_write
+        ldy     #$01
+        jsr     FS_OPEN
+        bcs     @err
+        lda     #$00
+        ldx     #$00
+        rts
+@err:   lda     #$01
+        ldx     #$00
+        rts
+.endproc
+
+; int dgetb(void) -- next byte 0..255, or -1 at EOF
+.proc _dgetb
+        jsr     FS_GETB
+        bcs     @eof
+        ldx     #$00
+        rts
+@eof:   lda     #$ff
+        ldx     #$ff
+        rts
+.endproc
+
+; char dputb(char c) -- A = byte; 0 = ok, 1 = error
+.proc _dputb
+        jsr     FS_PUTB
+        bcs     @err
+        lda     #$00
+        ldx     #$00
+        rts
+@err:   lda     #$01
+        ldx     #$00
+        rts
+.endproc
+
+; void dclose(void)
+.proc _dclose
+        jmp     FS_CLOSE
 .endproc

@@ -273,6 +273,31 @@ target_include_directories(term_ansi_tests PRIVATE
 
 target_compile_features(term_ansi_tests PRIVATE cxx_std_20)
 
+# Headless test of the terminal's XMODEM receive (^R) to the FAT16 disk.
+add_executable(term_xmodem_tests
+    test_term_xmodem.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(term_xmodem_tests gtest_main gtest)
+
+target_include_directories(term_xmodem_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(term_xmodem_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -341,6 +366,10 @@ add_test(NAME modem
 # Add the serial-terminal ANSI engine test to CTest
 add_test(NAME term_ansi
     COMMAND term_ansi_tests)
+
+# Add the terminal XMODEM-receive test to CTest
+add_test(NAME term_xmodem
+    COMMAND term_xmodem_tests)
 
 # Add the VIC character-plane (8-bit CP437) unit test to CTest
 add_test(NAME vic_charplane
