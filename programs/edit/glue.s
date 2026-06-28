@@ -14,6 +14,7 @@
 .export _INCH, _INCH_NB, _QUITDOS
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
 .export _vaddr, _vputc, _vgetc, _vhidecur
+.export _vattr, _vgetcolor, _vputcolor
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (also resets the kernel cursor)
@@ -26,7 +27,9 @@ DOS_WARM        = $AF1E
 ; VIC video register port (chars/colors live behind these, not in the map).
 VREG_ADDR_LO    = $FE2D         ; cell index low (0..1999)
 VREG_ADDR_HI    = $FE2E         ; cell index high
-VREG_CHAR       = $FE2F         ; char data port; bit7 => reverse; auto-increments
+VREG_CHAR       = $FE2F         ; char data port; full 8-bit glyph; auto-increments
+VREG_COLOR      = $FE30         ; color/attribute data port; auto-increments
+VREG_ATTR       = $FE31         ; attribute latch [R][BR][bg:3][fg:3]
 VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 
 .segment "CODE"
@@ -35,6 +38,25 @@ VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 .proc _vaddr
         sta     VREG_ADDR_LO
         stx     VREG_ADDR_HI
+        rts
+.endproc
+
+; void vattr(unsigned char a) -- set the color/attribute latch for next writes.
+.proc _vattr
+        sta     VREG_ATTR
+        rts
+.endproc
+
+; unsigned char vgetcolor(void) -- read the attribute at the current cell (X=0).
+.proc _vgetcolor
+        lda     VREG_COLOR
+        ldx     #$00
+        rts
+.endproc
+
+; void vputcolor(unsigned char a) -- write the attribute at the current cell.
+.proc _vputcolor
+        sta     VREG_COLOR
         rts
 .endproc
 

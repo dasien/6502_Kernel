@@ -66,12 +66,10 @@ namespace Computer
             break;
         case kRegChar:
         {
-            // Store a clean 7-bit glyph; legacy char-bit7 becomes the reverse bit
-            // in the color plane, otherwise the cell takes the current latch.
-            screen_buffer_[cell_index_] = value & 0x7F;
-            uint8_t attr = attr_latch_;
-            if (value & 0x80) attr |= kAttrReverse;
-            color_buffer_[cell_index_] = attr;
+            // Full 8-bit CP437 code point. Reverse/bright/color all live in the
+            // attribute plane (VREG_ATTR latch), so the whole byte is the glyph.
+            screen_buffer_[cell_index_] = value;
+            color_buffer_[cell_index_] = attr_latch_;
             advanceIndex();
             dirty_flag_ = true;
             break;

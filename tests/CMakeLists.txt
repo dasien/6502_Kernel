@@ -231,6 +231,22 @@ target_include_directories(modem_tests PRIVATE
 
 target_compile_features(modem_tests PRIVATE cxx_std_20)
 
+# VIC character-plane unit test: full 8-bit CP437 glyphs; reverse via attribute.
+add_executable(vic_charplane_tests
+    test_vic_charplane.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+)
+
+target_link_libraries(vic_charplane_tests gtest_main gtest)
+
+target_include_directories(vic_charplane_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(vic_charplane_tests PRIVATE cxx_std_20)
+
 # Headless test of the 6502 serial terminal's ANSI engine (programs/term).
 # Runs the real TERM blob; the C++ side feeds ANSI and asserts on the screen.
 add_executable(term_ansi_tests
@@ -325,6 +341,10 @@ add_test(NAME modem
 # Add the serial-terminal ANSI engine test to CTest
 add_test(NAME term_ansi
     COMMAND term_ansi_tests)
+
+# Add the VIC character-plane (8-bit CP437) unit test to CTest
+add_test(NAME vic_charplane
+    COMMAND vic_charplane_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom

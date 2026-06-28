@@ -16,6 +16,7 @@
 void OUTCH(char);
 char INCH(void);
 int RND(void);
+void SETATTR(char);             /* set the color/attribute latch (reverse/color) */
 void CLS(void);                 /* clear screen + home (strobe redraw)        */
 #define W while
 
@@ -123,6 +124,7 @@ PROBE(s)int s;                  /* shallow 2-ply score for side s, WITHOUT      
 SHOW()                          /* strobe: clear + draw a framed, labeled board */
 {int r,f,rr,ff,p;char*s="..PKNBRQ.P.KNBRQ";         /* uppercase piece letters */
  CLS();
+ SETATTR(2);                    /* normal = green on black (baseline for the board) */
  PUTS("          C H E S S   1.0\n\n");
  PUTS("      +-----------------+\n");
  r=0;W(r<8)                                         /* display rows top->bottom*/
@@ -132,7 +134,7 @@ SHOW()                          /* strobe: clear + draw a framed, labeled board 
   {ff=HB?7-f:f;
    p=b[16*rr+ff]&15;
    if(s[p]==46)OUTCH(46);                           /* empty square            */
-   else if(p>8)OUTCH(s[p]|128);                     /* White -> reverse video  */
+   else if(p>8){SETATTR(0x82);OUTCH(s[p]);SETATTR(2);} /* White -> reverse video */
    else OUTCH(s[p]);                                /* Black -> normal         */
    OUTCH(32);f++;
   }

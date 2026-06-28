@@ -10,12 +10,13 @@
 ; or A/X (int).
 ; ============================================================================
 
-.export _OUTCH, _INCH, _RND, _CLS
+.export _OUTCH, _INCH, _RND, _CLS, _SETATTR
 
 K_PRINT_CHAR    = $FF00         ; A = char -> screen
 K_PRINT_NEWLINE = $FF06         ; CR/LF
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char (uppercased)
 K_CLEAR_SCREEN  = $FF0C         ; clear screen + home cursor
+K_SET_ATTR      = $FF2D         ; A = color/attribute latch for next chars
 DOS_WARM        = $AF1E         ; clean exit back to the DOS ] prompt
 
 .segment "DATA"
@@ -29,6 +30,13 @@ rndseed:        .word   $ACE1   ; nonzero LFSR seed (DATA = loaded into RAM)
         bne     @ch
         jmp     K_PRINT_NEWLINE ; tail call: its RTS returns to the C caller
 @ch:    jmp     K_PRINT_CHAR
+.endproc
+
+; ---- void SETATTR(char a) -- set the color/attribute latch (a in A) ---------
+; Reverse-video now lives in the attribute, not char bit 7, so white pieces wrap
+; their glyph with SETATTR(reverse) / SETATTR(normal).
+.proc _SETATTR
+        jmp     K_SET_ATTR      ; tail call: its RTS returns to the C caller
 .endproc
 
 ; ---- char INCH(void) -- returns char in A (X=0) ----------------------------

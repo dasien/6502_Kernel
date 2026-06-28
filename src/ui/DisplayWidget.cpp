@@ -239,12 +239,11 @@ void DisplayWidget::initPalette()
 void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
                                       QColor& fg, QColor& bg) const
 {
-    // Reverse video comes from either the attribute reverse bit (register-written
-    // cells) or the legacy char-bit7 (cells written through the 40-col compat
-    // window). Either way the glyph itself is masked to 7 bits when drawn.
-    const bool reverse = (attr & Computer::VIC::kAttrReverse) || (glyph & 0x80);
+    Q_UNUSED(glyph) // the glyph is a full 8-bit CP437 code point now; all
+                    // styling (reverse/bright/color) lives in the attribute.
+    const bool reverse = (attr & Computer::VIC::kAttrReverse) != 0;
 
-    if (attr == Computer::VIC::kDefaultAttr && !(glyph & 0x80))
+    if (attr == Computer::VIC::kDefaultAttr)
     {
         // Exact default attribute: use the configured colors so the display is
         // pixel-identical to the pre-color era (green on black).

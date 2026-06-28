@@ -34,13 +34,25 @@ void dclose(void);
 
 /* ---- VIC video port (glue.s); the screen is not memory-mapped ---- */
 void vaddr(unsigned int cell);  /* point the data port at a cell (0..1999) */
-void vputc(unsigned char ch);   /* write a glyph (bit7 = reverse); auto-advances */
+void vputc(unsigned char ch);   /* write a glyph (full 8-bit code); auto-advances */
 unsigned char vgetc(void);      /* read the glyph at the current cell; advances */
+void vattr(unsigned char a);    /* set the color/attribute latch for next writes */
+unsigned char vgetcolor(void);  /* read the attribute at the current cell; advances */
+void vputcolor(unsigned char a);/* write the attribute at the current cell; advances */
 void vhidecur(void);            /* hide the kernel hardware cursor */
 
-/* Set reverse-video on the cell at linear index idx (read-modify-write): read
-   the glyph back, then rewrite it with bit7 set. */
-static void orcell(int idx) { unsigned char c; vaddr(idx); c = vgetc(); vaddr(idx); vputc(c | 0x80); }
+#define ATTR_NORMAL 0x02        /* green on black (the system default) */
+#define ATTR_REV    0x82        /* reverse-video bit (0x80) | default */
+
+/* Set reverse-video on the cell at linear index idx by flipping the reverse bit
+   in its ATTRIBUTE (the glyph is now a full 8-bit code, so reverse can no longer
+   live in the character byte). Read-modify-write on the color plane. */
+static void orcell(int idx)
+{
+    unsigned char a;
+    vaddr(idx); a = vgetcolor();
+    vaddr(idx); vputcolor(a | 0x80);
+}
 
 /* logical keys returned by readkey() for nav (above the byte range) */
 #define K_LEFT  1001
@@ -109,7 +121,9 @@ static void status(void)
     buf[i++] = ' '; buf[i++] = 'C'; appendnum(buf, &i, cx + 1);
     if (statusmsg[0]) { char *p = statusmsg; buf[i++] = ' '; while (*p && i < COLS - 1) buf[i++] = *p++; }
     vaddr(TEXTROWS * COLS);
-    for (c = 0; c < COLS; c++) vputc(buf[c] | 0x80);
+    vattr(ATTR_REV);
+    for (c = 0; c < COLS; c++) vputc(buf[c]);
+    vattr(ATTR_NORMAL);
 }
 
 /* paint one screen text row r (0..TEXTROWS-1), windowed horizontally at coloff */
@@ -222,9 +236,11 @@ static int prompt(char *label, char *buf, int max)
     for (;;) {
         i = 0;
         vaddr(TEXTROWS * COLS);
-        { char *p = label; while (*p) { vputc((*p++) | 0x80); i++; } }
-        for (c = 0; c < len; c++) { vputc(buf[c] | 0x80); i++; }
-        while (i < COLS) { vputc(' ' | 0x80); i++; }
+        vattr(ATTR_REV);
+        { char *p = label; while (*p) { vputc((unsigned char)*p++); i++; } }
+        for (c = 0; c < len; c++) { vputc((unsigned char)buf[c]); i++; }
+        while (i < COLS) { vputc(' '); i++; }
+        vattr(ATTR_NORMAL);
         k = readkey();
         if (k == K_ESC) return 0;
         if (k == 0x0D || k == 0x0A) { buf[len] = 0; return 1; }
@@ -319,9 +335,11 @@ static void draw_search(char *q, int qlen)
     if (search_found) for (c = 0; c < qlen && (cx - coloff) + c < COLS; c++) orcell(base + c);
     else orcell(base);                          /* just the cursor when no match */
     vaddr(TEXTROWS * COLS);
-    { char *p = "Search: "; while (*p) { vputc((*p++) | 0x80); i++; } }
-    for (c = 0; c < qlen; c++) { vputc(q[c] | 0x80); i++; }
-    while (i < COLS) { vputc(' ' | 0x80); i++; }
+    vattr(ATTR_REV);
+    { char *p = "Search: "; while (*p) { vputc((unsigned char)*p++); i++; } }
+    for (c = 0; c < qlen; c++) { vputc((unsigned char)q[c]); i++; }
+    while (i < COLS) { vputc(' '); i++; }
+    vattr(ATTR_NORMAL);
 }
 
 static void search(void)
@@ -345,6 +363,7 @@ int main(void)
 {
     int k;
     row[0].chars = 0; row[0].len = 0; row[0].cap = 0; numrows = 1;
+    vattr(ATTR_NORMAL);          /* normal text attribute for painted rows */
     /* Hide the kernel hardware cursor so only the editor's reverse-video block
        cursor shows; returning to DOS re-shows it on the next PRINT_CHAR. */
     vhidecur();
