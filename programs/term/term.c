@@ -96,7 +96,7 @@ static void put_glyph(unsigned char ch)
     if (cx >= COLS) { cx = 0; line_feed(); }
     vaddr((unsigned int)(cy * COLS + cx));
     vattr(attr);
-    vputc(ch & 0x7F);
+    vputc(ch);                  /* full 8-bit CP437 code point (BBS art) */
     cx++;
     if (cx >= COLS) { cx = 0; line_feed(); }
 }
