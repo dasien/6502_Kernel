@@ -102,9 +102,21 @@ TEST(ModemProtocol, TelnetInboundIsFilteredAndRefused)
     EXPECT_EQ(h.cpu[2], 'X');
     EXPECT_EQ(h.cpu[3], 0xFF);
 
-    // We refuse both options: DO ECHO -> WONT ECHO, WILL SGA -> DONT SGA.
-    const std::vector<uint8_t> expect = {IAC, WONT, OPT_ECHO, IAC, DONT, OPT_SGA};
+    // DO ECHO -> WONT ECHO (refused); WILL SGA -> DO SGA (suppress-go-ahead accepted).
+    const std::vector<uint8_t> expect = {IAC, WONT, OPT_ECHO, IAC, DO, OPT_SGA};
     EXPECT_EQ(h.net, expect);
+}
+
+TEST(ModemProtocol, TelnetAcceptsSuppressGoAhead)
+{
+    MockHost h; ModemProtocol m(&h);
+    feed(m, "ATDT host\r"); m.onConnected(); h.clear();
+
+    const uint8_t in[] = {IAC, DO, OPT_SGA};   // server asks us to suppress GA
+    m.fromNetwork(in, sizeof(in));
+    const std::vector<uint8_t> expect = {IAC, WILL, OPT_SGA}; // we agree
+    EXPECT_EQ(h.net, expect);
+    EXPECT_TRUE(h.cpu.empty()); // negotiation stripped from the 6502 stream
 }
 
 TEST(ModemProtocol, PlusEscapeThenHangup)

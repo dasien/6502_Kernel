@@ -75,6 +75,7 @@ namespace Computer
         static constexpr uint8_t kWONT = 252;
         static constexpr uint8_t kDO = 253;
         static constexpr uint8_t kDONT = 254;
+        static constexpr uint8_t kOptSGA = 3; // suppress-go-ahead (accepted)
 
     private:
         enum class State { Command, Dialing, Online };

@@ -171,12 +171,12 @@ namespace Computer
                 else if (b == kSB) tn_ = Tn::Sb;
                 else tn_ = Tn::Data; // other 2-byte command: consume
                 break;
-            case Tn::Will: // remote WILL x -> we refuse: DONT x
-                telnetReply(kDONT, b); tn_ = Tn::Data; break;
+            case Tn::Will: // remote WILL x: accept suppress-go-ahead, refuse the rest
+                telnetReply(b == kOptSGA ? kDO : kDONT, b); tn_ = Tn::Data; break;
             case Tn::Wont:
                 tn_ = Tn::Data; break; // nothing to do
-            case Tn::Do: // remote DO x -> we refuse: WONT x
-                telnetReply(kWONT, b); tn_ = Tn::Data; break;
+            case Tn::Do: // remote DO x: agree to suppress-go-ahead, refuse the rest
+                telnetReply(b == kOptSGA ? kWILL : kWONT, b); tn_ = Tn::Data; break;
             case Tn::Dont:
                 tn_ = Tn::Data; break;
             case Tn::Sb: // subnegotiation: discard until IAC SE
