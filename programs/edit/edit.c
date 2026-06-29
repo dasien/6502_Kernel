@@ -106,15 +106,15 @@ static void appendnum(char *buf, int *pi, int v)
     while (n) buf[(*pi)++] = t[--n];
 }
 
-/* "EDIT name* Lx/y Cz  <msg>" on the reverse-video bottom row */
+/* "MFC EDIT name* Lx/y Cz  <msg>" on the reverse-video bottom row */
 static void status(void)
 {
     char buf[COLS];
     char *nm = curname[0] ? curname : "[new]";
     int i = 0, c;
     for (c = 0; c < COLS; c++) buf[c] = ' ';
-    buf[i++] = 'E'; buf[i++] = 'D'; buf[i++] = 'I'; buf[i++] = 'T'; buf[i++] = ' ';
-    { char *p = nm; while (*p && i < 18) buf[i++] = *p++; }
+    { char *p = "MFC EDIT "; while (*p) buf[i++] = *p++; }
+    { char *p = nm; while (*p && i < 22) buf[i++] = *p++; }
     if (dirty) buf[i++] = '*';
     buf[i++] = ' '; buf[i++] = 'L'; appendnum(buf, &i, cy + 1);
     buf[i++] = '/'; appendnum(buf, &i, numrows);

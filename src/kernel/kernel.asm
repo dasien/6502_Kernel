@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.15
+; Version:      3.17
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -220,6 +220,16 @@
 ; 2026-06-27  v3.15 80-column display (phase E): re-centered the boot welcome
 ;                   message for 80 columns (28 leading spaces); R:/T:/Z: memory
 ;                   dumps now show 16 bytes per line (was 8) to use the width.
+; 2026-06-28  v3.16 Boot is now silent: the kernel drops its OPERATIONAL welcome
+;                   and hands straight to the DOS shell, which draws the unified
+;                   sign-on splash box (it owns the OS version + free-memory
+;                   figures). See _DOS_SPLASH in dos.asm.
+; 2026-06-28  v3.17 Consistent app sign-on banners (MFC <NAME> [vVER] + key hints).
+;                   The monitor clears the screen on cold entry (MONITOR_COLD) and
+;                   prints "MFC MONITOR   ?=HELP  Q=QUIT"; its ? help now tabs each
+;                   description to a fixed column (PRINT_HELP_LINE, 80-col aware).
+;                   Companion banner edits live in the modules/programs (ASM, FORTH,
+;                   CHESS, ScottFree, EDIT, TERM).
 ;
 ; ================================================================
 
@@ -481,17 +491,10 @@ CLEAR_MON_VAR_LOOP:
     CLI                         ; Enable interrupts
 
 ; ================================================================
-; MONITOR START/WELCOME MESSAAGE
+; HAND OFF TO THE DOS SHELL
 ; ================================================================
-    ; Display welcome message in bright cyan to show off the color plane,
-    ; then restore the default green so the DOS banner and prompt look normal.
-    LDA #$40 | $06              ; bright (bit6) + cyan foreground (6), black bg
-    JSR SET_ATTR
-    LDA #<MSG_WELCOME
-    LDY #>MSG_WELCOME
-    JSR PRINT_MSG_AY
-    LDA #$02                    ; default attribute: green (fg=2) on black
-    JSR SET_ATTR
+    ; The kernel boots silently; the MFC/OS shell draws the sign-on splash box
+    ; (it owns the OS version + free-memory figures). See _DOS_SPLASH in dos.asm.
 
     ; Boot into the MFC/OS DOS shell (always-mapped DOS ROM). The monitor is now
     ; a tool launched from the DOS by MON; it returns here via DOS_WARM.
@@ -2387,11 +2390,41 @@ HELP_LOOP:
     INX
     LDA HELP_MSG_TABLE,X
     STA MON_MSG_PTR_HI
-    JSR PRINT_MESSAGE
+    JSR PRINT_HELP_LINE         ; syntax, then pad to the description column, then text
     JSR PRINT_NEWLINE_PAGED
     INX
     CPX #(HELP_MSG_COUNT * 2)   ; loop over the whole table (2 bytes per entry)
     BNE HELP_LOOP
+    RTS
+
+; Print one help line that lines its description up in a column: like
+; PRINT_MESSAGE, but a TAB byte ($09) is rendered as enough spaces to advance the
+; cursor to HELP_DESC_COL. Each help string is "<syntax>",$09,"<description>",0,
+; so every description starts at the same column regardless of the syntax width
+; (now that the screen is 80 columns wide). Ptr in MON_MSG_PTR_LO/HI.
+HELP_DESC_COL = 22
+PRINT_HELP_LINE:
+    LDY #$00
+@loop:
+    LDA (MON_MSG_PTR_LO),Y
+    BEQ @done                   ; null terminator
+    CMP #$09                    ; TAB -> pad to the description column
+    BNE @putc
+@pad:
+    LDA CURSOR_X
+    CMP #HELP_DESC_COL
+    BCS @padded                 ; already at/past the column
+    LDA #' '
+    JSR PRINT_CHAR              ; (preserves Y, like the PRINT_MESSAGE loop relies on)
+    BRA @pad
+@padded:
+    INY
+    BNE @loop
+@putc:
+    JSR PRINT_CHAR
+    INY
+    BNE @loop
+@done:
     RTS
 
 ; Exit mode command - Return from any interactive mode to command mode
@@ -3152,6 +3185,17 @@ SEARCH_DONE:
 
 ; Main monitor command loop - reads and processes commands
 ; This is the heart of the monitor program
+; MONITOR_COLD - cold entry from the DOS 'MON' command (K_MON_ENTRY). Prints the
+; MFC sign-on banner once, then falls into MONITOR_MAIN. A BREAK/NMI return
+; (NMI_HANDLER_BREAK) jumps straight to MONITOR_MAIN, so the banner appears once
+; per session rather than on every break.
+MONITOR_COLD:
+    JSR CLEAR_SCREEN           ; start on a clean screen so the banner sits at the top
+    LDA #<MSG_MON_BANNER
+    LDY #>MSG_MON_BANNER
+    JSR PRINT_MSG_AY            ; "MFC MONITOR   ?=HELP  Q=QUIT" + newline
+    ; fall through to MONITOR_MAIN
+
 MONITOR_MAIN:
     ; A freshly launched monitor (from DOS via MON) starts clean: command mode,
     ; current address 0. The DOS shell uses MON_CURRADDR as scratch, so reset it
@@ -3328,27 +3372,29 @@ HELP_MSG_COUNT = 15              ; Number of help messages
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
+MSG_MON_BANNER:      .BYTE "MFC MONITOR   ?=HELP  Q=QUIT", $0D, 0
 MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
-MSG_HELP_CLEAR:      .BYTE "C:     CLEAR SCREEN", 0
-MSG_HELP_DECIMAL:    .BYTE "D:NNNNN DECIMAL TO HEX", 0
-MSG_HELP_GO:         .BYTE "G:XXXX RUN", 0
-MSG_HELP_HEX_TO_DEC: .BYTE "H:XXXX HEX TO DECIMAL", 0
-MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY) READ FROM MEMORY", 0
-MSG_HELP_STACK:      .BYTE "T:     PRINT STACK", 0
-MSG_HELP_WRITE:      .BYTE "W:XXXX WRITE TO MEMORY", 0
-MSG_HELP_ZERO:       .BYTE "Z:     PRINT ZERO PAGE", 0
-MSG_HELP_FILL:       .BYTE "F:XXXX-YYYY,ZZ FILL MEMORY", 0
-MSG_HELP_MOVE:       .BYTE "M:XXXX-YYYY,ZZZZ,B (B:0=COPY 1=MOVE)", 0
-MSG_HELP_SEARCH:     .BYTE "X:XXXX-YYYY,PATTERN SEARCH MEMORY", 0
-MSG_HELP_EXIT:       .BYTE "ESC    EXIT CURRENT MODE", 0
-MSG_HELP_HELP:       .BYTE "?      SHOW THIS HELP", 0
-MSG_HELP_RECALL:     .BYTE ".      RECALL LAST COMMAND", 0
-MSG_HELP_QUIT:       .BYTE "Q      QUIT TO DOS", 0
+; Each help line is "<syntax>", $09 (TAB -> pad to HELP_DESC_COL), "<description>".
+MSG_HELP_CLEAR:      .BYTE "C:", $09, "CLEAR SCREEN", 0
+MSG_HELP_DECIMAL:    .BYTE "D:NNNNN", $09, "DECIMAL TO HEX", 0
+MSG_HELP_GO:         .BYTE "G:XXXX", $09, "RUN PROGRAM", 0
+MSG_HELP_HEX_TO_DEC: .BYTE "H:XXXX", $09, "HEX TO DECIMAL", 0
+MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY)", $09, "READ MEMORY", 0
+MSG_HELP_STACK:      .BYTE "T:", $09, "PRINT STACK", 0
+MSG_HELP_WRITE:      .BYTE "W:XXXX", $09, "WRITE MEMORY", 0
+MSG_HELP_ZERO:       .BYTE "Z:", $09, "PRINT ZERO PAGE", 0
+MSG_HELP_FILL:       .BYTE "F:XXXX-YYYY,ZZ", $09, "FILL MEMORY", 0
+MSG_HELP_MOVE:       .BYTE "M:XXXX-YYYY,ZZZZ,B", $09, "COPY/MOVE (B 0=COPY 1=MOVE)", 0
+MSG_HELP_SEARCH:     .BYTE "X:XXXX-YYYY,PATTERN", $09, "SEARCH MEMORY", 0
+MSG_HELP_EXIT:       .BYTE "ESC", $09, "EXIT CURRENT MODE", 0
+MSG_HELP_HELP:       .BYTE "?", $09, "SHOW THIS HELP", 0
+MSG_HELP_RECALL:     .BYTE ".", $09, "RECALL LAST COMMAND", 0
+MSG_HELP_QUIT:       .BYTE "Q", $09, "QUIT TO DOS", 0
 MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
 MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
-MSG_WELCOME:         .BYTE "                            -=MFC 6502 OPERATIONAL=-", $0D, $0A, 0
+; (The boot sign-on lives in the DOS shell now -- see _DOS_SPLASH in dos.asm.)
 MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
 MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
 
@@ -3435,7 +3481,7 @@ K_RETURN_MODULE: JMP RETURN_FROM_MODULE ; $FF12 - module exit point (BASIC BYE, 
 K_READ_LINE:     JMP READ_COMMAND_LINE  ; $FF15
 K_PARSE_HEX:     JMP HEX_QUAD_TO_ADDR   ; $FF18
 K_PRINT_HEX_BYTE:JMP PRINT_HEX_BYTE     ; $FF1B
-K_MON_ENTRY:     JMP MONITOR_MAIN       ; $FF1E - DOS launches the monitor here
+K_MON_ENTRY:     JMP MONITOR_COLD       ; $FF1E - DOS launches the monitor here
 K_LAUNCH_BY_NAME:JMP LAUNCH_BY_NAME     ; $FF21 - DOS launches a module by name
 K_LIST_MODULES:  JMP LIST_MODULES       ; $FF24 - print the module catalog (BANKS)
 K_PRINT_DEC:     JMP PRINT_DEC          ; $FF27 - print a 32-bit value in decimal

@@ -125,7 +125,7 @@ SHOW()                          /* strobe: clear + draw a framed, labeled board 
 {int r,f,rr,ff,p;char*s="..PKNBRQ.P.KNBRQ";         /* uppercase piece letters */
  CLS();
  SETATTR(2);                    /* normal = green on black (baseline for the board) */
- PUTS("          C H E S S   1.0\n\n");
+ PUTS("        MFC CHESS v1.0\n\n");
  PUTS("      +-----------------+\n");
  r=0;W(r<8)                                         /* display rows top->bottom*/
  {rr=HB?7-r:r;                                      /* flip board if Black     */
@@ -156,7 +156,7 @@ main()
 
  W(1)                                               /* splash / new-game menu  */
  {CLS();
-  PUTS("\n\n      C H E S S   1.0\n\n");
+  PUTS("\n\n      MFC CHESS v1.0\n\n");
   PUTS("   a port of micro-Max\n   by H.G. Muller\n\n\n");
   PUTS("   (N)ew game     (Q)uit\n");
   W(INCH()!='n');                                   /* N starts; Q/ESC -> DOS  */

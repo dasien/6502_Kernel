@@ -2098,11 +2098,10 @@ PUTS:
 .segment "DATA"
 
 MSG_BANNER:
-    .byte "MFC DEV TOOLS v0.4", $0D, $0A
+    .byte "MFC ASM v0.4", $0D, $0A
     .byte "ASSEMBLER / DISASSEMBLER", $0D, $0A, $0A, $00
 MSG_PROMPT:
-    .byte "A XXXX=ASM LINE  L=LOAD  B=BUILD", $0D, $0A
-    .byte "D XXXX=DISASSEMBLE  ESC=EXIT", $0D, $0A, $00
+    .byte "A XXXX=ASM  D XXXX=DISASM  L=LOAD  B=BUILD  ESC=EXIT", $0D, $0A, $00
 MSG_ASM_OK:
     .byte "OK", $0D, $0A, $00
 MSG_ASM_ERR:

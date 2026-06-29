@@ -456,7 +456,7 @@ int main(void)
     while (acia_get() >= 0) { }   /* flush any stale RX from a prior session */
     vfill(' '); vcmd(VCMD_CLEAR);
     cx = 0; cy = 0; attr = ATTR_DEFAULT; vattr(attr); move_cursor();
-    local_print("MFC TERM   ^D dial  ^S send  ^R recv  ^X hang up  ^Q quit\r\n\n");
+    local_print("MFC TERM v1.0   ^D dial  ^S send  ^R recv  ^X hang up  ^Q quit\r\n\n");
 
     for (;;) {
         b = acia_get();

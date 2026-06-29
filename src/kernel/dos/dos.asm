@@ -47,6 +47,8 @@ K_LAUNCH_BY_NAME = $FF21                ; A/X=name -> launch a ROM module, or ca
 K_LIST_MODULES   = $FF24                ; print the module catalog (BANKS command)
 K_GET_KEYSTROKE  = $FF09                ; non-blocking key read: C set + A = key
 K_PRINT_DEC      = $FF27                ; A/X = ptr to 4-byte LE value, Y = field width
+K_SET_ATTR       = $FF2D                ; A = color/attribute latch for next chars
+CURSOR_X         = $0276                ; current cursor column (for box padding)
 
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
@@ -190,8 +192,9 @@ DOS_SIGNATURE:
 ;   1.3  cross-drawer COPY (qualified src/dst paths) + new MOVE command
 ;   1.4  blank line between a command's output and the next prompt (shell polish)
 ;   1.5  MEMMAP reflects 80-col: screen moved behind the VIC port; $0400 is free RAM
+;   1.6  boot sign-on splash box (CP437 + color): OPERATIONAL + OS version + free RAM
 DOS_VERSION:
-    .BYTE $01, $05                      ; version 1.5 (major, minor)
+    .BYTE $01, $06                      ; version 1.6 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -209,12 +212,134 @@ DOS_VERSION:
 _DOS_COLD:
     LDX #$FF
     TXS                                 ; clean stack
-    LDA #<MSG_DOS_BANNER
-    STA MON_MSG_PTR_LO
-    LDA #>MSG_DOS_BANNER
-    STA MON_MSG_PTR_HI
-    JSR K_PRINT_MESSAGE
+    JSR _DOS_SPLASH                     ; the sign-on box (OPERATIONAL + ver + free)
     JMP _DOS_PROMPT
+
+; ----------------------------------------------------------------
+; _DOS_SPLASH - the boot sign-on: a centred CP437 box framing the OPERATIONAL
+; banner, the OS version (from DOS_VERSION), and the free-RAM figure. The box is
+; 40 wide, indented 20 (centred on 80 cols): left border at column 20, right at
+; column 59. Content lines pad to the right border using the live cursor column
+; (CURSOR_X), so a variable-width version number still lines up.
+; ----------------------------------------------------------------
+BOX_INDENT_COL  = 20
+BOX_RIGHT_COL   = 59
+ATTR_BORDER     = $40 | $06             ; bright cyan
+ATTR_TITLE      = $40 | $07             ; bright white
+ATTR_INFO       = $02                   ; green
+
+; The box is just four rows: top border, OPERATIONAL, version/free, bottom
+; border. Borders are always drawn in ATTR_BORDER (cyan); only the content text
+; takes its own color (_BOX_OPEN/_BOX_PADCLOSE reset to cyan around each line).
+_DOS_SPLASH:
+    JSR K_PRINT_NEWLINE
+    LDA #ATTR_BORDER
+    JSR K_SET_ATTR
+    LDA #$C9                            ; top corners
+    LDX #$BB
+    JSR _BOX_RULE
+    JSR _BOX_OPER                       ; "MFC 6502  OPERATIONAL" (white text)
+    JSR _BOX_VERFREE                    ; "MFC/OS x.y   NNNNN BYTES FREE" (green)
+    LDA #ATTR_BORDER
+    JSR K_SET_ATTR
+    LDA #$C8                            ; bottom corners
+    LDX #$BC
+    JSR _BOX_RULE
+    LDA #ATTR_INFO                      ; restore the normal text colour
+    JSR K_SET_ATTR
+    JMP K_PRINT_NEWLINE
+
+; Print BOX_INDENT_COL spaces (lands the cursor on the box's left column).
+_BOX_PAD_INDENT:
+    LDX #BOX_INDENT_COL
+@p: LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    DEX
+    BNE @p
+    RTS
+
+; A horizontal rule: indent, left corner (A), 38 horizontals, right corner (X).
+; Drawn in whatever attribute the caller set (always cyan for the box).
+_BOX_RULE:
+    PHA
+    PHX
+    JSR _BOX_PAD_INDENT
+    PLA                                 ; right corner (pushed last) -> X
+    TAX
+    PLA                                 ; left corner -> A
+    JSR K_PRINT_CHAR                    ; left corner
+    PHX                                 ; save right corner
+    LDX #38
+@h: LDA #$CD
+    JSR K_PRINT_CHAR
+    DEX
+    BNE @h
+    PLA                                 ; right corner
+    JSR K_PRINT_CHAR
+    JMP K_PRINT_NEWLINE
+
+; Open an interior content line: cyan left border (indent + box bar). The caller
+; then sets its text color and prints content, finishing with _BOX_PADCLOSE.
+_BOX_OPEN:
+    LDA #ATTR_BORDER
+    JSR K_SET_ATTR
+    JSR _BOX_PAD_INDENT
+    LDA #$BA
+    JSR K_PRINT_CHAR
+    RTS
+
+; Pad to the right border column, then draw the cyan right border + newline.
+_BOX_PADCLOSE:
+@l: LDA CURSOR_X
+    CMP #BOX_RIGHT_COL
+    BCS @d
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    BRA @l
+@d: LDA #ATTR_BORDER                    ; border is always cyan, not the text color
+    JSR K_SET_ATTR
+    LDA #$BA
+    JSR K_PRINT_CHAR
+    JMP K_PRINT_NEWLINE
+
+; Centred OPERATIONAL line (bright white text, cyan borders).
+_BOX_OPER:
+    JSR _BOX_OPEN
+    LDA #ATTR_TITLE
+    JSR K_SET_ATTR
+    LDX #8                              ; left padding to centre the 21-char text
+@s: LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    DEX
+    BNE @s
+    LDA #<MSG_BOX_OPER
+    LDX #>MSG_BOX_OPER
+    JSR _DOS_PMSG
+    JMP _BOX_PADCLOSE
+
+; "MFC/OS <ver>   NNNNN BYTES FREE" line (green text, cyan borders).
+_BOX_VERFREE:
+    JSR _BOX_OPEN
+    LDA #ATTR_INFO
+    JSR K_SET_ATTR
+    LDX #5
+@s: LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    DEX
+    BNE @s
+    LDA #<MSG_DOS_VER                   ; "MFC/OS "
+    LDX #>MSG_DOS_VER
+    JSR _DOS_PMSG
+    LDA DOS_VERSION
+    JSR _DOS_PRINT_BYTE_DEC
+    LDA #'.'
+    JSR K_PRINT_CHAR
+    LDA DOS_VERSION+1
+    JSR _DOS_PRINT_BYTE_DEC
+    LDA #<MSG_BOX_FREE                  ; "   34816 BYTES FREE"
+    LDX #>MSG_BOX_FREE
+    JSR _DOS_PMSG
+    JMP _BOX_PADCLOSE
 
 ; ----------------------------------------------------------------
 ; _DOS_WARM - re-entry from the monitor (no banner)
@@ -1740,7 +1865,8 @@ _DOS_RUN_FILE:
 ; ----------------------------------------------------------------
 ; DOS shell strings
 ; ----------------------------------------------------------------
-MSG_DOS_BANNER:  .BYTE $0D, $0A, "MFC/OS", $0D, $0A, 0
+MSG_BOX_OPER:    .BYTE "MFC 6502  OPERATIONAL", 0   ; 21 chars, centred in the box
+MSG_BOX_FREE:    .BYTE "   34816 BYTES FREE", 0      ; user RAM $0800-$8FFF
 MSG_DOS_HELP:    .BYTE "CATALOG TYPE MORE SAVE LOAD COPY", $0D, $0A
                  .BYTE "MOVE ERASE RENAME IMPORT EXPORT", $0D, $0A
                  .BYTE "NEWDRAWER OPEN CLOSE DROPDRAWER", $0D, $0A

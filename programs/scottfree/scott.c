@@ -608,7 +608,7 @@ int main(void)
     int vb, no;
     LightRefill = GameHeader.LightTime;
     CLS();
-    Output("MFC-DOS ScottFree\n");
+    Output("MFC SCOTTFREE v1.14\n");
     Output("A Scott Adams game driver (ScottFree 1.14, GPL).\n\n");
     Look();
     W (1) {

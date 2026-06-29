@@ -23,10 +23,10 @@ public:
     MonitorIntegrationTester() : tests_passed(0), tests_failed(0) {
         // Power on the system and let it initialize
         computer.power_on();
-        // Allow kernel initialization. RESET now also zeroes the 12KB module
-        // window ($B000-$DFFF), which is ~90K cycles, so give boot enough room
-        // to reach the command prompt before the first test runs.
-        computer.run(200000);
+        // Allow kernel initialization. RESET zeroes the 12KB module window
+        // (~90K cycles), then the DOS draws the sign-on splash; give boot ample
+        // room to reach the command prompt before the first test runs.
+        computer.run(300000);
 
         std::cout << "6502 Monitor Integration Test Suite" << std::endl;
         std::cout << "===================================" << std::endl;
@@ -138,8 +138,9 @@ public:
         sendCommand("FROB");
         verifyResponse("COMMAND NOT FOUND", "Unknown command reports COMMAND NOT FOUND");
 
-        // MON launches the monitor (its help header proves we're in the monitor).
+        // MON launches the monitor: its MFC sign-on banner shows on entry...
         sendCommand("MON");
+        verifyResponse("MFC MONITOR", "MON shows the MFC sign-on banner");
         sendCommand("?");
         verifyResponse("MONITOR COMMANDS", "MON launches the monitor");
         // Q returns to the DOS shell (HELP's built-in list proves we're back).
@@ -248,7 +249,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.5", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.6", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -569,15 +570,20 @@ private:
         clearScreen();
         sendCommand("?");
         sendCommand("?");   // second help without clearing -> forces scrolling
-        verifyResponse("M:XXXX-YYYY,ZZZZ,B (B:0=COPY 1=MOVE)",
+        // The help lines now tab their descriptions to a fixed column, so assert
+        // the description text (the trailing part of each line that straddles a
+        // page boundary after scrolling - a cross-page scroll bug would split it).
+        verifyResponse("COPY/MOVE (B 0=COPY 1=MOVE)",
                        "Scroll: M: help line intact");
-        verifyResponse("X:XXXX-YYYY,PATTERN SEARCH MEMORY",
-                       "Scroll: X: help line intact");
-        verifyResponse("R:XXXX(-YYYY) READ FROM MEMORY",
+        verifyResponse("X:XXXX-YYYY,PATTERN",
+                       "Scroll: X: help syntax intact");
+        verifyResponse("SEARCH MEMORY",
+                       "Scroll: X: help description intact");
+        verifyResponse("READ MEMORY",
                        "Scroll: R: help line intact");
-        verifyResponse("Z:     PRINT ZERO PAGE",
+        verifyResponse("PRINT ZERO PAGE",
                        "Scroll: Z: help line intact");
-        verifyResponse(".      RECALL LAST COMMAND",
+        verifyResponse("RECALL LAST COMMAND",
                        "Scroll: . help line intact");
     }
 
@@ -594,7 +600,7 @@ private:
     void testDevtoolsModule() {
         launchAsm();
         verifyMemEquals(0xFE23, 0x02, "ASM maps bank 2 (MODULE_BANK)");
-        verifyResponse("DEV TOOLS", "Assembler module launches via ASM");
+        verifyResponse("MFC ASM", "Assembler module launches via ASM");
 
         sendKey(0x1B, 200000);   // ESC -> module returns via $FF12 to the DOS
         verifyMemEquals(0xFE23, 0x00, "Module return unmaps bank (window = RAM)");
@@ -606,6 +612,7 @@ private:
     void testForthModule() {
         sendCommand("FORTH", 4000000);   // cold start + sign-on
         verifyMemEquals(0xFE23, 0x03, "FORTH maps bank 3 (MODULE_BANK)");
+        verifyResponse("MFC FORTH", "FORTH module shows the MFC sign-on banner");
         verifyResponse("fig-FORTH", "FORTH module signs on");
 
         sendCommand(": DOUBLE 2 * ;", 3000000);   // compiles into RAM at $0802

@@ -85,7 +85,7 @@ DAREA = UAREA-BMAG   ; disk buffer area
 ;
 ; *=ORIG  (origin set by linker)
 ENTER: NOP   ; User cold entry point
-JMP COLD+2   ; vector to COLD entry
+JMP FCOLD    ; print the MFC sign-on, then vector to COLD entry (was JMP COLD+2)
 REENTR: NOP   ; User warm entry point
 JMP WARM   ; vector to WARM entry
 .WORD $0004   ; 6502 encoded in radix-36
@@ -4879,6 +4879,19 @@ TCR:    PHY
 INCH:   JSR K_GET_KEY           ; non-blocking; C set + A = key when ready
         BCC INCH                ; spin until a key arrives -> blocking read
         RTS
+
+; FCOLD - the MFC cold entry: print the "MFC FORTH" sign-on banner once, then
+; fall into the real FIG-Forth COLD start. (ENTER jumps here instead of COLD+2;
+; the warm entry REENTR still goes straight to WARM, so no banner on re-entry.)
+; K_PRINT_CHAR preserves A/X/Y, so the simple index loop is safe.
+FCOLD:  LDX #$00
+@bl:    LDA FORTH_BANNER,X
+        BEQ @bd
+        JSR K_PRINT_CHAR
+        INX
+        BNE @bl
+@bd:    JMP COLD+2
+FORTH_BANNER: .BYTE "MFC FORTH   (FIG-FORTH)   MON=QUIT", $0D, $00
 
 ; ================================================================
 ;  ROMable-vocabulary support.
