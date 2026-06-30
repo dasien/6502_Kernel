@@ -223,28 +223,94 @@ static void local_print(const char *s) { while (*s) ansi_byte((unsigned char)*s+
 /* send a C string out the serial line */
 static void serial_print(const char *s) { while (*s) acia_put((unsigned char)*s++); }
 
-/* read a line locally (echoed to the screen) into buf; returns on CR */
-static void local_line(char *buf, int max)
+/* Read a line locally (echoed to the screen) into buf. Returns 1 on RETURN, or
+   0 if ESC cancelled the entry (buf is emptied). */
+static int local_line(char *buf, int max)
 {
     int len = 0, k;
     for (;;) {
         k = INCH();
-        if (k == 0x0D || k == 0x0A) { buf[len] = 0; ansi_byte(0x0D); ansi_byte(0x0A); return; }
+        if (k == 0x1B) { buf[0] = 0; ansi_byte(0x0D); ansi_byte(0x0A); return 0; } /* ESC cancels */
+        if (k == 0x0D || k == 0x0A) { buf[len] = 0; ansi_byte(0x0D); ansi_byte(0x0A); return 1; }
         if (k == 0x08 || k == 0x7F) { if (len > 0) { len--; ansi_byte(0x08); ansi_byte(' '); ansi_byte(0x08); } continue; }
         if (k >= 0x20 && k < 0x7F && len < max - 1) { buf[len++] = (char)k; ansi_byte((unsigned char)k); }
     }
 }
 
+/* ===================== saved BBS dial-list (DIAL.LST) ====================== */
+/* A plain-text list in the FAT16 root, one entry per line: "host:port  name"
+   (first whitespace-delimited token is the address, the rest is the display
+   name). Blank lines and lines starting with '#' are ignored. Editable in EDIT.
+   Up to 9 entries are offered in the ^D menu (single-key selection). */
+#define MAXBBS   9
+#define DIALBUF  600
+static char  dialbuf[DIALBUF];
+static char *bbs_addr[MAXBBS];   /* host:port, null-terminated */
+static char *bbs_name[MAXBBS];   /* display name (may be empty) */
+static int   bbs_count;
+
+static void load_dial_list(void)
+{
+    int n = 0, c;
+    char *p;
+    bbs_count = 0;
+    if (dopen_read("DIAL.LST")) return;                 /* no saved list */
+    while ((c = dgetb()) >= 0 && n < DIALBUF - 1) dialbuf[n++] = (char)c;
+    dclose();
+    dialbuf[n] = 0;
+    p = dialbuf;
+    while (*p && bbs_count < MAXBBS) {
+        char *line = p;
+        while (*p && *p != '\n' && *p != '\r') p++;     /* find end of line */
+        if (*p) *p++ = 0;                               /* terminate it */
+        while (*p == '\n' || *p == '\r') p++;           /* skip the CR/LF pair */
+        while (*line == ' ' || *line == '\t') line++;   /* trim leading space */
+        if (*line == 0 || *line == '#') continue;       /* blank / comment */
+        bbs_addr[bbs_count] = line;                     /* address = first token */
+        while (*line && *line != ' ' && *line != '\t') line++;
+        if (*line) { *line++ = 0; while (*line == ' ' || *line == '\t') line++; }
+        bbs_name[bbs_count] = line;                     /* name = the rest */
+        bbs_count++;
+    }
+}
+
+static void dial_addr(const char *host)
+{
+    serial_print("ATDT ");
+    serial_print(host);
+    acia_put(0x0D);
+}
+
 static void do_dial(void)
 {
     char host[64];
-    local_print("\r\nDial: ");
-    local_line(host, sizeof(host));
-    if (host[0]) {
-        serial_print("ATDT ");
-        serial_print(host);
-        acia_put(0x0D);
+    int i, k;
+    load_dial_list();
+    if (bbs_count) {
+        local_print("\r\nSaved BBSes:\r\n");
+        for (i = 0; i < bbs_count; i++) {
+            char tag[5];
+            tag[0] = ' '; tag[1] = ' '; tag[2] = (char)('1' + i); tag[3] = ')';
+            tag[4] = 0;
+            local_print(tag);
+            local_print(" ");
+            local_print(bbs_name[i][0] ? bbs_name[i] : bbs_addr[i]);
+            local_print("\r\n");
+        }
+        local_print("  0) Enter address\r\nPick: ");
+        k = INCH();
+        if (k == 0x1B) { local_print("\r\n"); return; }     /* ESC cancels */
+        if (k >= '1' && k < '1' + bbs_count) {
+            ansi_byte((unsigned char)k);
+            local_print("\r\n");
+            dial_addr(bbs_addr[k - '1']);
+            return;
+        }
+        local_print("\r\n");                                /* '0'/other -> manual */
     }
+    local_print("Dial: ");
+    local_line(host, sizeof(host));
+    if (host[0]) dial_addr(host);
 }
 
 static void do_hangup(void)

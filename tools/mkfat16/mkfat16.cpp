@@ -78,6 +78,11 @@ int main(int argc, char **argv) {
                          bytesOf("MFC-DOS SAMPLE DISK\r\n"
                                  "TYPE @ TO LIST FILES, @NAME TO PRINT ONE.\r\n")});
         files.push_back({"HELLO.TXT", bytesOf("HELLO FROM MFC-DOS!\r\n")});
+        // Starter dial-list for TERM's ^D menu (host:port  name; edit in EDIT).
+        files.push_back({"DIAL.LST",
+                         bytesOf("# MFC TERM dial-list: host:port  name\r\n"
+                                 "particlesbbs.dyndns.org:6400  Particles BBS\r\n"
+                                 "bbs.fozztexx.com:23  Level 29\r\n")});
         std::cout << "No host files given - writing sample files.\n";
     } else {
         for (int i = 2; i < argc; ++i) {

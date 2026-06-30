@@ -22,7 +22,10 @@
 #include "computer/Computer6502.h"
 #include "computer/Memory.h"
 #include "computer/PIA.h"
+#include "computer/VIC.h"
 #include "support/fat16_image.h"
+
+#include <string>
 
 using Computer::Computer6502;
 using Computer::CPU6502;
@@ -195,4 +198,43 @@ TEST_F(TermXmodemTest, ReceivesFileToFat16)
     ASSERT_TRUE(fsRead("X.DAT", got)) << "received file not found on the disk";
     ASSERT_EQ(got.size(), payload.size());
     EXPECT_EQ(got, payload);
+}
+
+// ^D loads DIAL.LST, shows a numbered menu, and a digit dials that entry's
+// address: the terminal must transmit "ATDT <addr>\r" for the chosen line.
+TEST_F(TermXmodemTest, DialListMenuDialsChosenEntry)
+{
+    auto bytesOf = [](const std::string &s) {
+        return std::vector<uint8_t>(s.begin(), s.end());
+    };
+    // Two entries with distinctive addresses; a comment and blank line to skip.
+    writeImage({{"DIAL.LST", bytesOf("# my boards\r\n"
+                                     "test.bbs.one:1234  First Board\r\n"
+                                     "\r\n"
+                                     "host.two:2323  Second Board\r\n")}});
+
+    // ^D opens the menu; "2" picks the second entry.
+    auto *pia = computer.getPia();
+    pia->addKeypress(0x04); // Ctrl-D
+    pia->addKeypress('2');
+
+    // Run, draining anything the terminal transmits into a string.
+    std::string tx;
+    for (int i = 0; i < 12'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (tx.find('\r') != std::string::npos) break; // dial line sent
+    }
+
+    // The menu rendered (scrape the screen for an entry's display name)...
+    std::string screen;
+    auto *vic = computer.getVideoChip();
+    for (int y = 0; y < 25; ++y)
+        for (int x = 0; x < 80; ++x)
+            screen += static_cast<char>(vic->getCharacterAt(x, y));
+    EXPECT_NE(screen.find("Saved BBSes"), std::string::npos) << "dial menu header missing";
+    EXPECT_NE(screen.find("First Board"), std::string::npos) << "entry 1 name missing";
+
+    // ...and choosing entry 2 dialed its address.
+    EXPECT_EQ(tx, "ATDT host.two:2323\r") << "got: " << tx;
 }
