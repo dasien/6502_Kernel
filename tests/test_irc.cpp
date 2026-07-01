@@ -125,6 +125,8 @@ TEST_F(IrcTest, RegistersDisplaysAndPongs)
         }
         if (fed && tx.find("PONG :xyz") != std::string::npos) break; // full token drained
     }
+    // Repaint is coalesced (fires when RX goes idle); step so it lands before we scrape.
+    for (int i = 0; i < 1'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
 
     // Registration the client sent on connect.
     EXPECT_NE(tx.find("ATDT test.irc:6667"), std::string::npos) << tx;
@@ -161,6 +163,7 @@ TEST_F(IrcTest, RendersEventsAndHandlesNickInUse)
                 ":alice!u@h PRIVMSG #t :\001ACTION waves\001\r\n"
                 ":bob!u@h PRIVMSG mfc :\001VERSION\001\r\n"
                 ":srv 252 mfc 5 :operator(s) online\r\n"    // numeric w/ a count param
+                ":al!u@h PRIVMSG #t :\003" "4RED\017norm\r\n" // mIRC colour 4 (red)
                 ":srv 433 * mfc :Nickname is in use\r\n";
             for (char ch : ev) acia->hostSend(static_cast<uint8_t>(ch));
             fed = true;
@@ -177,7 +180,17 @@ TEST_F(IrcTest, RendersEventsAndHandlesNickInUse)
     EXPECT_NE(s.find("* nick in use, trying mfc_"), std::string::npos);
     EXPECT_NE(s.find("5 operator(s) online"), std::string::npos);     // numeric param kept
     EXPECT_NE(s.find("[online]"), std::string::npos);                 // status bar
-    EXPECT_NE(tx.find("NOTICE bob :\001VERSION MFC IRC 1.2\001"), std::string::npos) << tx;
+
+    // mIRC colour honoured: "RED" cells carry IRC colour 4 (red) -> our bright
+    // red fg (0x41); the "norm" after ^O reset is back to default (0x02).
+    size_t rp = s.find("RED");
+    ASSERT_NE(rp, std::string::npos);
+    auto *vic = c.getVideoChip();
+    EXPECT_EQ(vic->getColorAt(rp % 80, rp / 80), 0x41);
+    size_t np = s.find("norm");
+    ASSERT_NE(np, std::string::npos);
+    EXPECT_EQ(vic->getColorAt(np % 80, np / 80), 0x02);
+    EXPECT_NE(tx.find("NOTICE bob :\001VERSION MFC IRC 1.3\001"), std::string::npos) << tx;
     EXPECT_NE(tx.find("NICK mfc_"), std::string::npos) << tx;
 }
 
@@ -211,6 +224,140 @@ TEST_F(IrcTest, ChannelCommandsTransmitProperIrc)
     EXPECT_NE(tx.find("PART #t"), std::string::npos) << tx;    // bare /part -> current channel
 }
 
+// /server disconnects (QUIT + modem hangup) so the app can return to the dial
+// screen, instead of exiting to DOS like /quit.
+TEST_F(IrcTest, ServerCommandDisconnects)
+{
+    mountDisk({});
+    type("test.irc:6667\r");
+    type("mfc\r");
+    type("#t\r");
+
+    std::string tx;
+    bool connected = false, sent = false;
+    for (int i = 0; i < 60'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !sent && tx.find("JOIN #t") != std::string::npos) {
+            for (char ch : std::string("/server\r")) c.getPia()->addKeypress(static_cast<uint8_t>(ch));
+            sent = true;
+        }
+        if (sent && tx.find("+++ATH") != std::string::npos) break;   // hung up
+    }
+
+    EXPECT_NE(tx.find("QUIT :changing servers"), std::string::npos) << tx;
+    EXPECT_NE(tx.find("+++ATH"), std::string::npos) << tx;           // modem hangup issued
+}
+
+// /list sends the LIST command (with filter) and renders the server's replies.
+TEST_F(IrcTest, ListCommandSendsAndRenders)
+{
+    mountDisk({});
+    type("test.irc:6667\r");
+    type("mfc\r");
+    type("#t\r");
+
+    std::string tx;
+    bool connected = false, listed = false;
+    long flush = 0;
+    for (int i = 0; i < 60'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !listed && tx.find("JOIN #t") != std::string::npos) {
+            for (char ch : std::string("/list >100\r")) c.getPia()->addKeypress(static_cast<uint8_t>(ch));
+            listed = true;
+        }
+        if (listed && tx.find("LIST >100") != std::string::npos) {   // command went out; feed a reply
+            for (char ch : std::string(":srv 322 mfc #cool 42 :a cool channel\r\n"))
+                acia->hostSend(static_cast<uint8_t>(ch));
+            if (++flush > 2'000'000) break;
+        }
+    }
+
+    EXPECT_NE(tx.find("LIST >100"), std::string::npos) << tx;   // filter passed through
+    EXPECT_NE(screen().find("#cool 42 a cool channel"), std::string::npos); // 322 reply rendered
+}
+
+// A burst of many LIST replies must leave the screen with each entry intact on
+// its own row (no merged/overlapping lines).
+TEST_F(IrcTest, ListBurstRowsStayIntact)
+{
+    mountDisk({});
+    type("test.irc:6667\r"); type("mfc\r"); type("#t\r");
+
+    std::string tx;
+    bool connected = false, fed = false;
+    long flush = 0;
+    for (int i = 0; i < 80'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !fed && tx.find("JOIN #t") != std::string::npos) {
+            std::string ev;
+            for (int c = 0; c < 30; ++c)                    // long (wrapping) topics
+                ev += ":srv 322 mfc #chan" + std::to_string(c) + " " + std::to_string(c) +
+                      " :topic " + std::string(90, 'x' + (c % 20)) + "\r\n";
+            for (char ch : ev) acia->hostSend(static_cast<uint8_t>(ch));
+            fed = true;
+        }
+        if (fed && ++flush > 5'000'000) break;
+    }
+
+    // No chat row should contain two channel headers (that would be a merge).
+    auto *vic = c.getVideoChip();
+    for (int y = 0; y < 23; ++y) {
+        std::string row;
+        for (int x = 0; x < 80; ++x) row += static_cast<char>(vic->getCharacterAt(x, y));
+        size_t first = row.find("#chan");
+        if (first != std::string::npos)
+            EXPECT_EQ(row.find("#chan", first + 1), std::string::npos)
+                << "row " << y << " has two channel headers: [" << row << "]";
+    }
+}
+
+// The newest line sits on the bottom chat row (row 22), earlier lines just
+// above it, each at column 0 (no mid-screen offset / gaps).
+TEST_F(IrcTest, NewestLineAtBottomRow)
+{
+    mountDisk({});
+    type("test.irc:6667\r"); type("mfc\r"); type("#t\r");
+
+    std::string tx;
+    bool connected = false, fed = false;
+    long flush = 0;
+    for (int i = 0; i < 60'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !fed && tx.find("JOIN #t") != std::string::npos) {
+            for (char ch : std::string("NOTICE AUTH :one\r\nNOTICE AUTH :two\r\nNOTICE AUTH :three\r\n"))
+                acia->hostSend(static_cast<uint8_t>(ch));
+            fed = true;
+        }
+        if (fed && ++flush > 2'000'000) break;
+    }
+
+    auto *vic = c.getVideoChip();
+    auto rowText = [&](int y) { std::string r; for (int x = 0; x < 80; ++x) r += (char)vic->getCharacterAt(x, y); return r; };
+    EXPECT_EQ(rowText(22).rfind("* three", 0), 0u); // newest at row 22, col 0
+    EXPECT_EQ(rowText(21).rfind("* two", 0), 0u);   // previous at row 21, col 0
+    EXPECT_EQ(rowText(20).rfind("* one", 0), 0u);   // and row 20
+}
+
 // UTF-8 down-convert (nbsp -> space) and long lines wrap instead of truncating.
 TEST_F(IrcTest, FoldsUtf8AndWrapsLongLines)
 {
@@ -234,6 +381,7 @@ TEST_F(IrcTest, FoldsUtf8AndWrapsLongLines)
             // >80-char message must wrap so its tail ("END") still appears.
             std::string ev = ":al!u@h PRIVMSG #t :A\xC2\xA0""B\r\n";
             ev += ":al!u@h PRIVMSG #t :" + std::string(80, 'X') + "END\r\n";
+            ev += ":al!u@h PRIVMSG #t :gap" + std::string(8, ' ') + "here\r\n"; // space run
             // mIRC formatting: ^C4,1 (colour) + ^B (bold) around "RedBold".
             ev += ":al!u@h PRIVMSG #t :\x03""4,1\x02""RedBold\x0f done\r\n";
             for (char ch : ev) acia->hostSend(static_cast<uint8_t>(ch));
@@ -246,6 +394,8 @@ TEST_F(IrcTest, FoldsUtf8AndWrapsLongLines)
     EXPECT_NE(s.find("A B"), std::string::npos);          // nbsp folded to a space
     EXPECT_EQ(s.find("\xC2"), std::string::npos);         // no raw UTF-8 byte on screen
     EXPECT_NE(s.find("END"), std::string::npos);          // long line wrapped, tail kept
+    EXPECT_NE(s.find("gap here"), std::string::npos);     // run of spaces collapsed to one
+    EXPECT_EQ(s.find("gap  here"), std::string::npos);    // (not two)
     EXPECT_NE(s.find("RedBold done"), std::string::npos); // mIRC codes stripped, text kept
     EXPECT_EQ(s.find("4,1"), std::string::npos);          // colour-spec digits not left behind
 }

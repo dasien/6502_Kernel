@@ -11,7 +11,7 @@
 ; ============================================================================
 
 .export _INCH, _INCH_NB, _QUITDOS
-.export _vaddr, _vputc, _vattr, _vcursor, _vfill, _vcmd
+.export _vaddr, _vputc, _vattr, _vcursor, _vfill, _vcmd, _vscrollbot
 .export _acia_init, _acia_get, _acia_put
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
 
@@ -32,6 +32,7 @@ VREG_CMD        = $FE32         ; 1=clear 2=scroll-up 3=scroll-down 4=fill-row
 VREG_CURSOR_LO  = $FE34
 VREG_CURSOR_HI  = $FE35         ; bit7 = cursor hidden
 VREG_CMD_PARAM  = $FE36         ; fill char for commands
+VREG_SCROLL_BOT = $FE37         ; scroll-region bottom row (scroll affects rows 0..this)
 
 ; 6551 ACIA registers.
 ACIA_DATA       = $FE29
@@ -101,6 +102,13 @@ ACIA_CONTROL    = $FE2C
 ; void vcmd(unsigned char cmd) -- run a chip-side block op (clear/scroll/fill).
 .proc _vcmd
         sta     VREG_CMD
+        rts
+.endproc
+
+; void vscrollbot(unsigned char row) -- set the scroll-region bottom row; scroll
+; commands then affect only rows 0..row (pinned footer rows stay put).
+.proc _vscrollbot
+        sta     VREG_SCROLL_BOT
         rts
 .endproc
 
