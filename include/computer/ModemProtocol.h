@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Computer
 {
@@ -75,7 +76,11 @@ namespace Computer
         static constexpr uint8_t kWONT = 252;
         static constexpr uint8_t kDO = 253;
         static constexpr uint8_t kDONT = 254;
-        static constexpr uint8_t kOptSGA = 3; // suppress-go-ahead (accepted)
+        static constexpr uint8_t kOptSGA = 3;    // suppress-go-ahead (accepted)
+        static constexpr uint8_t kOptTType = 24; // terminal-type (RFC 1091)
+        static constexpr uint8_t kOptNAWS = 31;  // negotiate-about-window-size
+        static constexpr uint8_t kTTypeIS = 0;   // TERMINAL-TYPE IS
+        static constexpr uint8_t kTTypeSEND = 1; // TERMINAL-TYPE SEND
 
     private:
         enum class State { Command, Dialing, Online };
@@ -88,10 +93,13 @@ namespace Computer
         int plus_count_ = 0;          ///< consecutive '+' seen online (the +++ escape)
         bool suppress_no_carrier_ = false; ///< local ATH/ATZ hangup -> no NO CARRIER
         Tn tn_ = Tn::Data;            ///< inbound telnet filter state
+        std::vector<uint8_t> sb_;     ///< subnegotiation bytes collected between SB and SE
 
         void parseAt(const std::string &line);
         void result(const char *code);     ///< inject "\r\n<code>\r\n" to the 6502
         void telnetReply(uint8_t verb, uint8_t opt);
+        void telnetSubReply(const uint8_t *body, size_t n); ///< IAC SB <body> IAC SE
+        void handleSubneg();               ///< act on a completed subnegotiation
     };
 } // namespace Computer
 

@@ -164,6 +164,16 @@ static void sgr(void)
     vattr(attr);
 }
 
+/* Send a small non-negative decimal number out the serial line. */
+static void serial_num(int v)
+{
+    char b[6];
+    int i = 0;
+    if (v == 0) { acia_put('0'); return; }
+    while (v > 0 && i < 6) { b[i++] = (char)('0' + (v % 10)); v /= 10; }
+    while (i > 0) acia_put((unsigned char)b[--i]);
+}
+
 static void csi_dispatch(unsigned char final)
 {
     int n = param[0];
@@ -185,6 +195,20 @@ static void csi_dispatch(unsigned char final)
     case 'm': sgr(); break;
     case 's': scx = cx; scy = cy; break;
     case 'u': cx = scx; cy = scy; move_cursor(); break;
+    case 'n':                             /* Device Status Report */
+        if (n == 6) {                     /* CPR: report cursor as ESC[row;colR */
+            acia_put(0x1B); acia_put('[');
+            serial_num(cy + 1); acia_put(';'); serial_num(cx + 1); acia_put('R');
+        } else if (n == 5) {              /* status OK */
+            acia_put(0x1B); acia_put('['); acia_put('0'); acia_put('n');
+        }
+        break;
+    case 'c':                             /* Device Attributes: identify as ANSI/VT100 */
+        if (priv == 0) {                  /* primary DA -> "ESC[?1;0c" (VT100, no options) */
+            acia_put(0x1B); acia_put('['); acia_put('?'); acia_put('1');
+            acia_put(';'); acia_put('0'); acia_put('c');
+        }
+        break;
     default: break;                       /* unknown CSI: ignore, stay synced */
     }
 }
@@ -522,7 +546,7 @@ int main(void)
     while (acia_get() >= 0) { }   /* flush any stale RX from a prior session */
     vfill(' '); vcmd(VCMD_CLEAR);
     cx = 0; cy = 0; attr = ATTR_DEFAULT; vattr(attr); move_cursor();
-    local_print("MFC TERM v1.1   ^D dial  ^S send  ^R recv  ^X hang up  ^Q quit\r\n\n");
+    local_print("MFC TERM v1.2   ^D dial  ^S send  ^R recv  ^X hang up  ^Q quit\r\n\n");
 
     for (;;) {
         b = acia_get();

@@ -126,3 +126,22 @@ TEST_F(TermAnsiTest, KeyboardForwardsToSerial)
         if (acia->hostRecv() == 'k') sawK = true;
     EXPECT_TRUE(sawK) << "the terminal did not forward the key to the ACIA TX";
 }
+
+// A BBS probes terminal capabilities with ANSI queries; the terminal must reply
+// so the board serves enhanced ANSI instead of falling back to plain ASCII.
+TEST_F(TermAnsiTest, AnswersAnsiCapabilityQueries)
+{
+    auto drainTx = [&] {
+        std::string s;
+        while (acia->hostHasTx()) s += static_cast<char>(acia->hostRecv());
+        return s;
+    };
+
+    // Clear + home, then Device Status Report (ESC[6n) -> cursor at row1,col1.
+    feed("\x1b[2J\x1b[H\x1b[6n");
+    EXPECT_NE(drainTx().find("\x1b[1;1R"), std::string::npos);
+
+    // Device Attributes (ESC[c) -> identify as a VT100-class ANSI terminal.
+    feed("\x1b[c");
+    EXPECT_NE(drainTx().find("\x1b[?1;0c"), std::string::npos);
+}

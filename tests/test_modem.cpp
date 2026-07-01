@@ -119,6 +119,44 @@ TEST(ModemProtocol, TelnetAcceptsSuppressGoAhead)
     EXPECT_TRUE(h.cpu.empty()); // negotiation stripped from the 6502 stream
 }
 
+// A BBS that probes for terminal type must learn we are an ANSI terminal, so it
+// serves enhanced ANSI/CP437 rather than falling back to plain ASCII.
+TEST(ModemProtocol, TelnetAnnouncesAnsiTerminalType)
+{
+    constexpr uint8_t SB = 250, SE = 240, TTYPE = 24, SEND = 1, IS = 0;
+    MockHost h; ModemProtocol m(&h);
+    feed(m, "ATDT host\r"); m.onConnected(); h.clear();
+
+    // Server: IAC DO TERMINAL-TYPE  -> we reply IAC WILL TERMINAL-TYPE.
+    const uint8_t doTtype[] = {IAC, DO, TTYPE};
+    m.fromNetwork(doTtype, sizeof(doTtype));
+    EXPECT_EQ(h.net, (std::vector<uint8_t>{IAC, WILL, TTYPE}));
+    h.clear();
+
+    // Server: IAC SB TERMINAL-TYPE SEND IAC SE -> we reply IS "ansi-bbs".
+    const uint8_t send[] = {IAC, SB, TTYPE, SEND, IAC, SE};
+    m.fromNetwork(send, sizeof(send));
+    std::vector<uint8_t> want = {IAC, SB, TTYPE, IS};
+    for (char c : std::string("ansi-bbs")) want.push_back(static_cast<uint8_t>(c));
+    want.push_back(IAC); want.push_back(SE);
+    EXPECT_EQ(h.net, want);
+    EXPECT_TRUE(h.cpu.empty()); // negotiation never reaches the 6502
+}
+
+// NAWS: we accept and immediately report an 80x25 window.
+TEST(ModemProtocol, TelnetReportsWindowSize)
+{
+    constexpr uint8_t SB = 250, SE = 240, NAWS = 31;
+    MockHost h; ModemProtocol m(&h);
+    feed(m, "ATDT host\r"); m.onConnected(); h.clear();
+
+    const uint8_t doNaws[] = {IAC, DO, NAWS};
+    m.fromNetwork(doNaws, sizeof(doNaws));
+    const std::vector<uint8_t> want = {IAC, WILL, NAWS,
+                                       IAC, SB, NAWS, 0, 80, 0, 25, IAC, SE};
+    EXPECT_EQ(h.net, want);
+}
+
 TEST(ModemProtocol, PlusEscapeThenHangup)
 {
     MockHost h; ModemProtocol m(&h);

@@ -149,6 +149,34 @@ namespace Computer
         host_->sendToNetwork(r, 3);
     }
 
+    // Send IAC SB <body...> IAC SE (a telnet subnegotiation reply).
+    void ModemProtocol::telnetSubReply(const uint8_t *body, size_t n)
+    {
+        std::vector<uint8_t> r;
+        r.reserve(n + 4);
+        r.push_back(kIAC); r.push_back(kSB);
+        r.insert(r.end(), body, body + n);
+        r.push_back(kIAC); r.push_back(kSE);
+        host_->sendToNetwork(r.data(), r.size());
+    }
+
+    // A subnegotiation completed in sb_ (option byte first). We announce an ANSI
+    // terminal type when the server asks (TERMINAL-TYPE SEND) so BBSes serve
+    // enhanced ANSI/CP437 art instead of falling back to plain ASCII.
+    void ModemProtocol::handleSubneg()
+    {
+        if (sb_.size() >= 2 && sb_[0] == kOptTType && sb_[1] == kTTypeSEND)
+        {
+            static const char kType[] = "ansi-bbs";
+            std::vector<uint8_t> body;
+            body.push_back(kOptTType);
+            body.push_back(kTTypeIS);
+            for (const char *p = kType; *p; ++p) body.push_back(static_cast<uint8_t>(*p));
+            telnetSubReply(body.data(), body.size());
+        }
+        sb_.clear();
+    }
+
     void ModemProtocol::fromNetwork(const uint8_t *data, size_t n)
     {
         std::vector<uint8_t> out;
@@ -175,16 +203,31 @@ namespace Computer
                 telnetReply(b == kOptSGA ? kDO : kDONT, b); tn_ = Tn::Data; break;
             case Tn::Wont:
                 tn_ = Tn::Data; break; // nothing to do
-            case Tn::Do: // remote DO x: agree to suppress-go-ahead, refuse the rest
-                telnetReply(b == kOptSGA ? kWILL : kWONT, b); tn_ = Tn::Data; break;
+            case Tn::Do: // remote DO x: which options we agree to provide
+                if (b == kOptSGA || b == kOptTType)
+                {
+                    telnetReply(kWILL, b);       // yes: suppress-go-ahead, terminal-type
+                }
+                else if (b == kOptNAWS)
+                {
+                    telnetReply(kWILL, b);       // yes, and immediately report 80x25
+                    const uint8_t naws[5] = {kOptNAWS, 0, 80, 0, 25};
+                    telnetSubReply(naws, sizeof(naws));
+                }
+                else
+                {
+                    telnetReply(kWONT, b);       // decline everything else
+                }
+                tn_ = Tn::Data; break;
             case Tn::Dont:
                 tn_ = Tn::Data; break;
-            case Tn::Sb: // subnegotiation: discard until IAC SE
+            case Tn::Sb: // subnegotiation: collect bytes until IAC SE
                 if (b == kIAC) tn_ = Tn::SbIac;
+                else sb_.push_back(b);
                 break;
             case Tn::SbIac:
-                if (b == kSE) tn_ = Tn::Data;
-                else tn_ = Tn::Sb; // IAC IAC inside SB, or stray: stay in SB
+                if (b == kSE) { handleSubneg(); tn_ = Tn::Data; }
+                else { sb_.push_back(b); tn_ = Tn::Sb; } // IAC IAC inside SB (literal $FF)
                 break;
             }
         }
