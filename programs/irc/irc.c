@@ -6,14 +6,16 @@
  *  servers speak raw text so the IAC path is a no-op here). Dialing is in-band
  *  Hayes: we send "ATDT host:port" and wait for the modem's CONNECT result.
  *
- *  UI: the screen is split into a scrolling chat region (rows 0..23, a 24-line
- *  software ring repainted on each new line) and a pinned reverse-video input
- *  line on row 24 -- so async incoming messages never clobber what you type.
+ *  UI: a scrolling chat region (rows 0..22), a status bar (row 23: nick,
+ *  channel, online/offline), and a pinned reverse-video input line (row 24) --
+ *  so async incoming messages never clobber what you type.
  *
- *  Protocol (subset): PING->PONG keepalive; PRIVMSG shown as "<nick> text";
- *  server numerics / NOTICE / MOTD shown as their trailing text. Input that
- *  starts with '/' is a command (/join, /nick, /me, /raw, /quit); anything else
- *  is sent as PRIVMSG to the current channel and echoed locally. Ctrl-Q quits.
+ *  Protocol (subset): PING->PONG keepalive; PRIVMSG as "<nick> text" (CTCP
+ *  ACTION as "* nick ..."; CTCP VERSION/PING answered); NOTICE as "-nick- ...";
+ *  JOIN/PART/QUIT/NICK as "* nick ..." events; nick-in-use (433) appends '_' and
+ *  retries; NO CARRIER/ERROR mark offline. Input starting with '/' is a command
+ *  (/join /nick /me /raw /quit); anything else is a PRIVMSG to the current
+ *  channel, echoed locally. Ctrl-Q quits.
  */
 
 #include <string.h>
@@ -36,12 +38,15 @@ extern int  dgetb(void);                  /* next byte 0..255, or -1 at EOF */
 extern void dclose(void);
 
 #define COLS         80
-#define CHATROWS     24            /* rows 0..23 are chat; row 24 is input */
+#define CHATROWS     23            /* rows 0..22 chat; row 23 status; row 24 input */
+#define STATUSROW    23
 #define INPUTROW     24
 #define ATTR_DEFAULT 0x02          /* green on black */
 #define ATTR_REVERSE 0x80
+#define ATTR_STATUS  0x86          /* reverse + cyan: a black-on-cyan status bar */
 #define VCMD_CLEAR   1
 #define KEY_QUIT     0x11          /* Ctrl-Q */
+#define CTCP         0x01          /* CTCP delimiter (\001) */
 
 static char chat[CHATROWS][COLS + 1];   /* the visible chat ring */
 static char input[160];                 /* the input line being typed */
@@ -50,6 +55,7 @@ static char rxline[512];                /* one incoming IRC line being assembled
 static int  rxlen;
 static char nick[24];
 static char chan[34];                   /* current channel ("" = none joined) */
+static char online;                     /* 1 once the modem reports CONNECT */
 
 /* Saved IRC server list (SYSTEM/IRC.LST), same format/parser as TERM's dial-
    list: one entry per line, "host:port  name"; '#' comments/blank lines ignored,
@@ -121,6 +127,25 @@ static void chat_add(const char *s)
     chat_repaint();
 }
 
+/* ---- status line (row 23): nick, channel, connection state --------------- */
+static void status_repaint(void)
+{
+    char bar[COLS + 1];
+    int j = 0, m;
+    const char *st = online ? "[online]" : "[offline]";
+    for (m = 0; "MFC IRC "[m] && j < COLS; m++) bar[j++] = "MFC IRC "[m];
+    for (m = 0; nick[m] && j < COLS; m++) bar[j++] = nick[m];
+    if (j < COLS) bar[j++] = ' ';
+    if (chan[0]) { for (m = 0; chan[m] && j < COLS; m++) bar[j++] = chan[m]; }
+    else         { for (m = 0; "(no channel)"[m] && j < COLS; m++) bar[j++] = "(no channel)"[m]; }
+    if (j < COLS) bar[j++] = ' ';
+    for (m = 0; st[m] && j < COLS; m++) bar[j++] = st[m];
+    bar[j] = 0;
+    vattr(ATTR_STATUS);
+    put_at((unsigned int)STATUSROW * COLS, bar, COLS);
+    vattr(ATTR_DEFAULT);
+}
+
 /* ---- input line (pinned, reverse video, on row 24) ----------------------- */
 static void input_repaint(void)
 {
@@ -135,12 +160,44 @@ static void input_repaint(void)
 }
 
 /* ---- incoming IRC line --------------------------------------------------- */
+/* Append a null-terminated string to line[] at *j, capped at COLS. */
+static void ln_puts(char *line, int *j, const char *s)
+{
+    while (*s && *j < COLS) line[(*j)++] = *s++;
+}
+/* Null-terminate the first whitespace-delimited word of p in place; return p. */
+static char *word(char *p)
+{
+    char *q = p;
+    while (*q && *q != ' ') q++;
+    *q = 0;
+    return p;
+}
+
+/* Show a server numeric's human text. `body` is the line past ":server NNN
+   target", i.e. the middle params followed by an optional ":trailing". We copy
+   the params verbatim and drop only the single ':' that introduces the trailing
+   text, so counts/tokens (e.g. "5 operator(s) online", ISUPPORT tokens) survive
+   instead of being replaced by the boilerplate trailing alone. */
+static void emit_server_text(const char *body)
+{
+    char line[COLS + 1];
+    int j = 0, tokstart = 1, trailing = 0;
+    while (*body && j < COLS) {
+        char ch = *body++;
+        if (!trailing && tokstart && ch == ':') { trailing = 1; tokstart = 0; continue; }
+        if (!trailing) tokstart = (ch == ' ');
+        line[j++] = ch;
+    }
+    line[j] = 0;
+    chat_add(line);
+}
+
 static void handle_line(char *s)
 {
-    int i = 0, ns = 0, ne = 0;
-    char *cmd, *t;
-    char line[COLS + 1];
-    int j, m;
+    int i = 0, ns = 0, ne = 0, j, m;
+    char *cmd, *t, *args;
+    char nk[24], line[COLS + 1];
 
     if (!s[0]) return;
 
@@ -148,6 +205,9 @@ static void handle_line(char *s)
         aputs("PONG"); aputs(s + 4); acrlf();
         return;
     }
+    /* Link status lines from the modem (no ':' prefix). */
+    if (strstr(s, "NO CARRIER")) { online = 0; status_repaint(); chat_add("* disconnected (NO CARRIER)"); return; }
+    if (strncmp(s, "ERROR", 5) == 0) { online = 0; status_repaint(); chat_add(s); return; }
 
     if (s[0] == ':') {                          /* ":nick!user@host CMD ..." */
         i = 1; ns = 1;
@@ -157,27 +217,88 @@ static void handle_line(char *s)
         if (s[i] == ' ') i++;
     }
     cmd = s + i;
+    args = cmd;                                 /* first argument word */
+    while (*args && *args != ' ') args++;
+    if (*args == ' ') args++;
+    t = strstr(cmd, " :");                      /* trailing text (after " :") */
+    if (t) t += 2;
+    for (m = ns, j = 0; m < ne && j < 23; m++) nk[j++] = s[m];
+    nk[j] = 0;
 
     if (strncmp(cmd, "PRIVMSG", 7) == 0) {
-        t = strstr(cmd, " :");                  /* the message text */
+        if (t && t[0] == CTCP) {                 /* CTCP: \001TAG args\001 */
+            char *body = t + 1, *end = strchr(body, CTCP);
+            if (end) *end = 0;
+            if (strncmp(body, "ACTION", 6) == 0) {
+                j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
+                ln_puts(line, &j, " "); ln_puts(line, &j, body[6] ? body + 7 : "");
+                line[j] = 0; chat_add(line);
+            } else if (strncmp(body, "VERSION", 7) == 0) {
+                aputs("NOTICE "); aputs(nk); aputs(" :\001VERSION MFC IRC 1.1\001"); acrlf();
+            } else if (strncmp(body, "PING", 4) == 0) {
+                aputs("NOTICE "); aputs(nk); aputs(" :\001PING");
+                aputs(body + 4); acia_put(CTCP); acrlf();
+            }
+            return;
+        }
         if (!t) return;
-        t += 2;
-        j = 0;
-        line[j++] = '<';
-        m = ns;
-        while (m < ne && j < COLS) line[j++] = s[m++];
-        if (j < COLS) line[j++] = '>';
-        if (j < COLS) line[j++] = ' ';
-        while (*t && j < COLS) line[j++] = *t++;
-        line[j] = 0;
-        chat_add(line);
+        j = 0; ln_puts(line, &j, "<"); ln_puts(line, &j, nk);
+        ln_puts(line, &j, "> "); ln_puts(line, &j, t);
+        line[j] = 0; chat_add(line);
         return;
     }
-
-    /* Everything else (welcome numerics, NOTICE, MOTD, JOIN/PART...): show the
-       trailing text if there is one, otherwise the whole raw line. */
-    t = strstr(s, " :");
-    chat_add(t ? t + 2 : s);
+    if (strncmp(cmd, "NOTICE", 6) == 0) {
+        j = 0;
+        if (nk[0]) { ln_puts(line, &j, "-"); ln_puts(line, &j, nk); ln_puts(line, &j, "- "); }
+        else       { ln_puts(line, &j, "* "); }   /* unprefixed AUTH/server notice */
+        ln_puts(line, &j, t ? t : "");
+        line[j] = 0; chat_add(line);
+        return;
+    }
+    if (strncmp(cmd, "JOIN", 4) == 0) {
+        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
+        ln_puts(line, &j, " joined "); ln_puts(line, &j, word(t ? t : args));
+        line[j] = 0; chat_add(line);
+        return;
+    }
+    if (strncmp(cmd, "PART", 4) == 0) {
+        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
+        ln_puts(line, &j, " left "); ln_puts(line, &j, word(args));
+        line[j] = 0; chat_add(line);
+        return;
+    }
+    if (strncmp(cmd, "QUIT", 4) == 0) {
+        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
+        ln_puts(line, &j, " quit");
+        if (t) { ln_puts(line, &j, " ("); ln_puts(line, &j, t); ln_puts(line, &j, ")"); }
+        line[j] = 0; chat_add(line);
+        return;
+    }
+    if (strncmp(cmd, "NICK", 4) == 0) {
+        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
+        ln_puts(line, &j, " is now "); ln_puts(line, &j, word(t ? t : args));
+        line[j] = 0; chat_add(line);
+        return;
+    }
+    if (cmd[0] >= '0' && cmd[0] <= '9') {        /* server numeric reply */
+        char *p;
+        if (strncmp(cmd, "001", 3) == 0) { online = 1; status_repaint(); }
+        if (strncmp(cmd, "433", 3) == 0) {       /* nick in use -> append '_', retry */
+            int nl = 0; while (nick[nl]) nl++;
+            if (nl < (int)sizeof(nick) - 2) { nick[nl] = '_'; nick[nl + 1] = 0; }
+            aputs("NICK "); aputs(nick); acrlf();
+            status_repaint();
+            j = 0; ln_puts(line, &j, "* nick in use, trying "); ln_puts(line, &j, nick);
+            line[j] = 0; chat_add(line);
+            return;
+        }
+        p = args;                                /* args -> target; skip it to the body */
+        while (*p && *p != ' ') p++;
+        if (*p == ' ') p++;
+        emit_server_text(p);                     /* params + trailing, prefix stripped */
+        return;
+    }
+    chat_add(t ? t : s);                         /* anything else: trailing or raw */
 }
 
 /* ---- outgoing (the input line) ------------------------------------------- */
@@ -213,9 +334,11 @@ static void send_input(void)
         } else if (strncmp(input, "/join ", 6) == 0) {
             aputs("JOIN "); aputs(input + 6); acrlf();
             copy_word(chan, input + 6, (int)sizeof(chan));
+            status_repaint();
         } else if (strncmp(input, "/nick ", 6) == 0) {
             aputs("NICK "); aputs(input + 6); acrlf();
             copy_word(nick, input + 6, (int)sizeof(nick));
+            status_repaint();
         } else if (strncmp(input, "/me ", 4) == 0 && chan[0]) {
             aputs("PRIVMSG "); aputs(chan); aputs(" :\001ACTION ");
             aputs(input + 4); acia_put(0x01); acrlf();
@@ -279,7 +402,7 @@ static void setup(void)
     int st = 0, b, row = 2, i, k;
 
     vattr(ATTR_DEFAULT);
-    put_at(0 * COLS, "MFC IRC v1.0", COLS);
+    put_at(0 * COLS, "MFC IRC v1.1", COLS);
 
     /* Server: pick from IRC.LST if present, else type one. */
     server[0] = 0;
@@ -318,7 +441,7 @@ static void setup(void)
 
     for (t = 3000000L; t; ) {                   /* wait for CONNECT (with timeout) */
         b = acia_get();
-        if (b >= 0) { if (feed_match("CONNECT", &st, (unsigned char)b)) break; }
+        if (b >= 0) { if (feed_match("CONNECT", &st, (unsigned char)b)) { online = 1; break; } }
         else        { --t; }
     }
 
@@ -340,6 +463,7 @@ int main(void)
     for (r = 0; r < CHATROWS; r++) chat[r][0] = 0;
     rxlen = 0; inlen = 0; input[0] = 0;
     chat_repaint();
+    status_repaint();
     input_repaint();
 
     for (;;) {
