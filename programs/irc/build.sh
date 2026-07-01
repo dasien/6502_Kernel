@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 
-cl65 -t none --signed-chars -O -C irc.cfg irc.c glue.s -o irc.bin
+cl65 -t none --signed-chars -O -I ../common -C irc.cfg irc.c ../common/scrollback.c glue.s -o irc.bin
 
 # Prepend the 2-byte little-endian $0800 load header -> a .PRG.
 printf '\000\010' > IRC.PRG

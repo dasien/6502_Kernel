@@ -190,7 +190,7 @@ TEST_F(IrcTest, RendersEventsAndHandlesNickInUse)
     size_t np = s.find("norm");
     ASSERT_NE(np, std::string::npos);
     EXPECT_EQ(vic->getColorAt(np % 80, np / 80), 0x02);
-    EXPECT_NE(tx.find("NOTICE bob :\001VERSION MFC IRC 1.3\001"), std::string::npos) << tx;
+    EXPECT_NE(tx.find("NOTICE bob :\001VERSION MFC IRC 1.4\001"), std::string::npos) << tx;
     EXPECT_NE(tx.find("NICK mfc_"), std::string::npos) << tx;
 }
 
@@ -356,6 +356,107 @@ TEST_F(IrcTest, NewestLineAtBottomRow)
     EXPECT_EQ(rowText(22).rfind("* three", 0), 0u); // newest at row 22, col 0
     EXPECT_EQ(rowText(21).rfind("* two", 0), 0u);   // previous at row 21, col 0
     EXPECT_EQ(rowText(20).rfind("* one", 0), 0u);   // and row 20
+}
+
+// Scrollback: after enough lines to overflow the 23-row chat region, PgUp
+// (ESC[5~) pages back to lines that scrolled off the top; End (ESC[F) snaps
+// back to the live tail (newest line on the bottom chat row).
+TEST_F(IrcTest, ScrollbackPageUpShowsOlderLines)
+{
+    mountDisk({});
+    type("test.irc:6667\r"); type("mfc\r"); type("#t\r");
+
+    // 40 distinct lines > 23 rows, so line01..line17 scroll off the top.
+    std::string feed;
+    for (int n = 1; n <= 40; ++n) {
+        std::string nn = (n < 10 ? "0" : "") + std::to_string(n);
+        feed += "NOTICE AUTH :line" + nn + "\r\n";
+    }
+
+    std::string tx;
+    bool connected = false, fed = false;
+    long flush = 0;
+    for (int i = 0; i < 80'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !fed && tx.find("JOIN #t") != std::string::npos) {
+            for (char ch : feed) acia->hostSend(static_cast<uint8_t>(ch));
+            fed = true;
+        }
+        if (fed && ++flush > 5'000'000) break;
+    }
+
+    auto *vic = c.getVideoChip();
+    auto rowText = [&](int y) { std::string r; for (int x = 0; x < 80; ++x) r += (char)vic->getCharacterAt(x, y); return r; };
+    auto statusRow = [&]() { return rowText(24); };
+
+    // Live tail: the newest line sits on the bottom chat row, oldest is gone.
+    ASSERT_EQ(rowText(22).rfind("* line40", 0), 0u) << rowText(22);
+    EXPECT_EQ(screen().find("* line01"), std::string::npos);   // scrolled off
+
+    // Page up: ESC[5~ walks the view back to the oldest retained lines.
+    type("\x1b[5~");
+    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    EXPECT_NE(screen().find("* line01"), std::string::npos) << "PgUp should reveal line01";
+    EXPECT_NE(statusRow().find("review"), std::string::npos) << statusRow();
+
+    // End: ESC[F snaps back to the live tail; line40 is on the bottom row again.
+    type("\x1b[F");
+    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    EXPECT_EQ(rowText(22).rfind("* line40", 0), 0u) << rowText(22);
+    EXPECT_EQ(statusRow().find("review"), std::string::npos) << statusRow();
+}
+
+// While reviewing, a newly arrived line must not disturb the frozen view: it
+// queues into history (status shows the review indicator) instead of scrolling.
+TEST_F(IrcTest, ReviewHoldsWhileNewLinesArrive)
+{
+    mountDisk({});
+    type("test.irc:6667\r"); type("mfc\r"); type("#t\r");
+
+    std::string feed;
+    for (int n = 1; n <= 40; ++n) {
+        std::string nn = (n < 10 ? "0" : "") + std::to_string(n);
+        feed += "NOTICE AUTH :line" + nn + "\r\n";
+    }
+
+    std::string tx;
+    bool connected = false, fed = false;
+    long flush = 0;
+    for (int i = 0; i < 80'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !fed && tx.find("JOIN #t") != std::string::npos) {
+            for (char ch : feed) acia->hostSend(static_cast<uint8_t>(ch));
+            fed = true;
+        }
+        if (fed && ++flush > 5'000'000) break;
+    }
+
+    // Enter review at the very top.
+    type("\x1b[5~");
+    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    auto *vic = c.getVideoChip();
+    auto rowText = [&](int y) { std::string r; for (int x = 0; x < 80; ++x) r += (char)vic->getCharacterAt(x, y); return r; };
+    ASSERT_NE(screen().find("* line01"), std::string::npos);
+    const std::string top_before = rowText(0);
+
+    // A fresh line arrives while reviewing: it must not appear on screen or move
+    // the view; it only queues below (the [review +N] indicator still shows).
+    for (char ch : std::string("NOTICE AUTH :freshline\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+
+    EXPECT_EQ(rowText(0), top_before) << "review view moved";
+    EXPECT_EQ(screen().find("freshline"), std::string::npos) << "new line leaked onto the frozen view";
+    EXPECT_NE(rowText(24).find("review"), std::string::npos) << rowText(24);
 }
 
 // UTF-8 down-convert (nbsp -> space) and long lines wrap instead of truncating.

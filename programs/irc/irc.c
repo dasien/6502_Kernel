@@ -19,9 +19,15 @@
  *  /whois /raw /server /quit); anything else is a PRIVMSG to the current channel.
  *  /server drops the carrier and returns to the dial screen; /quit and Ctrl-Q
  *  exit to DOS; ESC quits from the setup prompts.
+ *
+ *  Scrollback: every chat row is also kept in a RAM history ring (scrollback.c);
+ *  PgUp/PgDn page back through it, Home/End jump to the oldest/live tail. While
+ *  reviewing, the screen holds still and incoming lines queue below (the status
+ *  bar shows "[review +N]"); typing or End snaps back to the live tail.
  */
 
 #include <string.h>
+#include "scrollback.h"
 
 /* ---- kernel/VIC/ACIA glue (glue.s, shared shape with TERM) --------------- */
 extern char INCH(void);             /* blocking key read */
@@ -62,8 +68,9 @@ extern void dclose(void);
 #define SESS_REDIAL  1
 #define SESS_EXIT    2
 
-/* The chat history lives in the VIC screen buffer itself (rows 0..CHATROWS-1),
-   scrolled in hardware; there is no separate ring buffer. */
+/* Live chat scrolls in the VIC screen buffer (rows 0..CHATROWS-1) in hardware;
+   a copy of every row is also pushed to the scrollback ring (scrollback.c) so
+   the user can page back through history. */
 static char input[160];                 /* the input line being typed */
 static int  inlen;
 static char rxline[512];                /* one incoming IRC line being assembled */
@@ -123,6 +130,8 @@ static void put_at(unsigned int cell, const char *s, int pad)
     while (*s && i < COLS) { vputc((unsigned char)*s++); i++; }
     while (i < pad)        { vputc(' '); i++; }
 }
+
+static void status_repaint(void);            /* defined below; used by chat_add */
 
 /* ---- chat region --------------------------------------------------------- */
 /* IRC colour (0-15) -> our 16-colour palette index (fg 0-7, +8 = bright). Order:
@@ -243,12 +252,14 @@ static void chat_add(const char *s)
     clean[ci] = 0;
 
     p = clean; off = 0;
-    do {                                          /* wrap at COLS; scroll one row per line */
+    do {                                          /* wrap at COLS; one history row per line */
         n = 0;
         while (p[n] && n < COLS) n++;
-        chat_line(p, cbuf + off, n);
+        sb_push(p, cbuf + off, (unsigned char)n); /* always record in scrollback */
+        if (!sb_reviewing()) chat_line(p, cbuf + off, n); /* live: hardware-scroll it in */
         p += n; off += n;
     } while (*p);
+    if (sb_reviewing()) status_repaint();         /* update the "[review +N]" count */
 }
 
 /* ---- status line (row 24): nick, channel, connection state --------------- */
@@ -264,6 +275,18 @@ static void status_repaint(void)
     else         { for (m = 0; "(no channel)"[m] && j < COLS; m++) bar[j++] = "(no channel)"[m]; }
     if (j < COLS) bar[j++] = ' ';
     for (m = 0; st[m] && j < COLS; m++) bar[j++] = st[m];
+    if (sb_reviewing()) {                        /* "[review +N]" while scrolled back */
+        unsigned int below = sb_backlog();
+        char num[6]; int t = 0;
+        for (m = 0; " [review" [m] && j < COLS; m++) bar[j++] = " [review"[m];
+        if (below) {                             /* +N new lines waiting below */
+            if (j < COLS) bar[j++] = ' ';
+            if (j < COLS) bar[j++] = '+';
+            do { num[t++] = (char)('0' + below % 10); below /= 10; } while (below && t < 5);
+            while (t > 0 && j < COLS) bar[j++] = num[--t];
+        }
+        if (j < COLS) bar[j++] = ']';
+    }
     bar[j] = 0;
     vattr(ATTR_STATUS);
     put_at((unsigned int)STATUSROW * COLS, bar, COLS);
@@ -358,7 +381,7 @@ static void handle_line(char *s)
                 ln_puts(line, &j, " "); ln_puts(line, &j, body[6] ? body + 7 : "");
                 line[j] = 0; chat_add(line);
             } else if (strncmp(body, "VERSION", 7) == 0) {
-                aputs("NOTICE "); aputs(nk); aputs(" :\001VERSION MFC IRC 1.3\001"); acrlf();
+                aputs("NOTICE "); aputs(nk); aputs(" :\001VERSION MFC IRC 1.4\001"); acrlf();
             } else if (strncmp(body, "PING", 4) == 0) {
                 aputs("NOTICE "); aputs(nk); aputs(" :\001PING");
                 aputs(body + 4); acia_put(CTCP); acrlf();
@@ -575,7 +598,7 @@ static int setup(void)
     for (;;) {                                  /* server-pick + connect, retry on failure */
         vfill(' '); vcmd(VCMD_CLEAR);
         vattr(ATTR_DEFAULT);
-        put_at(0 * COLS, "MFC IRC v1.3   (ESC quits)", COLS);
+        put_at(0 * COLS, "MFC IRC v1.4   (ESC quits)", COLS);
         row = 2;
         server[0] = 0;
         load_server_list();
@@ -644,13 +667,31 @@ static int setup(void)
     }
 }
 
+/* Handle a completed review-navigation key (PgUp/PgDn/Home/End). Returns 1 if it
+   was a navigation key (and repaints if the view moved), 0 otherwise. `final` is
+   the CSI final byte and `num` the numeric parameter (5=PgUp, 6=PgDn on '~'). */
+static int review_nav(int final, int num)
+{
+    int moved;
+    if (final == '~' && num == 5)      moved = sb_pageup();
+    else if (final == '~' && num == 6) moved = sb_pagedown();
+    else if (final == 'H')             moved = sb_home();
+    else if (final == 'F')             moved = sb_end();
+    else return 0;                     /* not one of ours (e.g. an arrow) */
+    if (moved) { sb_paint(); status_repaint(); }
+    return 1;
+}
+
 /* Run one connected session; returns SESS_REDIAL (/server) or SESS_EXIT (/quit, ^Q). */
 static int chat_session(void)
 {
     int b, k;
+    int csi = 0, num = 0;                    /* CSI decoder: 0 ground, 1 after ESC, 2 in CSI */
 
     vattr(ATTR_DEFAULT); vfill(' '); vcmd(VCMD_CLEAR);  /* clear (resets scroll region) */
     vscrollbot(CHATROWS - 1);                /* scroll only the chat rows; pin 23-24 */
+    sb_init(0, CHATROWS, COLS);              /* scrollback owns rows 0..CHATROWS-1 */
+    sb_reset();
     rxlen = 0; inlen = 0; input[0] = 0;
     status_repaint();
     input_repaint();
@@ -664,14 +705,29 @@ static int chat_session(void)
             continue;
         }
         k = INCH_NB();
-        if (k >= 0) {
-            if (k == KEY_QUIT) { aputs("QUIT :MFC IRC"); acrlf(); g_session = SESS_EXIT; }
-            else if (k == 0x0D || k == 0x0A) { send_input(); }
-            else if (k == 0x08 || k == 0x7F) {
-                if (inlen) { inlen--; input[inlen] = 0; input_repaint(); }
-            } else if (k >= 0x20 && k < 0x7F && inlen < (int)sizeof(input) - 1) {
-                input[inlen++] = (char)k; input[inlen] = 0; input_repaint();
-            }
+        if (k < 0) continue;
+
+        /* Navigation keys arrive as CSI sequences (ESC [ ... final); decode them
+           across loop iterations so PgUp/PgDn/Home/End drive the scrollback and
+           don't leak into the input line. */
+        if (csi == 1) { csi = (k == '[') ? 2 : 0; num = 0; continue; }
+        if (csi == 2) {
+            if (k >= '0' && k <= '9') { num = num * 10 + (k - '0'); continue; }
+            review_nav(k, num);                 /* final byte: act (or ignore) */
+            csi = 0;
+            continue;
+        }
+        if (k == KEY_ESC) { csi = 1; continue; } /* start of a CSI (or a stray ESC) */
+
+        /* Any other key returns us to the live tail before it acts. */
+        if (sb_reviewing()) { sb_end(); sb_paint(); status_repaint(); }
+
+        if (k == KEY_QUIT) { aputs("QUIT :MFC IRC"); acrlf(); g_session = SESS_EXIT; }
+        else if (k == 0x0D || k == 0x0A) { send_input(); }
+        else if (k == 0x08 || k == 0x7F) {
+            if (inlen) { inlen--; input[inlen] = 0; input_repaint(); }
+        } else if (k >= 0x20 && k < 0x7F && inlen < (int)sizeof(input) - 1) {
+            input[inlen++] = (char)k; input[inlen] = 0; input_repaint();
         }
     }
     return g_session;

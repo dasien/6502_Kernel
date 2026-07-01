@@ -163,14 +163,16 @@ if(CA65_FOUND AND LD65_FOUND)
         # ../kernel/irc.bin for the headless test; IRC.PRG for the disk is made
         # by programs/irc/build.sh.
         set(IRC_DIR ${CMAKE_SOURCE_DIR}/programs/irc)
+        set(COMMON_DIR ${CMAKE_SOURCE_DIR}/programs/common)
         set(IRC_BIN ${CMAKE_BINARY_DIR}/kernel/irc.bin)
         add_custom_target(irc_bin ALL
-            COMMAND cl65 -t none --signed-chars -O -C ${IRC_DIR}/irc.cfg
-                    ${IRC_DIR}/irc.c ${IRC_DIR}/glue.s -o ${IRC_BIN}
+            COMMAND cl65 -t none --signed-chars -O -I ${COMMON_DIR} -C ${IRC_DIR}/irc.cfg
+                    ${IRC_DIR}/irc.c ${COMMON_DIR}/scrollback.c ${IRC_DIR}/glue.s -o ${IRC_BIN}
             COMMAND ${CMAKE_COMMAND} -E echo "IRC chat-client blob built ($0800)"
             COMMENT "Building IRC chat-client blob"
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
             DEPENDS ${IRC_DIR}/irc.c ${IRC_DIR}/glue.s ${IRC_DIR}/irc.cfg
+                    ${COMMON_DIR}/scrollback.c ${COMMON_DIR}/scrollback.h
             VERBATIM
         )
     else()
