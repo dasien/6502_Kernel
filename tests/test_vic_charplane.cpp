@@ -46,3 +46,33 @@ TEST(VicCharPlane, ReverseLivesInTheAttributeNotTheChar)
     EXPECT_EQ(v.getCharacterAt(1, 0), 0xDB);
     EXPECT_EQ(v.getColorAt(1, 0), 0x02);
 }
+
+// A scroll region (VREG_SCROLL_BOT) confines scrolling to rows 0..bottom, so an
+// app can pin footer rows below it. Here rows 0-1 scroll; row 2 stays put.
+TEST(VicCharPlane, ScrollRegionPinsRowsBelow)
+{
+    VIC v;
+    putAt(v, 0 * VIC::kScreenWidth, 'A');   // row 0
+    putAt(v, 1 * VIC::kScreenWidth, 'B');   // row 1
+    putAt(v, 2 * VIC::kScreenWidth, 'P');   // row 2 (to be pinned)
+
+    v.write(VIC::kRegScrollBot, 1);         // scroll region = rows 0..1
+    v.write(VIC::kRegCmd, VIC::kCmdScrollUp);
+
+    EXPECT_EQ(v.getCharacterAt(0, 0), 'B'); // row 1 moved up into row 0
+    EXPECT_EQ(v.getCharacterAt(0, 1), ' '); // row 1 blanked
+    EXPECT_EQ(v.getCharacterAt(0, 2), 'P'); // row 2 pinned (below the region)
+}
+
+// Clearing the screen resets the scroll region to the whole screen.
+TEST(VicCharPlane, ClearResetsScrollRegion)
+{
+    VIC v;
+    v.write(VIC::kRegScrollBot, 1);         // shrink the region
+    v.write(VIC::kRegCmd, VIC::kCmdClear);   // clear should reset it to full-screen
+
+    putAt(v, 0, 'X');
+    putAt(v, (VIC::kScreenHeight - 1) * VIC::kScreenWidth, 'Z'); // last row
+    v.write(VIC::kRegCmd, VIC::kCmdScrollUp);
+    EXPECT_EQ(v.getCharacterAt(0, VIC::kScreenHeight - 2), 'Z'); // full-screen scroll moved it up
+}

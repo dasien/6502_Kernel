@@ -55,9 +55,12 @@ namespace Computer
         static constexpr uint16_t kRegCursorLo = 0xFE34; ///< cursor cell low (W)
         static constexpr uint16_t kRegCursorHi = 0xFE35; ///< cursor cell high; bit7 set = hidden (W)
         static constexpr uint16_t kRegCmdParam = 0xFE36; ///< command parameter / fill char (W)
+        static constexpr uint16_t kRegScrollBot = 0xFE37; ///< scroll-region bottom row (W);
+                                                          ///< scroll affects rows 0..this. Reset
+                                                          ///< to the last row on clear.
 
         static constexpr uint16_t kRegFirst = kRegAddrLo;
-        static constexpr uint16_t kRegLast = kRegCmdParam;
+        static constexpr uint16_t kRegLast = kRegScrollBot;
 
         // Command codes written to VREG_CMD.
         static constexpr uint8_t kCmdClear = 0x01;      ///< fill whole screen
@@ -112,6 +115,7 @@ namespace Computer
         mutable uint16_t cell_index_ = 0; ///< shared char/color data-port index
         uint8_t attr_latch_ = kDefaultAttr;
         uint8_t cmd_param_ = 0x20; ///< fill char for commands (default space)
+        uint8_t scroll_bot_ = kScreenHeight - 1; ///< scroll-region bottom row (default: full screen)
         uint16_t cursor_index_ = 0;
         bool cursor_hidden_ = false;
 

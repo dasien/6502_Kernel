@@ -57,8 +57,11 @@ namespace Computer
         switch (address)
         {
         case kRegAddrLo:
+            // Partial update: set the low byte only, and do NOT wrap yet. The
+            // still-stale high byte can push this intermediate value past the
+            // screen size; wrapping it here would corrupt the address before the
+            // high byte arrives. The wrap happens once the high byte is written.
             cell_index_ = (cell_index_ & 0xFF00) | value;
-            if (cell_index_ >= kScreenSize) cell_index_ %= kScreenSize;
             break;
         case kRegAddrHi:
             cell_index_ = (cell_index_ & 0x00FF) | (static_cast<uint16_t>(value) << 8);
@@ -84,6 +87,9 @@ namespace Computer
             break;
         case kRegCmdParam:
             cmd_param_ = value;
+            break;
+        case kRegScrollBot:
+            scroll_bot_ = (value < kScreenHeight) ? value : (kScreenHeight - 1);
             break;
         case kRegCmd:
             switch (value)
@@ -114,17 +120,21 @@ namespace Computer
     {
         screen_buffer_.fill(cmd_param_);
         color_buffer_.fill(attr_latch_);
+        scroll_bot_ = kScreenHeight - 1;   // a clear also resets the scroll region
         dirty_flag_ = true;
     }
 
+    // Scroll/blank only the region rows 0..scroll_bot_ (default: whole screen), so
+    // an app can pin footer rows (e.g. an input/status line) below the region.
     void VIC::cmdScrollUp()
     {
-        for (uint16_t i = 0; i < kScreenSize - kScreenWidth; ++i)
+        const uint16_t regionEnd = (static_cast<uint16_t>(scroll_bot_) + 1) * kScreenWidth;
+        for (uint16_t i = 0; i + kScreenWidth < regionEnd; ++i)
         {
             screen_buffer_[i] = screen_buffer_[i + kScreenWidth];
             color_buffer_[i] = color_buffer_[i + kScreenWidth];
         }
-        for (uint16_t i = kScreenSize - kScreenWidth; i < kScreenSize; ++i)
+        for (uint16_t i = regionEnd - kScreenWidth; i < regionEnd; ++i)
         {
             screen_buffer_[i] = cmd_param_;
             color_buffer_[i] = attr_latch_;
@@ -134,7 +144,8 @@ namespace Computer
 
     void VIC::cmdScrollDown()
     {
-        for (uint16_t i = kScreenSize; i-- > kScreenWidth;)
+        const uint16_t regionEnd = (static_cast<uint16_t>(scroll_bot_) + 1) * kScreenWidth;
+        for (uint16_t i = regionEnd; i-- > kScreenWidth;)
         {
             screen_buffer_[i] = screen_buffer_[i - kScreenWidth];
             color_buffer_[i] = color_buffer_[i - kScreenWidth];
