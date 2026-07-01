@@ -7,6 +7,8 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QString>
 #include "VIC.h"
 #include "Memory.h"
 
@@ -39,6 +41,10 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
+    // Mouse text selection: drag to select cells, copy to the clipboard on release.
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private slots:
     void refreshDisplay();
@@ -64,6 +70,13 @@ private:
     // Cursor state
     bool show_cursor_;
     QTimer* cursor_timer_;
+
+    // Text-selection state (mouse drag -> copy). Cells are linear indices
+    // (row * kScreenWidth + col) in reading order.
+    bool has_selection_;
+    bool selecting_;
+    int  sel_anchor_cell_;
+    int  sel_cursor_cell_;
     
     // 16-entry color palette (8 base + 8 bright) for the attribute planes.
     QColor palette_[16];
@@ -81,6 +94,10 @@ private:
     void drawCharacterAt(QPainter& painter, int x, int y, uint8_t glyph, uint8_t attr);
     void drawCursor(QPainter& painter);
     uint8_t qtKeyToAscii(QKeyEvent* event) const;
+    // Selection helpers.
+    int  cellIndexAt(const QPoint& pos) const;   // pixel -> clamped cell index
+    bool cellSelected(int x, int y) const;       // is cell (x,y) in the selection?
+    QString selectionText() const;               // selected cells -> text (CP437->Unicode)
 };
 
 #endif // DISPLAYWIDGET_H
