@@ -253,6 +253,32 @@ TEST_F(IrcTest, ServerCommandDisconnects)
     EXPECT_NE(tx.find("+++ATH"), std::string::npos) << tx;           // modem hangup issued
 }
 
+// /disconnect is an alias for /server: same QUIT + hang up + return to dial.
+TEST_F(IrcTest, DisconnectAliasHangsUp)
+{
+    mountDisk({});
+    type("test.irc:6667\r"); type("mfc\r"); type("#t\r");
+
+    std::string tx;
+    bool connected = false, sent = false;
+    for (int i = 0; i < 60'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !sent && tx.find("JOIN #t") != std::string::npos) {
+            for (char ch : std::string("/disconnect\r")) c.getPia()->addKeypress(static_cast<uint8_t>(ch));
+            sent = true;
+        }
+        if (sent && tx.find("+++ATH") != std::string::npos) break;
+    }
+
+    EXPECT_NE(tx.find("QUIT :changing servers"), std::string::npos) << tx;
+    EXPECT_NE(tx.find("+++ATH"), std::string::npos) << tx;
+}
+
 // /list sends the LIST command (with filter) and renders the server's replies.
 TEST_F(IrcTest, ListCommandSendsAndRenders)
 {

@@ -16,9 +16,9 @@
  *  retries; NO CARRIER/ERROR mark offline. mIRC formatting is honoured where the
  *  display can express it: colour/bold/reverse render; underline/italic drop.
  *  Input starting with '/' is a command (/join /part /nick /msg /me /list /names
- *  /whois /raw /server /quit); anything else is a PRIVMSG to the current channel.
- *  /server drops the carrier and returns to the dial screen; /quit and Ctrl-Q
- *  exit to DOS; ESC quits from the setup prompts.
+ *  /whois /raw /server /disconnect /quit); anything else is a PRIVMSG to the
+ *  current channel. /server (alias /disconnect) drops the carrier and returns to
+ *  the dial screen; /quit and Ctrl-Q exit to DOS; ESC quits from the setup prompts.
  *
  *  Scrollback: every chat row is also kept in a RAM history ring (scrollback.c);
  *  PgUp/PgDn page back through it, Home/End jump to the oldest/live tail. While
@@ -494,7 +494,7 @@ static void send_input(void)
     } else if ((a = cmd_arg("/quit"))) {
         aputs("QUIT :MFC IRC"); acrlf();
         g_session = SESS_EXIT;                       /* main hangs up + returns to DOS */
-    } else if ((a = cmd_arg("/server"))) {
+    } else if ((a = cmd_arg("/server")) || (a = cmd_arg("/disconnect"))) {
         aputs("QUIT :changing servers"); acrlf();
         g_session = SESS_REDIAL;                     /* main hangs up + returns to dial screen */
     } else if ((a = cmd_arg("/join"))) {
@@ -547,7 +547,7 @@ static void send_input(void)
         if (*a) { aputs(a); acrlf(); }
         else chat_add("* usage: /raw <irc command>");
     } else {
-        chat_add("* unknown (/join /part /nick /msg /me /list /names /whois /raw /server /quit)");
+        chat_add("* unknown (/join /part /nick /msg /me /list /names /whois /raw /server /disconnect /quit)");
     }
 
     inlen = 0; input[0] = 0;
