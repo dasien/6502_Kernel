@@ -237,8 +237,8 @@ static int local_line(char *buf, int max)
     }
 }
 
-/* ===================== saved BBS dial-list (DIAL.LST) ====================== */
-/* A plain-text list in the FAT16 root, one entry per line: "host:port  name"
+/* ===================== saved BBS dial-list (SYSTEM/DIAL.LST) =============== */
+/* A plain-text list in the SYSTEM drawer, one entry per line: "host:port  name"
    (first whitespace-delimited token is the address, the rest is the display
    name). Blank lines and lines starting with '#' are ignored. Editable in EDIT.
    Up to 9 entries are offered in the ^D menu (single-key selection). */
@@ -254,7 +254,7 @@ static void load_dial_list(void)
     int n = 0, c;
     char *p;
     bbs_count = 0;
-    if (dopen_read("DIAL.LST")) return;                 /* no saved list */
+    if (dopen_read("SYSTEM/DIAL.LST")) return;          /* no saved list */
     while ((c = dgetb()) >= 0 && n < DIALBUF - 1) dialbuf[n++] = (char)c;
     dclose();
     dialbuf[n] = 0;
@@ -522,7 +522,7 @@ int main(void)
     while (acia_get() >= 0) { }   /* flush any stale RX from a prior session */
     vfill(' '); vcmd(VCMD_CLEAR);
     cx = 0; cy = 0; attr = ATTR_DEFAULT; vattr(attr); move_cursor();
-    local_print("MFC TERM v1.0   ^D dial  ^S send  ^R recv  ^X hang up  ^Q quit\r\n\n");
+    local_print("MFC TERM v1.1   ^D dial  ^S send  ^R recv  ^X hang up  ^Q quit\r\n\n");
 
     for (;;) {
         b = acia_get();

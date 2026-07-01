@@ -208,10 +208,11 @@ TEST_F(TermXmodemTest, DialListMenuDialsChosenEntry)
         return std::vector<uint8_t>(s.begin(), s.end());
     };
     // Two entries with distinctive addresses; a comment and blank line to skip.
+    // The dial-list lives in the SYSTEM drawer (TERM opens SYSTEM/DIAL.LST).
     writeImage({{"DIAL.LST", bytesOf("# my boards\r\n"
                                      "test.bbs.one:1234  First Board\r\n"
                                      "\r\n"
-                                     "host.two:2323  Second Board\r\n")}});
+                                     "host.two:2323  Second Board\r\n"), "SYSTEM"}});
 
     // ^D opens the menu; "2" picks the second entry.
     auto *pia = computer.getPia();

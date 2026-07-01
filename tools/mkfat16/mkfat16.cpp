@@ -66,7 +66,9 @@ std::vector<uint8_t> bytesOf(const std::string &s) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <output.img> [hostfile ...]\n";
+        std::cerr << "Usage: " << argv[0] << " <output.img> [@DRAWER] [hostfile ...]\n"
+                  << "  An @DRAWER argument places following files in that one-level\n"
+                  << "  drawer (subdirectory); a bare @ returns to the root.\n";
         return 2;
     }
     const std::string outPath = argv[1];
@@ -78,20 +80,34 @@ int main(int argc, char **argv) {
                          bytesOf("MFC-DOS SAMPLE DISK\r\n"
                                  "TYPE @ TO LIST FILES, @NAME TO PRINT ONE.\r\n")});
         files.push_back({"HELLO.TXT", bytesOf("HELLO FROM MFC-DOS!\r\n")});
-        // Starter dial-list for TERM's ^D menu (host:port  name; edit in EDIT).
+        // Config lists live in a SYSTEM drawer (TERM/IRC read them from there).
         files.push_back({"DIAL.LST",
                          bytesOf("# MFC TERM dial-list: host:port  name\r\n"
                                  "particlesbbs.dyndns.org:6400  Particles BBS\r\n"
-                                 "bbs.fozztexx.com:23  Level 29\r\n")});
+                                 "bbs.fozztexx.com:23  Level 29\r\n"),
+                         "SYSTEM"});
+        files.push_back({"IRC.LST",
+                         bytesOf("# MFC IRC servers: host:port  name\r\n"
+                                 "irc.libera.chat:6667  Libera.Chat\r\n"
+                                 "irc.efnet.nl:6667  EFnet\r\n"
+                                 "irc.undernet.org:6667  UnderNet\r\n"),
+                         "SYSTEM"});
         std::cout << "No host files given - writing sample files.\n";
     } else {
+        std::string drawer;                 // "" = root; set by an @DRAWER argument
         for (int i = 2; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (!arg.empty() && arg[0] == '@') {   // @DRAWER (or bare @ = root)
+                drawer = to83(arg.substr(1));
+                if (drawer == "FILE") drawer.clear(); // to83("") -> "FILE"; treat @ as root
+                continue;
+            }
             std::vector<uint8_t> data;
-            if (!readHostFile(argv[i], data)) {
-                std::cerr << "error: cannot read '" << argv[i] << "'\n";
+            if (!readHostFile(arg, data)) {
+                std::cerr << "error: cannot read '" << arg << "'\n";
                 return 1;
             }
-            files.push_back({to83(argv[i]), std::move(data)});
+            files.push_back({to83(arg), std::move(data), drawer});
         }
     }
 

@@ -16,8 +16,10 @@
 #ifndef MFCDOS_TEST_FAT16_IMAGE_H
 #define MFCDOS_TEST_FAT16_IMAGE_H
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,7 @@ namespace mfcdos_test {
 struct Fat16File {
     std::string name;          ///< 8.3 name, e.g. "HELLO.TXT" (case-insensitive)
     std::vector<uint8_t> data; ///< file contents
+    std::string drawer;        ///< "" = root; else a one-level drawer (subdir) name
 };
 
 class Fat16ImageBuilder {
@@ -62,30 +65,66 @@ public:
         fat[0] = 0xFFF8;
         fat[1] = 0xFFFF;
 
-        // Root directory entries are written into the root sector.
         uint8_t *root = &img[rootStart * kBytesPerSector];
-
         uint16_t nextCluster = 2;
-        for (size_t f = 0; f < files.size(); ++f) {
-            const Fat16File &file = files[f];
+
+        // Allocate one contiguous cluster run for a file's data, chain the FAT,
+        // and copy the bytes in. Returns the first cluster (0 for an empty file).
+        auto placeData = [&](const Fat16File &file) -> uint16_t {
             const uint32_t size = static_cast<uint32_t>(file.data.size());
             const uint16_t clusters =
                 size == 0 ? 0
                           : static_cast<uint16_t>((size + clusterBytes() - 1) / clusterBytes());
-            const uint16_t firstCluster = clusters ? nextCluster : 0;
-
-            // Chain the clusters and copy the data.
+            const uint16_t first = clusters ? nextCluster : 0;
             for (uint16_t c = 0; c < clusters; ++c) {
                 const uint16_t cluster = nextCluster + c;
-                fat[cluster] = (c + 1 < clusters) ? (cluster + 1) : 0xFFFF; // EOC
+                fat[cluster] = (c + 1 < clusters) ? (cluster + 1) : 0xFFFF;
                 const uint32_t lba = dataStart + (cluster - 2) * kSectorsPerCluster;
                 const uint32_t off = c * clusterBytes();
                 const uint32_t n = std::min<uint32_t>(clusterBytes(), size - off);
                 std::memcpy(&img[lba * kBytesPerSector], &file.data[off], n);
             }
             nextCluster += clusters;
+            return first;
+        };
 
-            writeDirEntry(root + f * 32, file.name, firstCluster, size);
+        // Partition into root files and one-level drawers (first-seen order).
+        std::vector<const Fat16File *> rootFiles;
+        std::vector<std::string> drawerOrder;
+        std::vector<std::vector<const Fat16File *>> drawerFiles;
+        for (const Fat16File &f : files) {
+            if (f.drawer.empty()) { rootFiles.push_back(&f); continue; }
+            size_t d = 0;
+            for (; d < drawerOrder.size(); ++d) if (drawerOrder[d] == f.drawer) break;
+            if (d == drawerOrder.size()) { drawerOrder.push_back(f.drawer); drawerFiles.emplace_back(); }
+            drawerFiles[d].push_back(&f);
+        }
+        // Root can hold at most kRootEntries entries (root files + drawers). One
+        // drawer cluster holds clusterBytes()/32 entries incl. '.'/'..'. Fail
+        // loudly rather than silently overflowing the directory.
+        const size_t perCluster = clusterBytes() / 32;
+        if (rootFiles.size() + drawerOrder.size() > kRootEntries)
+            throw std::runtime_error("fat16: too many root entries (raise kRootEntries or use drawers)");
+        for (const auto &df : drawerFiles)
+            if (df.size() + 2 > perCluster)
+                throw std::runtime_error("fat16: drawer has too many files for one cluster");
+
+        size_t rootIdx = 0;
+        for (const Fat16File *file : rootFiles) {
+            const uint32_t size = static_cast<uint32_t>(file->data.size());
+            writeDirEntry(root + rootIdx++ * 32, file->name, placeData(*file), size);
+        }
+        for (size_t d = 0; d < drawerOrder.size(); ++d) {
+            const uint16_t dirCluster = nextCluster++;   // the drawer's directory cluster
+            fat[dirCluster] = 0xFFFF;
+            uint8_t *dir = &img[(dataStart + (dirCluster - 2) * kSectorsPerCluster) * kBytesPerSector];
+            writeDotEntries(dir, dirCluster);
+            size_t slot = 2;                              // entries after '.' and '..'
+            for (const Fat16File *file : drawerFiles[d]) {
+                const uint32_t size = static_cast<uint32_t>(file->data.size());
+                writeDirEntry(dir + slot++ * 32, file->name, placeData(*file), size);
+            }
+            writeDirEntry(root + rootIdx++ * 32, drawerOrder[d], dirCluster, 0, 0x10);
         }
 
         // Serialize the FAT (little-endian 16-bit entries).
@@ -146,10 +185,11 @@ private:
         b[0x1FE] = 0x55; b[0x1FF] = 0xAA;                // boot signature
     }
 
-    // Write a directory entry: 8.3 name (space-padded, uppercased), archive
-    // attribute, first cluster, and size.
+    // Write a directory entry: 8.3 name (space-padded, uppercased), attribute
+    // (0x20 archive for files, 0x10 for directories), first cluster, and size.
     static void writeDirEntry(uint8_t *e, const std::string &name,
-                              uint16_t firstCluster, uint32_t size) {
+                              uint16_t firstCluster, uint32_t size,
+                              uint8_t attr = 0x20) {
         std::memset(e, ' ', 11);
         size_t dot = name.find('.');
         std::string base = (dot == std::string::npos) ? name : name.substr(0, dot);
@@ -158,9 +198,26 @@ private:
             e[i] = static_cast<uint8_t>(toupper(base[i]));
         for (size_t i = 0; i < ext.size() && i < 3; ++i)
             e[8 + i] = static_cast<uint8_t>(toupper(ext[i]));
-        e[0x0B] = 0x20; // archive attribute
+        e[0x0B] = attr;
         put16(&e[0x1A], firstCluster);
         put32(&e[0x1C], size);
+    }
+
+    // Write the '.' (self) and '..' (parent=root) entries at the start of a
+    // one-level drawer's directory cluster, matching _DOS_INIT_DRAWER_CLUSTER.
+    // The '.'/'..' names are raw (not 8.3), so set the bytes directly.
+    static void writeDotEntries(uint8_t *dir, uint16_t selfCluster) {
+        std::memset(dir, ' ', 32);
+        dir[0] = '.';
+        dir[0x0B] = 0x10;                 // directory
+        put16(&dir[0x1A], selfCluster);   // '.' -> this drawer's cluster
+        put32(&dir[0x1C], 0);
+        uint8_t *dd = dir + 32;
+        std::memset(dd, ' ', 32);
+        dd[0] = '.'; dd[1] = '.';
+        dd[0x0B] = 0x10;
+        put16(&dd[0x1A], 0);              // '..' -> root
+        put32(&dd[0x1C], 0);
     }
 };
 

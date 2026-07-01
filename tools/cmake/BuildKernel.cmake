@@ -159,8 +159,22 @@ if(CA65_FOUND AND LD65_FOUND)
             DEPENDS ${TERM_DIR}/term.c ${TERM_DIR}/glue.s ${TERM_DIR}/term.cfg
             VERBATIM
         )
+        # IRC chat client blob (programs/irc), same toolchain as TERM. Staged at
+        # ../kernel/irc.bin for the headless test; IRC.PRG for the disk is made
+        # by programs/irc/build.sh.
+        set(IRC_DIR ${CMAKE_SOURCE_DIR}/programs/irc)
+        set(IRC_BIN ${CMAKE_BINARY_DIR}/kernel/irc.bin)
+        add_custom_target(irc_bin ALL
+            COMMAND cl65 -t none --signed-chars -O -C ${IRC_DIR}/irc.cfg
+                    ${IRC_DIR}/irc.c ${IRC_DIR}/glue.s -o ${IRC_BIN}
+            COMMAND ${CMAKE_COMMAND} -E echo "IRC chat-client blob built ($0800)"
+            COMMENT "Building IRC chat-client blob"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+            DEPENDS ${IRC_DIR}/irc.c ${IRC_DIR}/glue.s ${IRC_DIR}/irc.cfg
+            VERBATIM
+        )
     else()
-        message(STATUS "cl65 not found - skipping TERM terminal blob (term_bin)")
+        message(STATUS "cl65 not found - skipping TERM/IRC blobs (term_bin/irc_bin)")
     endif()
 
     # ================================================================
