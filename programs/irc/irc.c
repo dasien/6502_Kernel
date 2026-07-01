@@ -6,16 +6,16 @@
  *  servers speak raw text so the IAC path is a no-op here). Dialing is in-band
  *  Hayes: we send "ATDT host:port" and wait for the modem's CONNECT result.
  *
- *  UI: a scrolling chat region (rows 0..22), a status bar (row 23: nick,
- *  channel, online/offline), and a pinned reverse-video input line (row 24) --
- *  so async incoming messages never clobber what you type.
+ *  UI: a scrolling chat region (rows 0..22), a pinned reverse-video input line
+ *  (row 23), and a status bar at the very bottom (row 24: nick, channel,
+ *  online/offline) -- so async incoming messages never clobber what you type.
  *
  *  Protocol (subset): PING->PONG keepalive; PRIVMSG as "<nick> text" (CTCP
  *  ACTION as "* nick ..."; CTCP VERSION/PING answered); NOTICE as "-nick- ...";
  *  JOIN/PART/QUIT/NICK as "* nick ..." events; nick-in-use (433) appends '_' and
  *  retries; NO CARRIER/ERROR mark offline. Input starting with '/' is a command
- *  (/join /nick /me /raw /quit); anything else is a PRIVMSG to the current
- *  channel, echoed locally. Ctrl-Q quits.
+ *  (/join /part /nick /msg /me /list /names /whois /raw /quit); anything else is
+ *  a PRIVMSG to the current channel, echoed locally. Ctrl-Q quits.
  */
 
 #include <string.h>
@@ -38,15 +38,16 @@ extern int  dgetb(void);                  /* next byte 0..255, or -1 at EOF */
 extern void dclose(void);
 
 #define COLS         80
-#define CHATROWS     23            /* rows 0..22 chat; row 23 status; row 24 input */
-#define STATUSROW    23
-#define INPUTROW     24
+#define CHATROWS     23            /* rows 0..22 chat; row 23 input; row 24 status */
+#define INPUTROW     23
+#define STATUSROW    24
 #define ATTR_DEFAULT 0x02          /* green on black */
 #define ATTR_REVERSE 0x80
 #define ATTR_STATUS  0x86          /* reverse + cyan: a black-on-cyan status bar */
 #define VCMD_CLEAR   1
 #define KEY_QUIT     0x11          /* Ctrl-Q */
 #define CTCP         0x01          /* CTCP delimiter (\001) */
+#define MSGMAX       256           /* max built display line (wraps at COLS) */
 
 static char chat[CHATROWS][COLS + 1];   /* the visible chat ring */
 static char input[160];                 /* the input line being typed */
@@ -113,21 +114,75 @@ static void chat_repaint(void)
     for (r = 0; r < CHATROWS; r++) put_at((unsigned int)r * COLS, chat[r], COLS);
 }
 
-/* Append one display line, wrapping at COLS; scrolls the ring up and repaints. */
+/* Down-convert UTF-8 to our CP437/ASCII cell set: IRC is UTF-8, but our display
+   is one glyph per byte, so raw multibyte text shows as garbage (e.g. a U+00A0
+   nbsp arrives as the two glyphs "C2 A0"). Decode each UTF-8 code point to a
+   single cell: common typographic punctuation folds to ASCII, other multibyte
+   code points become one '?', and bytes that aren't valid UTF-8 pass through as
+   CP437 (so genuine high-bit CP437 still shows). */
+static char utf8_fold(unsigned int cp)
+{
+    switch (cp) {
+    case 0x00A0: return ' ';                     /* non-breaking space */
+    case 0x2018: case 0x2019: return '\'';        /* curly single quotes */
+    case 0x201C: case 0x201D: return '"';         /* curly double quotes */
+    case 0x2013: case 0x2014: return '-';         /* en/em dash */
+    case 0x2026: return '.';                      /* ellipsis */
+    default:     return '?';
+    }
+}
+
+/* Append one display line: strip IRC formatting/control codes (mIRC colour ^C,
+   hex colour ^D, bold/italic/underline/reverse/reset), UTF-8 down-convert the
+   rest, then wrap at COLS into the ring. */
 static void chat_add(const char *s)
 {
+    static char clean[MSGMAX];
+    int ci = 0;
+    const char *p;
     int r, n;
+
+    while (*s && ci < MSGMAX - 1) {
+        unsigned char b = (unsigned char)*s++;
+        if (b == 0x03) {                          /* mIRC colour: ^C[fg[,bg]] */
+            int k = 0;
+            while (*s >= '0' && *s <= '9' && k < 2) { s++; k++; }
+            if (*s == ',' && s[1] >= '0' && s[1] <= '9') {
+                s++; k = 0; while (*s >= '0' && *s <= '9' && k < 2) { s++; k++; }
+            }
+            continue;
+        }
+        if (b == 0x04) {                          /* hex colour: ^DRRGGBB */
+            int k = 0;
+            while (k < 6 && ((*s >= '0' && *s <= '9') ||
+                             (*s >= 'A' && *s <= 'F') || (*s >= 'a' && *s <= 'f'))) { s++; k++; }
+            continue;
+        }
+        if (b < 0x20 || b == 0x7F) continue;      /* strip bold/underline/reset/... */
+        if (b < 0xC0) {                           /* ASCII, or a stray high byte */
+            clean[ci++] = (char)b;
+        } else {                                  /* UTF-8 lead byte */
+            int extra = (b < 0xE0) ? 1 : (b < 0xF0) ? 2 : 3;
+            unsigned int cp = b & (0x3Fu >> extra);
+            while (extra-- && ((unsigned char)*s & 0xC0) == 0x80)
+                cp = (cp << 6) | ((unsigned char)*s++ & 0x3F);
+            clean[ci++] = utf8_fold(cp);
+        }
+    }
+    clean[ci] = 0;
+
+    p = clean;
     do {
         for (r = 0; r < CHATROWS - 1; r++) strcpy(chat[r], chat[r + 1]);
         n = 0;
-        while (s[n] && n < COLS) { chat[CHATROWS - 1][n] = s[n]; n++; }
+        while (p[n] && n < COLS) { chat[CHATROWS - 1][n] = p[n]; n++; }
         chat[CHATROWS - 1][n] = 0;
-        s += n;
-    } while (*s);
+        p += n;
+    } while (*p);
     chat_repaint();
 }
 
-/* ---- status line (row 23): nick, channel, connection state --------------- */
+/* ---- status line (row 24): nick, channel, connection state --------------- */
 static void status_repaint(void)
 {
     char bar[COLS + 1];
@@ -146,7 +201,7 @@ static void status_repaint(void)
     vattr(ATTR_DEFAULT);
 }
 
-/* ---- input line (pinned, reverse video, on row 24) ----------------------- */
+/* ---- input line (pinned, reverse video, on row 23) ----------------------- */
 static void input_repaint(void)
 {
     int i = 0, j = 0;
@@ -163,7 +218,7 @@ static void input_repaint(void)
 /* Append a null-terminated string to line[] at *j, capped at COLS. */
 static void ln_puts(char *line, int *j, const char *s)
 {
-    while (*s && *j < COLS) line[(*j)++] = *s++;
+    while (*s && *j < MSGMAX - 1) line[(*j)++] = *s++;
 }
 /* Null-terminate the first whitespace-delimited word of p in place; return p. */
 static char *word(char *p)
@@ -181,9 +236,9 @@ static char *word(char *p)
    instead of being replaced by the boilerplate trailing alone. */
 static void emit_server_text(const char *body)
 {
-    char line[COLS + 1];
+    static char line[MSGMAX];
     int j = 0, tokstart = 1, trailing = 0;
-    while (*body && j < COLS) {
+    while (*body && j < MSGMAX - 1) {
         char ch = *body++;
         if (!trailing && tokstart && ch == ':') { trailing = 1; tokstart = 0; continue; }
         if (!trailing) tokstart = (ch == ' ');
@@ -197,7 +252,7 @@ static void handle_line(char *s)
 {
     int i = 0, ns = 0, ne = 0, j, m;
     char *cmd, *t, *args;
-    char nk[24], line[COLS + 1];
+    char nk[24]; static char line[MSGMAX];
 
     if (!s[0]) return;
 
@@ -234,7 +289,7 @@ static void handle_line(char *s)
                 ln_puts(line, &j, " "); ln_puts(line, &j, body[6] ? body + 7 : "");
                 line[j] = 0; chat_add(line);
             } else if (strncmp(body, "VERSION", 7) == 0) {
-                aputs("NOTICE "); aputs(nk); aputs(" :\001VERSION MFC IRC 1.1\001"); acrlf();
+                aputs("NOTICE "); aputs(nk); aputs(" :\001VERSION MFC IRC 1.2\001"); acrlf();
             } else if (strncmp(body, "PING", 4) == 0) {
                 aputs("NOTICE "); aputs(nk); aputs(" :\001PING");
                 aputs(body + 4); acia_put(CTCP); acrlf();
@@ -311,53 +366,92 @@ static void copy_word(char *dst, const char *src, int max)
 
 static void echo_self(const char *text)
 {
-    char line[COLS + 1];
+    static char line[MSGMAX];
     int j = 0, m = 0;
     line[j++] = '<';
-    while (nick[m] && j < COLS) line[j++] = nick[m++];
-    if (j < COLS) line[j++] = '>';
-    if (j < COLS) line[j++] = ' ';
+    while (nick[m] && j < MSGMAX - 1) line[j++] = nick[m++];
+    if (j < MSGMAX - 1) line[j++] = '>';
+    if (j < MSGMAX - 1) line[j++] = ' ';
     m = 0;
-    while (text[m] && j < COLS) line[j++] = text[m++];
+    while (text[m] && j < MSGMAX - 1) line[j++] = text[m++];
     line[j] = 0;
     chat_add(line);
 }
 
+/* If the input line is command `c`, optionally followed by " <arg>", return a
+   pointer to the argument (past spaces), "" if the command is bare, or NULL if
+   the line is not this command. Lets each verb validate its own argument. */
+static const char *cmd_arg(const char *c)
+{
+    int n = 0;
+    while (c[n]) n++;
+    if (strncmp(input, c, n) != 0) return 0;
+    if (input[n] == 0) return input + n;             /* bare command -> "" */
+    if (input[n] != ' ') return 0;                   /* e.g. "/parted" != "/part" */
+    { const char *p = input + n + 1; while (*p == ' ') p++; return p; }
+}
+
 static void send_input(void)
 {
+    const char *a;
     if (inlen == 0) return;
 
-    if (input[0] == '/') {
-        if (strncmp(input, "/quit", 5) == 0) {
-            aputs("QUIT :MFC IRC"); acrlf();
-            QUITDOS();
-        } else if (strncmp(input, "/join ", 6) == 0) {
-            aputs("JOIN "); aputs(input + 6); acrlf();
-            copy_word(chan, input + 6, (int)sizeof(chan));
-            status_repaint();
-        } else if (strncmp(input, "/nick ", 6) == 0) {
-            aputs("NICK "); aputs(input + 6); acrlf();
-            copy_word(nick, input + 6, (int)sizeof(nick));
-            status_repaint();
-        } else if (strncmp(input, "/me ", 4) == 0 && chan[0]) {
-            aputs("PRIVMSG "); aputs(chan); aputs(" :\001ACTION ");
-            aputs(input + 4); acia_put(0x01); acrlf();
-            { char a[COLS + 1]; int j = 0, m = 0;
-              a[j++] = '*'; if (j < COLS) a[j++] = ' ';
-              while (nick[m] && j < COLS) a[j++] = nick[m++];
-              if (j < COLS) a[j++] = ' ';
-              m = 4; while (input[m] && j < COLS) a[j++] = input[m++];
-              a[j] = 0; chat_add(a); }
-        } else if (strncmp(input, "/raw ", 5) == 0) {
-            aputs(input + 5); acrlf();
-        } else {
-            chat_add("(unknown command)");
-        }
-    } else if (chan[0]) {
-        aputs("PRIVMSG "); aputs(chan); aputs(" :"); aputs(input); acrlf();
-        echo_self(input);
+    if (input[0] != '/') {                           /* plain text -> current channel */
+        if (chan[0]) { aputs("PRIVMSG "); aputs(chan); aputs(" :"); aputs(input); acrlf(); echo_self(input); }
+        else chat_add("(no channel - use /join #channel)");
+    } else if ((a = cmd_arg("/quit"))) {
+        aputs("QUIT :MFC IRC"); acrlf(); QUITDOS();
+    } else if ((a = cmd_arg("/join"))) {
+        if (*a) { aputs("JOIN "); aputs(a); acrlf();
+                  copy_word(chan, a, (int)sizeof(chan)); status_repaint(); }
+        else chat_add("* usage: /join #channel");
+    } else if ((a = cmd_arg("/part"))) {
+        const char *ch = *a ? a : (const char *)chan;              /* bare = leave current channel */
+        if (ch[0]) { aputs("PART "); aputs(ch); acrlf();
+                     if (!*a) { chan[0] = 0; status_repaint(); } }
+        else chat_add("* not in a channel");
+    } else if ((a = cmd_arg("/nick"))) {
+        if (*a) { aputs("NICK "); aputs(a); acrlf();
+                  copy_word(nick, a, (int)sizeof(nick)); status_repaint(); }
+        else chat_add("* usage: /nick <name>");
+    } else if ((a = cmd_arg("/me"))) {
+        if (*a && chan[0]) {
+            aputs("PRIVMSG "); aputs(chan); aputs(" :\001ACTION "); aputs(a); acia_put(CTCP); acrlf();
+            { static char ln[MSGMAX]; int j = 0, m = 0;
+              ln[j++] = '*'; if (j < MSGMAX - 1) ln[j++] = ' ';
+              while (nick[m] && j < MSGMAX - 1) ln[j++] = nick[m++];
+              if (j < MSGMAX - 1) ln[j++] = ' ';
+              m = 0; while (a[m] && j < MSGMAX - 1) ln[j++] = a[m++];
+              ln[j] = 0; chat_add(ln); }
+        } else chat_add("* usage: /me <action> (in a channel)");
+    } else if ((a = cmd_arg("/msg"))) {
+        char tgt[24]; int i = 0; const char *p = a;
+        while (*p && *p != ' ' && i < 23) tgt[i++] = *p++;
+        tgt[i] = 0;
+        while (*p == ' ') p++;
+        if (tgt[0] && *p) {
+            aputs("PRIVMSG "); aputs(tgt); aputs(" :"); aputs(p); acrlf();
+            { static char ln[MSGMAX]; int j = 0, m = 0;
+              ln[j++] = '>'; while (tgt[m] && j < MSGMAX - 1) ln[j++] = tgt[m++];
+              if (j < MSGMAX - 1) ln[j++] = '<'; if (j < MSGMAX - 1) ln[j++] = ' ';
+              m = 0; while (p[m] && j < MSGMAX - 1) ln[j++] = p[m++];
+              ln[j] = 0; chat_add(ln); }
+        } else chat_add("* usage: /msg <nick> <text>");
+    } else if ((a = cmd_arg("/list"))) {
+        aputs("LIST"); if (*a) { acia_put(' '); aputs(a); } acrlf();
+        chat_add("* listing channels (this can be long; filter e.g. /list >50)");
+    } else if ((a = cmd_arg("/names"))) {
+        const char *ch = *a ? a : (const char *)chan;
+        if (ch[0]) { aputs("NAMES "); aputs(ch); acrlf(); }
+        else chat_add("* usage: /names #channel");
+    } else if ((a = cmd_arg("/whois"))) {
+        if (*a) { aputs("WHOIS "); aputs(a); acrlf(); }
+        else chat_add("* usage: /whois <nick>");
+    } else if ((a = cmd_arg("/raw"))) {
+        if (*a) { aputs(a); acrlf(); }
+        else chat_add("* usage: /raw <irc command>");
     } else {
-        chat_add("(no channel - use /join #channel)");
+        chat_add("* unknown command (/join /part /nick /msg /me /list /names /whois /raw /quit)");
     }
 
     inlen = 0; input[0] = 0;
@@ -402,7 +496,7 @@ static void setup(void)
     int st = 0, b, row = 2, i, k;
 
     vattr(ATTR_DEFAULT);
-    put_at(0 * COLS, "MFC IRC v1.1", COLS);
+    put_at(0 * COLS, "MFC IRC v1.2", COLS);
 
     /* Server: pick from IRC.LST if present, else type one. */
     server[0] = 0;
