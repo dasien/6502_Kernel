@@ -559,3 +559,41 @@ TEST_F(IrcTest, ServerMenuPicksFromList)
     EXPECT_NE(tx.find("ATDT beta.irc:7000"), std::string::npos) << tx;  // dialed pick #2
     EXPECT_NE(tx.find("NICK ircuser"), std::string::npos) << tx;
 }
+
+// After /disconnect returns to the dial screen, the server menu must be shown
+// again (not just the bare "Server:" prompt) -- the list is re-read each time.
+TEST_F(IrcTest, ServerMenuReappearsAfterDisconnect)
+{
+    auto bytesOf = [](const std::string &s) {
+        return std::vector<uint8_t>(s.begin(), s.end());
+    };
+    mountDisk({{"IRC.LST", bytesOf("# my nets\r\n"
+                                   "alpha.irc:6667  Alpha Net\r\n"
+                                   "beta.irc:7000  Beta Net\r\n"), "SYSTEM"}});
+
+    c.getPia()->addKeypress('1');   // pick server 1 from the first menu
+    type("ircuser\r");              // Nick
+    type("#x\r");                   // Channel
+
+    std::string tx;
+    bool connected = false, disc = false;
+    long flush = 0;
+    for (int i = 0; i < 80'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT alpha.irc:6667") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !disc && tx.find("JOIN #x") != std::string::npos) {
+            for (char ch : std::string("/disconnect\r")) c.getPia()->addKeypress(static_cast<uint8_t>(ch));
+            disc = true;
+        }
+        if (disc && ++flush > 5'000'000) break;   // let it hang up + re-enter setup
+    }
+
+    // Back on the dial screen: the menu (not just "Server:") must be present.
+    const std::string s = screen();
+    EXPECT_NE(s.find("IRC servers:"), std::string::npos) << s;
+    EXPECT_NE(s.find("Alpha Net"), std::string::npos) << s;
+}

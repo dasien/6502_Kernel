@@ -193,8 +193,11 @@ DOS_SIGNATURE:
 ;   1.4  blank line between a command's output and the next prompt (shell polish)
 ;   1.5  MEMMAP reflects 80-col: screen moved behind the VIC port; $0400 is free RAM
 ;   1.6  boot sign-on splash box (CP437 + color): OPERATIONAL + OS version + free RAM
+;   1.7  path resolution no longer clobbers the caller's buffer: DRAWER/FILE
+;        restores the '/' after parsing, so a reused path (e.g. re-reading
+;        SYSTEM/IRC.LST every redial) resolves correctly on the 2nd+ call
 DOS_VERSION:
-    .BYTE $01, $06                      ; version 1.6 (major, minor)
+    .BYTE $01, $07                      ; version 1.7 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -3169,15 +3172,21 @@ _DOS_DIR_WRITE_ENTRY:
 ;   DRAWER/FILE -> the named root-level drawer
 ; Out: DOS_TGT_CLUS = directory cluster (0=root), DOS_RES_NAMEPTR -> the bare
 ; name; carry set on error (two-level path, drawer not found / not a drawer).
-; For the DRAWER/ case the '/' in the buffer is overwritten with NUL (callers
-; pass writable buffers; ABI callers pass bare names and never hit this path).
+; The DRAWER/ case temporarily NUL-terminates the drawer name in the buffer to
+; parse it, then restores the '/', so resolution does NOT clobber the caller's
+; path (it may be reused, e.g. re-reading SYSTEM/IRC.LST every redial). The
+; buffer must be writable; ABI callers pass bare names and never hit this path.
 _DOS_RESOLVE_PATH:
     JSR _FS_ENSURE_MOUNT
-    BCS @err
+    BCC @mounted
+    RTS                                 ; mount failed: carry already set (== @err)
+@mounted:
     LDY #$00
 @find1:
     LDA (DOS_PTR),Y                     ; first '/'?
-    BEQ @bare                           ; none -> bare name (current dir)
+    BNE @notend                         ; (long-branch @bare: routine grew past 127)
+    JMP @bare                           ; none -> bare name (current dir)
+@notend:
     CMP #'/'
     BEQ @gotslash
     INY
@@ -3207,10 +3216,13 @@ _DOS_RESOLVE_PATH:
     CLC
     RTS
 @drawer:
-    LDY DOS_RES_SLASH                  ; terminate the drawer name at the '/'
+    LDY DOS_RES_SLASH                  ; temporarily terminate the drawer name at '/'
     LDA #$00
     STA (DOS_PTR),Y
     JSR _DOS_PARSE_NAME83               ; drawer name -> DOS_NAME83
+    LDY DOS_RES_SLASH                  ; restore the '/': resolution must not clobber
+    LDA #'/'                            ; the caller's path, which may be reused (e.g.
+    STA (DOS_PTR),Y                     ; re-reading SYSTEM/IRC.LST on each redial)
     STZ DOS_TGT_CLUS                    ; look it up in root
     STZ DOS_TGT_CLUS+1
     JSR _DOS_DIR_FIND_EXISTING
