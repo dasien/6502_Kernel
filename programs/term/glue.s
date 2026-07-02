@@ -12,6 +12,7 @@
 
 .export _INCH, _INCH_NB, _QUITDOS
 .export _vaddr, _vputc, _vattr, _vcursor, _vfill, _vcmd
+.export _vgetc, _vgetcolor
 .export _acia_init, _acia_get, _acia_put
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
 
@@ -26,7 +27,8 @@ DOS_WARM        = $AF1E         ; DOS shell re-entry
 ; VIC video register port (the 80x25 screen lives behind these).
 VREG_ADDR_LO    = $FE2D
 VREG_ADDR_HI    = $FE2E
-VREG_CHAR       = $FE2F         ; bit7 => reverse; auto-increments the cell index
+VREG_CHAR       = $FE2F         ; glyph data port; auto-increments the cell index
+VREG_COLOR      = $FE30         ; color/attr data port; auto-increments the cell index
 VREG_ATTR       = $FE31         ; color/attribute latch [R][BR][bg:3][fg:3]
 VREG_CMD        = $FE32         ; 1=clear 2=scroll-up 3=scroll-down 4=fill-row
 VREG_CURSOR_LO  = $FE34
@@ -101,6 +103,21 @@ ACIA_CONTROL    = $FE2C
 ; void vcmd(unsigned char cmd) -- run a chip-side block op (clear/scroll/fill).
 .proc _vcmd
         sta     VREG_CMD
+        rts
+.endproc
+
+; unsigned char vgetc(void) -- read the glyph at the current cell (auto-inc).
+; Used to snapshot rows off the screen (scrollback capture / frame save).
+.proc _vgetc
+        lda     VREG_CHAR
+        ldx     #$00
+        rts
+.endproc
+
+; unsigned char vgetcolor(void) -- read the color/attr at the current cell (auto-inc).
+.proc _vgetcolor
+        lda     VREG_COLOR
+        ldx     #$00
         rts
 .endproc
 

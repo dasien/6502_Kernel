@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 
-cl65 -t none --signed-chars -O -C term.cfg term.c glue.s -o term.bin
+cl65 -t none --signed-chars -O -I ../common -C term.cfg term.c ../common/scrollback.c glue.s -o term.bin
 
 # Prepend the 2-byte little-endian $0800 load header -> a .PRG.
 printf '\000\010' > TERM.PRG

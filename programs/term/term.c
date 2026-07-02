@@ -11,12 +11,19 @@
  *  the modem answers CONNECT / NO CARRIER in the byte stream. Ctrl-X hangs up
  *  (+++ ATH), Ctrl-Q returns to the DOS prompt.
  *
+ *  Scrollback: rows that scroll off the top are captured into a RAM history ring
+ *  (the shared scrollback.c). PgUp/PgDn page back through that history; input to
+ *  the BBS is held while reviewing, the live screen is restored on exit. All
+ *  other keys (arrows, Home, End) are forwarded to the BBS as before.
+ *
  *  ANSI subset (BBS-targeted): CUP (ESC[r;cH/f), CUU/CUD/CUF/CUB, ED (ESC[nJ),
  *  EL (ESC[nK), SGR colors (ESC[...m, 16-color + bright + reverse), cursor
  *  save/restore (ESC[s/u and ESC 7/8), and CR/LF/BS/TAB/BEL. Unknown sequences
  *  are consumed without desyncing the parser. CP437 art is out of scope (the
  *  char plane is 7-bit; bit 7 is the reverse attribute).
  */
+
+#include "scrollback.h"          /* shared RAM history ring + review pager */
 
 /* ---- glue.s ---- */
 char INCH(void);                 /* blocking key read (true case) */
@@ -28,6 +35,8 @@ void vattr(unsigned char a);     /* set the color/attribute latch */
 void vcursor(unsigned int cell); /* position the displayed hardware cursor */
 void vfill(unsigned char ch);    /* set the fill char for the next chip command */
 void vcmd(unsigned char cmd);    /* run a chip-side block op */
+unsigned char vgetc(void);       /* read glyph at the current cell (auto-inc) */
+unsigned char vgetcolor(void);   /* read color/attr at the current cell (auto-inc) */
 void acia_init(void);            /* init the 6551 */
 int  acia_get(void);             /* non-blocking RX byte 0..255, or -1 */
 void acia_put(unsigned char c);  /* transmit a byte */
@@ -84,6 +93,12 @@ char priv;                       /* non-zero if a '?' private CSI */
 enum pstate { GROUND, GOTESC, GOTCSI };
 enum pstate pstate = GROUND;
 
+/* ---- scrollback state --------------------------------------------------- */
+static unsigned char cap_c[COLS], cap_a[COLS];               /* row being captured */
+static unsigned char frame_c[ROWS * COLS], frame_a[ROWS * COLS]; /* saved live frame */
+static char reviewing = 0;              /* 1 = browsing history (input is held) */
+static unsigned int histn = 0;          /* rows ever pushed (is there history?) */
+
 /* Advance an incremental substring matcher; returns 1 when pat fully matches. */
 static int feed_match(const char *pat, int *idx, unsigned char c)
 {
@@ -99,7 +114,20 @@ static int feed_match(const char *pat, int *idx, unsigned char c)
 /* ------------------------------------------------------------------ */
 static void move_cursor(void) { vcursor((unsigned int)(cy * COLS + cx)); }
 
-static void scroll_up(void) { vfill(' '); vcmd(VCMD_SCROLLUP); }
+/* Capture row 0 (about to be lost) into the scrollback ring, then scroll. */
+static void scroll_up(void)
+{
+    int i, n;
+    vaddr(0);
+    for (i = 0; i < COLS; i++) cap_c[i] = vgetc();
+    vaddr(0);
+    for (i = 0; i < COLS; i++) cap_a[i] = vgetcolor();
+    n = COLS;                                /* trim trailing default-attr blanks */
+    while (n > 0 && cap_c[n - 1] == ' ' && cap_a[n - 1] == ATTR_DEFAULT) n--;
+    sb_push((char *)cap_c, cap_a, (unsigned char)n);
+    histn++;
+    vfill(' '); vcmd(VCMD_SCROLLUP);
+}
 
 static void line_feed(void)
 {
@@ -538,34 +566,122 @@ static void do_send(void)
     xstatus("");
 }
 
+/* ---- scrollback review --------------------------------------------------- */
+/* Save / restore the whole 25-row live frame, so review can paint history over
+   it and put the terminal back untouched on exit (the ring only holds rows that
+   already scrolled off, so the live screen can't be rebuilt from it). */
+static void frame_save(void)
+{
+    int i;
+    vaddr(0);
+    for (i = 0; i < ROWS * COLS; i++) frame_c[i] = vgetc();
+    vaddr(0);
+    for (i = 0; i < ROWS * COLS; i++) frame_a[i] = vgetcolor();
+}
+
+static void frame_restore(void)
+{
+    int i;
+    unsigned char last = 0xFF;
+    vaddr(0);
+    for (i = 0; i < ROWS * COLS; i++) {
+        if (frame_a[i] != last) { vattr(frame_a[i]); last = frame_a[i]; }
+        vputc(frame_c[i]);
+    }
+    move_cursor();
+}
+
+static void review_enter(void)
+{
+    frame_save();
+    reviewing = 1;
+    sb_end();                    /* first page shows the rows just above the screen */
+    sb_paint();
+}
+
+static void review_exit(void)
+{
+    reviewing = 0;
+    frame_restore();
+}
+
+/* Non-review key actions (hotkeys + forward-to-BBS), factored out so the review
+   path can fall through to them after leaving review. */
+static void term_key(int k)
+{
+    if (k == KEY_QUIT) { do_hangup(); QUITDOS(); }
+    else if (k == KEY_DIAL) { do_dial(); }
+    else if (k == KEY_SEND) { do_send(); }
+    else if (k == KEY_RECV) { do_recv(); }
+    else if (k == KEY_HANGUP) { do_hangup(); }
+    else acia_put((unsigned char)k);   /* forward to the BBS */
+}
+
 int main(void)
 {
-    int b, k;
+    int b, k, i;
+    int kcsi = 0;                 /* keyboard CSI decoder: 0 ground, 1 after ESC, 2 body */
+    unsigned char kbuf[8];
+    int kblen = 0;
 
     acia_init();
     while (acia_get() >= 0) { }   /* flush any stale RX from a prior session */
     vfill(' '); vcmd(VCMD_CLEAR);
     cx = 0; cy = 0; attr = ATTR_DEFAULT; vattr(attr); move_cursor();
-    local_print("MFC TERM v1.2   ^D dial  ^S send  ^R recv  ^X hang up  ^Q quit\r\n\n");
+    sb_init(0, ROWS, COLS);       /* history ring covers the whole screen */
+    sb_reset();
+    histn = 0; reviewing = 0;
+    local_print("MFC TERM v1.3  ^D dial ^S/^R xfer ^X hangup ^Q quit  PgUp/PgDn scrollback\r\n\n");
 
     for (;;) {
-        b = acia_get();
-        if (b >= 0) {
-            if (feed_match("CONNECT", &m_connect, (unsigned char)b)) online = 1;
-            if (feed_match("NO CARRIER", &m_nocar, (unsigned char)b)) online = 0;
-            ansi_byte((unsigned char)b);
-            continue;
+        if (!reviewing) {         /* hold BBS input while reviewing (the host buffers it) */
+            b = acia_get();
+            if (b >= 0) {
+                if (feed_match("CONNECT", &m_connect, (unsigned char)b)) online = 1;
+                if (feed_match("NO CARRIER", &m_nocar, (unsigned char)b)) online = 0;
+                ansi_byte((unsigned char)b);
+                continue;
+            }
         }
 
         k = INCH_NB();
-        if (k >= 0) {
-            if (k == KEY_QUIT) { do_hangup(); QUITDOS(); }
-            else if (k == KEY_DIAL) { do_dial(); }
-            else if (k == KEY_SEND) { do_send(); }
-            else if (k == KEY_RECV) { do_recv(); }
-            else if (k == KEY_HANGUP) { do_hangup(); }
-            else acia_put((unsigned char)k);   /* forward to the BBS */
+        if (k < 0) {
+            if (kcsi) {           /* a partial sequence with no follow-on byte: it was a
+                                     lone ESC / short CSI, not PgUp/PgDn -> send to BBS */
+                if (reviewing) review_exit();
+                for (i = 0; i < kblen; i++) acia_put(kbuf[i]);
+                kcsi = 0; kblen = 0;
+            }
+            continue;
         }
+
+        /* Keyboard CSI decode: intercept PgUp (ESC[5~) / PgDn (ESC[6~) for
+           scrollback; forward every other key/sequence to the BBS as before. */
+        if (kcsi == 0) {
+            if (k == 0x1B) { kbuf[0] = 0x1B; kblen = 1; kcsi = 1; continue; }
+            if (reviewing) review_exit();
+            term_key(k);
+            continue;
+        }
+        if (kcsi == 1) {                        /* after ESC */
+            if (k == '[') { kbuf[1] = '['; kblen = 2; kcsi = 2; continue; }
+            if (reviewing) review_exit();
+            acia_put(0x1B); term_key(k);        /* ESC + a non-'[' byte -> BBS */
+            kcsi = 0; continue;
+        }
+        /* kcsi == 2: collecting the CSI body */
+        if (kblen < (int)sizeof(kbuf)) kbuf[kblen++] = (unsigned char)k;
+        if ((k >= '0' && k <= '9') || k == ';') continue;   /* still in the body */
+        if (k == '~' && kblen == 4 && kbuf[2] == '5') {         /* PgUp */
+            if (reviewing) { if (sb_pageup()) sb_paint(); }
+            else if (histn) review_enter();
+        } else if (k == '~' && kblen == 4 && kbuf[2] == '6') {  /* PgDn */
+            if (reviewing) { if (sb_pagedown()) sb_paint(); else review_exit(); }
+        } else {                                /* any other CSI -> leave review, forward */
+            if (reviewing) review_exit();
+            for (i = 0; i < kblen; i++) acia_put(kbuf[i]);
+        }
+        kcsi = 0; kblen = 0;
     }
     return 0;
 }

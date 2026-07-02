@@ -149,14 +149,16 @@ if(CA65_FOUND AND LD65_FOUND)
     find_program(CL65_FOUND cl65)
     if(CL65_FOUND)
         set(TERM_DIR ${CMAKE_SOURCE_DIR}/programs/term)
+        set(COMMON_DIR ${CMAKE_SOURCE_DIR}/programs/common)
         set(TERM_BIN ${CMAKE_BINARY_DIR}/kernel/term.bin)
         add_custom_target(term_bin ALL
-            COMMAND cl65 -t none --signed-chars -O -C ${TERM_DIR}/term.cfg
-                    ${TERM_DIR}/term.c ${TERM_DIR}/glue.s -o ${TERM_BIN}
+            COMMAND cl65 -t none --signed-chars -O -I ${COMMON_DIR} -C ${TERM_DIR}/term.cfg
+                    ${TERM_DIR}/term.c ${COMMON_DIR}/scrollback.c ${TERM_DIR}/glue.s -o ${TERM_BIN}
             COMMAND ${CMAKE_COMMAND} -E echo "TERM terminal blob built ($0800)"
             COMMENT "Building TERM terminal blob"
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
             DEPENDS ${TERM_DIR}/term.c ${TERM_DIR}/glue.s ${TERM_DIR}/term.cfg
+                    ${COMMON_DIR}/scrollback.c ${COMMON_DIR}/scrollback.h
             VERBATIM
         )
         # IRC chat client blob (programs/irc), same toolchain as TERM. Staged at

@@ -127,6 +127,43 @@ TEST_F(TermAnsiTest, KeyboardForwardsToSerial)
     EXPECT_TRUE(sawK) << "the terminal did not forward the key to the ACIA TX";
 }
 
+// Scrollback: rows that scroll off the top are recalled by PgUp (ESC[5~); a
+// normal key leaves review and restores the live screen.
+TEST_F(TermAnsiTest, ScrollbackPageUpRecallsScrolledLines)
+{
+    auto onScreen = [&](const std::string &t) {
+        for (int y = 0; y < 25; y++) {
+            std::string r;
+            for (int x = 0; x < 80; x++) r += (char)charAt(x, y);
+            if (r.find(t) != std::string::npos) return true;
+        }
+        return false;
+    };
+    auto press = [&](const std::string &keys) {
+        for (char ch : keys) c.getPia()->addKeypress(static_cast<uint8_t>(ch));
+        step(3'000'000);
+    };
+
+    feed("\x1b[2J\x1b[H");
+    std::string lines;                    // 40 numbered lines -> the early ones scroll off
+    for (int n = 1; n <= 40; n++) {
+        char b[3] = { (char)('0' + n / 10), (char)('0' + n % 10), 0 };
+        lines += std::string("L") + b + "\r\n";
+    }
+    feed(lines);
+    step(3'000'000);
+
+    ASSERT_TRUE(onScreen("L40"));         // a late line is live on screen
+    ASSERT_FALSE(onScreen("L05"));        // an early line has scrolled off
+
+    press("\x1b[5~");                     // PgUp -> review reveals scrolled-off lines
+    EXPECT_TRUE(onScreen("L05")) << "PgUp did not recall scrolled-off line L05";
+
+    press("x");                           // any key -> leave review, restore live screen
+    EXPECT_TRUE(onScreen("L40")) << "live screen not restored after review";
+    EXPECT_FALSE(onScreen("L05"));
+}
+
 // A BBS probes terminal capabilities with ANSI queries; the terminal must reply
 // so the board serves enhanced ANSI instead of falling back to plain ASCII.
 TEST_F(TermAnsiTest, AnswersAnsiCapabilityQueries)
