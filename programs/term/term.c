@@ -633,6 +633,16 @@ int main(void)
     histn = 0; reviewing = 0;
     local_print("MFC TERM v1.3  ^D dial ^S/^R xfer ^X hangup ^Q quit  PgUp/PgDn scrollback\r\n\n");
 
+    /* Launched as "TERM host:port"? DOS leaves the argument in DOS_ARGBUF ($0382);
+       dial it right away, as if the user had just typed it at the ^D prompt. */
+    {
+        const char *a = (const char *)0x0382;
+        if (a[0]) {
+            local_print("Dialing "); local_print(a); local_print("\r\n");
+            dial_addr(a);
+        }
+    }
+
     for (;;) {
         if (!reviewing) {         /* hold BBS input while reviewing (the host buffers it) */
             b = acia_get();

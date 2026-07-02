@@ -89,6 +89,9 @@ static char  srvbuf[SRVBUF];
 static char *srv_addr[MAXSRV];
 static char *srv_name[MAXSRV];
 static int   srv_count;
+/* Server passed on the command line ("IRC host:port"): used for the first
+   connect, then cleared so /server reconnects show the normal menu. */
+static char  arg_server[80];
 
 static void load_server_list(void)
 {
@@ -602,7 +605,12 @@ static int setup(void)
         row = 2;
         server[0] = 0;
         load_server_list();
-        if (srv_count) {
+        if (arg_server[0]) {                    /* launched as "IRC host:port": use it, skip
+                                                   the menu; only for this first connect */
+            strcpy(server, arg_server);
+            arg_server[0] = 0;
+        }
+        if (!server[0] && srv_count) {
             put_at((unsigned int)row++ * COLS, "IRC servers:", COLS);
             for (i = 0; i < srv_count; i++) {
                 char ln[COLS + 1];
@@ -736,6 +744,15 @@ static int chat_session(void)
 int main(void)
 {
     acia_init();
+
+    /* Launched as "IRC host:port"? DOS leaves the argument in DOS_ARGBUF ($0382);
+       use it as the initial server (skips the server menu for the first connect). */
+    {
+        const char *a = (const char *)0x0382;
+        int i;
+        for (i = 0; a[i] && i < (int)sizeof(arg_server) - 1; i++) arg_server[i] = a[i];
+        arg_server[i] = 0;
+    }
 
     for (;;) {                                  /* one iteration per server session */
         while (acia_get() >= 0) { }             /* flush stale RX */
