@@ -15,7 +15,10 @@ This project implements a complete 6502-based computer system kernel for emulate
 - Complete 6502 assembly language kernel optimized for emulated environments
 - Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
 - Interactive monitor with comprehensive debugging tools
+- **MFC/OS** DOS shell (`]` prompt) with a resident FAT16 filesystem and launch-by-name for disk programs
+- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
 - Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched with the `B:` command (with human-readable `.bas` LOAD/SAVE)
+- **System-wide `--More--` pager**: long output from any program (DOS, monitor, BASIC, ASM, FORTH) pauses each screenful (SPACE advances, ESC stops)
 - Memory manipulation and program execution capabilities
 - Streamlined architecture with universal commands and simplified modes
 - File I/O operations for loading and saving programs
@@ -33,13 +36,21 @@ The monitor features a streamlined architecture with:
 - **Command repeatability** recall last command for quick replay or modification
 ### Getting Started
 
-When the system boots, you'll see:
+The machine boots into the **MFC/OS** DOS shell, which shows a sign-on splash and
+the `]` prompt:
 ```
--=MFC 6502 OPERATIONAL=-
->
+]
+```
+From the DOS prompt you run disk programs by name (`EDIT`, `TERM`, `IRC`, `CHESS`, …),
+manage files (`CATALOG`, `TYPE`, `COPY`, …), and launch the **monitor** with `MON`.
+The monitor prompts with the current address followed by `>` (`?` for help, `Q` to
+return to DOS):
+
+```
+0000>
 ```
 
-The `>` prompt indicates you're in command mode. You can now enter any monitor command.
+The `NNNN>` prompt indicates you're in monitor command mode. You can now enter any monitor command.
 
 ## Monitor Commands
 
@@ -94,7 +105,7 @@ The monitor provides clear, consistent error messages:
 - **$0000-$00FF**: Zero Page (system workspace; monitor uses $14-$39, EhBASIC uses the rest)
 - **$0100-$01FF**: Stack memory
 - **$0200-$03FF**: Monitor variables and command buffers
-- **$0400-$07FF**: Free RAM (formerly the screen; the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE36`, not in the address map)
+- **$0400-$07FF**: Free RAM (formerly the screen; the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE37`, not in the address map)
 - **$0800-$AFFF**: User RAM (module working RAM; EhBASIC program/variable space)
 - **$B000-$DFFF**: Module window (12 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC is bank 1)
 - **$E000-$FFFF**: Kernel ROM (8 KB; CODE ~3,900 bytes, rest free for growth)

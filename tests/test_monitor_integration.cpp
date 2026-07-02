@@ -147,8 +147,10 @@ public:
         verifyResponse("MONITOR COMMANDS", "MON launches the monitor");
         // Q returns to the DOS shell (HELP's built-in list proves we're back).
         sendCommand("Q");
-        sendCommand("HELP");
+        sendCommand("HELP", 500000);   // the two-column list prints ~23 lines
         verifyResponse("RENAME", "Q returns to the DOS shell");
+        // HELP is now a two-column verb/description list (like the monitor's ?).
+        verifyResponse("clear the screen", "HELP shows command descriptions");
     }
 
     // DOS file verbs: SAVE (with .PRG header) / LOAD / RENAME / ERASE, exercised
@@ -200,7 +202,7 @@ public:
         verifyMemEquals(0x0820, 0xA9, "Program body loaded at its header address");
         verifyMemEquals(0x0900, 0x42, "Disk program ran (wrote its marker)");
         // Back at the DOS prompt and responsive (program RTS'd to DOS_WARM).
-        sendCommand("HELP");
+        sendCommand("HELP", 500000);   // the two-column list prints ~23 lines
         verifyResponse("RENAME", "Returned to the DOS prompt after the program");
     }
 
@@ -251,7 +253,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.9", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.10", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 

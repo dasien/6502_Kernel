@@ -48,12 +48,14 @@ K_LIST_MODULES   = $FF24                ; print the module catalog (BANKS comman
 K_GET_KEYSTROKE  = $FF09                ; non-blocking key read: C set + A = key
 K_PRINT_DEC      = $FF27                ; A/X = ptr to 4-byte LE value, Y = field width
 K_SET_ATTR       = $FF2D                ; A = color/attribute latch for next chars
+K_PRINT_HELP_LINE = $FF30               ; MON_MSG_PTR -> "syntax"<TAB>"desc" (TAB pads to col)
 CURSOR_X         = $0276                ; current cursor column (for box padding)
 
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
 MON_MSG_PTR_LO   = $16                  ; message pointer for K_PRINT_MESSAGE
 MON_MSG_PTR_HI   = $17
+CMD_LINE_COUNT   = $21                  ; kernel pager line counter (reset after a command)
 MON_CURRADDR_LO  = $14                  ; K_PARSE_HEX result / our mem cursor (zp)
 MON_CURRADDR_HI  = $15
 MON_STARTADDR_LO = $026C                ; range start (SAVE) / addr override (LOAD)
@@ -203,8 +205,10 @@ DOS_SIGNATURE:
 ;   1.9  MORE folds into TYPE: the kernel now pages all output (system-wide
 ;        --MORE--), so DOS's separate MORE pager was removed and CATALOG/TYPE
 ;        page automatically
+;   1.10 HELP is now a two-column verb/description list (like the monitor's ?),
+;        rendered via the kernel's new K_PRINT_HELP_LINE ($FF30)
 DOS_VERSION:
-    .BYTE $01, $09                      ; version 1.9 (major, minor)
+    .BYTE $01, $0A                      ; version 1.10 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -379,7 +383,12 @@ _DOS_PROMPT:
     BNE @run
     JMP _DOS_PROMPT                     ; empty line
 @run:
+    STZ CMD_LINE_COUNT                  ; a command's output starts at line 0: the
+                                        ; prompt and the echoed command (incl. its CR)
+                                        ; must not count toward the pager
     JSR _DOS_DISPATCH
+    STZ CMD_LINE_COUNT                  ; ...and its count must not bleed into the
+                                        ; trailing blank + next prompt (spurious --MORE--)
     JSR K_PRINT_NEWLINE                 ; blank line between a command's output
     JMP _DOS_PROMPT                     ; and the next prompt (not on empty input)
 
@@ -613,15 +622,29 @@ _DOS_VERB_MATCH:
     RTS
 
 ; ----------------------------------------------------------------
-; _DOS_DO_HELP - list the built-in commands
+; _DOS_DO_HELP - list the built-in commands, two-column (verb / description),
+; the same layout as the monitor's ? help. Each entry is "syntax"<TAB>"desc"; the
+; kernel's K_PRINT_HELP_LINE renders the TAB as padding to a fixed column.
 ; ----------------------------------------------------------------
 _DOS_DO_HELP:
-    JSR K_PRINT_NEWLINE
-    LDA #<MSG_DOS_HELP
+    LDA #<MSG_DOS_HELP_HDR              ; header (its own CR/LF)
     STA MON_MSG_PTR_LO
-    LDA #>MSG_DOS_HELP
+    LDA #>MSG_DOS_HELP_HDR
     STA MON_MSG_PTR_HI
-    JMP K_PRINT_MESSAGE
+    JSR K_PRINT_MESSAGE
+    LDX #$00
+@loop:
+    LDA DOS_HELP_TABLE,X               ; MON_MSG_PTR = table[X] (2 bytes per entry)
+    STA MON_MSG_PTR_LO
+    INX
+    LDA DOS_HELP_TABLE,X
+    STA MON_MSG_PTR_HI
+    INX
+    JSR K_PRINT_HELP_LINE              ; "verb"<TAB>"desc", TAB padded to the column
+    JSR K_PRINT_NEWLINE
+    CPX #(DOS_HELP_COUNT * 2)
+    BNE @loop
+    RTS
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_MON - launch the monitor (returns to DOS_WARM via its Q command)
@@ -1813,10 +1836,38 @@ _DOS_RUN_FILE:
 ; ----------------------------------------------------------------
 MSG_BOX_OPER:    .BYTE "MFC 6502  OPERATIONAL", 0   ; 21 chars, centred in the box
 MSG_BOX_FREE:    .BYTE "   34816 BYTES FREE", 0      ; user RAM $0800-$8FFF
-MSG_DOS_HELP:    .BYTE "CATALOG TYPE MORE SAVE LOAD COPY", $0D, $0A
-                 .BYTE "MOVE ERASE RENAME IMPORT EXPORT", $0D, $0A
-                 .BYTE "NEWDRAWER OPEN CLOSE DROPDRAWER", $0D, $0A
-                 .BYTE "DISKFREE MEMMAP VERSION CLS MON HELP", $0D, $0A, 0
+MSG_DOS_HELP_HDR: .BYTE "MFC/OS COMMANDS", $0D, $0A, 0
+
+; Two-column HELP entries: "syntax"<TAB>"description", 0. K_PRINT_HELP_LINE
+; renders the TAB ($09) as padding to a fixed description column. Keep each
+; syntax under that column (22) so the descriptions line up.
+DOS_HELP_TABLE:
+    .WORD DH_CAT, DH_TYPE, DH_MORE, DH_LOAD, DH_SAVE, DH_COPY, DH_MOVE
+    .WORD DH_REN, DH_ERASE, DH_IMPORT, DH_EXPORT, DH_NEWD, DH_OPEN, DH_CLOSE
+    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_VER, DH_CLS, DH_MON, DH_HELP
+DOS_HELP_COUNT = (* - DOS_HELP_TABLE) / 2
+
+DH_CAT:    .BYTE "CATALOG [pat]", $09, "list files (CAT)", 0
+DH_TYPE:   .BYTE "TYPE name", $09, "show a text file", 0
+DH_MORE:   .BYTE "MORE name", $09, "show a file (= TYPE)", 0
+DH_LOAD:   .BYTE "LOAD name[,addr]", $09, "load a file to memory", 0
+DH_SAVE:   .BYTE "SAVE name,s-e", $09, "save memory to a file", 0
+DH_COPY:   .BYTE "COPY src,dst", $09, "copy a file", 0
+DH_MOVE:   .BYTE "MOVE src,dst", $09, "move / rename a file", 0
+DH_REN:    .BYTE "RENAME old,new", $09, "rename a file", 0
+DH_ERASE:  .BYTE "ERASE name", $09, "delete a file", 0
+DH_IMPORT: .BYTE "IMPORT name", $09, "host file -> disk", 0
+DH_EXPORT: .BYTE "EXPORT name", $09, "disk file -> host", 0
+DH_NEWD:   .BYTE "NEWDRAWER name", $09, "make a drawer", 0
+DH_OPEN:   .BYTE "OPEN name", $09, "enter a drawer", 0
+DH_CLOSE:  .BYTE "CLOSE", $09, "leave the drawer", 0
+DH_DROPD:  .BYTE "DROPDRAWER name", $09, "remove an empty drawer", 0
+DH_FREE:   .BYTE "DISKFREE", $09, "show free space", 0
+DH_MEMMAP: .BYTE "MEMMAP", $09, "show the memory map", 0
+DH_VER:    .BYTE "VERSION", $09, "show the OS version", 0
+DH_CLS:    .BYTE "CLS", $09, "clear the screen", 0
+DH_MON:    .BYTE "MON", $09, "enter the monitor", 0
+DH_HELP:   .BYTE "HELP", $09, "this list", 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
 MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
 MSG_DOS_NOFILE:  .BYTE "FILE NOT FOUND", $0D, $0A, 0

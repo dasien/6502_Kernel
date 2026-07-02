@@ -237,6 +237,10 @@
 ;                   (DOS shell, MON, BASIC, ASM, FORTH) is paged with no code of
 ;                   its own. MON's per-command counter and DOS's separate MORE
 ;                   pager collapse into this one core.
+; 2026-07-02  v3.19 Exposed PRINT_HELP_LINE in the ABI as K_PRINT_HELP_LINE
+;                   ($FF30): prints "syntax"<TAB>"description" with the TAB padded
+;                   to a fixed column. Lets the DOS HELP list use the monitor's
+;                   two-column layout instead of a flat list (no duplicated code).
 ;
 ; ================================================================
 
@@ -3526,6 +3530,7 @@ K_LIST_MODULES:  JMP LIST_MODULES       ; $FF24 - print the module catalog (BANK
 K_PRINT_DEC:     JMP PRINT_DEC          ; $FF27 - print a 32-bit value in decimal
 K_PARSE_DEC:     JMP PARSE_DEC_ABI      ; $FF2A - parse a decimal string from MON_CMDBUF
 K_SET_ATTR:      JMP SET_ATTR           ; $FF2D - set the color/attribute latch (VREG_ATTR)
+K_PRINT_HELP_LINE: JMP PRINT_HELP_LINE  ; $FF30 - print "syntax"<TAB>"desc" (TAB pads to col 22)
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

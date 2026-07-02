@@ -22,7 +22,7 @@ small set of memory-mapped devices. This document reflects the actual kernel
 
 There is no SID / CIA. The **VIC** is an 80×25 color text chip whose character
 and color planes live *inside the chip* (not in the 64K map) and are reached
-through a VDC-style register port at `$FE2D-$FE36` (see the I/O section). The
+through a VDC-style register port at `$FE2D-$FE37` (see the I/O section). The
 keyboard and file I/O are exposed through a small PIA-style register block at
 `$FE00`. The `$B000-$DFFF` window is
 a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
@@ -49,12 +49,13 @@ EhBASIC interpreter, which uses page zero heavily. The split:
 | `$14-$15` | `MON_CURRADDR_LO/HI` | Current memory address |
 | `$16-$17` | `MON_MSG_PTR_LO/HI` | Message string pointer |
 | `$18-$19` | `JUMP_VECTOR` | Indirect jump / ZP pointer scratch |
-| `$1A-$1B` | `SCREEN_PTR_LO/HI` | Current screen position |
-| `$1C-$1D` | `SCRL_SRC_ADDR_LO/HI` | Scroll source |
-| `$1E-$1F` | `SCRL_DEST_ADDR_LO/HI` | Scroll destination |
-| `$20` | `SCRL_BYTE_CNT` | Scroll byte counter |
-| `$21` | `CMD_LINE_COUNT` | Lines printed by current command (paging) |
-| `$22` | `PAGE_ABORT_FLAG` | Set when ESC pressed during paging |
+| `$1A-$1B` | `VID_CELL_LO/HI` | Computed VIC cell index (`CURSOR_Y*80 + X`) |
+| `$1C-$1D` | `VID_TMP_LO/HI` | Cell-index computation scratch |
+| `$1E` | `PAGE_ENABLE` | System pager master switch (1 = on; a future setting toggles it) |
+| `$1F` | `PAGE_SUSPEND` | ESC at `--MORE--` suspends paging for the rest of this output |
+| `$20` | `PAGE_IN_BREAK` | Guard: inside the page-break prompt (don't re-count) |
+| `$21` | `CMD_LINE_COUNT` | Lines printed since the last pause/command (paging) |
+| `$22` | `PAGE_ABORT_FLAG` | Set when ESC pressed during paging (cooperative abort) |
 | `$23` | `RNG_SEED` | PRNG seed |
 | `$24` | `RNG_MAX` | PRNG max value |
 | `$25-$34` | `HEX_LOOKUP_TABLE` | 16-byte hex digit table |
@@ -109,7 +110,7 @@ the two never run at the same time.
 Note: `DEC_DIGIT_BUFFER` ($027D) deliberately aliases `MON_SEARCH_PATTERN` —
 the D:/H: and X: commands never run at the same time.
 
-## Video (VIC) register port (`$FE2D-$FE36`)
+## Video (VIC) register port (`$FE2D-$FE37`)
 
 The 80×25 screen is **not** in the 64K address space. The VIC owns two parallel
 cell planes — a character plane (one 7-bit ASCII byte per cell) and a color
@@ -131,6 +132,7 @@ block ops so the CPU never copies the screen.
 | `$FE34` | `VREG_CURSOR_LO` | Hardware cursor cell low |
 | `$FE35` | `VREG_CURSOR_HI` | Cursor cell high; bit 7 = cursor hidden |
 | `$FE36` | `VREG_CMD_PARAM` | Command parameter / fill character |
+| `$FE37` | `VREG_SCROLL_BOT` | Scroll-region bottom row; scroll/fill affect rows 0..this (default 24). IRC pins its input/status rows below the region |
 
 Attribute byte: `[R][BR][bg:3][fg:3]` — bit 7 reverse, bit 6 bright, bits 5–3
 background (0–7), bits 2–0 foreground (0–7). Power-on/clear default is `$02`
@@ -200,6 +202,7 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 | `$FF27` | `K_PRINT_DEC` | `PRINT_DEC` — print a 32-bit value in decimal |
 | `$FF2A` | `K_PARSE_DEC` | `PARSE_DEC_ABI` — parse a decimal string from `MON_CMDBUF` |
 | `$FF2D` | `K_SET_ATTR` | `SET_ATTR` — set the color/attribute latch (`VREG_ATTR`) |
+| `$FF30` | `K_PRINT_HELP_LINE` | `PRINT_HELP_LINE` — print `"syntax"`<TAB>`"desc"` (TAB pads to a fixed column) for two-column help listings |
 
 The jump table is also the **module ABI**: a ROM module reaches kernel services
 only through these entries, so it is independent of where the kernel's internal
@@ -248,4 +251,4 @@ file-stream LOAD/SAVE routines).
 | `LINES_PER_PAGE` | `24` | Paging threshold |
 
 (The screen is no longer memory-mapped; the kernel writes it through the VIC
-register port at `$FE2D-$FE36` and tracks the logical cursor in `CURSOR_X/Y`.)
+register port at `$FE2D-$FE37` and tracks the logical cursor in `CURSOR_X/Y`.)

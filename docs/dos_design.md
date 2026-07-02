@@ -18,9 +18,19 @@ closed.** Identity: OS = **MFC/OS**, `]` prompt.
 filesystem is single-open, so COPY reads the source fully into `$0800` then writes it
 out; files > ~34 KB report `FILE TOO BIG`), `DISKFREE` (free space in decimal bytes +
 KB; scans each FAT sector once), `MEMMAP` (the full memory map with region sizes),
-`VERSION`, `MORE NAME` (paged `TYPE`, `--MORE--` every 22 lines, ESC aborts), and
-**wildcards** in `CATALOG`/`CAT` (`*` and `?`, 8.3). `CATALOG` now prints a `NAME /
-BYTES` header with decimal sizes in aligned columns. `DATE`/`TIME` are deferred (no
+`VERSION`, `MORE NAME`, and **wildcards** in `CATALOG`/`CAT` (`*` and `?`, 8.3).
+`CATALOG` now prints a `NAME / BYTES` header with decimal sizes in aligned columns.
+
+**System-wide pager (kernel v3.18 / DOS 1.9).** Paging moved out of DOS's own
+`MORE` into the kernel's single `PRINT_CHAR` path (`PAGE_ADVANCE`): it counts
+newlines and pauses every `LINES_PER_PAGE` (24) with a `--MORE-- (SPACE, ESC=STOP)`
+prompt, gated by `PAGE_ENABLE` (default on) and reset per command in
+`GET_KEYSTROKE` (on the submitting CR). Because every text program prints through
+`K_PRINT_CHAR`, the DOS shell, MON, BASIC, ASM, and FORTH are **all** paged with no
+code of their own — long `TYPE`/`CATALOG`/`LIST`/`WORDS`/dumps pause each screenful;
+SPACE (or any key) advances, ESC stops. As a result `MORE` is now identical to
+`TYPE` (it dispatches to it); the old per-command DOS pager was removed. A future
+settings facility will expose `PAGE_ENABLE` so paging can be turned off. `DATE`/`TIME` are deferred (no
 RTC; only a ~60 Hz timer IRQ). `BANKS` lists the ROM modules. Decimal conversion was
 promoted to the BIOS ABI (kernel v3.12): `K_PRINT_DEC` ($FF27, 32-bit → decimal,
 right-justifiable) and `K_PARSE_DEC` ($FF2A, decimal → 16-bit). The monitor's `H:`/`D:`
