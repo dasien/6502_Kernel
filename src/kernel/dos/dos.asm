@@ -155,6 +155,13 @@ DOS_W_ATTR       = $037B                ; byte: attribute for the next dir entry
 DOS_RES_SLASH    = $037E                ; byte: path-resolution slash-index scratch
 DOS_ALLOC_HINT   = $037F                ; word: next-free-cluster rover ($037F-$0380)
 DOS_ALLOC_WRAP   = $0381                ; byte: alloc scan has wrapped past the end
+; Launch argument: the command tail after a program name (e.g. the "SYSTEM/DIAL.LST"
+; in "EDIT SYSTEM/DIAL.LST"), null-terminated, empty if none. DOS fills it before
+; every launch-by-name; a launched program reads it here. Placed ABOVE the FS
+; working vars so _FS_OPEN during the launch can't clobber it, and below $0800 so
+; it survives into the program (cc65 programs don't touch $03xx).
+DOS_ARGBUF       = $0382                ; launch argument, null-terminated ($0382-$03B1)
+DOS_ARGBUF_MAX   = 48                   ; buffer size (47 chars + NUL)
 
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
@@ -209,8 +216,10 @@ DOS_SIGNATURE:
 ;        rendered via the kernel's new K_PRINT_HELP_LINE ($FF30)
 ;   1.11 launch-by-name defaults the ".PRG" extension: "EDIT" runs "EDIT.PRG"
 ;        (tries the bare name first; only appends when the name has no extension)
+;   1.12 launch-by-name passes the command tail to the program in DOS_ARGBUF
+;        ($0382), so e.g. "EDIT SYSTEM/DIAL.LST" opens that file
 DOS_VERSION:
-    .BYTE $01, $0B                      ; version 1.11 (major, minor)
+    .BYTE $01, $0C                      ; version 1.12 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -564,6 +573,8 @@ _DOS_DISPATCH:
 @term:
     LDA #$00
     STA MON_CMDBUF,Y
+    JSR _DOS_CAPTURE_ARG                ; stash the command tail for the launched program
+                                        ; (must be before the .PRG-append mangles MON_CMDBUF)
     JSR K_PRINT_NEWLINE
     LDA DOS_SH_NAMEIDX                  ; '&' present? -> skip the module check
     BNE @disk
@@ -1809,6 +1820,40 @@ _DOS_NAME_MATCH:
     RTS
 @no:
     SEC
+    RTS
+
+; ----------------------------------------------------------------
+; ----------------------------------------------------------------
+; _DOS_CAPTURE_ARG - copy the command tail (the argument after the program name)
+; into DOS_ARGBUF, null-terminated; empty string if there is no argument. Called
+; at launch time, before the .PRG-default append can mangle MON_CMDBUF.
+; In: Y = index in MON_CMDBUF of the program name's NUL terminator.
+; ----------------------------------------------------------------
+_DOS_CAPTURE_ARG:
+    LDX #$00                            ; DOS_ARGBUF write index
+@skip:
+    INY                                 ; past the terminator, then skip leading spaces
+    CPY MON_CMDLEN
+    BCS @empty
+    LDA MON_CMDBUF,Y
+    CMP #ASCII_SPACE
+    BEQ @skip
+@copy:
+    STA DOS_ARGBUF,X
+    INX
+    CPX #DOS_ARGBUF_MAX-1               ; leave room for the terminator
+    BCS @done
+    INY
+    CPY MON_CMDLEN
+    BCS @done
+    LDA MON_CMDBUF,Y
+    BNE @copy
+@done:
+    LDA #$00
+    STA DOS_ARGBUF,X
+    RTS
+@empty:
+    STZ DOS_ARGBUF
     RTS
 
 ; ----------------------------------------------------------------

@@ -205,6 +205,20 @@ public:
         computer.getMemory()->write(0x0900, 0x00);
         sendCommand("RUNME", 300000);
         verifyMemEquals(0x0900, 0x42, "Launch without .PRG resolves to the .PRG file");
+        // Launch-by-name passes the command tail to the program in DOS_ARGBUF ($0382),
+        // so "EDIT SYSTEM/DIAL.LST" can open that file. Verify the arg is captured.
+        computer.getMemory()->write(0x0900, 0x00);
+        sendCommand("RUNME.PRG SYSTEM/DIAL.LST", 300000);
+        verifyMemEquals(0x0900, 0x42, "Program with an argument still runs");
+        {
+            std::string arg;
+            for (int i = 0; i < 40; i++) { uint8_t b = readMem(0x0382 + i); if (!b) break; arg += (char)b; }
+            bool ok = (arg == "SYSTEM/DIAL.LST");
+            std::cout << std::left << std::setw(30) << "Launch arg in DOS_ARGBUF"
+                      << ": " << (ok ? "PASS" : "FAIL");
+            if (!ok) { std::cout << " (got '" << arg << "')"; tests_failed++; } else tests_passed++;
+            std::cout << std::endl;
+        }
         // Back at the DOS prompt and responsive (program RTS'd to DOS_WARM).
         sendCommand("HELP", 500000);   // the two-column list prints ~23 lines
         verifyResponse("RENAME", "Returned to the DOS prompt after the program");
@@ -257,7 +271,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.11", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.12", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 

@@ -265,11 +265,11 @@ static void save(void)
     msg("Saved");
 }
 
-static void load(void)
+/* Read a named file into the document (shared by Ctrl-O and the launch argument). */
+static void load_named(const char *name)
 {
-    char name[16]; int c, r;
-    if (!prompt("Open: ", name, 16)) { msg("Cancelled"); return; }
-    if (dopen_read(name)) { msg("Not found"); return; }
+    int c, r, i;
+    if (dopen_read((char *)name)) { msg("Not found"); return; }
     clear_doc();
     row[0].chars = 0; row[0].len = 0; row[0].cap = 0; numrows = 1;
     for (;;) {
@@ -289,8 +289,16 @@ static void load(void)
     /* a trailing newline made an extra empty row -- drop it (round-trips save) */
     if (numrows > 1 && row[numrows - 1].len == 0) { free(row[numrows - 1].chars); numrows--; }
     cx = cy = rowoff = coloff = 0; dirty = 0; full_redraw = 1;
-    strcpy(curname, name);
+    for (i = 0; name[i] && i < (int)sizeof(curname) - 1; i++) curname[i] = name[i];
+    curname[i] = 0;                             /* bounded copy (curname is 16 bytes) */
     msg("Loaded");
+}
+
+static void load(void)
+{
+    char name[16];
+    if (!prompt("Open: ", name, 16)) { msg("Cancelled"); return; }
+    load_named(name);
 }
 
 /* ------------------------------------------------------------------ */
@@ -361,12 +369,22 @@ static void search(void)
 
 int main(void)
 {
-    int k;
+    int k, i;
+    static char argname[48];
     row[0].chars = 0; row[0].len = 0; row[0].cap = 0; numrows = 1;
     vattr(ATTR_NORMAL);          /* normal text attribute for painted rows */
     /* Hide the kernel hardware cursor so only the editor's reverse-video block
        cursor shows; returning to DOS re-shows it on the next PRINT_CHAR. */
     vhidecur();
+    /* If DOS launched us with a filename argument (e.g. "EDIT SYSTEM/DIAL.LST"),
+       open it. DOS leaves the command tail, NUL-terminated, in DOS_ARGBUF ($0382);
+       an empty string means no argument, so we start with a blank document. */
+    {
+        const char *a = (const char *)0x0382;
+        for (i = 0; a[i] && i < (int)sizeof(argname) - 1; i++) argname[i] = a[i];
+        argname[i] = 0;
+    }
+    if (argname[0]) load_named(argname);
     for (;;) {
         refresh();
         k = readkey();
