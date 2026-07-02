@@ -2,11 +2,11 @@
 # Build the twelve Adventure International (Scott Adams) games as named
 # MFC-DOS .PRGs, via build.sh (host pre-parse -> cc65 -> .PRG).
 #
-# The game .dat databases are shareware and are NOT redistributed in this
-# repo. Point this at a directory containing adv01.dat .. adv12.dat.
+# The Scott Adams .dat databases are shareware (freely shareable) and ARE
+# committed under programs/scottfree/dat/.
 #
 # Usage:  ./build_games.sh <dir-with-advNN.dat> [outdir]
-#         ./build_games.sh ~/Downloads/AdamsGames
+#         ./build_games.sh dat disk/GAMES     # rebuild the disk's game .PRGs
 set -e
 cd "$(dirname "$0")"
 DIR="${1:?usage: build_games.sh <dat-dir> [outdir]}"
