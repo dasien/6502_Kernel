@@ -290,6 +290,27 @@ public:
         return remaining == 0;
     }
 
+    // Every file on the image as Fat16File records (name, data, drawer) -- the
+    // same shape Fat16ImageBuilder::build consumes, so an image round-trips
+    // Reader -> Fat16File[] -> Builder. Root files have drawer=""; files inside a
+    // one-level drawer carry that drawer's name.
+    std::vector<Fat16File> readAll() const {
+        std::vector<Fat16File> out;
+        for (const auto &e : entries()) {
+            if (e.name == "." || e.name == "..") continue;
+            if (e.attr & 0x10) {                        // a drawer (subdirectory)
+                for (const auto &f : dirEntries(e.firstCluster)) {
+                    if (f.name == "." || f.name == "..") continue;
+                    if (f.attr & 0x10) continue;         // one level only
+                    out.push_back({f.name, readChain(f.firstCluster, f.size), e.name});
+                }
+            } else {
+                out.push_back({e.name, readChain(e.firstCluster, e.size), ""});
+            }
+        }
+        return out;
+    }
+
     uint16_t fatEntry(uint16_t cluster) const {
         const uint8_t *fat = &img_[fatStart_ * bytesPerSector_];
         return rd16(&fat[cluster * 2]);
@@ -305,6 +326,43 @@ public:
     }
 
 private:
+    // Read a cluster chain's bytes (used for files and drawer directories).
+    std::vector<uint8_t> readChain(uint16_t cluster, uint32_t size) const {
+        std::vector<uint8_t> out;
+        const uint32_t cbytes = bytesPerSector_ * sectorsPerCluster_;
+        while (size > 0 && cluster >= 2 && cluster < 0xFFF8) {
+            const uint32_t lba = dataStart_ + (cluster - 2) * sectorsPerCluster_;
+            const uint32_t n = std::min(cbytes, size);
+            const uint8_t *p = &img_[lba * bytesPerSector_];
+            out.insert(out.end(), p, p + n);
+            size -= n;
+            cluster = fatEntry(cluster);
+        }
+        return out;
+    }
+
+    // Live entries in a subdirectory (drawer), following its cluster chain.
+    std::vector<Entry> dirEntries(uint16_t firstCluster) const {
+        std::vector<Entry> out;
+        const uint32_t cbytes = bytesPerSector_ * sectorsPerCluster_;
+        uint16_t cluster = firstCluster;
+        while (cluster >= 2 && cluster < 0xFFF8) {
+            const uint32_t lba = dataStart_ + (cluster - 2) * sectorsPerCluster_;
+            const uint8_t *dir = &img_[lba * bytesPerSector_];
+            for (uint32_t i = 0; i < cbytes; i += 32) {
+                const uint8_t *e = dir + i;
+                if (e[0] == 0x00) return out;            // end of directory
+                if (e[0] == 0xE5) continue;              // deleted
+                const uint8_t attr = e[0x0B];
+                if ((attr & 0x0F) == 0x0F) continue;     // LFN
+                if (attr & 0x08) continue;               // volume label
+                out.push_back({decodeName(e), rd32(&e[0x1C]), rd16(&e[0x1A]), attr});
+            }
+            cluster = fatEntry(cluster);
+        }
+        return out;
+    }
+
     static uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
     static uint32_t rd32(const uint8_t *p) {
         return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);

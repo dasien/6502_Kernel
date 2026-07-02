@@ -372,6 +372,13 @@ add_test(NAME dos_blockio_tests
 add_test(NAME dos_fat16_tests
     COMMAND dos_fat16_tests)
 
+# FAT16 reader round-trip (root + drawers) — header-only, no emulator needed.
+add_executable(fat16_roundtrip_tests test_fat16_roundtrip.cpp)
+target_link_libraries(fat16_roundtrip_tests gtest_main gtest)
+target_include_directories(fat16_roundtrip_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(fat16_roundtrip_tests PRIVATE cxx_std_20)
+add_test(NAME fat16_roundtrip COMMAND fat16_roundtrip_tests)
+
 # Add integration test to CTest
 add_test(NAME monitor_integration
     COMMAND monitor_integration_tests)

@@ -63,6 +63,17 @@ add_executable(mkfat16 tools/mkfat16/mkfat16.cpp)
 target_include_directories(mkfat16 PRIVATE ${CMAKE_SOURCE_DIR}/tests/support)
 target_compile_features(mkfat16 PRIVATE cxx_std_20)
 
+# ----------------------------------------------------------------
+# mkdisk - diskmap-driven disk image tool (create / read / update). Reuses the
+# FAT16 builder + reader shared with the tests. Supersedes mkfat16.
+#   ./bin/mkdisk create <image> <diskmap.txt>
+#   ./bin/mkdisk read   <image> <outdir>
+#   ./bin/mkdisk update <image> <diskmap.txt>
+# ----------------------------------------------------------------
+add_executable(mkdisk tools/mkdisk/mkdisk.cpp)
+target_include_directories(mkdisk PRIVATE ${CMAKE_SOURCE_DIR}/tests/support)
+target_compile_features(mkdisk PRIVATE cxx_std_20)
+
 # Convenience: write a sample disk.img (with sample files) next to the ROMs,
 # where the emulator looks for it (../disk.img relative to the bin/ dir).
 add_custom_target(sample_disk
