@@ -207,8 +207,10 @@ DOS_SIGNATURE:
 ;        page automatically
 ;   1.10 HELP is now a two-column verb/description list (like the monitor's ?),
 ;        rendered via the kernel's new K_PRINT_HELP_LINE ($FF30)
+;   1.11 launch-by-name defaults the ".PRG" extension: "EDIT" runs "EDIT.PRG"
+;        (tries the bare name first; only appends when the name has no extension)
 DOS_VERSION:
-    .BYTE $01, $0A                      ; version 1.10 (major, minor)
+    .BYTE $01, $0B                      ; version 1.11 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -572,7 +574,30 @@ _DOS_DISPATCH:
     LDA DOS_SH_NAMEIDX                  ; name ptr = MON_CMDBUF + offset
     LDX #>MON_CMDBUF                    ; (low byte = offset, MON_CMDBUF is page-aligned)
     JSR _DOS_RUN_FILE                  ; loads + runs a disk .PRG (no return on success)
-    ; only here if the program wasn't found
+    ; Not found as typed. If the name has no extension, default it to ".PRG"
+    ; (so "EDIT" runs "EDIT.PRG") and try once more before giving up.
+    LDX DOS_SH_NAMEIDX
+@extscan:
+    LDA MON_CMDBUF,X
+    BEQ @adddot                        ; reached the terminator with no '.' -> add ".PRG"
+    CMP #'.'
+    BEQ @bad                           ; already has an extension -> don't guess
+    INX
+    BNE @extscan
+@adddot:
+    LDY #$00                            ; append ".PRG",0 at the terminator (X)
+@cpext:
+    LDA DOS_EXT_PRG,Y
+    STA MON_CMDBUF,X
+    BEQ @extdone                        ; the trailing null was just copied
+    INX
+    INY
+    BRA @cpext
+@extdone:
+    LDA DOS_SH_NAMEIDX
+    LDX #>MON_CMDBUF
+    JSR _DOS_RUN_FILE                  ; retry as "<name>.PRG"
+@bad:
     LDA #<MSG_DOS_BADCMD
     STA MON_MSG_PTR_LO
     LDA #>MSG_DOS_BADCMD
@@ -1869,6 +1894,7 @@ DH_CLS:    .BYTE "CLS", $09, "clear the screen", 0
 DH_MON:    .BYTE "MON", $09, "enter the monitor", 0
 DH_HELP:   .BYTE "HELP", $09, "this list", 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
+DOS_EXT_PRG:     .BYTE ".PRG", 0        ; default extension for launch-by-name
 MSG_DOS_NOFILES: .BYTE "NO FILES", $0D, $0A, 0
 MSG_DOS_NOFILE:  .BYTE "FILE NOT FOUND", $0D, $0A, 0
 MSG_DOS_USAGE:   .BYTE "USAGE: SAVE F,SSSS-EEEE / LOAD F[,AAAA]", $0D, $0A

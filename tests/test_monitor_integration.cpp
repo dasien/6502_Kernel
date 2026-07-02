@@ -201,6 +201,10 @@ public:
         sendCommand("RUNME.PRG", 300000);
         verifyMemEquals(0x0820, 0xA9, "Program body loaded at its header address");
         verifyMemEquals(0x0900, 0x42, "Disk program ran (wrote its marker)");
+        // Launch-by-name defaults the .PRG extension: "RUNME" runs "RUNME.PRG".
+        computer.getMemory()->write(0x0900, 0x00);
+        sendCommand("RUNME", 300000);
+        verifyMemEquals(0x0900, 0x42, "Launch without .PRG resolves to the .PRG file");
         // Back at the DOS prompt and responsive (program RTS'd to DOS_WARM).
         sendCommand("HELP", 500000);   // the two-column list prints ~23 lines
         verifyResponse("RENAME", "Returned to the DOS prompt after the program");
@@ -253,7 +257,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.10", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.11", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
