@@ -166,6 +166,27 @@ ninja
 # - Memory map: cmake-build-debug/kernel/kernel.map
 ```
 
+### Disk image (`mkdisk`)
+
+The GUI loads `cmake-build-debug/disk.img`. It is assembled from a **diskmap
+bundle** — the repo `disk/` directory holds `diskmap.txt` (the disk layout, one
+path per line; `DRAWER/NAME` = a one-level drawer) plus the stable content
+(`SYSTEM/` config lists, `GAMES/` the Scott Adams games). The rebuildable apps
+(`EDIT`/`TERM`/`IRC`, `GAMES/CHESS`) are staged from their fresh `.PRG` builds.
+
+```bash
+ninja disk                                  # (re)assemble cmake-build-debug/disk.img
+```
+`ninja disk` is explicit — a plain `ninja` never rewrites the disk. After changing
+a disk program, rebuild its `.PRG` (`programs/<x>/build.sh`) then `ninja disk`.
+
+The `mkdisk` host tool (`cmake-build-debug/bin/mkdisk`) also works standalone:
+```bash
+mkdisk create <image> <diskmap.txt>   # build a fresh image from a bundle
+mkdisk read   <image> <outdir>        # extract an image into a bundle (+ diskmap.txt)
+mkdisk update <image> <diskmap.txt>   # replace/add listed files, keep the rest
+```
+
 ### Project Structure
 ```
 6502-kernel/

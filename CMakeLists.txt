@@ -74,12 +74,22 @@ add_executable(mkdisk tools/mkdisk/mkdisk.cpp)
 target_include_directories(mkdisk PRIVATE ${CMAKE_SOURCE_DIR}/tests/support)
 target_compile_features(mkdisk PRIVATE cxx_std_20)
 
-# Convenience: write a sample disk.img (with sample files) next to the ROMs,
-# where the emulator looks for it (../disk.img relative to the bin/ dir).
-add_custom_target(sample_disk
-    COMMAND mkfat16 ${CMAKE_BINARY_DIR}/disk.img
-    DEPENDS mkfat16
-    COMMENT "Creating sample FAT16 disk image at ${CMAKE_BINARY_DIR}/disk.img"
+# Assemble the default disk.img the GUI loads (${CMAKE_BINARY_DIR}/disk.img).
+# Explicit target -- NOT part of `ninja`/ALL -- so routine builds never rewrite the
+# disk. It stages a bundle from the repo `disk/` (config + games + diskmap) plus the
+# freshly built app .PRGs, then runs `mkdisk create`. Rebuild a program's .PRG first
+# (programs/<x>/build.sh) if you changed it, then `ninja disk`.
+set(DISKROOT ${CMAKE_BINARY_DIR}/diskroot)
+add_custom_target(disk
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${DISKROOT}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/disk ${DISKROOT}
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/edit/EDIT.PRG     ${DISKROOT}/EDIT.PRG
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/term/TERM.PRG     ${DISKROOT}/TERM.PRG
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/irc/IRC.PRG       ${DISKROOT}/IRC.PRG
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/micromax/CHESS.PRG ${DISKROOT}/GAMES/CHESS.PRG
+    COMMAND mkdisk create ${CMAKE_BINARY_DIR}/disk.img ${DISKROOT}/diskmap.txt
+    DEPENDS mkdisk
+    COMMENT "Assembling disk.img from disk/ + built app .PRGs"
     VERBATIM
 )
 
