@@ -40,6 +40,7 @@ public:
         // drop into the monitor (MON) for the pure-monitor command tests.
         testDosShell();
         testPromptColorReset();
+        testPagerLongType();
         testDosFileVerbs();
         testDosTransfer();
         testDosUtils();
@@ -250,7 +251,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.8", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.9", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -502,6 +503,21 @@ private:
             tests_passed++;
         }
         std::cout << std::endl;
+    }
+
+    // System-wide pager: a file longer than one screen must pause with --MORE--
+    // (the kernel pages all output now, so plain TYPE pages), then complete after
+    // ENTER. This exercises the shared pager that also covers BASIC/ASM/FORTH.
+    void testPagerLongType() {
+        std::string big;
+        for (int i = 1; i <= 30; ++i) big += "LINE" + std::to_string(i) + "\r\n";
+        mountDisk({{"BIG.TXT", std::vector<uint8_t>(big.begin(), big.end())}});
+        clearScreen();
+        sendCommand("TYPE BIG.TXT", 2'000'000);        // fills a screen, then pauses
+        verifyResponse("--MORE--", "TYPE pauses with the pager on a long file");
+        computer.getPia()->addKeypress('\r');          // continue past the page break
+        computer.run(2'000'000);
+        verifyResponse("LINE30", "TYPE completes after the pager continue");
     }
 
     // Read a byte straight from emulator RAM - robust, unlike screen scraping.

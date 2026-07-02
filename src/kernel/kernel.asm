@@ -230,6 +230,13 @@
 ;                   description to a fixed column (PRINT_HELP_LINE, 80-col aware).
 ;                   Companion banner edits live in the modules/programs (ASM, FORTH,
 ;                   CHESS, ScottFree, EDIT, TERM).
+; 2026-07-02  v3.18 System-wide pager: PRINT_CHAR now counts newlines and pauses
+;                   every LINES_PER_PAGE with the --MORE-- prompt (PAGE_ADVANCE),
+;                   gated by PAGE_ENABLE (default on) and reset per command in
+;                   GET_KEYSTROKE. So any program that prints through K_PRINT_CHAR
+;                   (DOS shell, MON, BASIC, ASM, FORTH) is paged with no code of
+;                   its own. MON's per-command counter and DOS's separate MORE
+;                   pager collapse into this one core.
 ;
 ; ================================================================
 
@@ -259,8 +266,11 @@ VID_CELL_LO        = $1A           ; computed cell index low
 VID_CELL_HI        = $1B           ; computed cell index high
 VID_TMP_LO         = $1C           ; cell-computation temporary low
 VID_TMP_HI         = $1D           ; cell-computation temporary high
-; $1E-$20 (3 bytes) free.
-CMD_LINE_COUNT     = $21           ; Lines printed by current command (was $0D)
+; $1E-$20: kernel pager flags (see PAGE_ADVANCE / GET_KEYSTROKE).
+PAGE_ENABLE        = $1E           ; pager master switch (1=on; a future setting toggles it)
+PAGE_SUSPEND       = $1F           ; ESC at --MORE-- suspends paging for the rest of this output
+PAGE_IN_BREAK      = $20           ; guard: inside the page-break prompt (don't re-count)
+CMD_LINE_COUNT     = $21           ; Lines printed since the last pause/command (was $0D)
 PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
 RNG_SEED           = $23           ; Random number generator seed (was $0F)
 RNG_MAX            = $24           ; Maximum value for random number (was $10)
@@ -474,6 +484,11 @@ ZP_CLEAR_LOOP:
     ; Initialize RNG seed
     LDA #$01                    ; Non-zero seed (LFSR can't use 0)
     STA RNG_SEED                ; Initialize RNG
+    STA PAGE_ENABLE             ; pager on by default (a future setting can disable it)
+    STZ CMD_LINE_COUNT          ; pager state starts clean
+    STZ PAGE_SUSPEND
+    STZ PAGE_ABORT_FLAG
+    STZ PAGE_IN_BREAK
 
     ; Initialize monitor variables and state
     LDX #$E9                    ; Clear monitor area $0200-$02E9 (234 bytes)
@@ -819,6 +834,7 @@ PRINT_CHAR_NEWLINE:
 
 PRINT_CHAR_NEWLINE_DONE:
     JSR UPDATE_CURSOR
+    JSR PAGE_ADVANCE            ; count this line; pause with --MORE-- at a full page
     PLA                         ; restore A = $0D (EhBASIC's CMP #$0D depends on it)
     RTS
 
@@ -856,27 +872,40 @@ PRINT_NEWLINE:
     JSR PRINT_CHAR
     RTS
 
-; Print newline with paging for memory dump commands only
+; PRINT_NEWLINE_PAGED - retained for its many MON call sites. Paging is now
+; handled centrally in PRINT_CHAR (PAGE_ADVANCE), so this is just a newline.
 PRINT_NEWLINE_PAGED:
-    ; Scroll screen, printing newline character
     LDA #ASCII_CR
     JSR PRINT_CHAR
+    RTS
 
-    ; Increment command line counter
+; PAGE_ADVANCE - called from PRINT_CHAR after every newline. When paging is
+; enabled and not suspended for this output, count the line and, every
+; LINES_PER_PAGE lines, pause with the --MORE-- prompt. This is the one shared
+; pager for the whole system (DOS shell, MON, BASIC, ASM, FORTH) -- any program
+; that prints through K_PRINT_CHAR is paged with no code of its own. The counter
+; is reset per command in GET_KEYSTROKE (on the submitting CR). Preserves X and Y
+; (the PRINT_CHAR contract; PRINT_MESSAGE loops on Y); A is restored by the caller.
+PAGE_ADVANCE:
+    LDA PAGE_ENABLE
+    BEQ @ret                    ; paging off (a future setting)
+    LDA PAGE_SUSPEND
+    BNE @ret                    ; user pressed ESC: let the rest scroll
+    LDA PAGE_IN_BREAK
+    BNE @ret                    ; printing the prompt itself; don't recurse
     INC CMD_LINE_COUNT
-
-    ; Check if we've printed a full screen in this command
     LDA CMD_LINE_COUNT
     CMP #LINES_PER_PAGE
-    BNE PRINT_NEWLINE_PAGED_DONE     ; Not at page boundary yet
-
-    ; We're about to scroll a full page - pause
-    JSR HANDLE_PAGE_BREAK
-
-    ; Reset counter for next page
+    BCC @ret                    ; not a full page yet
     STZ CMD_LINE_COUNT
-
-PRINT_NEWLINE_PAGED_DONE:
+    INC PAGE_IN_BREAK
+    PHX
+    PHY
+    JSR HANDLE_PAGE_BREAK
+    PLY
+    PLX
+    STZ PAGE_IN_BREAK
+@ret:
     RTS
 
 HANDLE_PAGE_BREAK:
@@ -894,15 +923,13 @@ HANDLE_PAGE_BREAK:
 PAGE_WAIT_KEY:
     JSR GET_KEYSTROKE           ; Check for key pressed
     BCC PAGE_WAIT_KEY           ; Loop if no key available
-    CMP #ASCII_CR               ; Enter to continue
-    BEQ PAGE_CONTINUE
-    CMP #ASCII_ESC              ; ESC to abort
-    BEQ PAGE_ABORT
-    JMP PAGE_WAIT_KEY           ; Wait for valid input
+    CMP #ASCII_ESC              ; ESC aborts; SPACE/ENTER/any other key advances a page
+    BNE PAGE_CONTINUE
 
 PAGE_ABORT:
     LDA #1
-    STA PAGE_ABORT_FLAG         ; Set abort flag
+    STA PAGE_ABORT_FLAG         ; cooperative callers (MON dumps) stop entirely
+    STA PAGE_SUSPEND            ; others (BASIC/FORTH/TYPE) stop pausing, rest scrolls
 
 PAGE_CONTINUE:
     ; Restore cursor state and reposition the displayed cursor
@@ -955,6 +982,18 @@ GET_KEYSTROKE:
     ; editor READ_COMMAND_LINE uppercases command lines, and BASIC's input
     ; vector points at a folding wrapper (KEY_UC) since its tokenizer needs
     ; uppercase keywords.
+    ; A submitted line (CR) starts a fresh command: reset the pager so each
+    ; command pages independently and the prompt/echo never accumulate. This is
+    ; the one universal "new command" signal (MON/DOS/ASM via READ_COMMAND_LINE,
+    ; BASIC/FORTH via their own $FF09 readers). PAGE_ENABLE is left untouched so a
+    ; future persistent "paging off" setting survives. Does not fire on no-key
+    ; polls, so a command that scans for a key mid-output won't reset itself.
+    CMP #ASCII_CR
+    BNE GET_KEY_HAVE
+    STZ CMD_LINE_COUNT
+    STZ PAGE_SUSPEND
+    STZ PAGE_ABORT_FLAG
+GET_KEY_HAVE:
     SEC                     ; Set carry to indicate character available
     RTS
 GET_NO_KEY:
@@ -3395,7 +3434,7 @@ MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
 MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
 ; (The boot sign-on lives in the DOS shell now -- see _DOS_SPLASH in dos.asm.)
-MSG_PAGE_PROMPT:     .BYTE "--MORE-- (ENTER)", 0
+MSG_PAGE_PROMPT:     .BYTE "--MORE-- (SPACE, ESC=STOP)", 0
 MSG_MODULE_FAIL:     .BYTE "MODULE NOT LOADED", $0D, $0A, 0
 
 ; ----------------------------------------------------------------

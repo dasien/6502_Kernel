@@ -200,8 +200,11 @@ DOS_SIGNATURE:
 ;        that left the VIC attribute latch on another colour, e.g. TERM after a
 ;        coloured BBS, no longer bleeds into the ] prompt), and a blank line is
 ;        printed on re-entry so the prompt clears row 0
+;   1.9  MORE folds into TYPE: the kernel now pages all output (system-wide
+;        --MORE--), so DOS's separate MORE pager was removed and CATALOG/TYPE
+;        page automatically
 DOS_VERSION:
-    .BYTE $01, $08                      ; version 1.8 (major, minor)
+    .BYTE $01, $09                      ; version 1.9 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -484,7 +487,7 @@ _DOS_DISPATCH:
     LDX #>KW_MORE
     JSR _DOS_VERB_MATCH
     BCS @n14
-    JMP _DOS_DO_MORE
+    JMP _DOS_DO_TYPE                    ; MORE == TYPE now: the kernel pages all output
 @n14:
     LDA #<KW_VERSION
     LDX #>KW_VERSION
@@ -1661,79 +1664,9 @@ _DOS_STR_EQ:
     CLC
     RTS
 
-; ----------------------------------------------------------------
-; _DOS_DO_MORE - MORE NAME : like TYPE, but pause every screenful
-; ----------------------------------------------------------------
-; On entry Y = delimiter after the verb. Pages after 22 lines: prints a prompt,
-; waits for a key (ESC aborts, anything else continues). DOS_TMP = line count.
-_DOS_DO_MORE:
-    JSR _DOS_ARGSTART
-    BCC :+
-    JMP @noname
-:
-    LDX MON_CMDLEN                      ; null-terminate the name
-    LDA #$00
-    STA MON_CMDBUF,X
-    TYA
-    LDX #>MON_CMDBUF
-    LDY #$00                            ; read mode
-    JSR _FS_OPEN
-    BCS @notfound
-    JSR K_PRINT_NEWLINE
-    STZ DOS_TMP                         ; lines printed on this page
-@rd:
-    JSR _FS_GETB
-    BCS @eof
-    CMP #ASCII_CR                       ; ignore CR (newline on LF, handles CRLF/LF)
-    BEQ @rd
-    CMP #ASCII_LF
-    BNE @putc
-    JSR K_PRINT_NEWLINE
-    INC DOS_TMP
-    LDA DOS_TMP
-    CMP #22                             ; full screenful?
-    BCC @rd
-    JSR _DOS_PAGE_PAUSE                 ; carry set = user pressed ESC (abort)
-    BCS @abort
-    STZ DOS_TMP
-    BRA @rd
-@putc:
-    JSR K_PRINT_CHAR
-    BRA @rd
-@abort:
-    JSR K_PRINT_NEWLINE
-@eof:
-    JMP _FS_CLOSE                       ; tail (returns to _DOS_PROMPT)
-@notfound:
-@noname:
-    JMP _DOS_PERR_NOFILE
-
-; _DOS_PAGE_PAUSE - print the pager prompt, wait for a key. Carry set if the key
-; was ESC (caller should abort); carry clear to continue. Clears the prompt line.
-_DOS_PAGE_PAUSE:
-    LDA #<MSG_DOS_MORE
-    LDX #>MSG_DOS_MORE
-    JSR _DOS_PMSG
-    JSR _DOS_WAITKEY
-    PHA
-    LDA #ASCII_CR                       ; return to column 0 and clear the prompt
-    JSR K_PRINT_CHAR
-    LDX #$08
-@clr:
-    LDA #ASCII_SPACE
-    JSR K_PRINT_CHAR
-    DEX
-    BNE @clr
-    LDA #ASCII_CR
-    JSR K_PRINT_CHAR
-    PLA
-    CMP #$1B                            ; ESC?
-    BEQ @esc
-    CLC
-    RTS
-@esc:
-    SEC
-    RTS
+; MORE is dispatched to _DOS_DO_TYPE: the kernel now pages all output (PAGE_ADVANCE),
+; so "TYPE" and "MORE" behave identically. The old _DOS_DO_MORE / _DOS_PAGE_PAUSE
+; pager was removed in favour of that single shared pager.
 
 ; _DOS_WAITKEY - block until a key is pressed; return it in A.
 _DOS_WAITKEY:
@@ -1915,7 +1848,6 @@ MSG_DOS_CATHDR:  .BYTE "NAME            BYTES", $0D, $0A, 0
 MSG_DOS_FREE1:   .BYTE "DISK FREE: ", 0
 MSG_DOS_FREE2:   .BYTE " BYTES (", 0
 MSG_DOS_FREE3:   .BYTE " KB)", $0D, $0A, 0
-MSG_DOS_MORE:    .BYTE "--MORE--", 0
 MSG_DOS_DIRTAG:  .BYTE "<D>", 0
 MSG_DOS_DRAWER_NEW:  .BYTE "DRAWER CREATED", $0D, $0A, 0
 MSG_DOS_DRAWER_DROP: .BYTE "DRAWER DROPPED", $0D, $0A, 0
