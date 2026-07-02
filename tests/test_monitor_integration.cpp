@@ -523,6 +523,19 @@ private:
             tests_passed++;
         }
         std::cout << std::endl;
+
+        // CLEAR_SCREEN clears in the default colour even when the latch was left
+        // on another colour, so the whole plane (incl. the blank cursor cell) is
+        // $02 -- otherwise the block cursor, drawn from its cell's colour, is stale.
+        computer.getMemory()->write(0xFE31, 0x07);   // white latch again
+        sendCommand("CLS");
+        bool clr = (cols[80 * 12 + 40] == 0x02);      // a mid-screen blank cell
+        std::cout << std::left << std::setw(30) << "CLS clears in default colour"
+                  << ": " << (clr ? "PASS" : "FAIL");
+        if (!clr) { std::cout << " (colour=$" << std::hex << std::uppercase
+                              << (int)cols[80 * 12 + 40] << std::dec << ")"; tests_failed++; }
+        else tests_passed++;
+        std::cout << std::endl;
     }
 
     // System-wide pager: a file longer than one screen must pause with --MORE--

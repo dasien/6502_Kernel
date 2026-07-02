@@ -241,6 +241,10 @@
 ;                   ($FF30): prints "syntax"<TAB>"description" with the TAB padded
 ;                   to a fixed column. Lets the DOS HELP list use the monitor's
 ;                   two-column layout instead of a flat list (no duplicated code).
+; 2026-07-02  v3.20 CLEAR_SCREEN clears in the default attribute ($02): a program
+;                   that left the color latch on another color (e.g. TERM after a
+;                   BBS) now hands back a default-colored screen, so the cursor
+;                   (drawn from its cell's stored color) isn't a stale color.
 ;
 ; ================================================================
 
@@ -754,7 +758,14 @@ SCROLL_SCREEN:
     RTS
 
 ; Clear the whole screen (chip-side fill) and home the cursor. Uses A.
+; Clears in the default attribute ($02, green on black): the VIC fills the color
+; plane from the latch, so a program that left the latch on another color (e.g.
+; TERM after a colored BBS) hands back a default-colored screen -- including the
+; blank cell under the cursor, whose stored color the host draws the cursor from.
+; Programs that clear in their own color drive VREG_CMD directly, not this ABI.
 CLEAR_SCREEN:
+    LDA #$02
+    STA VREG_ATTR
     LDA #ASCII_SPACE
     STA VREG_CMD_PARAM
     LDA #VCMD_CLEAR
