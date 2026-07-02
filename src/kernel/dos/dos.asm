@@ -196,8 +196,12 @@ DOS_SIGNATURE:
 ;   1.7  path resolution no longer clobbers the caller's buffer: DRAWER/FILE
 ;        restores the '/' after parsing, so a reused path (e.g. re-reading
 ;        SYSTEM/IRC.LST every redial) resolves correctly on the 2nd+ call
+;   1.8  return-to-DOS polish: the prompt reclaims the default colour (a program
+;        that left the VIC attribute latch on another colour, e.g. TERM after a
+;        coloured BBS, no longer bleeds into the ] prompt), and a blank line is
+;        printed on re-entry so the prompt clears row 0
 DOS_VERSION:
-    .BYTE $01, $07                      ; version 1.7 (major, minor)
+    .BYTE $01, $08                      ; version 1.8 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -350,7 +354,13 @@ _BOX_VERFREE:
 _DOS_WARM:
     LDX #$FF
     TXS
+    JSR K_PRINT_NEWLINE                 ; one blank line on return so the prompt
+                                        ; clears row 0 (a program just cleared+homed)
 _DOS_PROMPT:
+    LDA #$02                            ; reclaim the default colour (green on black):
+    JSR K_SET_ATTR                     ; a launched program (TERM following a BBS's
+                                       ; ANSI colours, EDIT, a game) may have left the
+                                       ; VIC attribute latch on another colour
     LDA DOS_CWD_NAME                    ; in a drawer? show its name before ']'
     BEQ @bracket
     LDA #<DOS_CWD_NAME

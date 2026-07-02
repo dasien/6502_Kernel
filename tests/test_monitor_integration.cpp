@@ -39,6 +39,7 @@ public:
         // ROM modules (launched from the DOS by name, returning to the DOS), then
         // drop into the monitor (MON) for the pure-monitor command tests.
         testDosShell();
+        testPromptColorReset();
         testDosFileVerbs();
         testDosTransfer();
         testDosUtils();
@@ -249,7 +250,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.7", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.8", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -477,6 +478,30 @@ private:
     // returns to the DOS prompt on ESC.
     void launchAsm() {
         sendCommand("ASM", 200000);
+    }
+
+    // Regression: after a program leaves the VIC attribute latch on a non-default
+    // colour (as TERM does when a BBS ends on white), the DOS prompt must reclaim
+    // the default green ($02) rather than inherit the stale colour.
+    void testPromptColorReset() {
+        computer.getMemory()->write(0xFE31, 0x07);   // white latch, as if left by TERM
+        sendCommand("");                              // empty line -> DOS reprints ']'
+        auto& chars = computer.getVideoChip()->getScreenBuffer();
+        auto& cols  = computer.getVideoChip()->getColorBuffer();
+        int idx = -1;
+        for (int i = 0; i < Computer::VIC::kScreenSize; ++i)
+            if (chars[i] == ']') idx = i;             // the newest (bottom) prompt
+        bool ok = (idx >= 0 && cols[idx] == 0x02);
+        std::cout << std::left << std::setw(30) << "Prompt reclaims default colour"
+                  << ": " << (ok ? "PASS" : "FAIL");
+        if (!ok) {
+            std::cout << " (]' colour=$" << std::hex << std::uppercase
+                      << (idx >= 0 ? (int)cols[idx] : -1) << std::dec << ")";
+            tests_failed++;
+        } else {
+            tests_passed++;
+        }
+        std::cout << std::endl;
     }
 
     // Read a byte straight from emulator RAM - robust, unlike screen scraping.
