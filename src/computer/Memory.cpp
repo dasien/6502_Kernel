@@ -3,6 +3,7 @@
 #include "PIA.h"
 #include "BlockDevice.h"
 #include "Acia.h"
+#include "Sid.h"
 
 #include <algorithm>
 
@@ -45,6 +46,12 @@ namespace Computer
         if (video_chip_ && VIC::isVideoRegAddress(address))
         {
             return video_chip_->read(address);
+        }
+
+        // Check if this is a SID sound-chip register read ($FE38-$FE54).
+        if (sid_ && Sid::isSidAddress(address))
+        {
+            return sid_->read(address);
         }
 
         // DOS ROM: always-mapped read-only region. Falls through to RAM when no
@@ -104,6 +111,13 @@ namespace Computer
             return;
         }
 
+        // Check if this is a SID sound-chip register write ($FE38-$FE54).
+        if (sid_ && Sid::isSidAddress(address))
+        {
+            sid_->write(address, value);
+            return;
+        }
+
         // DOS ROM is read-only: ignore writes when an image is installed.
         if (!dos_rom_.empty() && address >= kDosRomStart && address <= kDosRomEnd)
         {
@@ -159,6 +173,11 @@ namespace Computer
     void Memory::setAcia(Acia *acia)
     {
         acia_ = acia;
+    }
+
+    void Memory::setSid(Sid *sid)
+    {
+        sid_ = sid;
     }
 
     void Memory::loadBank(uint8_t bank, const std::vector<uint8_t> &image)

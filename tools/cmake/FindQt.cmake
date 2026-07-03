@@ -32,6 +32,25 @@ else()
     message(STATUS "Using Qt6")
 endif()
 
+# Optional Qt Multimedia (audio output for the SID sound chip). If it is not
+# installed the emulator still builds -- it just runs without sound.
+if(QT_FOUND)
+    if(QT_VERSION EQUAL 6)
+        find_package(Qt6 QUIET COMPONENTS Multimedia)
+        set(_qt_mm_found ${Qt6Multimedia_FOUND})
+    else()
+        find_package(Qt5 QUIET COMPONENTS Multimedia)
+        set(_qt_mm_found ${Qt5Multimedia_FOUND})
+    endif()
+    if(_qt_mm_found)
+        set(QT_MULTIMEDIA_FOUND TRUE CACHE BOOL "Qt Multimedia found")
+        message(STATUS "Qt Multimedia found - SID audio enabled")
+    else()
+        set(QT_MULTIMEDIA_FOUND FALSE CACHE BOOL "Qt Multimedia found")
+        message(STATUS "Qt Multimedia NOT found - building without SID audio")
+    endif()
+endif()
+
 # Enable Qt's MOC (Meta-Object Compiler) if Qt is found
 if(QT_FOUND)
     set(CMAKE_AUTOMOC ON)

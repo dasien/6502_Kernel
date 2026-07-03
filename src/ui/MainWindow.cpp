@@ -44,6 +44,11 @@ MainWindow::MainWindow(QWidget* parent)
     // Emulated Hayes modem: bridges the ACIA to TCP (the terminal dials BBSes).
     modem_ = new Modem(computer_->getAcia(), this);
 
+#ifdef HAVE_SID_AUDIO
+    // SID sound chip: stream its synthesized PCM to the default audio output.
+    sid_audio_ = new SidAudio(computer_->getSid(), this);
+#endif
+
     display_widget_->startRefresh();
     display_widget_->setFocus();
     is_running_ = true;

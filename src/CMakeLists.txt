@@ -13,6 +13,7 @@ set(SOURCES
     computer/Computer6502.cpp
     computer/VIC.cpp
     computer/PIA.cpp
+    computer/Sid.cpp
     computer/MapFileParser.cpp
 )
 
@@ -34,6 +35,12 @@ if(QT_FOUND)
         ${CMAKE_SOURCE_DIR}/include/ui/MainWindow.h
         ${CMAKE_SOURCE_DIR}/include/computer/Modem.h
     )
+
+    # SID audio bridge (QAudioSink) is only built when Qt Multimedia is present.
+    if(QT_MULTIMEDIA_FOUND)
+        list(APPEND SOURCES computer/SidAudio.cpp)
+        list(APPEND QT_HEADERS ${CMAKE_SOURCE_DIR}/include/computer/SidAudio.h)
+    endif()
 endif()
 
 # Create executable
@@ -53,9 +60,19 @@ if(QT_FOUND)
     else()
         target_link_libraries(6502-kernel Qt5::Core Qt5::Widgets Qt5::Network)
     endif()
-    
+
     # Define QT_GUI to enable Qt code paths
     target_compile_definitions(6502-kernel PRIVATE QT_GUI=1)
+
+    # Link Qt Multimedia and enable the SID audio bridge when available.
+    if(QT_MULTIMEDIA_FOUND)
+        if(QT_VERSION EQUAL 6)
+            target_link_libraries(6502-kernel Qt6::Multimedia)
+        else()
+            target_link_libraries(6502-kernel Qt5::Multimedia)
+        endif()
+        target_compile_definitions(6502-kernel PRIVATE HAVE_SID_AUDIO=1)
+    endif()
 else()
     message(STATUS "Building console-only version (Qt not found)")
 endif()

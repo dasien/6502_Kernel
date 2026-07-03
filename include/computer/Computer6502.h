@@ -15,6 +15,7 @@
 #include "PIA.h"
 #include "BlockDevice.h"
 #include "Acia.h"
+#include "Sid.h"
 
 namespace Computer
 {
@@ -113,6 +114,16 @@ namespace Computer
         }
 
         /**
+         * @brief Get pointer to the SID sound chip
+         * @return Sid* Pointer to the $FE38-$FE54 sound chip
+         * @note Used by the GUI audio bridge (QAudioSink) and by tests
+         */
+        Sid *getSid()
+        {
+            return &sid;
+        }
+
+        /**
          * @brief Get pointer to the peripheral interface adapter (PIA)
          * @return PIA* Pointer to the PIA for keyboard and file operations
          * @note Used primarily for testing and input simulation
@@ -154,6 +165,7 @@ namespace Computer
         PIA pia; ///< Peripheral Interface Adapter for I/O
         BlockDevice block_device; ///< Block device backing the FAT16 disk image
         Acia acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
+        Sid sid; ///< SID sound chip ($FE38-$FE54)
         Memory memory; ///< 64KB system memory with memory-mapped I/O
         CPU6502 cpu; ///< MOS 65C02 microprocessor
         ResetCircuit reset_circuit; ///< Reset circuit for system initialization

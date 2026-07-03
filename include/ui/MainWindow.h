@@ -10,6 +10,9 @@
 #include "Computer6502.h"
 #include "DisplayWidget.h"
 #include "Modem.h"
+#ifdef HAVE_SID_AUDIO
+#include "SidAudio.h"
+#endif
 
 class MainWindow : public QMainWindow
 {
@@ -62,6 +65,9 @@ private:
     // Computer system
     Computer::Computer6502* computer_;
     Modem* modem_;        ///< emulated Hayes modem bridging the ACIA to TCP
+#ifdef HAVE_SID_AUDIO
+    SidAudio* sid_audio_ = nullptr; ///< SID sound-chip audio output bridge
+#endif
     QTimer* execution_timer_;
     QTimer* irq_timer_;   ///< drives the PIA interval-timer IRQ at ~60 Hz
     

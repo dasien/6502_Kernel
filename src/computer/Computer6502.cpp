@@ -27,6 +27,9 @@ namespace Computer
 
         // Route the ACIA (serial) registers ($FE29-$FE2C) through memory.
         memory.setAcia(&acia);
+
+        // Route the SID sound-chip registers ($FE38-$FE54) through memory.
+        memory.setSid(&sid);
     }
 
     void Computer6502::showFatalError(const std::string& message)

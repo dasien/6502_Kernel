@@ -247,6 +247,23 @@ target_include_directories(vic_charplane_tests PRIVATE
 
 target_compile_features(vic_charplane_tests PRIVATE cxx_std_20)
 
+# SID sound-chip unit test: register map + oscillator/ADSR synthesis. Self-
+# contained (Sid has no other device deps), like the VIC char-plane test.
+add_executable(sid_tests
+    test_sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+)
+
+target_link_libraries(sid_tests gtest_main gtest)
+
+target_include_directories(sid_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(sid_tests PRIVATE cxx_std_20)
+
 # Headless test of the 6502 serial terminal's ANSI engine (programs/term).
 # Runs the real TERM blob; the C++ side feeds ANSI and asserts on the screen.
 add_executable(term_ansi_tests
@@ -410,6 +427,10 @@ add_test(NAME irc
 # Add the VIC character-plane (8-bit CP437) unit test to CTest
 add_test(NAME vic_charplane
     COMMAND vic_charplane_tests)
+
+# Add the SID sound-chip unit test to CTest
+add_test(NAME sid
+    COMMAND sid_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom

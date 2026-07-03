@@ -16,6 +16,7 @@ namespace Computer
     class PIA;
     class BlockDevice;
     class Acia;
+    class Sid;
 
     /**
      * @class Memory
@@ -132,6 +133,12 @@ namespace Computer
         void setAcia(Acia *acia);
 
         /**
+         * @brief Set or update the SID sound chip for memory-mapped I/O
+         * @param sid Pointer to Sid instance ($FE38-$FE54)
+         */
+        void setSid(Sid *sid);
+
+        /**
          * @brief Install the always-mapped DOS ROM image ($9000-$AFFF)
          * @param image DOS ROM image; truncated/zero-padded to 8KB
          * @note Once installed the region is read-only (writes ignored). Passing
@@ -176,6 +183,7 @@ namespace Computer
         PIA *pia_;                    ///< Pointer to PIA for memory-mapped peripheral I/O
         BlockDevice *block_device_ = nullptr; ///< Block device ($FE24-$FE28), or null
         Acia *acia_ = nullptr;                ///< Serial ACIA ($FE29-$FE2C), or null
+        Sid *sid_ = nullptr;                  ///< SID sound chip ($FE38-$FE54), or null
 
         /// Module ROM images, indexed by bank (1..255). Each entry is either
         /// empty (no module installed) or exactly kModuleWindowSize bytes.
