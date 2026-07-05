@@ -36,6 +36,7 @@ add_executable(cpu_alu_tests
     test_cpu_alu.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -59,6 +60,7 @@ target_compile_features(cpu_alu_tests PRIVATE cxx_std_20)
 add_executable(memory_banking_tests
     test_memory_banking.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -84,6 +86,7 @@ target_compile_features(memory_banking_tests PRIVATE cxx_std_20)
 add_executable(block_device_tests
     test_block_device.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -111,6 +114,7 @@ add_executable(dos_blockio_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -140,6 +144,7 @@ add_executable(dos_fat16_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -168,6 +173,7 @@ add_executable(acia_xmodem_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -195,6 +201,7 @@ add_executable(print_char_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -271,6 +278,7 @@ add_executable(term_ansi_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -296,6 +304,7 @@ add_executable(term_xmodem_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -321,6 +330,7 @@ add_executable(irc_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -346,6 +356,7 @@ add_executable(monitor_integration_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp

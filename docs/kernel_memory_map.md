@@ -140,6 +140,24 @@ background (0–7), bits 2–0 foreground (0–7). Power-on/clear default is `$0
 (`$0276/$0277`) and writes the screen through this port; `K_SET_ATTR` (`$FF2D`)
 sets the color latch.
 
+## Sound (SID) register port (`$FE38-$FE54`)
+
+A software sound chip modeled on the MOS 6581/8580 SID: the real 29-register
+layout (three voices + filter) relocated from `$D400` to `$FE38`, so SID
+knowledge and music transfer directly. Per voice (V1 `$FE38`, V2 `$FE3F`,
+V3 `$FE46`; 7 registers each): `FREQ_LO/HI`, `PW_LO/HI` (12-bit pulse width),
+`CONTROL` (bit0 gate, bit1 sync, bit2 ring, bit3 test, bit4 triangle, bit5
+sawtooth, bit6 pulse, bit7 noise), `ATK/DEC`, `SUS/REL`. Global: `FC_LO`/`FC_HI`
+(11-bit cutoff, `$FE4D/4E`), `RES_FILT` (resonance + per-voice routing, `$FE4F`),
+`MODE_VOL` (filter mode LP/BP/HP + master volume, `$FE50`), and read-only
+`OSC3`/`ENV3` voice-3 read-back (`$FE53/54`).
+
+The host synthesizes 44.1 kHz PCM from the register state and plays it through
+Qt (`SidAudio`/`QAudioSink`). Ring/sync modulation are not modeled. The kernel
+uses voice 1 for the system beep and the `K_SOUND_TONE`/`K_SOUND_OFF` ABI; ASCII
+BEL (`$07`) rings a short non-blocking beep (gated off by the timer IRQ). All
+kernel sound honors the `SOUND_ENABLE` zero-page flag (`$29`, default on).
+
 ## I/O — PIA (`$FE00-$FE23`)
 
 The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region (the kernel just
@@ -176,11 +194,11 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 
 | Segment | Range | Purpose |
 |---------|-------|---------|
-| `CODE` | `$E000-$EF62` (3939 B) | Monitor code and data |
-| `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK`) |
-| `JUMPS` | `$FF00-$FF2F` (48 B) | Kernel API jump table (16 entries) |
+| `CODE` | `$E000-$EF44` (3909 B) | Monitor code and data |
+| `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK` + VIC + SID) |
+| `JUMPS` | `$FF00-$FF38` (57 B) | Kernel API jump table (19 entries) |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
-| (free) | ~`$EF63-$FDFF` | ~3.6 KB unused |
+| (free) | ~`$EF45-$FDFF` | ~3.6 KB unused |
 
 ### Kernel API jump table (`$FF00`)
 
@@ -203,6 +221,8 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 | `$FF2A` | `K_PARSE_DEC` | `PARSE_DEC_ABI` — parse a decimal string from `MON_CMDBUF` |
 | `$FF2D` | `K_SET_ATTR` | `SET_ATTR` — set the color/attribute latch (`VREG_ATTR`) |
 | `$FF30` | `K_PRINT_HELP_LINE` | `PRINT_HELP_LINE` — print `"syntax"`<TAB>`"desc"` (TAB pads to a fixed column) for two-column help listings |
+| `$FF33` | `K_SOUND_TONE` | `SOUND_TONE` — play a tone on SID voice 1 (A = freq low, X = freq high); honors `SOUND_ENABLE` |
+| `$FF36` | `K_SOUND_OFF` | `SOUND_OFF` — stop voice 1 (gate off) |
 
 The jump table is also the **module ABI**: a ROM module reaches kernel services
 only through these entries, so it is independent of where the kernel's internal

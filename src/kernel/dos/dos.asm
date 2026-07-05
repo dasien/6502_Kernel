@@ -218,8 +218,9 @@ DOS_SIGNATURE:
 ;        (tries the bare name first; only appends when the name has no extension)
 ;   1.12 launch-by-name passes the command tail to the program in DOS_ARGBUF
 ;        ($0382), so e.g. "EDIT SYSTEM/DIAL.LST" opens that file
+;   1.13 kernel SID sound chip: BEL beeps; K_SOUND_TONE/OFF ABI (kernel v3.21)
 DOS_VERSION:
-    .BYTE $01, $0C                      ; version 1.12 (major, minor)
+    .BYTE $01, $0D                      ; version 1.13 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door

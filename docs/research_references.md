@@ -86,6 +86,17 @@ https://c64os.com/post/c64kernalrom#scr_setmsg
 ## Unsorted - Please sort these into relevant sections above or create new ones.
 https://github.com/davidgiven/cpm65
 
+## Sound — MOS 6581/8580 SID
+(Datasheets and reverse-engineering notes behind the software SID. Docs/behavior
+only — we wrote the synth from scratch and deliberately did NOT port reSID (GPL).)
+- SID 6581/8580 datasheet (register map, waveforms, ADSR rate tables, filter)
+  - what: the chip our `Sid` model targets
+  - relevant: register layout relocated to `$FE38`; envelope/filter behavior
+  - license: docs-only
+- reSID (Dag Lem) — studied for *behavior*, NOT copied
+  - relevant: reference for combined-waveform / filter nonlinearity notes
+  - license: GPL — **do not port code**; behavior reference only
+
 ## Games / Assembler Programs to port
 https://github.com/jefftranter/6502/tree/master/asm/KIM-1/TheFirstBookOfKIM/Games
 https://www.linusakesson.net/software/zeugma/index.php

@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.17
+; Version:      3.21
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -245,6 +245,11 @@
 ;                   that left the color latch on another color (e.g. TERM after a
 ;                   BBS) now hands back a default-colored screen, so the cursor
 ;                   (drawn from its cell's stored color) isn't a stale color.
+; 2026-07-05  v3.21 SID sound-chip integration: ASCII BEL ($07) rings a short
+;                   non-blocking beep (auto-gated-off by the timer IRQ); new sound
+;                   ABI K_SOUND_TONE ($FF33) / K_SOUND_OFF ($FF36) plays/stops a
+;                   tone on voice 1. Both honor SOUND_ENABLE (default on; the hook
+;                   for a future SETTINGS mute).
 ;
 ; ================================================================
 
@@ -288,6 +293,8 @@ MOVE_DEST_LO       = $25           ; M: captured original destination low (copy 
 MOVE_DEST_HI       = $26           ; M: captured original destination high
 MOVE_DEND_LO       = $27           ; M: destination end = dest + (end - start), low
 MOVE_DEND_HI       = $28           ; M: destination end high
+SOUND_ENABLE       = $29           ; 1 = system sound on (BEL beep + sound ABI); 0 = muted
+BEEP_TIMER         = $2A           ; jiffies until the BEL beep auto-gates-off (0 = idle)
 DEC_TEMP_LO        = $35           ; Decimal conversion temporary low byte
 DEC_TEMP_HI        = $36           ; Decimal conversion temporary high byte
 DEC_DIGIT_IDX      = $37           ; Decimal digit index/counter
@@ -359,6 +366,7 @@ ASCII_COLON        = $3A           ; Colon ':'
 ASCII_COMMA        = $2C           ; Comma ',' (field separator)
 ASCII_DASH         = $2D           ; Dash '-'
 ASCII_BACKSPACE    = $08           ; Backspace character
+ASCII_BEL          = $07           ; Bell (rings a short beep via the SID)
 ASCII_DELETE       = $7F           ; Delete character
 ASCII_ESC          = $1B           ; Escape character
 ASCII_DOT          = $2E           ; Dot '.' character
@@ -432,6 +440,19 @@ BASIC_IRQ_FLAGS    = $DF           ; EhBASIC IrqBase (zero page): b7=enabled, b5
 INT_ENABLED        = $80           ; "interrupt enabled" bit in the above
 INT_HAPPENED       = $20           ; "interrupt happened" bit (set by the ISR for BASIC)
 
+; SID sound chip ($FE38-$FE54; real 6581/8580 register layout). Voice 1 is used
+; for the system beep and the K_SOUND_TONE/K_SOUND_OFF ABI.
+SID_V1_FREQLO      = $FE38         ; voice 1 frequency low
+SID_V1_FREQHI      = $FE39         ; voice 1 frequency high
+SID_V1_CTRL        = $FE3C         ; voice 1 control: b0 gate, b4 triangle
+SID_V1_AD          = $FE3D         ; voice 1 attack (hi) / decay (lo)
+SID_V1_SR          = $FE3E         ; voice 1 sustain (hi) / release (lo)
+SID_MODEVOL        = $FE50         ; filter mode (hi nibble) + master volume (lo)
+SID_CTRL_TONE      = $11           ; triangle ($10) + gate ($01): a clean beep tone
+BEEP_FREQ_LO       = $AC           ; $39AC ~= 880 Hz at the nominal 1 MHz SID clock
+BEEP_FREQ_HI       = $39
+BEEP_LEN_JIFFIES   = $08           ; beep duration in ~60 Hz timer ticks (~130 ms)
+
 ; ================================================================
 ; KERNEL PROGRAM START
 ; ================================================================
@@ -497,6 +518,8 @@ ZP_CLEAR_LOOP:
     STZ PAGE_SUSPEND
     STZ PAGE_ABORT_FLAG
     STZ PAGE_IN_BREAK
+    STA SOUND_ENABLE            ; A still $01: system sound on by default
+    STZ BEEP_TIMER              ; no beep pending
 
     ; Initialize monitor variables and state
     LDX #$E9                    ; Clear monitor area $0200-$02E9 (234 bytes)
@@ -808,6 +831,9 @@ PRINT_CHAR_CHECK_BS:
     CMP #ASCII_BACKSPACE        ; Is it backspace?
     BEQ PRINT_CHAR_BACKSPACE    ; Handle backspace
 
+    CMP #ASCII_BEL              ; Is it BEL ($07)?
+    BEQ PRINT_CHAR_BELL         ; ring the bell (non-blocking beep), print nothing
+
     ; Other control characters (< space) produce no glyph -- terminal behavior.
     ; This drops things like BELL ($07), which EhBASIC emits on every keypress
     ; once its 71-char input buffer is full; rendering it would show garbage.
@@ -836,6 +862,11 @@ PRINT_CHAR_ADV_DONE:
     JSR UPDATE_CURSOR           ; move the displayed cursor to the new position
 PRINT_CHAR_DONE:
     PLA                         ; restore A = the character that was printed
+    RTS
+
+PRINT_CHAR_BELL:
+    JSR BEEP                    ; start a short beep (preserves X and Y)
+    PLA                         ; restore A = $07 (BEL)
     RTS
 
 PRINT_CHAR_NEWLINE:
@@ -3289,6 +3320,15 @@ MONITOR_SKIP_SAVE:
 IRQ_HANDLER:
     PHA                         ; preserve A (X/Y untouched)
     STA TIMER_IRQ_ACK           ; acknowledge the timer (value ignored)
+
+    ; Count down an in-progress BEL beep and gate it off when it expires.
+    LDA BEEP_TIMER
+    BEQ IRQ_CHECK_BASIC         ; 0 = no beep running
+    DEC BEEP_TIMER
+    BNE IRQ_CHECK_BASIC         ; still sounding
+    STZ SID_V1_CTRL             ; duration elapsed: gate off voice 1 (silence)
+
+IRQ_CHECK_BASIC:
     LDA BASIC_IRQ_FLAGS         ; is BASIC's ON IRQ enabled?
     AND #INT_ENABLED
     BEQ IRQ_HANDLER_DONE        ; no -> nothing more to do
@@ -3317,6 +3357,63 @@ NMI_HANDLER_BREAK:
     TXS
     CLI                         ; monitor runs with interrupts enabled
     JMP MONITOR_MAIN           ; back to a fresh monitor prompt
+
+; ================================================================
+; SOUND ROUTINES (SID voice 1)
+; ================================================================
+; All honor SOUND_ENABLE (0 = muted). Voice 1 is configured for a clean tone:
+; instant attack, full sustain, no filter, master volume 15.
+
+; SOUND_VOICE1 - set voice 1's envelope + volume for a sustained tone. Leaves the
+; control register alone (the caller gates it). Uses A only; preserves X and Y.
+SOUND_VOICE1:
+    LDA #$00
+    STA SID_V1_AD               ; attack 0, decay 0
+    LDA #$F0
+    STA SID_V1_SR               ; sustain 15, release 0
+    LDA #$0F
+    STA SID_MODEVOL             ; volume 15, filter off
+    RTS
+
+; BEEP - start a short (~130 ms) fixed-pitch beep on voice 1. Non-blocking: the
+; timer IRQ gates it off after BEEP_LEN_JIFFIES ticks. Preserves X and Y (called
+; from PRINT_CHAR for BEL).
+BEEP:
+    LDA SOUND_ENABLE
+    BEQ BEEP_DONE               ; muted -> do nothing
+    LDA #BEEP_FREQ_LO
+    STA SID_V1_FREQLO
+    LDA #BEEP_FREQ_HI
+    STA SID_V1_FREQHI
+    JSR SOUND_VOICE1
+    LDA #SID_CTRL_TONE          ; triangle + gate on
+    STA SID_V1_CTRL
+    LDA #BEEP_LEN_JIFFIES
+    STA BEEP_TIMER              ; the timer IRQ gates it off
+BEEP_DONE:
+    RTS
+
+; SOUND_TONE ($FF33) - play a sustained tone on voice 1 until SOUND_OFF.
+; Input: A = frequency low byte, X = frequency high byte. Clobbers A.
+SOUND_TONE:
+    STA SID_V1_FREQLO           ; store the frequency first (harmless if muted)
+    STX SID_V1_FREQHI
+    STZ BEEP_TIMER              ; not a timed beep; the caller controls duration
+    LDA SOUND_ENABLE
+    BEQ SOUND_TONE_MUTE         ; muted -> leave it silent
+    JSR SOUND_VOICE1            ; envelope + volume
+    LDA #SID_CTRL_TONE          ; triangle + gate on
+    STA SID_V1_CTRL
+    RTS
+SOUND_TONE_MUTE:
+    STZ SID_V1_CTRL             ; ensure the voice stays off
+    RTS
+
+; SOUND_OFF ($FF36) - stop voice 1 (gate off, silence).
+SOUND_OFF:
+    STZ BEEP_TIMER
+    STZ SID_V1_CTRL
+    RTS
 
 ; ================================================================
 ; COMMAND JUMP TABLES - For fast command dispatch
@@ -3542,6 +3639,8 @@ K_PRINT_DEC:     JMP PRINT_DEC          ; $FF27 - print a 32-bit value in decima
 K_PARSE_DEC:     JMP PARSE_DEC_ABI      ; $FF2A - parse a decimal string from MON_CMDBUF
 K_SET_ATTR:      JMP SET_ATTR           ; $FF2D - set the color/attribute latch (VREG_ATTR)
 K_PRINT_HELP_LINE: JMP PRINT_HELP_LINE  ; $FF30 - print "syntax"<TAB>"desc" (TAB pads to col 22)
+K_SOUND_TONE:    JMP SOUND_TONE         ; $FF33 - play a tone on voice 1 (A=freq lo, X=freq hi)
+K_SOUND_OFF:     JMP SOUND_OFF          ; $FF36 - stop voice 1 (gate off)
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

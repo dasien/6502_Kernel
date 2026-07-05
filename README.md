@@ -258,6 +258,12 @@ or studied:
   `vga-text-mode-fonts` collection (<https://int10h.org/>), gratefully
   acknowledged; the pristine `VGA8.F16` and the header generator are under
   `vendor/cp437font/`.
+- **MOS 6581/8580 SID** — the sound chip our software SID is modeled on (three
+  voices, ADSR, multimode filter). The synthesizer is written from scratch from
+  public SID documentation (register layout, envelope rates, filter behavior) —
+  **no reSID or other GPL code is used**. With thanks to the SID/C64 community
+  whose datasheets and reverse-engineering notes made a faithful model possible.
+  See `docs/sound_design.md`.
 
 See `docs/cc65_to_prg.md` for the C-to-`.PRG` build pipeline.
 
