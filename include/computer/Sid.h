@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <array>
+#include <atomic>
 #include <mutex>
 
 namespace Computer
@@ -33,7 +34,9 @@ namespace Computer
      * This synthesizer is written from scratch from public SID documentation. It is
      * musically faithful (register-compatible, familiar pitches) but not cycle-exact
      * -- envelopes use a float exponential approximation rather than the segmented
-     * hardware counter. No reSID (or other GPL) code is used.
+     * hardware counter, the filter is a Chamberlin state-variable filter, and
+     * combined waveforms use a bitwise-AND approximation. Ring/sync modulation are
+     * not modeled. No reSID (or other GPL) code is used.
      *
      * @see Memory, Computer6502, Acia
      */
@@ -74,6 +77,20 @@ namespace Computer
         static constexpr uint8_t kCtrlSawtooth = 0x20;
         static constexpr uint8_t kCtrlPulse = 0x40;
         static constexpr uint8_t kCtrlNoise = 0x80;
+
+        // RES_FILT ($FE4F+... i.e. kRegResFilt): low nibble routes voices 1-3
+        // (bit0=v1, bit1=v2, bit2=v3, bit3=external) through the filter; high
+        // nibble is resonance.
+        static constexpr uint8_t kFiltVoice1 = 0x01;
+        static constexpr uint8_t kFiltVoice2 = 0x02;
+        static constexpr uint8_t kFiltVoice3 = 0x04;
+
+        // MODE_VOL: low nibble = master volume; high nibble selects filter mode
+        // and voice-3 disconnect.
+        static constexpr uint8_t kModeLowPass = 0x10;
+        static constexpr uint8_t kModeBandPass = 0x20;
+        static constexpr uint8_t kModeHighPass = 0x40;
+        static constexpr uint8_t kModeVoice3Off = 0x80;
 
         // Synthesis constants.
         static constexpr int kSampleRate = 44100;
@@ -120,6 +137,13 @@ namespace Computer
 
         // Audio-thread-private synthesis state.
         std::array<Voice, kNumVoices> voices_{};
+        double filt_ic1_ = 0.0;   ///< TPT state-variable filter integrator 1 state
+        double filt_ic2_ = 0.0;   ///< TPT state-variable filter integrator 2 state
+
+        // Voice-3 read-back, published from the audio thread for the OSC3/ENV3
+        // read-only registers (read on the CPU thread; slight staleness is fine).
+        std::atomic<uint8_t> osc3_val_{0};
+        std::atomic<uint8_t> env3_val_{0};
 
         // Per-voice synthesis helpers (operate on a register snapshot).
         static double oscillatorOutput(Voice &v, const uint8_t *vr);
