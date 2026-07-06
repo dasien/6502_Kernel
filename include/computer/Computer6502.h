@@ -16,6 +16,7 @@
 #include "BlockDevice.h"
 #include "Acia.h"
 #include "Sid.h"
+#include "Rtc.h"
 
 namespace Computer
 {
@@ -124,6 +125,16 @@ namespace Computer
         }
 
         /**
+         * @brief Get pointer to the real-time clock
+         * @return Rtc* Pointer to the $FE55-$FE5C RTC
+         * @note Used by tests to pin a known time via setTimeProvider
+         */
+        Rtc *getRtc()
+        {
+            return &rtc;
+        }
+
+        /**
          * @brief Get pointer to the peripheral interface adapter (PIA)
          * @return PIA* Pointer to the PIA for keyboard and file operations
          * @note Used primarily for testing and input simulation
@@ -166,6 +177,7 @@ namespace Computer
         BlockDevice block_device; ///< Block device backing the FAT16 disk image
         Acia acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
         Sid sid; ///< SID sound chip ($FE38-$FE54)
+        Rtc rtc; ///< real-time clock ($FE55-$FE5C)
         Memory memory; ///< 64KB system memory with memory-mapped I/O
         CPU6502 cpu; ///< MOS 65C02 microprocessor
         ResetCircuit reset_circuit; ///< Reset circuit for system initialization

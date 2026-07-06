@@ -37,6 +37,7 @@ add_executable(cpu_alu_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -61,6 +62,7 @@ add_executable(memory_banking_tests
     test_memory_banking.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -87,6 +89,7 @@ add_executable(block_device_tests
     test_block_device.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -115,6 +118,7 @@ add_executable(dos_blockio_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -145,6 +149,7 @@ add_executable(dos_fat16_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -174,6 +179,7 @@ add_executable(acia_xmodem_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -202,6 +208,7 @@ add_executable(print_char_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -271,6 +278,23 @@ target_include_directories(sid_tests PRIVATE
 
 target_compile_features(sid_tests PRIVATE cxx_std_20)
 
+# RTC unit test: register map + BCD host-time snapshot (injectable time source).
+# Self-contained (Rtc has no other device deps).
+add_executable(rtc_tests
+    test_rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+)
+
+target_link_libraries(rtc_tests gtest_main gtest)
+
+target_include_directories(rtc_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(rtc_tests PRIVATE cxx_std_20)
+
 # Headless test of the 6502 serial terminal's ANSI engine (programs/term).
 # Runs the real TERM blob; the C++ side feeds ANSI and asserts on the screen.
 add_executable(term_ansi_tests
@@ -279,6 +303,7 @@ add_executable(term_ansi_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -305,6 +330,7 @@ add_executable(term_xmodem_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -331,6 +357,7 @@ add_executable(irc_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -357,6 +384,7 @@ add_executable(monitor_integration_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
@@ -442,6 +470,10 @@ add_test(NAME vic_charplane
 # Add the SID sound-chip unit test to CTest
 add_test(NAME sid
     COMMAND sid_tests)
+
+# Add the RTC unit test to CTest
+add_test(NAME rtc
+    COMMAND rtc_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom

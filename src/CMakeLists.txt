@@ -14,6 +14,7 @@ set(SOURCES
     computer/VIC.cpp
     computer/PIA.cpp
     computer/Sid.cpp
+    computer/Rtc.cpp
     computer/MapFileParser.cpp
 )
 

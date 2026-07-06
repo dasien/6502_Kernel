@@ -4,6 +4,7 @@
 #include "BlockDevice.h"
 #include "Acia.h"
 #include "Sid.h"
+#include "Rtc.h"
 
 #include <algorithm>
 
@@ -52,6 +53,12 @@ namespace Computer
         if (sid_ && Sid::isSidAddress(address))
         {
             return sid_->read(address);
+        }
+
+        // Check if this is an RTC register read ($FE55-$FE5C).
+        if (rtc_ && Rtc::isRtcAddress(address))
+        {
+            return rtc_->read(address);
         }
 
         // DOS ROM: always-mapped read-only region. Falls through to RAM when no
@@ -118,6 +125,13 @@ namespace Computer
             return;
         }
 
+        // Check if this is an RTC register write ($FE55-$FE5C; RTC_LATCH).
+        if (rtc_ && Rtc::isRtcAddress(address))
+        {
+            rtc_->write(address, value);
+            return;
+        }
+
         // DOS ROM is read-only: ignore writes when an image is installed.
         if (!dos_rom_.empty() && address >= kDosRomStart && address <= kDosRomEnd)
         {
@@ -178,6 +192,11 @@ namespace Computer
     void Memory::setSid(Sid *sid)
     {
         sid_ = sid;
+    }
+
+    void Memory::setRtc(Rtc *rtc)
+    {
+        rtc_ = rtc;
     }
 
     void Memory::loadBank(uint8_t bank, const std::vector<uint8_t> &image)
