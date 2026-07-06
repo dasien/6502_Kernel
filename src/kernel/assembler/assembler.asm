@@ -524,6 +524,7 @@ CT_DONE:
 ;         any error (bad mnemonic, operand syntax, illegal mode, branch range).
 ; ----------------------------------------------------------------
 ASM_ONE:
+    JSR UPCASE_LINE                 ; case-insensitive: fold to uppercase first
     STZ ASM_IDX
     JSR ASM_PARSE_MNEM
     BCS AO_ERR
@@ -1166,6 +1167,7 @@ ANL_END:
 ; ----------------------------------------------------------------
 ASM2_LINE:
     JSR ASM2_STRIP_COMMENT
+    JSR UPCASE_LINE                 ; case-insensitive: fold to uppercase first
     STZ ASM_IDX
     JSR ASM2_SKIPSPC
     LDX ASM_IDX
@@ -2053,7 +2055,36 @@ ICL_YES:
 IS_ALNUM:
     JSR IS_ALPHA
     BCS ICL_YES
+    CMP #'_'                        ; underscore is a valid identifier char
+    BEQ ICL_YES
     JSR IS_DIGIT
+    RTS
+
+; ----------------------------------------------------------------
+; UPCASE_LINE - fold MON_CMDBUF[0..MON_CMDLEN) to uppercase in place, stopping at
+; the first double-quote so .ASCII/.TX string contents keep their case. Called
+; before parsing, so the assembler is case-insensitive for directives, mnemonics,
+; labels, hex digits, and operands (e.g. .org / lda / start / $ab / ,x all work).
+; Clobbers A and X.
+; ----------------------------------------------------------------
+UPCASE_LINE:
+    LDX #$00
+UCL_LOOP:
+    CPX MON_CMDLEN
+    BCS UCL_DONE
+    LDA MON_CMDBUF,X
+    CMP #'"'                        ; a string literal begins: leave the rest as-is
+    BEQ UCL_DONE
+    CMP #'a'
+    BCC UCL_NEXT
+    CMP #'z'+1
+    BCS UCL_NEXT
+    AND #$DF                        ; 'a'..'z' -> 'A'..'Z'
+    STA MON_CMDBUF,X
+UCL_NEXT:
+    INX
+    BRA UCL_LOOP
+UCL_DONE:
     RTS
 
 ; ----------------------------------------------------------------

@@ -61,6 +61,7 @@ public:
         testTwoPassAssembler();
         testTwoPassDirectives();
         testAssemblerListing();
+        testAssemblerCaseInsensitive();
 
         // Monitor tests run inside MON.
         sendCommand("MON");
@@ -937,6 +938,41 @@ private:
         verifyResponse("0802: RTS", "listing: second line address");
         verifyMemEquals(0x0800, 0xA9, "listing build emitted LDA");
         verifyMemEquals(0x0802, 0x60, "listing build emitted RTS");
+
+        sendKey(0x1B, 200000);
+    }
+
+    // The assembler is case-insensitive and accepts underscores in identifiers
+    // (task #73). Lowercase directives (.org), mnemonics (lda), labels (start),
+    // hex ($ab), and index operands (,x) all assemble, and an underscore in an
+    // identifier (my_val) is part of the name.
+    void testAssemblerCaseInsensitive() {
+        Computer::Memory *mem = computer.getMemory();
+        const char *src =
+            ".org $0800\n"
+            "my_val = $2a\n"
+            "start: lda #my_val\n"
+            "ldx #$ab\n"
+            "sta $10,x\n"
+            "jmp start\n"
+            ".end\n";
+        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
+        for (const char *p = src; *p; ++p)
+            mem->write(a++, static_cast<uint8_t>(*p));
+        mem->write(a, 0x00);
+
+        launchAsm();
+        sendCommand("B", 300000);
+
+        verifyMemEquals(0x0800, 0xA9, "ci: lowercase lda #imm");
+        verifyMemEquals(0x0801, 0x2A, "ci: underscore equate my_val (=$2a)");
+        verifyMemEquals(0x0802, 0xA2, "ci: lowercase ldx");
+        verifyMemEquals(0x0803, 0xAB, "ci: lowercase hex $ab");
+        verifyMemEquals(0x0804, 0x95, "ci: lowercase sta zp,x");
+        verifyMemEquals(0x0805, 0x10, "ci: zp operand");
+        verifyMemEquals(0x0806, 0x4C, "ci: lowercase jmp");
+        verifyMemEquals(0x0807, 0x00, "ci: label 'start' lo (case-insensitive ref)");
+        verifyMemEquals(0x0808, 0x08, "ci: label 'start' hi");
 
         sendKey(0x1B, 200000);
     }
