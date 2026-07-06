@@ -15,6 +15,8 @@
 #include <iomanip>
 #include <filesystem>
 #include <fstream>
+#include <ctime>
+#include <cstdlib>
 #include "computer/Computer6502.h"
 #include "support/fat16_image.h"
 
@@ -44,6 +46,7 @@ public:
         testDosFileVerbs();
         testDosTransfer();
         testDosUtils();
+        testDate();
         testDosDrawers();
         testDosCrossDrawer();
         testRunDiskProgram();
@@ -272,7 +275,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.13", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.14", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -304,6 +307,25 @@ public:
         computer.getPia()->addKeypress(' ');   // resume past the single page break
         computer.run(3000000);
         verifyResponse("L25", "MORE pages through a long file after a keypress");
+    }
+
+    // DATE reads the RTC ($FE55-$FE5C) and prints the date + time. Pin UTC and
+    // inject a fixed timestamp so the output is deterministic.
+    void testDate() {
+        setenv("TZ", "UTC", 1);
+        tzset();
+        std::tm t{};
+        t.tm_year = 2021 - 1900;
+        t.tm_mon = 3 - 1;   // March
+        t.tm_mday = 4;
+        t.tm_hour = 5;
+        t.tm_min = 6;
+        t.tm_sec = 7;
+        const std::time_t e = timegm(&t); // 2021-03-04 05:06:07 UTC (a Thursday)
+        computer.getRtc()->setTimeProvider([e] { return e; });
+
+        sendCommand("DATE");
+        verifyResponse("THU 2021-03-04 05:06:07", "DATE shows the RTC date and time");
     }
 
     // Drawers (one-level FAT16 subdirectories). All drawers are created at

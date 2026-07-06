@@ -51,6 +51,17 @@ K_SET_ATTR       = $FF2D                ; A = color/attribute latch for next cha
 K_PRINT_HELP_LINE = $FF30               ; MON_MSG_PTR -> "syntax"<TAB>"desc" (TAB pads to col)
 CURSOR_X         = $0276                ; current cursor column (for box padding)
 
+; RTC (real-time clock) registers in the I/O page, read directly. Write RTC_LATCH
+; to snapshot the host time; the field registers are BCD (day-of-week is 0=Sun..6).
+RTC_LATCH        = $FE55
+RTC_SEC          = $FE56
+RTC_MIN          = $FE57
+RTC_HOUR         = $FE58
+RTC_DAY          = $FE59
+RTC_MONTH        = $FE5A
+RTC_YEAR         = $FE5B
+RTC_DOW          = $FE5C
+
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
 MON_MSG_PTR_LO   = $16                  ; message pointer for K_PRINT_MESSAGE
@@ -219,8 +230,9 @@ DOS_SIGNATURE:
 ;   1.12 launch-by-name passes the command tail to the program in DOS_ARGBUF
 ;        ($0382), so e.g. "EDIT SYSTEM/DIAL.LST" opens that file
 ;   1.13 kernel SID sound chip: BEL beeps; K_SOUND_TONE/OFF ABI (kernel v3.21)
+;   1.14 DATE command shows the date/time from the new RTC device ($FE55-$FE5C)
 DOS_VERSION:
-    .BYTE $01, $0D                      ; version 1.13 (major, minor)
+    .BYTE $01, $0E                      ; version 1.14 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -552,6 +564,12 @@ _DOS_DISPATCH:
     BCS @n21
     JMP _DOS_DO_MOVE
 @n21:
+    LDA #<KW_DATE
+    LDX #>KW_DATE
+    JSR _DOS_VERB_MATCH
+    BCS @n22
+    JMP _DOS_DO_DATE
+@n22:
     ; No built-in command matched - launch a program by name. A leading '&'
     ; forces the disk path (skip the ROM-module check); otherwise modules win.
     LDX #$00                            ; name starts at offset 0...
@@ -1253,6 +1271,80 @@ _DOS_PRINT_BYTE_DEC:
     JMP K_PRINT_DEC                     ; tail
 
 ; ----------------------------------------------------------------
+; _DOS_DO_DATE - print the current date and time from the RTC ($FE55-$FE5C).
+; ----------------------------------------------------------------
+; "Ddd 20YY-MM-DD HH:MM:SS" -- weekday abbreviation + date + 24-hour time. Writing
+; RTC_LATCH snapshots the host time so the multi-register read is consistent.
+_DOS_DO_DATE:
+    STA RTC_LATCH                       ; snapshot host time (written value ignored)
+    JSR K_PRINT_NEWLINE
+    ; weekday abbreviation: index DOW_NAMES at DOW*3
+    LDA RTC_DOW
+    CMP #$07
+    BCC @dow                            ; guard an unexpected value
+    LDA #$00
+@dow:
+    ASL A                               ; DOW*2 (DOW<=6, no carry)
+    CLC
+    ADC RTC_DOW                         ; + DOW = DOW*3
+    TAX
+    LDA DOW_NAMES,X
+    JSR K_PRINT_CHAR
+    LDA DOW_NAMES+1,X
+    JSR K_PRINT_CHAR
+    LDA DOW_NAMES+2,X
+    JSR K_PRINT_CHAR
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    ; 20YY-MM-DD
+    LDA #'2'
+    JSR K_PRINT_CHAR
+    LDA #'0'
+    JSR K_PRINT_CHAR
+    LDA RTC_YEAR
+    JSR _DOS_PRINT_BCD
+    LDA #'-'
+    JSR K_PRINT_CHAR
+    LDA RTC_MONTH
+    JSR _DOS_PRINT_BCD
+    LDA #'-'
+    JSR K_PRINT_CHAR
+    LDA RTC_DAY
+    JSR _DOS_PRINT_BCD
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    ; HH:MM:SS
+    LDA RTC_HOUR
+    JSR _DOS_PRINT_BCD
+    LDA #':'
+    JSR K_PRINT_CHAR
+    LDA RTC_MIN
+    JSR _DOS_PRINT_BCD
+    LDA #':'
+    JSR K_PRINT_CHAR
+    LDA RTC_SEC
+    JSR _DOS_PRINT_BCD
+    JMP K_PRINT_NEWLINE
+
+; _DOS_PRINT_BCD - print the packed-BCD byte in A as two decimal digits.
+_DOS_PRINT_BCD:
+    PHA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CLC
+    ADC #'0'
+    JSR K_PRINT_CHAR
+    PLA
+    AND #$0F
+    CLC
+    ADC #'0'
+    JMP K_PRINT_CHAR                     ; tail
+
+DOW_NAMES: .BYTE "SUNMONTUEWEDTHUFRISAT"
+
+; ----------------------------------------------------------------
 ; _DOS_DO_MEM - print the memory map
 ; ----------------------------------------------------------------
 _DOS_DO_MEM:
@@ -1915,7 +2007,7 @@ MSG_DOS_HELP_HDR: .BYTE "MFC/OS COMMANDS", $0D, $0A, 0
 DOS_HELP_TABLE:
     .WORD DH_CAT, DH_TYPE, DH_MORE, DH_LOAD, DH_SAVE, DH_COPY, DH_MOVE
     .WORD DH_REN, DH_ERASE, DH_IMPORT, DH_EXPORT, DH_NEWD, DH_OPEN, DH_CLOSE
-    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_VER, DH_CLS, DH_MON, DH_HELP
+    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_VER, DH_DATE, DH_CLS, DH_MON, DH_HELP
 DOS_HELP_COUNT = (* - DOS_HELP_TABLE) / 2
 
 DH_CAT:    .BYTE "CATALOG [pat]", $09, "list files (CAT)", 0
@@ -1936,6 +2028,7 @@ DH_DROPD:  .BYTE "DROPDRAWER name", $09, "remove an empty drawer", 0
 DH_FREE:   .BYTE "DISKFREE", $09, "show free space", 0
 DH_MEMMAP: .BYTE "MEMMAP", $09, "show the memory map", 0
 DH_VER:    .BYTE "VERSION", $09, "show the OS version", 0
+DH_DATE:   .BYTE "DATE", $09, "show the date and time", 0
 DH_CLS:    .BYTE "CLS", $09, "clear the screen", 0
 DH_MON:    .BYTE "MON", $09, "enter the monitor", 0
 DH_HELP:   .BYTE "HELP", $09, "this list", 0
@@ -2002,6 +2095,7 @@ KW_NEWDRAWER:    .BYTE "NEWDRAWER", 0
 KW_OPEN:         .BYTE "OPEN", 0
 KW_CLOSE:        .BYTE "CLOSE", 0
 KW_DROPDRAWER:   .BYTE "DROPDRAWER", 0
+KW_DATE:         .BYTE "DATE", 0
 
 ; ================================================================
 ; BLOCK DEVICE PRIMITIVES

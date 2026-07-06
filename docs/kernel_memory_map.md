@@ -158,6 +158,27 @@ uses voice 1 for the system beep and the `K_SOUND_TONE`/`K_SOUND_OFF` ABI; ASCII
 BEL (`$07`) rings a short non-blocking beep (gated off by the timer IRQ). All
 kernel sound honors the `SOUND_ENABLE` zero-page flag (`$29`, default on).
 
+## Real-time clock (RTC) register port (`$FE55-$FE5C`)
+
+A read-only real-time clock that mirrors the host's local wall-clock time (always
+correct, not settable — so no battery-backed persistence is needed). The DOS
+`DATE` command reads it.
+
+| Address | Register | Notes |
+|---------|----------|-------|
+| `$FE55` | `RTC_LATCH` | write any value → snapshot host time into the fields; read = 0 |
+| `$FE56` | `RTC_SEC` | seconds, BCD 00–59 |
+| `$FE57` | `RTC_MIN` | minutes, BCD 00–59 |
+| `$FE58` | `RTC_HOUR` | hours, BCD 00–23 (24-hour) |
+| `$FE59` | `RTC_DAY` | day of month, BCD 01–31 |
+| `$FE5A` | `RTC_MONTH` | month, BCD 01–12 |
+| `$FE5B` | `RTC_YEAR` | year mod 100, BCD 00–99 (add 2000) |
+| `$FE5C` | `RTC_DOW` | day of week, 0=Sunday … 6=Saturday |
+
+Writing `RTC_LATCH` before reading the fields keeps a multi-register read from
+straddling a second boundary (the reason real RTCs have a latch). The host time
+source is injectable so tests can pin a known timestamp.
+
 ## I/O — PIA (`$FE00-$FE23`)
 
 The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region (the kernel just
