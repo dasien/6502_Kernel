@@ -47,6 +47,7 @@ public:
         testDosTransfer();
         testDosUtils();
         testDate();
+        testFileTimestamp();
         testDosDrawers();
         testDosCrossDrawer();
         testRunDiskProgram();
@@ -275,7 +276,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.14", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.15", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -326,6 +327,20 @@ public:
 
         sendCommand("DATE");
         verifyResponse("THU 2021-03-04 05:06:07", "DATE shows the RTC date and time");
+    }
+
+    // Files written by DOS are stamped from the RTC; CATALOG shows the date/time.
+    // testDate() has pinned the RTC to 2021-03-04 05:06, so a file created now
+    // must list with that timestamp; the host-built SEED.TXT shows the build date.
+    void testFileTimestamp() {
+        mountDisk({{"SEED.TXT", std::vector<uint8_t>(10, 'X')}});
+        sendCommand("COPY SEED.TXT,STAMPED.TXT", 400000);
+        sendCommand("CLS");
+        sendCommand("CAT", 400000);
+        verifyResponse("MODIFIED", "CATALOG header has a MODIFIED column");
+        verifyResponse("STAMPED.TXT", "the new file is listed");
+        verifyResponse("2021-03-04 05:06", "CATALOG shows the RTC timestamp on a written file");
+        verifyResponse("2026-01-01 00:00", "host-built file shows the build date");
     }
 
     // Drawers (one-level FAT16 subdirectories). All drawers are created at

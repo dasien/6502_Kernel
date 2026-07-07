@@ -35,6 +35,16 @@ namespace Computer
      * | $FE5A  | RTC_MONTH   | month, BCD 01-12                          |
      * | $FE5B  | RTC_YEAR    | year mod 100, BCD 00-99 (add 2000)        |
      * | $FE5C  | RTC_DOW     | day of week, 0=Sunday .. 6=Saturday       |
+     * | $FE5D  | RTC_FATTIME_LO | FAT-packed time, low byte              |
+     * | $FE5E  | RTC_FATTIME_HI | FAT-packed time, high byte             |
+     * | $FE5F  | RTC_FATDATE_LO | FAT-packed date, low byte              |
+     * | $FE60  | RTC_FATDATE_HI | FAT-packed date, high byte             |
+     *
+     * The FAT-format registers are an MFC convenience (not on a real chip): the
+     * host pre-packs the current time into the FAT16 directory format
+     * (time = [hour:5][min:6][sec/2:5], date = [year-1980:7][month:4][day:5]) so
+     * the 6502 filesystem can stamp files by copying four bytes rather than
+     * doing the bit-packing itself.
      *
      * The time source is injectable (defaults to the real clock) so tests can
      * pin a known timestamp and assert exact register values.
@@ -52,9 +62,13 @@ namespace Computer
         static constexpr uint16_t kRegMonth = 0xFE5A;
         static constexpr uint16_t kRegYear = 0xFE5B;
         static constexpr uint16_t kRegDow = 0xFE5C;
+        static constexpr uint16_t kRegFatTimeLo = 0xFE5D;
+        static constexpr uint16_t kRegFatTimeHi = 0xFE5E;
+        static constexpr uint16_t kRegFatDateLo = 0xFE5F;
+        static constexpr uint16_t kRegFatDateHi = 0xFE60;
 
         static constexpr uint16_t kRegFirst = kRegLatch;
-        static constexpr uint16_t kRegLast = kRegDow;
+        static constexpr uint16_t kRegLast = kRegFatDateHi;
 
         /// Construct with the default (real) time source and take an initial
         /// snapshot so reads are valid even before the first latch.

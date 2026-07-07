@@ -40,9 +40,11 @@ TEST(RtcTest, AddressRange)
     EXPECT_FALSE(Rtc::isRtcAddress(Rtc::kRegFirst - 1));
     EXPECT_TRUE(Rtc::isRtcAddress(Rtc::kRegLatch));
     EXPECT_TRUE(Rtc::isRtcAddress(Rtc::kRegDow));
-    EXPECT_FALSE(Rtc::isRtcAddress(Rtc::kRegDow + 1));
+    EXPECT_TRUE(Rtc::isRtcAddress(Rtc::kRegFatDateHi));
+    EXPECT_FALSE(Rtc::isRtcAddress(Rtc::kRegFatDateHi + 1));
     EXPECT_EQ(Rtc::kRegLatch, 0xFE55u);
     EXPECT_EQ(Rtc::kRegDow, 0xFE5Cu);
+    EXPECT_EQ(Rtc::kRegFatDateHi, 0xFE60u);
 }
 
 TEST(RtcTest, KnownTimeToBcd)
@@ -66,6 +68,20 @@ TEST(RtcTest, KnownTimeToBcd)
 
     // The latch register itself reads as 0.
     EXPECT_EQ(rtc.read(Rtc::kRegLatch), 0x00);
+}
+
+TEST(RtcTest, FatFormatRegisters)
+{
+    pinUtc();
+    Rtc rtc;
+    const std::time_t e = utcEpoch(2021, 3, 4, 5, 6, 7);
+    rtc.setTimeProvider([e] { return e; });
+    // FAT time = hour<<11 | min<<5 | sec/2 = (5<<11)|(6<<5)|3 = 0x28C3
+    EXPECT_EQ(rtc.read(Rtc::kRegFatTimeLo), 0xC3);
+    EXPECT_EQ(rtc.read(Rtc::kRegFatTimeHi), 0x28);
+    // FAT date = (2021-1980)<<9 | month<<5 | day = (41<<9)|(3<<5)|4 = 0x5264
+    EXPECT_EQ(rtc.read(Rtc::kRegFatDateLo), 0x64);
+    EXPECT_EQ(rtc.read(Rtc::kRegFatDateHi), 0x52);
 }
 
 TEST(RtcTest, LatchSnapshotsOnWrite)

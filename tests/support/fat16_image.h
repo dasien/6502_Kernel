@@ -199,6 +199,15 @@ private:
         for (size_t i = 0; i < ext.size() && i < 3; ++i)
             e[8 + i] = static_cast<uint8_t>(toupper(ext[i]));
         e[0x0B] = attr;
+        // Stamp a fixed build date/time (2026-01-01 00:00) so host-built disks
+        // show a real date in CATALOG rather than "(no date)". FAT date word =
+        // (year-1980)<<9 | month<<5 | day; time word = 0 (midnight).
+        const uint16_t kBuildDate = (46 << 9) | (1 << 5) | 1; // 2026-01-01
+        put16(&e[0x0E], 0);         // create time
+        put16(&e[0x10], kBuildDate); // create date
+        put16(&e[0x12], kBuildDate); // last-access date
+        put16(&e[0x16], 0);         // last-write time
+        put16(&e[0x18], kBuildDate); // last-write date
         put16(&e[0x1A], firstCluster);
         put32(&e[0x1C], size);
     }

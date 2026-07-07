@@ -61,6 +61,10 @@ RTC_DAY          = $FE59
 RTC_MONTH        = $FE5A
 RTC_YEAR         = $FE5B
 RTC_DOW          = $FE5C
+RTC_FATTIME_LO   = $FE5D                ; host-packed FAT time/date (see Rtc.h)
+RTC_FATTIME_HI   = $FE5E
+RTC_FATDATE_LO   = $FE5F
+RTC_FATDATE_HI   = $FE60
 
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
@@ -174,6 +178,10 @@ DOS_ALLOC_WRAP   = $0381                ; byte: alloc scan has wrapped past the 
 DOS_ARGBUF       = $0382                ; launch argument, null-terminated ($0382-$03B1)
 DOS_ARGBUF_MAX   = 48                   ; buffer size (47 chars + NUL)
 
+; FAT timestamp snapshot (read from the RTC's FAT-format registers on write)
+DOS_FTIME        = $03B2                ; word: packed FAT time (hh:mm:ss/2)
+DOS_FDATE        = $03B4                ; word: packed FAT date (y-1980:month:day)
+
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
 
@@ -231,8 +239,9 @@ DOS_SIGNATURE:
 ;        ($0382), so e.g. "EDIT SYSTEM/DIAL.LST" opens that file
 ;   1.13 kernel SID sound chip: BEL beeps; K_SOUND_TONE/OFF ABI (kernel v3.21)
 ;   1.14 DATE command shows the date/time from the new RTC device ($FE55-$FE5C)
+;   1.15 files are timestamped from the RTC on write; CATALOG shows the date/time
 DOS_VERSION:
-    .BYTE $01, $0E                      ; version 1.14 (major, minor)
+    .BYTE $01, $0F                      ; version 1.15 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -818,7 +827,7 @@ _DOS_PRINT_ENTRY:
     LDX #>DOS_W_SIZE
     LDY #$08
     JSR K_PRINT_DEC
-    JMP K_PRINT_NEWLINE
+    JMP _DOS_PRINT_DATE_EOL
 @drawer:
     LDX #5                              ; right-justify "<D>" in the 8-col field
 @dsp:
@@ -829,7 +838,102 @@ _DOS_PRINT_ENTRY:
     LDA #<MSG_DOS_DIRTAG
     LDX #>MSG_DOS_DIRTAG
     JSR _DOS_PMSG
+    JMP _DOS_PRINT_DATE_EOL
+
+; ----------------------------------------------------------------
+; _DOS_PRINT_DATE_EOL - print "  YYYY-MM-DD HH:MM" from the entry, then newline.
+; ----------------------------------------------------------------
+_DOS_PRINT_DATE_EOL:
+    JSR _DOS_PRINT_FILEDATE
     JMP K_PRINT_NEWLINE
+
+; _DOS_PRINT_FILEDATE - print the current DOS_ENTRY's last-write date/time as
+; "  YYYY-MM-DD HH:MM", or "  (no date)" if the entry was never stamped.
+_DOS_PRINT_FILEDATE:
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    LDA DOS_ENTRY+$18                   ; last-write date word (0 = unstamped)
+    ORA DOS_ENTRY+$19
+    BNE @have
+    LDA #<MSG_DOS_NODATE
+    LDX #>MSG_DOS_NODATE
+    JMP _DOS_PMSG                       ; tail: "(no date)"
+@have:
+    LDA #'2'                            ; year "20YY" (files are always 20xx)
+    JSR K_PRINT_CHAR
+    LDA #'0'
+    JSR K_PRINT_CHAR
+    LDA DOS_ENTRY+$19                   ; yoff = date_hi >> 1; year-2000 = yoff-20
+    LSR A
+    SEC
+    SBC #20
+    JSR _DOS_PRINT_2DEC                 ; "YY"
+    LDA #'-'
+    JSR K_PRINT_CHAR
+    LDA DOS_ENTRY+$18                   ; month = ((hi & 1) << 3) | (lo >> 5)
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA DOS_TMP
+    LDA DOS_ENTRY+$19
+    AND #$01
+    ASL A
+    ASL A
+    ASL A
+    ORA DOS_TMP
+    JSR _DOS_PRINT_2DEC                 ; "MM"
+    LDA #'-'
+    JSR K_PRINT_CHAR
+    LDA DOS_ENTRY+$18                   ; day = date_lo & 0x1F
+    AND #$1F
+    JSR _DOS_PRINT_2DEC                 ; "DD"
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    LDA DOS_ENTRY+$17                   ; hour = time_hi >> 3
+    LSR A
+    LSR A
+    LSR A
+    JSR _DOS_PRINT_2DEC                 ; "HH"
+    LDA #':'
+    JSR K_PRINT_CHAR
+    LDA DOS_ENTRY+$16                   ; min = ((time_hi & 7) << 3) | (time_lo >> 5)
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA DOS_TMP
+    LDA DOS_ENTRY+$17
+    AND #$07
+    ASL A
+    ASL A
+    ASL A
+    ORA DOS_TMP
+    JMP _DOS_PRINT_2DEC                 ; "MM" (tail)
+
+; _DOS_PRINT_2DEC - print A (0-99) as two zero-padded decimal digits.
+_DOS_PRINT_2DEC:
+    LDX #$FF
+@t:
+    INX
+    SEC
+    SBC #10
+    BCS @t
+    CLC
+    ADC #10                             ; restore the ones digit (over-subtracted)
+    PHA
+    TXA                                 ; tens
+    CLC
+    ADC #'0'
+    JSR K_PRINT_CHAR
+    PLA
+    CLC
+    ADC #'0'
+    JMP K_PRINT_CHAR                    ; tail
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_TYPE - print the contents of "TYPE NAME"
@@ -2060,7 +2164,8 @@ MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
                  .BYTE "$B000-$DFFF MODULES    (12K)", $0D, $0A
                  .BYTE "$E000-$FFFF KERNEL ROM (8K)", $0D, $0A
                  .BYTE "$FE2D-$FE36 VIDEO PORT (VIC)", $0D, $0A, 0
-MSG_DOS_CATHDR:  .BYTE "NAME            BYTES", $0D, $0A, 0
+MSG_DOS_CATHDR:  .BYTE "NAME            BYTES  MODIFIED", $0D, $0A, 0
+MSG_DOS_NODATE:  .BYTE "(no date)", 0
 MSG_DOS_FREE1:   .BYTE "DISK FREE: ", 0
 MSG_DOS_FREE2:   .BYTE " BYTES (", 0
 MSG_DOS_FREE3:   .BYTE " KB)", $0D, $0A, 0
@@ -3268,10 +3373,21 @@ _DOS_MARK_DELETED:
 ; Read-modify-write the directory sector: seek to the slot, write name +
 ; archive attr + first cluster (DOS_W_FIRST_CLUS) + size (DOS_W_SIZE), flush.
 _DOS_DIR_WRITE_ENTRY:
+    STA RTC_LATCH                       ; snapshot host time into the RTC registers
+    LDA RTC_FATTIME_LO                  ; the host pre-packs it into FAT format
+    STA DOS_FTIME
+    LDA RTC_FATTIME_HI
+    STA DOS_FTIME+1
+    LDA RTC_FATDATE_LO
+    STA DOS_FDATE
+    LDA RTC_FATDATE_HI
+    STA DOS_FDATE+1
     LDA DOS_W_DIRENT_LBA
     LDX DOS_W_DIRENT_LBA+1
     JSR _DOS_READ_SECTOR
-    BCS @err
+    BCC @rdok                           ; (@err is now out of BCS range)
+    JMP @err
+@rdok:
     LDA DOS_W_DIRENT_IDX                ; skip to slot * 32
     STA DOS_TMP
     STZ DOS_TMP+1
@@ -3291,11 +3407,19 @@ _DOS_DIR_WRITE_ENTRY:
     BNE @nm
     LDA DOS_W_ATTR                      ; $0B attribute (archive for files, $10 drawer)
     STA BLK_DATA
-    LDX #14                             ; $0C-$19 reserved/time/date + cluster-hi = 0
+    LDX #10                             ; $0C-$15 = 0 (reserved/create/access/clus-hi)
 @z:
     STZ BLK_DATA
     DEX
     BNE @z
+    LDA DOS_FTIME                       ; $16-$17 last-write time
+    STA BLK_DATA
+    LDA DOS_FTIME+1
+    STA BLK_DATA
+    LDA DOS_FDATE                       ; $18-$19 last-write date
+    STA BLK_DATA
+    LDA DOS_FDATE+1
+    STA BLK_DATA
     LDA DOS_W_FIRST_CLUS                ; $1A-$1B first cluster (low word)
     STA BLK_DATA
     LDA DOS_W_FIRST_CLUS+1

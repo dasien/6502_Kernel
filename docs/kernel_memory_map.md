@@ -174,10 +174,19 @@ correct, not settable — so no battery-backed persistence is needed). The DOS
 | `$FE5A` | `RTC_MONTH` | month, BCD 01–12 |
 | `$FE5B` | `RTC_YEAR` | year mod 100, BCD 00–99 (add 2000) |
 | `$FE5C` | `RTC_DOW` | day of week, 0=Sunday … 6=Saturday |
+| `$FE5D-$FE5E` | `RTC_FATTIME_LO/HI` | current time pre-packed as a FAT16 time word |
+| `$FE5F-$FE60` | `RTC_FATDATE_LO/HI` | current date pre-packed as a FAT16 date word |
 
 Writing `RTC_LATCH` before reading the fields keeps a multi-register read from
 straddling a second boundary (the reason real RTCs have a latch). The host time
 source is injectable so tests can pin a known timestamp.
+
+The `RTC_FATTIME`/`RTC_FATDATE` registers are an MFC convenience (not on a real
+chip): the host pre-packs the current time into the FAT16 directory format
+(time = `[hour:5][min:6][sec/2:5]`, date = `[year-1980:7][month:4][day:5]`), so
+DOS stamps a new file's directory entry by copying four bytes instead of doing
+the bit-packing itself. DOS `CATALOG` unpacks these fields to show each file's
+`YYYY-MM-DD HH:MM` modification time.
 
 ## I/O — PIA (`$FE00-$FE23`)
 
