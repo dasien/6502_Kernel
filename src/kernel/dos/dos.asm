@@ -1924,12 +1924,6 @@ _DOS_STR_EQ:
 ; so "TYPE" and "MORE" behave identically. The old _DOS_DO_MORE / _DOS_PAGE_PAUSE
 ; pager was removed in favour of that single shared pager.
 
-; _DOS_WAITKEY - block until a key is pressed; return it in A.
-_DOS_WAITKEY:
-    JSR K_GET_KEYSTROKE                 ; non-blocking: C set + A = key when ready
-    BCC _DOS_WAITKEY
-    RTS
-
 ; ----------------------------------------------------------------
 ; _DOS_PARSE_PATTERN83 - (DOS_PTR) wildcard "NAME.EXT" -> DOS_NAME83 template
 ; ----------------------------------------------------------------
@@ -2262,9 +2256,7 @@ _BLK_WRITE_SECTOR:
     INY
     BNE @page1
     DEC BLK_BUF_PTR+1                   ; restore the caller's pointer
-    LDA #BLK_CMD_WRITE
-    STA BLK_CMD                         ; flush the buffer to the sector
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH                  ; flush the buffer to the sector
     BNE @err
     CLC
     RTS
@@ -2313,6 +2305,40 @@ _DOS_SKIP_BYTES:
     DEC DOS_TMP
     BRA @loop
 @done:
+    RTS
+
+; _DOS_SLOT32_SKIP - skip A*32 bytes in the buffered sector (seek to a 32-byte
+; directory slot). In: A = slot index (0-15). Consumes DOS_TMP; clobbers A/X.
+_DOS_SLOT32_SKIP:
+    STA DOS_TMP
+    STZ DOS_TMP+1
+    LDX #5                              ; * 32 = << 5
+@s:
+    ASL DOS_TMP
+    ROL DOS_TMP+1
+    DEX
+    BNE @s
+    JMP _DOS_SKIP_BYTES                 ; tail
+
+; _DOS_SEEK_DIRENT - read the directory sector at DOS_W_DIRENT_LBA and position
+; the data port at slot DOS_W_DIRENT_IDX. Out: carry set on a read error.
+_DOS_SEEK_DIRENT:
+    LDA DOS_W_DIRENT_LBA
+    LDX DOS_W_DIRENT_LBA+1
+    JSR _DOS_READ_SECTOR
+    BCS @e
+    LDA DOS_W_DIRENT_IDX
+    JSR _DOS_SLOT32_SKIP
+    CLC
+@e:
+    RTS
+
+; _DOS_BLK_FLUSH - write the buffered sector back (BLK_LBA unchanged). On return
+; the Z flag reflects BLK_STATUS (Z set = ready), so callers do `BNE err`.
+_DOS_BLK_FLUSH:
+    LDA #BLK_CMD_WRITE
+    STA BLK_CMD
+    LDA BLK_STATUS
     RTS
 
 ; ================================================================
@@ -2577,17 +2603,8 @@ _DOS_READ_DIR_ENTRY:
     LDX DOS_DIR_LBA+1
     JSR _DOS_READ_SECTOR
     BCS @err
-    ; skip DOS_DIR_IDX * 32 bytes
-    LDA DOS_DIR_IDX
-    STA DOS_TMP
-    STZ DOS_TMP+1
-    LDX #5                              ; * 32 = << 5
-@sh:
-    ASL DOS_TMP
-    ROL DOS_TMP+1
-    DEX
-    BNE @sh
-    JSR _DOS_SKIP_BYTES
+    LDA DOS_DIR_IDX                     ; skip DOS_DIR_IDX * 32 to the slot
+    JSR _DOS_SLOT32_SKIP
     LDY #$00
 @rd:
     LDA BLK_DATA
@@ -2933,9 +2950,7 @@ _FS_CLOSE_WRITE:
     INC DOS_F_OFF+1
     BRA @pad
 @flush:
-    LDA #BLK_CMD_WRITE
-    STA BLK_CMD
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH
     BNE @err
 @finalize:
     JSR _DOS_DIR_WRITE_ENTRY            ; final first-cluster + size
@@ -2995,11 +3010,7 @@ _DOS_WRITE_ADVANCE_SECTOR:
     STA DOS_ARG_CLUS
     LDA DOS_W_PREV_CLUS+1
     STA DOS_ARG_CLUS+1
-    LDA DOS_NEW_CLUS
-    STA DOS_ARG_VAL
-    LDA DOS_NEW_CLUS+1
-    STA DOS_ARG_VAL+1
-    JSR _DOS_WRITE_FAT_ENTRY
+    JSR _DOS_FAT_LINK
     BCS @err
     LDA DOS_NEW_CLUS                    ; current = prev = new
     STA DOS_F_CLUS
@@ -3308,20 +3319,8 @@ _FS_RENAME:
 ; _DOS_DIR_WRITE_NAME - rmw the 11-byte name field of the slot at DOS_W_DIRENT_*
 ; with DOS_NAME83. Out: carry set on error.
 _DOS_DIR_WRITE_NAME:
-    LDA DOS_W_DIRENT_LBA
-    LDX DOS_W_DIRENT_LBA+1
-    JSR _DOS_READ_SECTOR
+    JSR _DOS_SEEK_DIRENT
     BCS @err
-    LDA DOS_W_DIRENT_IDX                ; skip to slot * 32
-    STA DOS_TMP
-    STZ DOS_TMP+1
-    LDX #$05
-@sh:
-    ASL DOS_TMP
-    ROL DOS_TMP+1
-    DEX
-    BNE @sh
-    JSR _DOS_SKIP_BYTES
     LDY #$00
 @nm:
     LDA DOS_NAME83,Y
@@ -3329,9 +3328,7 @@ _DOS_DIR_WRITE_NAME:
     INY
     CPY #11
     BNE @nm
-    LDA #BLK_CMD_WRITE
-    STA BLK_CMD
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH
     BNE @err
     CLC
     RTS
@@ -3341,25 +3338,11 @@ _DOS_DIR_WRITE_NAME:
 
 ; _DOS_MARK_DELETED - write $E5 over name[0] of the slot at DOS_W_DIRENT_*
 _DOS_MARK_DELETED:
-    LDA DOS_W_DIRENT_LBA
-    LDX DOS_W_DIRENT_LBA+1
-    JSR _DOS_READ_SECTOR
+    JSR _DOS_SEEK_DIRENT
     BCS @err
-    LDA DOS_W_DIRENT_IDX                ; skip to slot * 32
-    STA DOS_TMP
-    STZ DOS_TMP+1
-    LDX #$05
-@sh:
-    ASL DOS_TMP
-    ROL DOS_TMP+1
-    DEX
-    BNE @sh
-    JSR _DOS_SKIP_BYTES
     LDA #DIRENT_DELETED
     STA BLK_DATA                        ; overwrite name[0]
-    LDA #BLK_CMD_WRITE
-    STA BLK_CMD
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH
     BNE @err
     CLC
     RTS
@@ -3382,22 +3365,8 @@ _DOS_DIR_WRITE_ENTRY:
     STA DOS_FDATE
     LDA RTC_FATDATE_HI
     STA DOS_FDATE+1
-    LDA DOS_W_DIRENT_LBA
-    LDX DOS_W_DIRENT_LBA+1
-    JSR _DOS_READ_SECTOR
-    BCC @rdok                           ; (@err is now out of BCS range)
-    JMP @err
-@rdok:
-    LDA DOS_W_DIRENT_IDX                ; skip to slot * 32
-    STA DOS_TMP
-    STZ DOS_TMP+1
-    LDX #$05
-@sh:
-    ASL DOS_TMP
-    ROL DOS_TMP+1
-    DEX
-    BNE @sh
-    JSR _DOS_SKIP_BYTES
+    JSR _DOS_SEEK_DIRENT
+    BCS @err
     LDY #$00                            ; name (11 bytes)
 @nm:
     LDA DOS_NAME83,Y
@@ -3432,9 +3401,7 @@ _DOS_DIR_WRITE_ENTRY:
     STA BLK_DATA
     LDA DOS_W_SIZE+3
     STA BLK_DATA
-    LDA #BLK_CMD_WRITE                  ; flush the directory sector
-    STA BLK_CMD
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH                  ; flush the directory sector
     BNE @err
     CLC
     RTS
@@ -3550,11 +3517,7 @@ _DOS_DIR_GROW:
     STA DOS_ARG_CLUS
     LDA DOS_DIR_CLUS+1
     STA DOS_ARG_CLUS+1
-    LDA DOS_NEW_CLUS
-    STA DOS_ARG_VAL
-    LDA DOS_NEW_CLUS+1
-    STA DOS_ARG_VAL+1
-    JSR _DOS_WRITE_FAT_ENTRY
+    JSR _DOS_FAT_LINK
     BCS @full
     LDA DOS_NEW_CLUS                    ; iterator now in the new cluster
     STA DOS_DIR_CLUS
@@ -3594,9 +3557,7 @@ _DOS_ZERO_SECTORS:
     LDA #>512
     STA DOS_TMP+1
     JSR _DOS_BLKZERO_N
-    LDA #BLK_CMD_WRITE
-    STA BLK_CMD
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH
     BNE @err
     INC DOS_TMP2
     BNE @n
@@ -3695,9 +3656,7 @@ _DOS_INIT_DRAWER_CLUSTER:
     LDA #>448
     STA DOS_TMP+1
     JSR _DOS_BLKZERO_N
-    LDA #BLK_CMD_WRITE
-    STA BLK_CMD
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH
     BNE @err
     LDA DOS_SEC_PER_CLUS                ; zero any remaining sectors of the cluster
     CMP #2
@@ -3920,15 +3879,23 @@ _DOS_WRITE_FAT_ENTRY:
     STA BLK_DATA                        ; overwrite entry low
     LDA DOS_ARG_VAL+1
     STA BLK_DATA                        ; overwrite entry high
-    LDA #BLK_CMD_WRITE
-    STA BLK_CMD                         ; flush the FAT sector (BLK_LBA unchanged)
-    LDA BLK_STATUS
+    JSR _DOS_BLK_FLUSH                  ; flush the FAT sector (BLK_LBA unchanged)
     BNE @err
     CLC
     RTS
 @err:
     SEC
     RTS
+
+; _DOS_FAT_LINK - chain a freshly allocated cluster onto a predecessor:
+; FAT[DOS_ARG_CLUS] = DOS_NEW_CLUS. In: DOS_ARG_CLUS = prev cluster, DOS_NEW_CLUS =
+; new cluster. Out: carry set on error (tail-calls _DOS_WRITE_FAT_ENTRY).
+_DOS_FAT_LINK:
+    LDA DOS_NEW_CLUS
+    STA DOS_ARG_VAL
+    LDA DOS_NEW_CLUS+1
+    STA DOS_ARG_VAL+1
+    JMP _DOS_WRITE_FAT_ENTRY
 
 ; _DOS_NEXT_CLUSTER - follow the FAT chain: DOS_F_CLUS -> next cluster.
 ; Carry clear and DOS_F_CLUS updated, or carry set at end-of-chain / error.
