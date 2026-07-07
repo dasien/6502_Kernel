@@ -913,17 +913,12 @@ PRINT_BACKSPACE_CLEAR_CHAR:
 ; Print a newline (carriage return)
 ; Modifies: A
 PRINT_NEWLINE:
-    ; Scroll screen, printing newline character (no paging)
     LDA #ASCII_CR
-    JSR PRINT_CHAR
-    RTS
+    JMP PRINT_CHAR              ; tail call (PRINT_CHAR's RTS returns to our caller)
 
-; PRINT_NEWLINE_PAGED - retained for its many MON call sites. Paging is now
-; handled centrally in PRINT_CHAR (PAGE_ADVANCE), so this is just a newline.
-PRINT_NEWLINE_PAGED:
-    LDA #ASCII_CR
-    JSR PRINT_CHAR
-    RTS
+; PRINT_NEWLINE_PAGED - alias: paging is now handled centrally in PRINT_CHAR
+; (PAGE_ADVANCE), so it is identical to PRINT_NEWLINE. Kept for its MON call sites.
+PRINT_NEWLINE_PAGED = PRINT_NEWLINE
 
 ; PAGE_ADVANCE - called from PRINT_CHAR after every newline. When paging is
 ; enabled and not suspended for this output, count the line and, every
