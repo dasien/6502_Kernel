@@ -25,6 +25,7 @@ extern void          vattr(unsigned char a);
 extern void          vfill(unsigned char ch);       /* fill char for chip block ops */
 extern void          vcmd(unsigned char cmd);        /* chip-side clear / fill-row */
 extern void          vhidecur(void);
+extern unsigned int  rng_seed(void);   /* RTC-derived entropy for the RNG seed */
 
 #define VCMD_CLEAR   0x01
 #define VCMD_FILLROW 0x04
@@ -59,7 +60,15 @@ static unsigned char occ[MAP_H][MAP_W];    /* live-monster index+1 at cell, else
 
 static signed char px, py;
 static int         php, pmaxhp;
+static int         pmana, pmaxmana;             /* mana pool (spells arrive in Phase 3) */
 static int         depth;
+
+/* character: 4 rolled stats + level/XP. STR=melee damage, INT=spell power/mana,
+ * CON=hit points, DEX=to-hit / evasion. */
+static unsigned char pstr, pint, pcon, pdex;
+static unsigned char plevel;
+static int           pxp, pxpnext;              /* XP total + threshold for next level */
+static char          pname[13];
 
 struct Mon { signed char x, y; int hp; unsigned char alive; };
 static struct Mon    mon[MAX_MON];
@@ -92,6 +101,27 @@ static void msg_add(const char *s) {
     msg[mlen] = 0;
 }
 static void set_msg(const char *s) { msg_clear(); msg_add(s); }
+
+/* ---- character: stats, HP/mana, XP + leveling ---- */
+static unsigned char roll3d6(void) { return (unsigned char)(3 + rndn(6) + rndn(6) + rndn(6)); }
+static int stat_hp(void)   { return 6 + pcon + (plevel - 1) * (4 + pcon / 6); }
+static int stat_mana(void) { return pint + (plevel - 1) * (pint / 3); }
+
+static void char_begin(void) {           /* fresh level-1 hero from the rolled stats */
+    plevel = 1; pxp = 0; pxpnext = 20;
+    pmaxhp = stat_hp();     php   = pmaxhp;
+    pmaxmana = stat_mana(); pmana = pmaxmana;
+}
+static void gain_xp(int amt) {
+    pxp += amt;
+    while (pxp >= pxpnext) {              /* level up: full heal + bigger pools */
+        plevel++;
+        pxpnext = 20 * plevel * plevel;
+        pmaxhp = stat_hp();     php   = pmaxhp;
+        pmaxmana = stat_mana(); pmana = pmaxmana;
+        msg_add("You grow stronger!");
+    }
+}
 
 /* ---- map generation: rooms + L-tunnels ---- */
 static void dig_room(unsigned char x0, unsigned char y0, unsigned char w, unsigned char h) {
@@ -285,6 +315,7 @@ static const unsigned char vattrs[9] = { A_TEXT, A_DIM, A_DIM, A_DIM,
  * code actually CHANGED are written. Status/message rows are redrawn only when
  * their contents change (so a plain step touches almost nothing). */
 static int          shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
+static int          shlevel = -1, shmana = -1;
 static char         shmsg[80];                             /* last message shown */
 
 static void render(unsigned char full) {
@@ -326,14 +357,21 @@ static void render(unsigned char full) {
     }
     pbx0 = litx0; pby0 = lity0; pbx1 = litx1; pby1 = lity1;
 
-    if (full || depth != shdepth || php != shhp || pmaxhp != shmax) {
+    if (full || depth != shdepth || php != shhp || pmaxhp != shmax ||
+        plevel != shlevel || pmana != shmana) {
         clear_row(STA_ROW);
-        put_str(0,  STA_ROW, "THE SUNLESS VAULT", A_STAIRS);
-        put_str(20, STA_ROW, "DEPTH", A_TEXT); put_num(26, STA_ROW, depth, A_STAIRS);
-        put_str(31, STA_ROW, "HP", A_TEXT);    put_num(34, STA_ROW, php, A_MON);
-        put_str(38, STA_ROW, "/", A_TEXT);     put_num(39, STA_ROW, pmaxhp, A_TEXT);
-        put_str(46, STA_ROW, "ARROWS  >DOWN  Q:QUIT", A_DIM);
-        shdepth = depth; shhp = php; shmax = pmaxhp;
+        put_str(0,  STA_ROW, pname, A_STAIRS);
+        put_str(13, STA_ROW, "LV", A_TEXT);  put_num(16, STA_ROW, plevel, A_STAIRS);
+        put_str(19, STA_ROW, "HP", A_TEXT);  put_num(22, STA_ROW, php, A_MON);
+        put_str(25, STA_ROW, "/", A_TEXT);   put_num(26, STA_ROW, pmaxhp, A_TEXT);
+        put_str(31, STA_ROW, "MP", A_TEXT);  put_num(34, STA_ROW, pmana, A_STAIRS);
+        put_str(37, STA_ROW, "/", A_TEXT);   put_num(38, STA_ROW, pmaxmana, A_TEXT);
+        put_str(43, STA_ROW, "S", A_TEXT);   put_num(44, STA_ROW, pstr, A_FLOOR);
+        put_str(47, STA_ROW, "I", A_TEXT);   put_num(48, STA_ROW, pint, A_FLOOR);
+        put_str(51, STA_ROW, "C", A_TEXT);   put_num(52, STA_ROW, pcon, A_FLOOR);
+        put_str(55, STA_ROW, "D", A_TEXT);   put_num(56, STA_ROW, pdex, A_FLOOR);
+        put_str(61, STA_ROW, "DEPTH", A_TEXT); put_num(67, STA_ROW, depth, A_STAIRS);
+        shdepth = depth; shhp = php; shmax = pmaxhp; shlevel = plevel; shmana = pmana;
     }
 
     {
@@ -361,11 +399,13 @@ static unsigned char try_move(signed char dx, signed char dy) {
     if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H) return 0;
     m = mon_at(nx, ny);
     if (m) {
-        int dmg = rndn(4) + 2;
+        int dmg = rndn(4) + 1 + pstr / 4;         /* STR drives melee damage */
+        if (rndn(10) == 0) { dmg += dmg; msg_add("A critical hit!"); }  /* 10% x2 */
         m->hp -= dmg;
         if (m->hp <= 0) {
             m->alive = 0; occ[(unsigned char)m->y][(unsigned char)m->x] = 0;
             msg_add("You slay the creature!");
+            gain_xp(4 + depth * 2);
         } else msg_add("You strike the creature.");
         return 0;
     }
@@ -385,8 +425,12 @@ static void mon_turn(void) {
             int adx = px - m->x, ady = py - m->y;
             signed char dx = sgn(adx), dy = sgn(ady);
             if (adx >= -1 && adx <= 1 && ady >= -1 && ady <= 1) {
-                php -= (rndn(3) + 1);
-                msg_add("The creature claws you!");
+                if (rndn(50) < pdex) {           /* DEX gives an evasion chance */
+                    msg_add("You dodge.");
+                } else {
+                    php -= (rndn(3) + 1);
+                    msg_add("The creature claws you!");
+                }
             } else {
                 signed char nx = m->x + dx, ny = m->y + dy;
                 signed char ox = m->x, oy = m->y;   /* old cell, for occ maintenance */
@@ -409,6 +453,11 @@ static void mon_turn(void) {
  * a bare/partial ESC is ambiguous and must NOT be treated as an action (that's
  * why holding a key used to "crash" out to DOS: the stray ESC read as quit).
  * So a partial/unknown escape returns -1 (ignored); quitting is 'Q' only. */
+/* drop any queued keys: a turn-based game processes one move per turn, so input
+ * that piled up during a slow frame (or a held key) must be discarded -- otherwise
+ * the backlog runs you past danger and buffered bytes leak out on exit. */
+static void flush_input(void) { while (INCH_NB() != -1) ; }
+
 static int readkey(void) {
     int c = INCH();
     if (c != 0x1B) return c;
@@ -423,13 +472,54 @@ static int readkey(void) {
     return -1;
 }
 
+/* ---- title / stat-roll / name entry ---- */
+static void roll_screen(void) {
+    int k;
+    unsigned char n, accepted = 0;
+
+    while (!accepted) {                       /* roll 3d6 per stat; reroll at will */
+        pstr = roll3d6(); pint = roll3d6(); pcon = roll3d6(); pdex = roll3d6();
+        vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+        put_str(31, 3,  "THE SUNLESS VAULT", A_STAIRS);
+        put_str(16, 5,  "Descend fifteen floors and recover the Shimmering Orb.", A_DIM);
+        put_str(34, 9,  "ROLL YOUR HERO", A_TEXT);
+        put_str(34, 11, "STR", A_TEXT); put_num(40, 11, pstr, A_STAIRS);
+        put_str(34, 12, "INT", A_TEXT); put_num(40, 12, pint, A_STAIRS);
+        put_str(34, 13, "CON", A_TEXT); put_num(40, 13, pcon, A_STAIRS);
+        put_str(34, 14, "DEX", A_TEXT); put_num(40, 14, pdex, A_STAIRS);
+        put_str(25, 17, "[R] Reroll      [Enter] Accept", A_TEXT);
+        for (;;) {
+            k = INCH();
+            if (k == 'r' || k == 'R') break;              /* reroll */
+            if (k == 13 || k == 10) { accepted = 1; break; }
+        }
+    }
+
+    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    put_str(31, 8,  "THE SUNLESS VAULT", A_STAIRS);
+    put_str(30, 11, "Name your hero:", A_TEXT);
+    n = 0; pname[0] = 0;
+    for (;;) {
+        unsigned char i;
+        vaddr((unsigned int)13 * 80 + 33); last_attr = 0xFF;   /* draw the name field */
+        for (i = 0; i < 12; i++) put_cell(i < n ? (unsigned char)pname[i] : '_', A_STAIRS);
+        k = INCH();
+        if (k == 13 || k == 10) break;
+        if (k == 8 || k == 127) { if (n > 0) { n--; pname[n] = 0; } continue; }
+        if (k >= 32 && k < 127 && n < 12) { pname[n++] = (char)k; pname[n] = 0; }
+    }
+    if (n == 0) { pname[0]='H'; pname[1]='E'; pname[2]='R'; pname[3]='O'; pname[4]=0; }
+}
+
 void main(void) {
     int k;
     unsigned char moved;
     vhidecur();
-    rngv   = 0xACE1;
+    rngv   = rng_seed();               /* seed from the RTC so each run differs */
+    if (rngv == 0) rngv = 0xACE1;      /* xorshift must not start at zero */
+    roll_screen();
+    char_begin();
     depth  = 1;
-    pmaxhp = 20; php = 20;
     set_msg("You enter the Sunless Vault...");
     gen_level();
     light();
@@ -437,6 +527,7 @@ void main(void) {
 
     for (;;) {
         k = readkey();
+        flush_input();                     /* one turn per key press; drop the pile-up */
         if (k == 'Q' || k == 'q') break;   /* ESC can't quit: arrows start with ESC */
 
         moved = 0;
@@ -455,9 +546,15 @@ void main(void) {
         } else { continue; }
 
         mon_turn();
-        if (php <= 0) { msg_add("You die in the dark. Press a key."); render(0); INCH(); break; }
+        if (php <= 0) {
+            msg_add("You die in the dark. Press a key.");
+            render(0);
+            flush_input(); INCH();         /* flush so the death screen isn't skipped */
+            break;
+        }
         if (moved) light();
         render(0);
     }
+    flush_input();                         /* don't spill queued keys onto the DOS prompt */
     QUITDOS();
 }

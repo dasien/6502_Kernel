@@ -16,6 +16,7 @@
 .export _vaddr, _vputc, _vgetc, _vhidecur
 .export _vattr, _vgetcolor, _vputcolor
 .export _vfill, _vcmd
+.export _rng_seed
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (also resets the kernel cursor)
@@ -34,6 +35,14 @@ VREG_ATTR       = $FE31         ; attribute latch [R][BR][bg:3][fg:3]
 VREG_CMD        = $FE32         ; 1=clear 2=scroll-up 3=scroll-down 4=fill-row
 VREG_CMD_PARAM  = $FE36         ; fill char for clear / fill-row
 VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
+
+; RTC (real-time clock) registers -- used purely as an entropy source here.
+RTC_LATCH       = $FE55         ; write snapshots the live clock into the read regs
+RTC_SEC         = $FE56         ; BCD seconds
+RTC_MIN         = $FE57         ; BCD minutes
+RTC_HOUR        = $FE58         ; BCD hours
+RTC_FATTIME_LO  = $FE5D         ; host-packed FAT time low (sub-second-ish bits)
+RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
 
 .segment "CODE"
 
@@ -59,6 +68,24 @@ VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 ; void vcmd(unsigned char cmd) -- run a chip-side block op (clear/scroll/fill-row).
 .proc _vcmd
         sta     VREG_CMD
+        rts
+.endproc
+
+; unsigned int rng_seed(void) -- latch the RTC and fold seconds/minutes/hours plus
+; the packed FAT-time bits into a 16-bit seed (A=lo, X=hi). Varies per launch since
+; it's real wall-clock time; the caller guards against a zero result.
+.proc _rng_seed
+        sta     RTC_LATCH       ; snapshot the live clock (written value irrelevant)
+        lda     RTC_SEC
+        eor     RTC_FATTIME_LO
+        eor     #$E1            ; keep it lively
+        pha                     ; -> low byte
+        lda     RTC_MIN
+        eor     RTC_HOUR
+        eor     RTC_FATTIME_HI
+        eor     #$AC
+        tax                     ; -> high byte
+        pla                     ; low byte back into A
         rts
 .endproc
 
