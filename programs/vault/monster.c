@@ -1,7 +1,7 @@
 /* ============================================================================
- * monster.c -- creatures: the live array, spawning, greedy AI, and their attack
- * (resolved through combat.c). Phase 2 step 2 replaces the single hard-coded
- * type here with a data-driven roster (see data.c).
+ * monster.c -- creatures: the live array, depth-based spawning from the data.c
+ * roster, greedy AI, per-type combat (via combat.c), and the ability bits
+ * (regeneration + poison for now). Adding a creature is a row in data.c.
  * ==========================================================================*/
 #include "vault.h"
 
@@ -14,25 +14,39 @@ struct Mon *mon_at(signed char x, signed char y) {
         if (mon[i].alive && mon[i].x == x && mon[i].y == y) return &mon[i];
     return 0;
 }
+unsigned char occ_type(unsigned char oc) { return mon[oc - 1].type; }   /* for the renderer */
 
-/* how a creature presents to the combat resolver (scales with depth for now) */
+/* how a creature presents to the combat resolver -- straight from its roster row */
 void mon_combatant(struct Mon *m, struct Combatant *c) {
-    (void)m;
-    c->name  = "the creature";
-    c->acc   = (unsigned char)(6 + depth);
-    c->eva   = (unsigned char)(2 + depth / 2);
-    c->dmin  = 1;
-    c->dmax  = (unsigned char)(3 + depth / 2);
-    c->armor = 0;
+    const struct MonDef *d = &mondef[m->type];
+    c->name  = d->name;
+    c->acc   = d->acc;
+    c->eva   = d->eva;
+    c->dmin  = d->dmin;
+    c->dmax  = d->dmax;
+    c->armor = d->armor;
+}
+
+/* pick a roster type whose depth band includes the current floor */
+static unsigned char pick_type(void) {
+    unsigned char t, cand[16], nc = 0;
+    for (t = 0; t < nmondef; t++)
+        if (depth >= mondef[t].dlo && depth <= mondef[t].dhi) cand[nc++] = t;
+    if (nc == 0) return 0;                       /* fallback: the rat */
+    return cand[rndn(nc)];
 }
 
 void spawn_monsters(void) {
-    unsigned char i;
+    unsigned char i, ty;
     nmon = 0;
     for (i = 1; i < nrooms && nmon < MAX_MON; i++) {
-        if (rndn(3) != 0) {              /* ~2/3 of rooms get a creature */
-            mon[nmon].x = rcx[i]; mon[nmon].y = rcy[i];
-            mon[nmon].hp = 3 + depth; mon[nmon].alive = 1;
+        if (rndn(3) != 0) {                      /* ~2/3 of rooms get a creature */
+            ty = pick_type();
+            mon[nmon].type  = ty;
+            mon[nmon].hp    = mondef[ty].hp + rndn(3);
+            mon[nmon].x     = rcx[i];
+            mon[nmon].y     = rcy[i];
+            mon[nmon].alive = 1;
             occ[rcy[i]][rcx[i]] = nmon + 1;
             nmon++;
         }
@@ -43,22 +57,27 @@ void mon_turn(void) {
     unsigned char i;
     struct Mon *m;
     for (i = 0; i < nmon; i++) {
+        const struct MonDef *d;
         m = &mon[i];
         if (!m->alive) continue;
-        if (!vis[(unsigned char)m->y][(unsigned char)m->x]) continue;   /* only act when seen */
+        if (!vis[(unsigned char)m->y][(unsigned char)m->x]) continue;   /* act only when seen */
+        d = &mondef[m->type];
+        if ((d->abil & AB_REGEN) && m->hp < (int)d->hp) m->hp++;        /* slow heal */
         {
             int adx = px - m->x, ady = py - m->y;
             signed char dx = sgn(adx), dy = sgn(ady);
             if (adx >= -1 && adx <= 1 && ady >= -1 && ady <= 1) {       /* adjacent: attack */
-                struct Combatant a, d;
+                struct Combatant a, def;
                 struct AtkResult r;
                 mon_combatant(m, &a);
-                player_combatant(&d);
-                resolve_attack(&a, &d, &r);
-                if (!r.hit) msg_add("The creature misses.");
+                player_combatant(&def);
+                resolve_attack(&a, &def, &r);
+                if (!r.hit) { msg_add("The"); msg_add(d->name); msg_add("misses."); }
                 else {
                     php -= r.dmg;
-                    msg_add(r.crit ? "The creature savages you!" : "The creature claws you!");
+                    msg_add("The"); msg_add(d->name);
+                    msg_add(r.crit ? "savages you!" : "hits you.");
+                    if (d->abil & AB_POISON) { ppoison += 4; msg_add("Poison!"); }
                 }
             } else {                                                    /* else step closer */
                 signed char nx = m->x + dx, ny = m->y + dy;

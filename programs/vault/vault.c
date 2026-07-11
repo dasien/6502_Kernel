@@ -67,7 +67,6 @@ static void roll_screen(void) {
         pstr = roll3d6(); pint = roll3d6(); pcon = roll3d6(); pdex = roll3d6();
         vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
         put_str(31, 3,  "THE SUNLESS VAULT", A_STAIRS);
-        put_str(16, 5,  "Descend fifteen floors and recover the Shimmering Orb.", A_DIM);
         put_str(34, 9,  "ROLL YOUR HERO", A_TEXT);
         put_str(34, 11, "STR", A_TEXT); put_num(40, 11, pstr, A_STAIRS);
         put_str(34, 12, "INT", A_TEXT); put_num(40, 12, pint, A_STAIRS);
@@ -133,6 +132,7 @@ void main(void) {
         } else { continue; }
 
         mon_turn();
+        if (ppoison > 0) { php--; ppoison--; msg_add("The poison gnaws."); }
         if (php <= 0) {
             msg_add("You die in the dark. Press a key.");
             render(0);

@@ -42,14 +42,16 @@ static void clear_row(unsigned char y) {
 #define V_FLOOR  4
 #define V_WALL   5
 #define V_STAIR  6
-#define V_MON    7
+#define V_MON    7      /* unused for drawing now -- monster cells use VC_MON + type */
 #define V_PLAYER 8
+#define VC_MON   16     /* monster view codes: VC_MON + roster index (so each type diffs) */
 static const unsigned char vglyph[9] = { ' ', '.', '#', '>', '.', '#', '>', 'r', '@' };
 static const unsigned char vattrs[9] = { A_TEXT, A_DIM, A_DIM, A_DIM,
                                          A_FLOOR, A_WALL, A_STAIRS, A_MON, A_PLAYER };
 
 static int  shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
 static int  shlevel = -1, shmana = -1;
+static unsigned char shpsn = 2;                    /* last poisoned flag (impossible init) */
 static char shmsg[80];                             /* last message shown */
 
 /* Diff repaint. full=1 wipes the screen + resets the shadow buffer (new level);
@@ -82,14 +84,17 @@ void render(unsigned char full) {
         for (x = x0; x <= x1; x++) {
             if ((signed char)x == px && y == py)      code = V_PLAYER;
             else if (vp[x]) {
-                if (op[x]) code = V_MON;
+                if (op[x]) code = VC_MON + occ_type(op[x]);   /* per-type glyph/colour */
                 else { t = gp[x]; code = (t == T_WALL) ? V_WALL : (t == T_STAIRS) ? V_STAIR : V_FLOOR; }
             } else if (ep[x]) {
                 t = gp[x]; code = (t == T_WALL) ? V_DWALL : (t == T_STAIRS) ? V_DSTAIR : V_DFLOOR;
             } else code = V_BLANK;
             if (code != sh[x]) {
+                unsigned char g, at;
+                if (code >= VC_MON) { t = code - VC_MON; g = mondef[t].glyph; at = mondef[t].attr; }
+                else                { g = vglyph[code];  at = vattrs[code]; }
                 vaddr((unsigned int)y * 80 + x);
-                put_cell(vglyph[code], vattrs[code]);
+                put_cell(g, at);
                 sh[x] = code;
             }
         }
@@ -97,7 +102,7 @@ void render(unsigned char full) {
     pbx0 = litx0; pby0 = lity0; pbx1 = litx1; pby1 = lity1;
 
     if (full || depth != shdepth || php != shhp || pmaxhp != shmax ||
-        plevel != shlevel || pmana != shmana) {
+        plevel != shlevel || pmana != shmana || (ppoison > 0) != shpsn) {
         clear_row(STA_ROW);
         put_str(0,  STA_ROW, pname, A_STAIRS);
         put_str(13, STA_ROW, "LV", A_TEXT);  put_num(16, STA_ROW, plevel, A_STAIRS);
@@ -109,8 +114,10 @@ void render(unsigned char full) {
         put_str(47, STA_ROW, "I", A_TEXT);   put_num(48, STA_ROW, pint, A_FLOOR);
         put_str(51, STA_ROW, "C", A_TEXT);   put_num(52, STA_ROW, pcon, A_FLOOR);
         put_str(55, STA_ROW, "D", A_TEXT);   put_num(56, STA_ROW, pdex, A_FLOOR);
-        put_str(61, STA_ROW, "DEPTH", A_TEXT); put_num(67, STA_ROW, depth, A_STAIRS);
+        put_str(61, STA_ROW, "DL", A_TEXT);  put_num(64, STA_ROW, depth, A_STAIRS);
+        if (ppoison > 0) put_str(69, STA_ROW, "POISON", A_MON);
         shdepth = depth; shhp = php; shmax = pmaxhp; shlevel = plevel; shmana = pmana;
+        shpsn = (ppoison > 0);
     }
 
     {

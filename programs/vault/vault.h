@@ -86,9 +86,32 @@ struct AtkResult { unsigned char hit; unsigned char crit; int dmg; };
 void resolve_attack(const struct Combatant *atk, const struct Combatant *def,
                     struct AtkResult *out);
 
+/* ---- data.c: content tables ----
+ * A monster type is a row of numbers + a couple of behaviour bits. monster.c
+ * spawns by depth and hands these to combat.c; draw.c reads glyph/attr. Adding
+ * a creature is a table row, not code. */
+#define AB_REGEN   0x01    /* heals a little each turn */
+#define AB_POISON  0x02    /* a landed hit poisons the hero */
+#define AB_RANGED  0x04    /* (reserved for a later step) */
+#define AB_SPLIT   0x08    /* (reserved) */
+#define AB_SUMMON  0x10    /* (reserved) */
+#define AB_TELE    0x20    /* (reserved) */
+struct MonDef {
+    unsigned char glyph, attr;
+    const char   *name;
+    unsigned char hp;                        /* base = max hit points */
+    unsigned char acc, eva, dmin, dmax, armor;
+    unsigned char xp;
+    unsigned char dlo, dhi;                  /* depth range this type appears on */
+    unsigned char abil;
+};
+extern const struct MonDef mondef[];
+extern const unsigned char nmondef;
+
 /* ---- player.c: the hero ---- */
 extern signed char   px, py;
 extern int           php, pmaxhp, pmana, pmaxmana;
+extern int           ppoison;                /* remaining poison ticks */
 extern unsigned char pstr, pint, pcon, pdex, plevel;
 extern char          pname[13];
 unsigned char roll3d6(void);
@@ -98,11 +121,12 @@ void          player_combatant(struct Combatant *c);
 unsigned char try_move(signed char dx, signed char dy);   /* 1 if the hero moved */
 
 /* ---- monster.c: creatures ---- */
-struct Mon { signed char x, y; int hp; unsigned char alive; };
+struct Mon { signed char x, y; int hp; unsigned char alive, type; };
 struct Mon   *mon_at(signed char x, signed char y);
 void          mon_combatant(struct Mon *m, struct Combatant *c);
 void          spawn_monsters(void);
 void          mon_turn(void);
+unsigned char occ_type(unsigned char oc);   /* type of the monster at occ value oc */
 
 /* ---- vault.c: core (RNG, messages, shared progress) ---- */
 extern int           depth;
