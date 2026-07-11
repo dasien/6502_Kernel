@@ -1,0 +1,117 @@
+/* ============================================================================
+ * The Sunless Vault -- shared declarations for the MFC text roguelike.
+ *
+ * The code is split into cohesive modules, each owning its own state:
+ *   glue.s    platform (VIC video, keyboard, FAT16, RTC)  -- see externs below
+ *   map.c     the dungeon grid + rooms; generation + field of view
+ *   draw.c    screen rendering + the status/message rows
+ *   player.c  the hero: stats, leveling, movement
+ *   monster.c creatures: spawning + AI
+ *   combat.c  actor-vs-actor resolution (to-hit, damage) -- knows no actor types
+ *   vault.c   main loop, input, RNG, the turn message log
+ *
+ * Each module defines the globals it owns; this header declares them `extern`
+ * for the others. cc65 links the translation units into one flat $0800 .PRG.
+ * ==========================================================================*/
+#ifndef VAULT_H
+#define VAULT_H
+
+/* ---- platform (glue.s) ---- */
+extern unsigned char INCH(void);
+extern int           INCH_NB(void);
+extern void          QUITDOS(void);
+extern void          vaddr(unsigned int cell);
+extern void          vputc(unsigned char ch);
+extern void          vattr(unsigned char a);
+extern void          vfill(unsigned char ch);        /* fill char for chip block ops */
+extern void          vcmd(unsigned char cmd);         /* chip-side clear / fill-row */
+extern void          vhidecur(void);
+extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy */
+
+#define VCMD_CLEAR   0x01
+#define VCMD_FILLROW 0x04
+
+/* ---- screen layout: rows 0..22 map, 23 message, 24 status ---- */
+#define MAP_W    80
+#define MAP_H    23
+#define MSG_ROW  23
+#define STA_ROW  24
+
+/* ---- tiles ---- */
+#define T_WALL   0
+#define T_FLOOR  1
+#define T_STAIRS 2
+
+/* ---- colour attributes ([R:7][BR:6][bg:5-3][fg:2-0]) ---- */
+#define A_WALL   0x47   /* bright white */
+#define A_FLOOR  0x02   /* green */
+#define A_DIM    0x04   /* blue -- explored but not currently visible */
+#define A_PLAYER 0x43   /* bright yellow */
+#define A_MON    0x41   /* bright red */
+#define A_STAIRS 0x46   /* bright cyan */
+#define A_TEXT   0x07   /* white */
+
+#define MAX_MON   16
+#define MAX_ROOMS 14
+#define FOV_R     8
+
+/* ---- map.c: the dungeon grid + rooms + FOV ---- */
+extern unsigned char gmap[MAP_H][MAP_W];    /* terrain */
+extern unsigned char seen[MAP_H][MAP_W];    /* ever seen (drawn dim when not visible) */
+extern unsigned char vis[MAP_H][MAP_W];     /* currently in view */
+extern unsigned char occ[MAP_H][MAP_W];     /* live-monster index+1 at cell, else 0 */
+extern unsigned char rcx[MAX_ROOMS], rcy[MAX_ROOMS], nrooms;   /* room centres */
+extern unsigned char litx0, lity0, litx1, lity1;               /* current lit box */
+void gen_level(void);
+void light(void);
+
+/* ---- draw.c: rendering ---- */
+void put_cell(unsigned char g, unsigned char a);
+void put_str(unsigned char x, unsigned char y, const char *s, unsigned char a);
+void put_num(unsigned char x, unsigned char y, int v, unsigned char a);
+void render(unsigned char full);
+
+/* ---- combat.c: actor-vs-actor resolution ----
+ * A Combatant is a snapshot of the numbers that drive one exchange, filled in by
+ * the attacker's / defender's own module from its stats (and later gear/buffs).
+ * The resolver never asks "is this the hero or a beast" -- it only sees numbers. */
+struct Combatant {
+    const char   *name;      /* for the log */
+    unsigned char acc;       /* accuracy: raises the attacker's hit chance */
+    unsigned char eva;       /* evasion: lowers the attacker's hit chance */
+    unsigned char dmin, dmax;/* damage range before armour */
+    unsigned char armor;     /* flat damage reduction */
+};
+struct AtkResult { unsigned char hit; unsigned char crit; int dmg; };
+void resolve_attack(const struct Combatant *atk, const struct Combatant *def,
+                    struct AtkResult *out);
+
+/* ---- player.c: the hero ---- */
+extern signed char   px, py;
+extern int           php, pmaxhp, pmana, pmaxmana;
+extern unsigned char pstr, pint, pcon, pdex, plevel;
+extern char          pname[13];
+unsigned char roll3d6(void);
+void          char_begin(void);                 /* fresh level-1 hero from rolled stats */
+void          gain_xp(int amt);
+void          player_combatant(struct Combatant *c);
+unsigned char try_move(signed char dx, signed char dy);   /* 1 if the hero moved */
+
+/* ---- monster.c: creatures ---- */
+struct Mon { signed char x, y; int hp; unsigned char alive; };
+struct Mon   *mon_at(signed char x, signed char y);
+void          mon_combatant(struct Mon *m, struct Combatant *c);
+void          spawn_monsters(void);
+void          mon_turn(void);
+
+/* ---- vault.c: core (RNG, messages, shared progress) ---- */
+extern int           depth;
+extern char          msg[80];
+unsigned int  rnd16(void);
+unsigned char rndn(unsigned char n);
+signed char   sgn(int v);
+void          msg_clear(void);
+void          msg_add(const char *s);
+void          set_msg(const char *s);
+
+#endif /* VAULT_H */
