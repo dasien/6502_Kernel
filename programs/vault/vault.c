@@ -115,7 +115,7 @@ void main(void) {
     roll_screen();
     char_begin();
     depth = 1;
-    set_msg("You enter the Sunless Vault...");
+    set_msg("You enter the Sunless Vault.  (i)tems  (c)ast  >:descend  Q:quit");
     gen_level();
     spawn_monsters();
     spawn_items();
@@ -140,6 +140,12 @@ void main(void) {
             if (!used) continue;
             moved = 0;                                 /* item used: a turn passes, no move */
         }
+        else if (k == 'c' || k == 'C') {               /* cast a spell (free unless cast) */
+            unsigned char cast = spell_screen();
+            render(1);
+            if (!cast) continue;
+            moved = 0;                                 /* spell cast: a turn passes */
+        }
         else if (k == '>') {
             if (gmap[py][px] == T_STAIRS) {
                 depth++; set_msg("You descend deeper into the vault...");
@@ -149,8 +155,8 @@ void main(void) {
         } else { continue; }
 
         if (moved) try_pickup();                       /* grab whatever we stepped onto */
-        mon_turn();
-        if (ppoison > 0) { php--; ppoison--; msg_add("The poison gnaws."); }
+        player_tick();                                 /* effects + regen (poison, shield...) */
+        mon_turn();                                    /* frozen if Time Stop is active */
         if (php <= 0) {
             msg_add("You die in the dark. Press a key.");
             render(0);

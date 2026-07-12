@@ -16,6 +16,31 @@ struct Mon *mon_at(signed char x, signed char y) {
 }
 unsigned char occ_type(unsigned char oc) { return mon[oc - 1].type; }   /* for the renderer */
 
+/* closest currently-visible live creature (squared distance), or 0 -- for spells */
+struct Mon *nearest_vis_mon(void) {
+    unsigned char i, best = 0xFF;
+    int bestd = 30000;
+    for (i = 0; i < nmon; i++) {
+        int dx, dy, d;
+        if (!mon[i].alive || !vis[(unsigned char)mon[i].y][(unsigned char)mon[i].x]) continue;
+        dx = mon[i].x - px; dy = mon[i].y - py; d = dx * dx + dy * dy;
+        if (d < bestd) { bestd = d; best = i; }
+    }
+    return (best == 0xFF) ? 0 : &mon[best];
+}
+
+/* apply damage; on death clear the cell + award XP. Returns 1 if it died. */
+unsigned char mon_hurt(struct Mon *m, int dmg) {
+    m->hp -= dmg;
+    if (m->hp <= 0) {
+        m->alive = 0;
+        occ[(unsigned char)m->y][(unsigned char)m->x] = 0;
+        gain_xp(mondef[m->type].xp);
+        return 1;
+    }
+    return 0;
+}
+
 /* how a creature presents to the combat resolver -- straight from its roster row */
 void mon_combatant(struct Mon *m, struct Combatant *c) {
     const struct MonDef *d = &mondef[m->type];
@@ -56,6 +81,7 @@ void spawn_monsters(void) {
 void mon_turn(void) {
     unsigned char i;
     struct Mon *m;
+    if (ptimestop) return;                     /* Time Stop: creatures are frozen */
     for (i = 0; i < nmon; i++) {
         const struct MonDef *d;
         m = &mon[i];

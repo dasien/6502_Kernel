@@ -10,6 +10,7 @@ int           php, pmaxhp, pmana, pmaxmana;
 int           ppoison;
 int           pgold;
 unsigned char pweapon, parmor;
+unsigned char pshield, ptimestop, plight;
 unsigned char pstr, pint, pcon, pdex, plevel;
 char          pname[13];
 
@@ -17,11 +18,11 @@ static int    pxp, pxpnext;
 
 unsigned char roll3d6(void) { return (unsigned char)(3 + rndn(6) + rndn(6) + rndn(6)); }
 static int stat_hp(void)    { return 6 + pcon + (plevel - 1) * (4 + pcon / 6); }
-static int stat_mana(void)  { return pint + (plevel - 1) * (pint / 3); }
+static int stat_mana(void)  { return 2 * pint + (plevel - 1) * (pint / 2); }
 
 void char_begin(void) {                  /* fresh level-1 hero from the rolled stats */
     plevel = 1; pxp = 0; pxpnext = 20; ppoison = 0; pgold = 0;
-    pweapon = 0; parmor = 0;
+    pweapon = 0; parmor = 0; pshield = 0; ptimestop = 0; plight = 0;
     pmaxhp = stat_hp();     php   = pmaxhp;
     pmaxmana = stat_mana(); pmana = pmaxmana;
 }
@@ -43,7 +44,19 @@ void player_combatant(struct Combatant *c) {
     c->eva   = (unsigned char)(pdex / 2);
     c->dmin  = (unsigned char)(1 + pstr / 4 + pweapon);   /* STR + weapon bonus */
     c->dmax  = (unsigned char)(4 + pstr / 4 + pweapon);
-    c->armor = parmor;                                    /* armor bonus soaks damage */
+    c->armor = (unsigned char)(parmor + (pshield ? 4 : 0)); /* armor + shield spell */
+}
+
+/* per-turn upkeep: tick temporary effects, bleed poison, and regenerate slowly */
+void player_tick(void) {
+    static unsigned char rc;
+    if (ppoison > 0)   { php--; ppoison--; msg_add("The poison gnaws."); }
+    if (pshield > 0)   pshield--;
+    if (ptimestop > 0) ptimestop--;
+    if (plight > 0)    plight--;
+    rc++;
+    if ((rc & 3) == 0 && pmana < pmaxmana) pmana++;                 /* mana regen */
+    if ((rc & 7) == 0 && php < pmaxhp && ppoison == 0) php++;       /* natural healing */
 }
 
 /* returns 1 if the hero actually moved (so FOV needs recomputing) */
@@ -60,12 +73,8 @@ unsigned char try_move(signed char dx, signed char dy) {
         resolve_attack(&a, &d, &r);
         if (!r.hit) { msg_add("You miss the"); msg_add(d.name); return 0; }
         if (r.crit) msg_add("Critical hit!");
-        m->hp -= r.dmg;
-        if (m->hp <= 0) {
-            m->alive = 0; occ[(unsigned char)m->y][(unsigned char)m->x] = 0;
-            msg_add("You slay the"); msg_add(d.name);
-            gain_xp(mondef[m->type].xp);
-        } else { msg_add("You hit the"); msg_add(d.name); }
+        if (mon_hurt(m, r.dmg)) { msg_add("You slay the"); msg_add(d.name); }
+        else                    { msg_add("You hit the");  msg_add(d.name); }
         return 0;
     }
     if (gmap[ny][nx] == T_WALL) return 0;

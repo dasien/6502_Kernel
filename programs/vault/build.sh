@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 cl65 -t none --signed-chars -O -C vault.cfg \
-    vault.c map.c draw.c player.c monster.c combat.c item.c data.c glue.s -o vault.bin
+    vault.c map.c draw.c player.c monster.c combat.c item.c spell.c data.c glue.s -o vault.bin
 
 # Prepend the 2-byte little-endian $0800 load header -> a .PRG.
 printf '\000\010' > VAULT.PRG

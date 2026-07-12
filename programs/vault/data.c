@@ -42,3 +42,15 @@ const struct ItemDef itemdef[] = {
     { 147, 0x46, "armor upgrade",       IT_ARMOR,  0 },
 };
 const unsigned char nitemdef = sizeof(itemdef) / sizeof(itemdef[0]);
+
+/* SpellDef columns: name, mana cost, min INT to know it, kind.
+ * You "know" every spell your INT clears; mana limits how often you cast. */
+const struct SpellDef spelldef[] = {
+    { "Magic Missile",  4,  8, SP_MISSILE  },
+    { "Heal",           8, 10, SP_HEAL     },
+    { "Light",          3,  9, SP_LIGHT    },   /* torch: widens vision, not a map */
+    { "Shield",        14, 11, SP_SHIELD   },
+    { "Teleport",       2, 12, SP_TELE     },   /* cheap escape hatch */
+    { "Time Stop",     20, 15, SP_TIMESTOP },   /* cost = min mana; consumes ALL */
+};
+const unsigned char nspelldef = sizeof(spelldef) / sizeof(spelldef[0]);

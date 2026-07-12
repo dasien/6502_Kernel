@@ -99,6 +99,9 @@ static void clear_vis_box(void) {
     }
 }
 
+/* current sight radius -- FOV_R normally, widened while the Light spell is up */
+static unsigned char fov_r = FOV_R;
+
 /* floor / ceil integer division for a positive divisor b (C truncates toward 0) */
 static int fdiv(int a, int b) { return (a >= 0) ? a / b : -(((-a) + b - 1) / b); }
 static int cdiv(int a, int b) { return fdiv(a + b - 1, b); }
@@ -111,14 +114,14 @@ static void reveal(signed char x, signed char y) {
     int dx, dy;
     if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) return;
     dx = x - px; dy = y - py;
-    if (dx * dx + dy * dy <= FOV_R * FOV_R) { vis[y][x] = 1; seen[y][x] = 1; }
+    if (dx * dx + dy * dy <= (int)fov_r * fov_r) { vis[y][x] = 1; seen[y][x] = 1; }
 }
 
 static void scan(unsigned char q, int d, int sN, int sD, int eN, int eD) {
     int minc, maxc, col, x, y;
     signed char prev = -2;      /* -2 none, 0 floor, 1 wall (prev tile in row) */
     unsigned char wall;
-    if (d > FOV_R) return;
+    if (d > fov_r) return;
     minc = fdiv(2 * d * sN + sD, 2 * sD);   /* round_ties_up(d * start) */
     maxc = cdiv(2 * d * eN - eD, 2 * eD);   /* round_ties_down(d * end) */
     for (col = minc; col <= maxc; col++) {
@@ -142,12 +145,14 @@ void light(void) {
     unsigned char q;
     signed char a;
 
+    fov_r = plight ? (FOV_R + 5) : FOV_R;    /* the Light spell widens the torch */
+
     clear_vis_box();                         /* unlight last frame's disc */
     reveal(px, py);
     for (q = 0; q < 4; q++) scan(q, 1, -1, 1, 1, 1);
 
-    a = px - FOV_R; litx0 = (a < 0) ? 0 : a;         /* bounding box for render/clear */
-    a = py - FOV_R; lity0 = (a < 0) ? 0 : a;
-    a = px + FOV_R; litx1 = (a > MAP_W - 1) ? MAP_W - 1 : a;
-    a = py + FOV_R; lity1 = (a > MAP_H - 1) ? MAP_H - 1 : a;
+    a = px - fov_r; litx0 = (a < 0) ? 0 : a;         /* bounding box for render/clear */
+    a = py - fov_r; lity0 = (a < 0) ? 0 : a;
+    a = px + fov_r; litx1 = (a > MAP_W - 1) ? MAP_W - 1 : a;
+    a = py + fov_r; lity1 = (a > MAP_H - 1) ? MAP_H - 1 : a;
 }

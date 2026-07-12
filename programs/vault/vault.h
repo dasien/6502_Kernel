@@ -126,18 +126,37 @@ struct ItemDef {
 extern const struct ItemDef itemdef[];
 extern const unsigned char nitemdef;
 
+/* spells: INT-gated, mana-costed, castable from the 'c' menu. Time Stop is the
+ * capstone -- its "cost" is a minimum-mana threshold and it consumes ALL mana. */
+#define SP_MISSILE  0    /* bolt the nearest visible creature */
+#define SP_HEAL     1    /* restore HP */
+#define SP_LIGHT    2    /* reveal the whole level */
+#define SP_SHIELD   3    /* temporary armour */
+#define SP_TELE     4    /* blink to a random floor cell */
+#define SP_TIMESTOP 5    /* freeze monsters (and, in Phase 4, the seal clock) */
+struct SpellDef {
+    const char   *name;
+    unsigned char cost;                      /* mana (for Time Stop: min threshold) */
+    unsigned char minint;                    /* INT required to know the spell */
+    unsigned char kind;
+};
+extern const struct SpellDef spelldef[];
+extern const unsigned char nspelldef;
+
 /* ---- player.c: the hero ---- */
 extern signed char   px, py;
 extern int           php, pmaxhp, pmana, pmaxmana;
 extern int           ppoison;                /* remaining poison ticks */
 extern int           pgold;                  /* gold purse */
 extern unsigned char pweapon, parmor;        /* permanent gear bonuses (Yacor-style) */
+extern unsigned char pshield, ptimestop, plight;   /* temporary spell effects (turns left) */
 extern unsigned char pstr, pint, pcon, pdex, plevel;
 extern char          pname[13];
 unsigned char roll3d6(void);
 void          char_begin(void);                 /* fresh level-1 hero from rolled stats */
 void          gain_xp(int amt);
 void          player_combatant(struct Combatant *c);
+void          player_tick(void);                 /* per-turn upkeep: effects + regen */
 unsigned char try_move(signed char dx, signed char dy);   /* 1 if the hero moved */
 
 /* ---- monster.c: creatures ---- */
@@ -147,6 +166,11 @@ void          mon_combatant(struct Mon *m, struct Combatant *c);
 void          spawn_monsters(void);
 void          mon_turn(void);
 unsigned char occ_type(unsigned char oc);   /* type of the monster at occ value oc */
+struct Mon   *nearest_vis_mon(void);         /* closest visible live creature, or 0 */
+unsigned char mon_hurt(struct Mon *m, int dmg);   /* apply damage; 1 if it died */
+
+/* ---- spell.c ---- */
+unsigned char spell_screen(void);            /* the 'c' menu; 1 if a turn passed */
 
 /* ---- item.c: floor items + inventory ---- */
 #define MAX_FITEM 8
