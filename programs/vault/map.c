@@ -72,6 +72,19 @@ void gen_level(void) {
     gmap[rcy[nrooms - 1]][rcx[nrooms - 1]] = T_STAIRS;
 }
 
+/* a random walkable cell (for item scatter + teleport). Falls back to the
+ * hero's start if the map is somehow too dense to find one quickly. */
+void random_floor(signed char *ox, signed char *oy) {
+    unsigned char tries;
+    signed char x = px, y = py;
+    for (tries = 0; tries < 200; tries++) {
+        x = 1 + rndn(MAP_W - 2);
+        y = 1 + rndn(MAP_H - 2);
+        if (gmap[y][x] == T_FLOOR) break;
+    }
+    *ox = x; *oy = y;
+}
+
 /* ---- field of view: recursive symmetric shadowcasting (Albert Ford's method).
  * Each of 4 cardinal quadrants is scanned row by row outward; a row carries a
  * [start,end] slope cone as integer fractions, and a wall splits the cone by

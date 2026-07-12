@@ -33,6 +33,16 @@ void msg_add(const char *s) {
     while (*s && mlen < 79) msg[mlen++] = *s++;
     msg[mlen] = 0;
 }
+void msg_num(int v) {                    /* append " N" to the log */
+    char b[6];
+    signed char i = 0, j;
+    if (v < 0) v = 0;
+    if (v == 0) b[i++] = '0';
+    while (v > 0 && i < 5) { b[i++] = (char)('0' + v % 10); v /= 10; }
+    if (mlen && mlen < 79) msg[mlen++] = ' ';
+    for (j = i - 1; j >= 0 && mlen < 79; j--) msg[mlen++] = b[j];
+    msg[mlen] = 0;
+}
 void set_msg(const char *s) { msg_clear(); msg_add(s); }
 
 /* ---- input ----
@@ -108,6 +118,7 @@ void main(void) {
     set_msg("You enter the Sunless Vault...");
     gen_level();
     spawn_monsters();
+    spawn_items();
     light();
     render(1);
 
@@ -123,14 +134,21 @@ void main(void) {
         else if (k == 'k') moved = try_move(0, -1);
         else if (k == 'j') moved = try_move(0, 1);
         else if (k == '.') moved = 1;                  /* wait: a turn passes */
+        else if (k == 'i' || k == 'I') {               /* inventory (free unless used) */
+            unsigned char used = inventory_screen();
+            render(1);
+            if (!used) continue;
+            moved = 0;                                 /* item used: a turn passes, no move */
+        }
         else if (k == '>') {
             if (gmap[py][px] == T_STAIRS) {
                 depth++; set_msg("You descend deeper into the vault...");
-                gen_level(); spawn_monsters(); light(); render(1);
+                gen_level(); spawn_monsters(); spawn_items(); light(); render(1);
             } else { set_msg("There are no stairs here."); render(0); }
             continue;
         } else { continue; }
 
+        if (moved) try_pickup();                       /* grab whatever we stepped onto */
         mon_turn();
         if (ppoison > 0) { php--; ppoison--; msg_add("The poison gnaws."); }
         if (php <= 0) {

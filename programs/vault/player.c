@@ -8,6 +8,8 @@
 signed char   px, py;
 int           php, pmaxhp, pmana, pmaxmana;
 int           ppoison;
+int           pgold;
+unsigned char pweapon, parmor;
 unsigned char pstr, pint, pcon, pdex, plevel;
 char          pname[13];
 
@@ -18,7 +20,8 @@ static int stat_hp(void)    { return 6 + pcon + (plevel - 1) * (4 + pcon / 6); }
 static int stat_mana(void)  { return pint + (plevel - 1) * (pint / 3); }
 
 void char_begin(void) {                  /* fresh level-1 hero from the rolled stats */
-    plevel = 1; pxp = 0; pxpnext = 20; ppoison = 0;
+    plevel = 1; pxp = 0; pxpnext = 20; ppoison = 0; pgold = 0;
+    pweapon = 0; parmor = 0;
     pmaxhp = stat_hp();     php   = pmaxhp;
     pmaxmana = stat_mana(); pmana = pmaxmana;
 }
@@ -38,9 +41,9 @@ void player_combatant(struct Combatant *c) {
     c->name  = pname;
     c->acc   = (unsigned char)(8 + pdex / 2 + plevel);
     c->eva   = (unsigned char)(pdex / 2);
-    c->dmin  = (unsigned char)(1 + pstr / 4);
-    c->dmax  = (unsigned char)(4 + pstr / 4);
-    c->armor = 0;                        /* gear arrives in a later step */
+    c->dmin  = (unsigned char)(1 + pstr / 4 + pweapon);   /* STR + weapon bonus */
+    c->dmax  = (unsigned char)(4 + pstr / 4 + pweapon);
+    c->armor = parmor;                                    /* armor bonus soaks damage */
 }
 
 /* returns 1 if the hero actually moved (so FOV needs recomputing) */

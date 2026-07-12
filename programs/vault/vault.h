@@ -45,7 +45,7 @@ extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy
 /* ---- colour attributes ([R:7][BR:6][bg:5-3][fg:2-0]) ---- */
 #define A_WALL   0x47   /* bright white */
 #define A_FLOOR  0x02   /* green */
-#define A_DIM    0x04   /* blue -- explored but not currently visible */
+#define A_DIM    0x40   /* dark gray (bright black) -- explored but not currently visible */
 #define A_PLAYER 0x43   /* bright yellow */
 #define A_MON    0x41   /* bright red */
 #define A_STAIRS 0x46   /* bright cyan */
@@ -64,6 +64,7 @@ extern unsigned char rcx[MAX_ROOMS], rcy[MAX_ROOMS], nrooms;   /* room centres *
 extern unsigned char litx0, lity0, litx1, lity1;               /* current lit box */
 void gen_level(void);
 void light(void);
+void random_floor(signed char *ox, signed char *oy);   /* a random walkable cell */
 
 /* ---- draw.c: rendering ---- */
 void put_cell(unsigned char g, unsigned char a);
@@ -108,10 +109,29 @@ struct MonDef {
 extern const struct MonDef mondef[];
 extern const unsigned char nmondef;
 
+/* item kinds (the effect when used) */
+#define IT_HEAL  0    /* restore HP */
+#define IT_MANA  1    /* restore mana */
+#define IT_STR   2    /* permanent +STR */
+#define IT_MAP   3    /* reveal the whole level */
+#define IT_TELE  4    /* blink to a random floor cell */
+#define IT_GOLD  5    /* currency: adds to the gold purse, not the pack */
+#define IT_WEAPON 6   /* permanent +1 to weapon bonus (attack) */
+#define IT_ARMOR  7   /* permanent +1 to armor bonus (defense) */
+struct ItemDef {
+    unsigned char glyph, attr;
+    const char   *name;
+    unsigned char kind, mag;                 /* effect id + magnitude */
+};
+extern const struct ItemDef itemdef[];
+extern const unsigned char nitemdef;
+
 /* ---- player.c: the hero ---- */
 extern signed char   px, py;
 extern int           php, pmaxhp, pmana, pmaxmana;
 extern int           ppoison;                /* remaining poison ticks */
+extern int           pgold;                  /* gold purse */
+extern unsigned char pweapon, parmor;        /* permanent gear bonuses (Yacor-style) */
 extern unsigned char pstr, pint, pcon, pdex, plevel;
 extern char          pname[13];
 unsigned char roll3d6(void);
@@ -128,6 +148,15 @@ void          spawn_monsters(void);
 void          mon_turn(void);
 unsigned char occ_type(unsigned char oc);   /* type of the monster at occ value oc */
 
+/* ---- item.c: floor items + inventory ---- */
+#define MAX_FITEM 8
+#define MAX_INV   16
+extern unsigned char iocc[MAP_H][MAP_W];     /* floor-item index+1 at cell, else 0 */
+unsigned char iocc_type(unsigned char io);   /* item type at iocc value io (for the renderer) */
+void          spawn_items(void);
+void          try_pickup(void);              /* pick up whatever the hero stands on */
+unsigned char inventory_screen(void);        /* the 'i' menu; 1 if a turn passed */
+
 /* ---- vault.c: core (RNG, messages, shared progress) ---- */
 extern int           depth;
 extern char          msg[80];
@@ -136,6 +165,7 @@ unsigned char rndn(unsigned char n);
 signed char   sgn(int v);
 void          msg_clear(void);
 void          msg_add(const char *s);
+void          msg_num(int v);                /* append a decimal number to the log */
 void          set_msg(const char *s);
 
 #endif /* VAULT_H */
