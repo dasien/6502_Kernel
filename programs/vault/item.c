@@ -17,6 +17,19 @@ static unsigned char ninv;
 
 unsigned char iocc_type(unsigned char io) { return fitem[io - 1].type; }
 
+/* pick an item type by relative drop weight (gold common, upgrades/map rare) */
+static unsigned char pick_item(void) {
+    unsigned int total = 0, r;
+    unsigned char i;
+    for (i = 0; i < nitemdef; i++) total += itemdef[i].weight;
+    r = rnd16() % total;
+    for (i = 0; i < nitemdef; i++) {
+        if (r < itemdef[i].weight) return i;
+        r -= itemdef[i].weight;
+    }
+    return 0;
+}
+
 void spawn_items(void) {
     unsigned char n, count, y, x;
     for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) iocc[y][x] = 0;
@@ -29,7 +42,7 @@ void spawn_items(void) {
         if (occ[iy][ix] || iocc[iy][ix]) continue;
         if (ix == px && iy == py) continue;
         fitem[nfitem].x = ix; fitem[nfitem].y = iy;
-        fitem[nfitem].type = rndn(nitemdef); fitem[nfitem].alive = 1;
+        fitem[nfitem].type = pick_item(); fitem[nfitem].alive = 1;
         iocc[iy][ix] = nfitem + 1;
         nfitem++;
     }
@@ -42,7 +55,7 @@ void try_pickup(void) {
     ty = fitem[io - 1].type;
 
     if (itemdef[ty].kind == IT_GOLD) {              /* currency, not a pack item */
-        int amt = 2 + rndn((unsigned char)(6 + depth * 3));
+        int amt = 10 + depth * 3 + rndn((unsigned char)(10 + depth * 4));
         pgold += amt;
         msg_add("You find"); msg_num(amt); msg_add("gold.");
     } else if (itemdef[ty].kind == IT_WEAPON) {     /* permanent attack buff, used at once */
@@ -73,21 +86,12 @@ static void use_item(unsigned char slot) {
             pmana += itemdef[ty].mag; if (pmana > pmaxmana) pmana = pmaxmana;
             msg_add("Magic surges within you.");
             break;
-        case IT_STR:
-            pstr++;
-            msg_add("You feel mightier!");
-            break;
         case IT_MAP: {
             unsigned char y, x;
             for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) seen[y][x] = 1;
             msg_add("The level is laid bare.");
             break;
         }
-        case IT_TELE:
-            random_floor(&px, &py);
-            light();
-            msg_add("Reality lurches -- you blink away.");
-            break;
     }
     for (i = slot; i + 1 < ninv; i++) inv[i] = inv[i + 1];   /* consume the item */
     ninv--;

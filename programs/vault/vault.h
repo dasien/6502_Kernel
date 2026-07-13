@@ -111,18 +111,17 @@ extern const struct MonDef mondef[];
 extern const unsigned char nmondef;
 
 /* item kinds (the effect when used) */
-#define IT_HEAL  0    /* restore HP */
-#define IT_MANA  1    /* restore mana */
-#define IT_STR   2    /* permanent +STR */
-#define IT_MAP   3    /* reveal the whole level */
-#define IT_TELE  4    /* blink to a random floor cell */
-#define IT_GOLD  5    /* currency: adds to the gold purse, not the pack */
-#define IT_WEAPON 6   /* permanent +1 to weapon bonus (attack) */
-#define IT_ARMOR  7   /* permanent +1 to armor bonus (defense) */
+#define IT_HEAL   0   /* restore HP */
+#define IT_MANA   1   /* restore mana */
+#define IT_MAP    2   /* reveal the whole level */
+#define IT_GOLD   3   /* currency: adds to the gold purse, not the pack */
+#define IT_WEAPON 4   /* permanent +1 to weapon bonus (attack) */
+#define IT_ARMOR  5   /* permanent +1 to armor bonus (defense) */
 struct ItemDef {
     unsigned char glyph, attr;
     const char   *name;
     unsigned char kind, mag;                 /* effect id + magnitude */
+    unsigned char weight;                    /* relative drop frequency */
 };
 extern const struct ItemDef itemdef[];
 extern const unsigned char nitemdef;

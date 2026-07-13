@@ -29,17 +29,17 @@ const struct MonDef mondef[] = {
 };
 const unsigned char nmondef = sizeof(mondef) / sizeof(mondef[0]);
 
-/* ItemDef columns: glyph, attr, name, kind, magnitude.
- * Glyphs are CP437 bytes: 173 (potion flask), 240 (scroll), 15 (coins). */
+/* ItemDef columns: glyph, attr, name, kind, magnitude, drop weight.
+ * Glyphs are CP437 bytes: 173 (potion flask), 240 (scroll), 15 (coins).
+ * Weights are relative -- gold is the common find, upgrades/map the rarest.
+ * (Teleport is a spell, not a scroll; stat gains come from shrines.) */
 const struct ItemDef itemdef[] = {
-    { 173, 0x41, "potion of healing",   IT_HEAL, 14 },
-    { 173, 0x46, "potion of mana",      IT_MANA, 10 },
-    { 173, 0x45, "elixir of might",     IT_STR,   1 },
-    { 240, 0x47, "scroll of magic map", IT_MAP,   0 },
-    { 240, 0x43, "scroll of teleport",  IT_TELE,  0 },
-    {  15, 0x43, "gold",                IT_GOLD,  0 },
-    { 140, 0x47, "weapon upgrade",      IT_WEAPON, 0 },
-    { 147, 0x46, "armor upgrade",       IT_ARMOR,  0 },
+    {  15, 0x43, "gold",                IT_GOLD,   0, 30 },
+    { 173, 0x41, "potion of healing",   IT_HEAL,  14, 18 },
+    { 173, 0x46, "potion of mana",      IT_MANA,  10, 12 },
+    { 240, 0x47, "scroll of magic map", IT_MAP,    0,  6 },
+    { 140, 0x47, "weapon upgrade",      IT_WEAPON, 0,  5 },
+    { 147, 0x46, "armor upgrade",       IT_ARMOR,  0,  5 },
 };
 const unsigned char nitemdef = sizeof(itemdef) / sizeof(itemdef[0]);
 
