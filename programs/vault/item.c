@@ -93,6 +93,56 @@ static void use_item(unsigned char slot) {
     ninv--;
 }
 
+/* the 'p' shrine menu: donate gold for restoration or a permanent blessing. Both
+ * services grow more expensive the more you buy. Returns 1 if a turn passed. */
+unsigned char shrine_menu(void) {
+    static unsigned char nrest, nbless;      /* purchases so far -> rising prices */
+    int rcost = 15 + 15 * nrest;
+    int bcost = 30 + 30 * nbless;
+    int k;
+    char lbl[4];
+    unsigned char row;
+
+    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    put_str(26, 2, "AN ALTAR TO THE DROWNED GODS", A_STAIRS);
+    put_str(30, 4, "Gold", A_TEXT); put_num(35, 4, pgold, A_PLAYER);
+
+    lbl[1] = ')'; lbl[2] = ' '; lbl[3] = 0;
+    lbl[0] = 'a'; put_str(24, 6, lbl, A_STAIRS);
+    put_str(27, 6, "Restore body and mind", A_TEXT);
+    put_str(54, 6, "gold", A_DIM); put_num(59, 6, rcost, A_TEXT);
+    row = 8;
+    { static const char *bn[4] = { "Blessing of Might  (STR)", "Blessing of Mind   (INT)",
+                                    "Blessing of Vigor  (CON)", "Blessing of Grace  (DEX)" };
+      unsigned char i;
+      for (i = 0; i < 4; i++) {
+          lbl[0] = (char)('b' + i);
+          put_str(24, (unsigned char)(row + i), lbl, A_STAIRS);
+          put_str(27, (unsigned char)(row + i), bn[i], A_TEXT);
+          put_str(54, (unsigned char)(row + i), "gold", A_DIM);
+          put_num(59, (unsigned char)(row + i), bcost, A_TEXT);
+      }
+    }
+    put_str(24, 14, "[a-e] offer     [any other] leave", A_DIM);
+
+    k = INCH();
+    if (k == 'a') {
+        if (pgold < rcost) { msg_add("Not enough gold."); return 0; }
+        pgold -= rcost; nrest++;
+        php = pmaxhp; pmana = pmaxmana;
+        msg_add("The gods restore your body and mind.");
+        return 1;
+    }
+    if (k >= 'b' && k <= 'e') {
+        if (pgold < bcost) { msg_add("Not enough gold."); return 0; }
+        pgold -= bcost; nbless++;
+        player_bless((unsigned char)(k - 'b'));
+        msg_add("A cold blessing settles into your bones.");
+        return 1;
+    }
+    return 0;
+}
+
 /* the 'i' menu: list carried items, pick one to use. Returns 1 if a turn passed
  * (an item was used), 0 if it was only viewed. The caller repaints the map. */
 unsigned char inventory_screen(void) {

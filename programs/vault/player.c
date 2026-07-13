@@ -47,16 +47,25 @@ void player_combatant(struct Combatant *c) {
     c->armor = (unsigned char)(parmor + (pshield ? 4 : 0)); /* armor + shield spell */
 }
 
+/* shrine boon: permanently raise a stat (and the pool it feeds) */
+void player_bless(unsigned char which) {
+    switch (which) {
+        case 0: pstr++; break;
+        case 1: pint++; pmaxmana = stat_mana(); break;
+        case 2: pcon++; { int old = pmaxhp; pmaxhp = stat_hp(); php += pmaxhp - old; } break;
+        case 3: pdex++; break;
+    }
+}
+
 /* per-turn upkeep: tick temporary effects, bleed poison, and regenerate slowly */
 void player_tick(void) {
-    static unsigned char rc;
+    static unsigned char hreg, mreg;
     if (ppoison > 0)   { php--; ppoison--; msg_add("The poison gnaws."); }
     if (pshield > 0)   pshield--;
     if (ptimestop > 0) ptimestop--;
     if (plight > 0)    plight--;
-    rc++;
-    if ((rc & 3) == 0 && pmana < pmaxmana) pmana++;                 /* mana regen */
-    if ((rc & 7) == 0 && php < pmaxhp && ppoison == 0) php++;       /* natural healing */
+    if (++hreg >= 15) { hreg = 0; if (php < pmaxhp && ppoison == 0) php++; }   /* heal / 15 turns */
+    if (++mreg >= 25) { mreg = 0; if (pmana < pmaxmana) pmana++; }             /* mana / 25 turns */
 }
 
 /* returns 1 if the hero actually moved (so FOV needs recomputing) */
@@ -80,5 +89,6 @@ unsigned char try_move(signed char dx, signed char dy) {
     if (gmap[ny][nx] == T_WALL) return 0;
     px = nx; py = ny;
     if (gmap[py][px] == T_STAIRS) msg_add("A stairway leads down (press >).");
+    else if (gmap[py][px] == T_SHRINE) msg_add("An altar stands here. (p)ray.");
     return 1;
 }

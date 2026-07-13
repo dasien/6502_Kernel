@@ -41,6 +41,7 @@ extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy
 #define T_WALL   0
 #define T_FLOOR  1
 #define T_STAIRS 2
+#define T_SHRINE 3    /* an altar: stand on it and (p)ray to spend gold */
 
 /* ---- colour attributes ([R:7][BR:6][bg:5-3][fg:2-0]) ---- */
 #define A_WALL   0x47   /* bright white */
@@ -157,6 +158,7 @@ void          char_begin(void);                 /* fresh level-1 hero from rolle
 void          gain_xp(int amt);
 void          player_combatant(struct Combatant *c);
 void          player_tick(void);                 /* per-turn upkeep: effects + regen */
+void          player_bless(unsigned char which); /* shrine boon: +1 to stat 0=S 1=I 2=C 3=D */
 unsigned char try_move(signed char dx, signed char dy);   /* 1 if the hero moved */
 
 /* ---- monster.c: creatures ---- */
@@ -180,6 +182,7 @@ unsigned char iocc_type(unsigned char io);   /* item type at iocc value io (for 
 void          spawn_items(void);
 void          try_pickup(void);              /* pick up whatever the hero stands on */
 unsigned char inventory_screen(void);        /* the 'i' menu; 1 if a turn passed */
+unsigned char shrine_menu(void);             /* the 'p' altar menu; 1 if a turn passed */
 
 /* ---- vault.c: core (RNG, messages, shared progress) ---- */
 extern int           depth;

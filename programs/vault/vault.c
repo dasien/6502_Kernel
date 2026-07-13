@@ -146,6 +146,14 @@ void main(void) {
             if (!cast) continue;
             moved = 0;                                 /* spell cast: a turn passes */
         }
+        else if (k == 'p' || k == 'P') {               /* pray at an altar */
+            unsigned char used;
+            if (gmap[py][px] != T_SHRINE) { set_msg("There is no altar here."); render(0); continue; }
+            used = shrine_menu();
+            render(1);
+            if (!used) continue;
+            moved = 0;                                 /* an offering: a turn passes */
+        }
         else if (k == '>') {
             if (gmap[py][px] == T_STAIRS) {
                 depth++; set_msg("You descend deeper into the vault...");

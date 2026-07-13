@@ -44,11 +44,14 @@ static void clear_row(unsigned char y) {
 #define V_STAIR  6
 #define V_MON    7      /* unused for drawing now -- monster cells use VC_MON + type */
 #define V_PLAYER 8
+#define V_SHRINE 9
+#define V_DSHRINE 10
 #define VC_MON   16     /* monster view codes: VC_MON + roster index (so each type diffs) */
 #define VC_ITEM  48     /* floor-item view codes: VC_ITEM + item index */
-static const unsigned char vglyph[9] = { ' ', '.', '#', '>', '.', '#', '>', 'r', '@' };
-static const unsigned char vattrs[9] = { A_TEXT, A_DIM, A_DIM, A_DIM,
-                                         A_FLOOR, A_WALL, A_STAIRS, A_MON, A_PLAYER };
+static const unsigned char vglyph[11] = { ' ', '.', '#', '>', '.', '#', '>', 'r', '@', 234, 234 };
+static const unsigned char vattrs[11] = { A_TEXT, A_DIM, A_DIM, A_DIM,
+                                          A_FLOOR, A_WALL, A_STAIRS, A_MON, A_PLAYER,
+                                          A_WALL, A_DIM };   /* shrine lit / dim */
 
 static int  shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
 static int  shlevel = -1, shmana = -1, shgold = -1;
@@ -87,9 +90,11 @@ void render(unsigned char full) {
             else if (vp[x]) {
                 if (op[x])      code = VC_MON + occ_type(op[x]);    /* per-type glyph/colour */
                 else if (ip[x]) code = VC_ITEM + iocc_type(ip[x]);  /* floor item */
-                else { t = gp[x]; code = (t == T_WALL) ? V_WALL : (t == T_STAIRS) ? V_STAIR : V_FLOOR; }
+                else { t = gp[x]; code = (t == T_WALL) ? V_WALL : (t == T_STAIRS) ? V_STAIR :
+                                                 (t == T_SHRINE) ? V_SHRINE : V_FLOOR; }
             } else if (ep[x]) {
-                t = gp[x]; code = (t == T_WALL) ? V_DWALL : (t == T_STAIRS) ? V_DSTAIR : V_DFLOOR;
+                t = gp[x]; code = (t == T_WALL) ? V_DWALL : (t == T_STAIRS) ? V_DSTAIR :
+                                          (t == T_SHRINE) ? V_DSHRINE : V_DFLOOR;
             } else code = V_BLANK;
             if (code != sh[x]) {
                 unsigned char g, at;

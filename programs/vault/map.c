@@ -70,6 +70,26 @@ void gen_level(void) {
     }
     px = rcx[0]; py = rcy[0];
     gmap[rcy[nrooms - 1]][rcx[nrooms - 1]] = T_STAIRS;
+
+    /* At most one altar per floor (you can buy repeatedly at one, so more add no
+     * value). Chance starts at 20% and climbs 20 points each altar-less floor,
+     * resetting to 20% whenever one appears -- so a dry streak can't last long. */
+    if (nrooms > 1) {
+        static unsigned char shrine_chance = 20;
+        if (rndn(100) < shrine_chance) {
+            unsigned char tries;
+            for (tries = 0; tries < 10; tries++) {
+                unsigned char rr = 1 + rndn((unsigned char)(nrooms - 1));
+                unsigned char sx = rx0[rr] + rndn(rw[rr]);
+                unsigned char sy = ry0[rr] + rndn(rh[rr]);
+                if (gmap[sy][sx] == T_FLOOR) { gmap[sy][sx] = T_SHRINE; break; }
+            }
+            shrine_chance = 20;
+        } else {
+            shrine_chance += 20;
+            if (shrine_chance > 100) shrine_chance = 100;
+        }
+    }
 }
 
 /* a random walkable cell (for item scatter + teleport). Falls back to the
