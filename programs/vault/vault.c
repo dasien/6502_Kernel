@@ -33,12 +33,18 @@ void msg_add(const char *s) {
     while (*s && mlen < 79) msg[mlen++] = *s++;
     msg[mlen] = 0;
 }
+/* int -> ASCII digits into buf, LEAST significant first; returns the digit count.
+ * Shared by put_num (screen) and msg_num (log), which both emit buf in reverse. */
+signed char utoa(int v, char *buf) {
+    signed char i = 0;
+    if (v < 0) v = 0;
+    if (v == 0) buf[i++] = '0';
+    while (v > 0 && i < 5) { buf[i++] = (char)('0' + v % 10); v /= 10; }
+    return i;
+}
 void msg_num(int v) {                    /* append " N" to the log */
     char b[6];
-    signed char i = 0, j;
-    if (v < 0) v = 0;
-    if (v == 0) b[i++] = '0';
-    while (v > 0 && i < 5) { b[i++] = (char)('0' + v % 10); v /= 10; }
+    signed char i = utoa(v, b), j;
     if (mlen && mlen < 79) msg[mlen++] = ' ';
     for (j = i - 1; j >= 0 && mlen < 79; j--) msg[mlen++] = b[j];
     msg[mlen] = 0;
@@ -75,7 +81,7 @@ static void roll_screen(void) {
 
     while (!accepted) {                       /* roll 3d6 per stat; reroll at will */
         pstr = roll3d6(); pint = roll3d6(); pcon = roll3d6(); pdex = roll3d6();
-        vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+        cls();
         put_str(31, 3,  "THE SUNLESS VAULT", A_STAIRS);
         put_str(34, 9,  "ROLL YOUR HERO", A_TEXT);
         put_str(34, 11, "STR", A_TEXT); put_num(40, 11, pstr, A_STAIRS);
@@ -90,7 +96,7 @@ static void roll_screen(void) {
         }
     }
 
-    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    cls();
     put_str(31, 8,  "THE SUNLESS VAULT", A_STAIRS);
     put_str(30, 11, "Name your hero:", A_TEXT);
     n = 0; pname[0] = 0;
@@ -133,7 +139,7 @@ void main(void) {
         else if (k == 'l') moved = try_move(1, 0);
         else if (k == 'k') moved = try_move(0, -1);
         else if (k == 'j') moved = try_move(0, 1);
-        else if (k == '.') moved = 1;                  /* wait: a turn passes */
+        else if (k == ' ' || k == '.') moved = 1;      /* wait: a turn passes */
         else if (k == 'i' || k == 'I') {               /* inventory (free unless used) */
             unsigned char used = inventory_screen();
             render(1);

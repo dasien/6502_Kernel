@@ -22,19 +22,25 @@ struct Mon *nearest_vis_mon(void) {
     int bestd = 30000;
     for (i = 0; i < nmon; i++) {
         int dx, dy, d;
-        if (!mon[i].alive || !vis[(unsigned char)mon[i].y][(unsigned char)mon[i].x]) continue;
+        if (!mon[i].alive || !(vseen[(unsigned char)mon[i].y][(unsigned char)mon[i].x] & VVIS)) continue;
         dx = mon[i].x - px; dy = mon[i].y - py; d = dx * dx + dy * dy;
         if (d < bestd) { bestd = d; best = i; }
     }
     return (best == 0xFF) ? 0 : &mon[best];
 }
 
-/* apply damage; on death clear the cell + award XP. Returns 1 if it died. */
+/* a cell a monster may step into: not a wall, and not another monster (a floor
+ * item -- ent > MAX_MON -- is fine; the mover will pick it up). */
+static unsigned char step_free(signed char x, signed char y) {
+    return gmap[y][x] != T_WALL && !(ent[y][x] && ent[y][x] <= MAX_MON);
+}
+
+/* apply damage; on death drop any carried item + award XP. Returns 1 if it died. */
 unsigned char mon_hurt(struct Mon *m, int dmg) {
     m->hp -= dmg;
     if (m->hp <= 0) {
         m->alive = 0;
-        occ[(unsigned char)m->y][(unsigned char)m->x] = 0;
+        ent[(unsigned char)m->y][(unsigned char)m->x] = m->carry;   /* leave the item behind */
         gain_xp(mondef[m->type].xp);
         return 1;
     }
@@ -72,7 +78,8 @@ void spawn_monsters(void) {
             mon[nmon].x     = rcx[i];
             mon[nmon].y     = rcy[i];
             mon[nmon].alive = 1;
-            occ[rcy[i]][rcx[i]] = nmon + 1;
+            mon[nmon].carry = 0;
+            ent[rcy[i]][rcx[i]] = nmon + 1;
             nmon++;
         }
     }
@@ -86,7 +93,7 @@ void mon_turn(void) {
         const struct MonDef *d;
         m = &mon[i];
         if (!m->alive) continue;
-        if (!vis[(unsigned char)m->y][(unsigned char)m->x]) continue;   /* act only when seen */
+        if (!(vseen[(unsigned char)m->y][(unsigned char)m->x] & VVIS)) continue;   /* act only when seen */
         d = &mondef[m->type];
         if ((d->abil & AB_REGEN) && m->hp < (int)d->hp) m->hp++;        /* slow heal */
         {
@@ -106,14 +113,18 @@ void mon_turn(void) {
                     if (d->abil & AB_POISON) { ppoison += 4; msg_add("Poison!"); }
                 }
             } else {                                                    /* else step closer */
-                signed char nx = m->x + dx, ny = m->y + dy;
-                signed char ox = m->x, oy = m->y;   /* old cell, for occ maintenance */
-                if (gmap[ny][nx] != T_WALL && !mon_at(nx, ny)) { m->x = nx; m->y = ny; }
-                else if (dx && gmap[m->y][m->x + dx] != T_WALL && !mon_at((signed char)(m->x + dx), m->y)) m->x += dx;
-                else if (dy && gmap[m->y + dy][m->x] != T_WALL && !mon_at(m->x, (signed char)(m->y + dy))) m->y += dy;
-                if (m->x != ox || m->y != oy) {     /* moved: keep the occupancy grid in sync */
-                    occ[(unsigned char)oy][(unsigned char)ox] = 0;
-                    occ[(unsigned char)m->y][(unsigned char)m->x] = i + 1;
+                signed char ox = m->x, oy = m->y, cx = ox, cy = oy;
+                /* greedy step: diagonal if free, else along whichever axis is open.
+                 * Items (ent > MAX_MON) don't block -- the mover walks over them. */
+                if (step_free((signed char)(ox + dx), (signed char)(oy + dy))) { cx = ox + dx; cy = oy + dy; }
+                else if (dx && step_free((signed char)(ox + dx), oy)) cx = ox + dx;
+                else if (dy && step_free(ox, (signed char)(oy + dy))) cy = oy + dy;
+                if (cx != ox || cy != oy) {
+                    ent[(unsigned char)oy][(unsigned char)ox] = m->carry;    /* put back what we covered */
+                    m->carry = (ent[(unsigned char)cy][(unsigned char)cx] > MAX_MON)
+                                   ? ent[(unsigned char)cy][(unsigned char)cx] : 0;  /* cover any item here */
+                    ent[(unsigned char)cy][(unsigned char)cx] = i + 1;
+                    m->x = cx; m->y = cy;
                 }
             }
         }

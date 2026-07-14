@@ -7,6 +7,9 @@
 static unsigned char shown[MAP_H][MAP_W];   /* last view-code drawn per cell (diff) */
 static unsigned char last_attr;             /* skip redundant vattr() during a repaint */
 
+void cls(void) {   /* clear the whole screen (shared by render + all the menus) */
+    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+}
 void put_cell(unsigned char g, unsigned char a) {
     if (a != last_attr) { vattr(a); last_attr = a; }
     vputc(g);
@@ -18,13 +21,19 @@ void put_str(unsigned char x, unsigned char y, const char *s, unsigned char a) {
 }
 void put_num(unsigned char x, unsigned char y, int v, unsigned char a) {
     char buf[6];
-    signed char i = 0, j;
-    if (v < 0) v = 0;
-    if (v == 0) buf[i++] = '0';
-    while (v > 0 && i < 5) { buf[i++] = (char)('0' + (v % 10)); v /= 10; }
+    signed char i = utoa(v, buf), j;
     vaddr((unsigned int)y * 80 + x);
     last_attr = 0xFF;
     for (j = i - 1; j >= 0; j--) put_cell((unsigned char)buf[j], a);
+}
+/* "a) text" -- the letter is always accented (A_STAIRS); the text takes the
+ * caller's attr `a` (so a menu can dim un-affordable rows). */
+void menu_row(unsigned char idx, unsigned char lcol, unsigned char tcol,
+              unsigned char row, const char *text, unsigned char a) {
+    char lbl[4];
+    lbl[0] = (char)('a' + idx); lbl[1] = ')'; lbl[2] = ' '; lbl[3] = 0;
+    put_str(lcol, row, lbl, A_STAIRS);
+    put_str(tcol, row, text, a);
 }
 static void clear_row(unsigned char y) {
     vattr(A_TEXT);
@@ -56,7 +65,13 @@ static const unsigned char vattrs[11] = { A_TEXT, A_DIM, A_DIM, A_DIM,
 static int  shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
 static int  shlevel = -1, shmana = -1, shgold = -1;
 static unsigned char shpsn = 2;                    /* last poisoned flag (impossible init) */
-static char shmsg[80];                             /* last message shown */
+
+/* the single-value status fields, table-driven (name/HP/MP/PSN stay inline) */
+static const struct { unsigned char lcol, vcol, va; const char *lbl; } sfld[] = {
+    { 13, 16, A_STAIRS, "LV" }, { 43, 44, A_FLOOR, "S" }, { 47, 48, A_FLOOR, "I" },
+    { 51, 52, A_FLOOR, "C" },   { 55, 56, A_FLOOR, "D" }, { 59, 62, A_STAIRS, "DL" },
+    { 65, 67, A_PLAYER, "G" },
+};
 
 /* Diff repaint. full=1 wipes the screen + resets the shadow buffer (new level);
  * otherwise we scan only the union of last frame's lit box and this one. The cell
@@ -69,7 +84,7 @@ void render(unsigned char full) {
     unsigned char code, t;
 
     if (full) {
-        vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+        cls();
         for (y = 0; y < MAP_H; y++) {
             unsigned char *sh = shown[y];
             for (x = 0; x < MAP_W; x++) sh[x] = V_BLANK;   /* screen is now blank */
@@ -83,16 +98,17 @@ void render(unsigned char full) {
     }
     last_attr = 0xFF;
     for (y = y0; y <= y1; y++) {
-        unsigned char *gp = gmap[y], *vp = vis[y], *ep = seen[y];
-        unsigned char *op = occ[y], *ip = iocc[y], *sh = shown[y];
+        unsigned char *gp = gmap[y], *vsp = vseen[y], *entp = ent[y], *sh = shown[y];
+        unsigned int rowbase = (unsigned int)y * 80;     /* hoisted out of the x loop */
         for (x = x0; x <= x1; x++) {
             if ((signed char)x == px && y == py)      code = V_PLAYER;
-            else if (vp[x]) {
-                if (op[x])      code = VC_MON + occ_type(op[x]);    /* per-type glyph/colour */
-                else if (ip[x]) code = VC_ITEM + iocc_type(ip[x]);  /* floor item */
+            else if (vsp[x] & VVIS) {
+                unsigned char e = entp[x];
+                if (e) { code = (e <= MAX_MON) ? (VC_MON + occ_type(e))       /* monster */
+                                               : (VC_ITEM + iocc_type(e - MAX_MON)); }  /* item */
                 else { t = gp[x]; code = (t == T_WALL) ? V_WALL : (t == T_STAIRS) ? V_STAIR :
                                                  (t == T_SHRINE) ? V_SHRINE : V_FLOOR; }
-            } else if (ep[x]) {
+            } else if (vsp[x] & VSEEN) {
                 t = gp[x]; code = (t == T_WALL) ? V_DWALL : (t == T_STAIRS) ? V_DSTAIR :
                                           (t == T_SHRINE) ? V_DSHRINE : V_DFLOOR;
             } else code = V_BLANK;
@@ -101,7 +117,7 @@ void render(unsigned char full) {
                 if (code >= VC_ITEM)     { t = code - VC_ITEM; g = itemdef[t].glyph; at = itemdef[t].attr; }
                 else if (code >= VC_MON) { t = code - VC_MON;  g = mondef[t].glyph;  at = mondef[t].attr; }
                 else                     { g = vglyph[code];   at = vattrs[code]; }
-                vaddr((unsigned int)y * 80 + x);
+                vaddr(rowbase + x);
                 put_cell(g, at);
                 sh[x] = code;
             }
@@ -111,31 +127,27 @@ void render(unsigned char full) {
 
     if (full || depth != shdepth || php != shhp || pmaxhp != shmax ||
         plevel != shlevel || pmana != shmana || pgold != shgold || (ppoison > 0) != shpsn) {
+        int sv[7];
+        unsigned char i;
+        sv[0] = plevel; sv[1] = pstr; sv[2] = pint; sv[3] = pcon;
+        sv[4] = pdex;   sv[5] = depth; sv[6] = pgold;
         clear_row(STA_ROW);
         put_str(0,  STA_ROW, pname, A_STAIRS);
-        put_str(13, STA_ROW, "LV", A_TEXT);  put_num(16, STA_ROW, plevel, A_STAIRS);
         put_str(19, STA_ROW, "HP", A_TEXT);  put_num(22, STA_ROW, php, A_MON);
         put_str(25, STA_ROW, "/", A_TEXT);   put_num(26, STA_ROW, pmaxhp, A_TEXT);
         put_str(31, STA_ROW, "MP", A_TEXT);  put_num(34, STA_ROW, pmana, A_STAIRS);
         put_str(37, STA_ROW, "/", A_TEXT);   put_num(38, STA_ROW, pmaxmana, A_TEXT);
-        put_str(43, STA_ROW, "S", A_TEXT);   put_num(44, STA_ROW, pstr, A_FLOOR);
-        put_str(47, STA_ROW, "I", A_TEXT);   put_num(48, STA_ROW, pint, A_FLOOR);
-        put_str(51, STA_ROW, "C", A_TEXT);   put_num(52, STA_ROW, pcon, A_FLOOR);
-        put_str(55, STA_ROW, "D", A_TEXT);   put_num(56, STA_ROW, pdex, A_FLOOR);
-        put_str(59, STA_ROW, "DL", A_TEXT);  put_num(62, STA_ROW, depth, A_STAIRS);
-        put_str(65, STA_ROW, "G", A_TEXT);   put_num(67, STA_ROW, pgold, A_PLAYER);
+        for (i = 0; i < 7; i++) {
+            put_str(sfld[i].lcol, STA_ROW, sfld[i].lbl, A_TEXT);
+            put_num(sfld[i].vcol, STA_ROW, sv[i], sfld[i].va);
+        }
         if (ppoison > 0) put_str(73, STA_ROW, "PSN", A_MON);
         shdepth = depth; shhp = php; shmax = pmaxhp; shlevel = plevel; shmana = pmana;
         shgold = pgold; shpsn = (ppoison > 0);
     }
 
-    {
-        unsigned char i = 0, diff = full;
-        while (!diff) { if (msg[i] != shmsg[i]) diff = 1; else if (!msg[i]) break; i++; }
-        if (diff) {
-            clear_row(MSG_ROW);
-            put_str(0, MSG_ROW, msg, A_TEXT);
-            i = 0; do { shmsg[i] = msg[i]; } while (msg[i++]);
-        }
-    }
+    /* message row: repaint whenever there's a line (it changes almost every turn;
+     * diffing it isn't worth an 80-byte shadow buffer). */
+    clear_row(MSG_ROW);
+    put_str(0, MSG_ROW, msg, A_TEXT);
 }

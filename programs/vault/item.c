@@ -6,15 +6,16 @@
  * ==========================================================================*/
 #include "vault.h"
 
-struct Item { signed char x, y; unsigned char type, alive; };
+struct Item { signed char x, y; unsigned char type; };
 
 static struct Item   fitem[MAX_FITEM];   /* items lying on the floor */
 static unsigned char nfitem;
-unsigned char        iocc[MAP_H][MAP_W];  /* floor-item index+1 at cell (for O(1) render) */
 
 static unsigned char inv[MAX_INV];        /* carried item types */
 static unsigned char ninv;
 
+/* items live in the shared `ent` grid encoded as MAX_MON + index+1; the renderer
+ * passes (ent - MAX_MON) here, i.e. the 1-based item index. */
 unsigned char iocc_type(unsigned char io) { return fitem[io - 1].type; }
 
 /* pick an item type by relative drop weight (gold common, upgrades/map rare) */
@@ -31,28 +32,29 @@ static unsigned char pick_item(void) {
 }
 
 void spawn_items(void) {
-    unsigned char n, count, y, x;
-    for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) iocc[y][x] = 0;
+    unsigned char n, count;
+    /* the entity grid is already cleared by gen_level and populated with monsters;
+     * items just fill empty floor cells. */
     nfitem = 0;
     count = 2 + rndn(3);                  /* 2..4 items scattered per level */
     for (n = 0; n < count && nfitem < MAX_FITEM; n++) {
         signed char ix, iy;
         random_floor(&ix, &iy);
         if (gmap[iy][ix] != T_FLOOR) continue;
-        if (occ[iy][ix] || iocc[iy][ix]) continue;
+        if (ent[iy][ix]) continue;                   /* occupied by a monster or item */
         if (ix == px && iy == py) continue;
         fitem[nfitem].x = ix; fitem[nfitem].y = iy;
-        fitem[nfitem].type = pick_item(); fitem[nfitem].alive = 1;
-        iocc[iy][ix] = nfitem + 1;
+        fitem[nfitem].type = pick_item();
+        ent[iy][ix] = (unsigned char)(MAX_MON + nfitem + 1);
         nfitem++;
     }
 }
 
 void try_pickup(void) {
-    unsigned char io = iocc[(unsigned char)py][(unsigned char)px];
+    unsigned char e = ent[(unsigned char)py][(unsigned char)px];
     unsigned char ty;
-    if (!io) return;
-    ty = fitem[io - 1].type;
+    if (e <= MAX_MON) return;                        /* 0 = nothing, <=MAX_MON = monster */
+    ty = fitem[e - MAX_MON - 1].type;
 
     if (itemdef[ty].kind == IT_GOLD) {              /* currency, not a pack item */
         int amt = 10 + depth * 3 + rndn((unsigned char)(10 + depth * 4));
@@ -71,8 +73,7 @@ void try_pickup(void) {
         inv[ninv++] = ty;
         msg_add("You pick up the"); msg_add(itemdef[ty].name);
     }
-    fitem[io - 1].alive = 0;
-    iocc[(unsigned char)py][(unsigned char)px] = 0;
+    ent[(unsigned char)py][(unsigned char)px] = 0;
 }
 
 static void use_item(unsigned char slot) {
@@ -88,7 +89,7 @@ static void use_item(unsigned char slot) {
             break;
         case IT_MAP: {
             unsigned char y, x;
-            for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) seen[y][x] = 1;
+            for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) vseen[y][x] |= VSEEN;
             msg_add("The level is laid bare.");
             break;
         }
@@ -104,28 +105,20 @@ unsigned char shrine_menu(void) {
     int rcost = 15 + 15 * nrest;
     int bcost = 30 + 30 * nbless;
     int k;
-    char lbl[4];
-    unsigned char row;
+    static const char *bn[4] = { "Blessing of Might  (STR)", "Blessing of Mind   (INT)",
+                                 "Blessing of Vigor  (CON)", "Blessing of Grace  (DEX)" };
+    unsigned char i;
 
-    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    cls();
     put_str(26, 2, "AN ALTAR TO THE DROWNED GODS", A_STAIRS);
     put_str(30, 4, "Gold", A_TEXT); put_num(35, 4, pgold, A_PLAYER);
 
-    lbl[1] = ')'; lbl[2] = ' '; lbl[3] = 0;
-    lbl[0] = 'a'; put_str(24, 6, lbl, A_STAIRS);
-    put_str(27, 6, "Restore body and mind", A_TEXT);
+    menu_row(0, 24, 27, 6, "Restore body and mind", A_TEXT);
     put_str(54, 6, "gold", A_DIM); put_num(59, 6, rcost, A_TEXT);
-    row = 8;
-    { static const char *bn[4] = { "Blessing of Might  (STR)", "Blessing of Mind   (INT)",
-                                    "Blessing of Vigor  (CON)", "Blessing of Grace  (DEX)" };
-      unsigned char i;
-      for (i = 0; i < 4; i++) {
-          lbl[0] = (char)('b' + i);
-          put_str(24, (unsigned char)(row + i), lbl, A_STAIRS);
-          put_str(27, (unsigned char)(row + i), bn[i], A_TEXT);
-          put_str(54, (unsigned char)(row + i), "gold", A_DIM);
-          put_num(59, (unsigned char)(row + i), bcost, A_TEXT);
-      }
+    for (i = 0; i < 4; i++) {
+        menu_row((unsigned char)(1 + i), 24, 27, (unsigned char)(8 + i), bn[i], A_TEXT);
+        put_str(54, (unsigned char)(8 + i), "gold", A_DIM);
+        put_num(59, (unsigned char)(8 + i), bcost, A_TEXT);
     }
     put_str(24, 14, "[a-e] offer     [any other] leave", A_DIM);
 
@@ -153,20 +146,15 @@ unsigned char inventory_screen(void) {
     int k;
     unsigned char i;
 
-    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    cls();
     put_str(34, 2, "INVENTORY", A_STAIRS);
     put_str(28, 3, "Weapon +", A_TEXT); put_num(36, 3, pweapon, A_FLOOR);
     put_str(40, 3, "Armor +", A_TEXT);  put_num(47, 3, parmor, A_FLOOR);
     if (ninv == 0) {
         put_str(34, 5, "(empty)", A_DIM);
     } else {
-        char lbl[4];
-        lbl[1] = ')'; lbl[2] = ' '; lbl[3] = 0;
-        for (i = 0; i < ninv; i++) {
-            lbl[0] = (char)('a' + i);
-            put_str(28, (unsigned char)(5 + i), lbl, A_STAIRS);
-            put_str(31, (unsigned char)(5 + i), itemdef[inv[i]].name, A_TEXT);
-        }
+        for (i = 0; i < ninv; i++)
+            menu_row(i, 28, 31, (unsigned char)(5 + i), itemdef[inv[i]].name, A_TEXT);
     }
     put_str(22, (unsigned char)(7 + ninv), "[a-z] use    [any other] back", A_DIM);
 

@@ -58,9 +58,14 @@ extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy
 
 /* ---- map.c: the dungeon grid + rooms + FOV ---- */
 extern unsigned char gmap[MAP_H][MAP_W];    /* terrain */
-extern unsigned char seen[MAP_H][MAP_W];    /* ever seen (drawn dim when not visible) */
-extern unsigned char vis[MAP_H][MAP_W];     /* currently in view */
-extern unsigned char occ[MAP_H][MAP_W];     /* live-monster index+1 at cell, else 0 */
+/* visibility packed 1 bit each to save a full grid: bit0 = ever seen (drawn dim),
+ * bit1 = currently in view. */
+#define VSEEN 1
+#define VVIS  2
+extern unsigned char vseen[MAP_H][MAP_W];
+/* one "entity" grid instead of separate monster/item grids (a cell holds at most
+ * one): 0 = empty; 1..MAX_MON = monster index+1; >MAX_MON = MAX_MON + itemindex+1. */
+extern unsigned char ent[MAP_H][MAP_W];
 extern unsigned char rcx[MAX_ROOMS], rcy[MAX_ROOMS], nrooms;   /* room centres */
 extern unsigned char litx0, lity0, litx1, lity1;               /* current lit box */
 void gen_level(void);
@@ -68,9 +73,13 @@ void light(void);
 void random_floor(signed char *ox, signed char *oy);   /* a random walkable cell */
 
 /* ---- draw.c: rendering ---- */
+void cls(void);                              /* clear the whole screen */
 void put_cell(unsigned char g, unsigned char a);
 void put_str(unsigned char x, unsigned char y, const char *s, unsigned char a);
 void put_num(unsigned char x, unsigned char y, int v, unsigned char a);
+/* draw a "a) text" lettered menu row; shared by the inventory/spell/shrine menus */
+void menu_row(unsigned char idx, unsigned char lcol, unsigned char tcol,
+              unsigned char row, const char *text, unsigned char a);
 void render(unsigned char full);
 
 /* ---- combat.c: actor-vs-actor resolution ----
@@ -161,7 +170,10 @@ void          player_bless(unsigned char which); /* shrine boon: +1 to stat 0=S 
 unsigned char try_move(signed char dx, signed char dy);   /* 1 if the hero moved */
 
 /* ---- monster.c: creatures ---- */
-struct Mon { signed char x, y; int hp; unsigned char alive, type; };
+/* `carry` holds the entity value of a floor item the monster is standing on
+ * (0 if none) so it can walk over items without destroying them -- the item is
+ * put back on the cell it leaves or dies on. */
+struct Mon { signed char x, y; int hp; unsigned char alive, type, carry; };
 struct Mon   *mon_at(signed char x, signed char y);
 void          mon_combatant(struct Mon *m, struct Combatant *c);
 void          spawn_monsters(void);
@@ -176,8 +188,7 @@ unsigned char spell_screen(void);            /* the 'c' menu; 1 if a turn passed
 /* ---- item.c: floor items + inventory ---- */
 #define MAX_FITEM 8
 #define MAX_INV   16
-extern unsigned char iocc[MAP_H][MAP_W];     /* floor-item index+1 at cell, else 0 */
-unsigned char iocc_type(unsigned char io);   /* item type at iocc value io (for the renderer) */
+unsigned char iocc_type(unsigned char io);   /* item type at item index+1 (for the renderer) */
 void          spawn_items(void);
 void          try_pickup(void);              /* pick up whatever the hero stands on */
 unsigned char inventory_screen(void);        /* the 'i' menu; 1 if a turn passed */
@@ -192,6 +203,7 @@ signed char   sgn(int v);
 void          msg_clear(void);
 void          msg_add(const char *s);
 void          msg_num(int v);                /* append a decimal number to the log */
+signed char   utoa(int v, char *buf);        /* int -> reversed ASCII digits; count */
 void          set_msg(const char *s);
 
 #endif /* VAULT_H */

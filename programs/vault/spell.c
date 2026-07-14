@@ -56,12 +56,11 @@ static unsigned char cast_spell(unsigned char idx) {
 unsigned char spell_screen(void) {
     int k;
     unsigned char i, n = 0, known[16];
-    char lbl[4];
 
     for (i = 0; i < nspelldef; i++)
         if (pint >= spelldef[i].minint) known[n++] = i;
 
-    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    cls();
     put_str(34, 2, "SPELLS", A_STAIRS);
     put_str(30, 3, "Mana", A_TEXT); put_num(35, 3, pmana, A_STAIRS);
     put_str(38, 3, "/", A_TEXT);    put_num(39, 3, pmaxmana, A_TEXT);
@@ -69,15 +68,12 @@ unsigned char spell_screen(void) {
     if (n == 0) {
         put_str(30, 5, "You know no spells (raise INT).", A_DIM);
     } else {
-        lbl[1] = ')'; lbl[2] = ' '; lbl[3] = 0;
         for (i = 0; i < n; i++) {
             const struct SpellDef *s = &spelldef[known[i]];
             unsigned char row = (unsigned char)(5 + i);
-            unsigned char afford = (pmana >= s->cost);   /* Time Stop: cost = min */
-            lbl[0] = (char)('a' + i);
-            put_str(28, row, lbl, afford ? A_STAIRS : A_DIM);
-            put_str(31, row, s->name, afford ? A_TEXT : A_DIM);
-            put_str(50, row, "mana", A_DIM); put_num(55, row, s->cost, afford ? A_TEXT : A_DIM);
+            unsigned char a = (pmana >= s->cost) ? A_TEXT : A_DIM;   /* dim if unaffordable */
+            menu_row(i, 28, 31, row, s->name, a);
+            put_str(50, row, "mana", A_DIM); put_num(55, row, s->cost, a);
         }
     }
     put_str(22, (unsigned char)(7 + n), "[a-z] cast    [any other] back", A_DIM);

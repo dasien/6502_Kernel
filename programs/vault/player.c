@@ -16,7 +16,10 @@ char          pname[13];
 
 static int    pxp, pxpnext;
 
-unsigned char roll3d6(void) { return (unsigned char)(3 + rndn(6) + rndn(6) + rndn(6)); }
+unsigned char roll3d6(void) {          /* 3d6, floored at 8 so no hero is hopeless */
+    unsigned char r = (unsigned char)(3 + rndn(6) + rndn(6) + rndn(6));
+    return (r < 8) ? 8 : r;
+}
 static int stat_hp(void)    { return 6 + pcon + (plevel - 1) * (4 + pcon / 6); }
 static int stat_mana(void)  { return 2 * pint + (plevel - 1) * (pint / 2); }
 

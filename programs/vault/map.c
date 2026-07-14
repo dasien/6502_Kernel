@@ -6,9 +6,8 @@
 #include "vault.h"
 
 unsigned char gmap[MAP_H][MAP_W];
-unsigned char seen[MAP_H][MAP_W];
-unsigned char vis[MAP_H][MAP_W];
-unsigned char occ[MAP_H][MAP_W];
+unsigned char vseen[MAP_H][MAP_W];   /* bit0 seen, bit1 visible */
+unsigned char ent[MAP_H][MAP_W];     /* monster (1..MAX_MON) or item (>MAX_MON), else 0 */
 unsigned char rcx[MAX_ROOMS], rcy[MAX_ROOMS], nrooms;
 unsigned char litx0, lity0, litx1, lity1;
 
@@ -37,7 +36,7 @@ void gen_level(void) {
     for (i = 0; i < MAP_H; i++) {
         unsigned char x;
         for (x = 0; x < MAP_W; x++) {
-            gmap[i][x] = T_WALL; seen[i][x] = 0; vis[i][x] = 0; occ[i][x] = 0;
+            gmap[i][x] = T_WALL; vseen[i][x] = 0; ent[i][x] = 0;
         }
     }
     /* Place non-overlapping rooms (reject any that touch an existing one, so a
@@ -111,11 +110,11 @@ void random_floor(signed char *ox, signed char *oy) {
  * recursing into the sub-cone above it. Divisions happen per row, not per tile,
  * so it's cheap at ~1 MHz while giving true line-of-sight. `litx0..lity1` bounds
  * the lit disc for the diff renderer + the next clear. */
-static void clear_vis_box(void) {
+static void clear_vis_box(void) {   /* clear the visible bit, preserve the seen bit */
     signed char y, x;
     for (y = lity0; y <= (signed char)lity1; y++) {
-        unsigned char *vp = vis[y];
-        for (x = litx0; x <= (signed char)litx1; x++) vp[x] = 0;
+        unsigned char *vp = vseen[y];
+        for (x = litx0; x <= (signed char)litx1; x++) vp[x] &= (unsigned char)~VVIS;
     }
 }
 
@@ -134,7 +133,7 @@ static void reveal(signed char x, signed char y) {
     int dx, dy;
     if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) return;
     dx = x - px; dy = y - py;
-    if (dx * dx + dy * dy <= (int)fov_r * fov_r) { vis[y][x] = 1; seen[y][x] = 1; }
+    if (dx * dx + dy * dy <= (int)fov_r * fov_r) vseen[y][x] |= (VVIS | VSEEN);
 }
 
 static void scan(unsigned char q, int d, int sN, int sD, int eN, int eD) {
