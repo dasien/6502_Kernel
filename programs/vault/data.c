@@ -26,6 +26,8 @@ const struct MonDef mondef[] = {
     { 'W', 0x46, "wyvern",   34, 12,  6,  4,  8,  2,  20,  8, 14,  0 },
     { 'D', 0x41, "demon",    52, 14,  6,  6, 10,  3,  30, 10, 15,  0 },
     { 'Y', 0x45, "drake",    68, 15,  5,  8, 12,  4,  45, 12, 15,  0 },
+    /* index MON_GUARDIAN -- placed by hand on L15, never rolled (dlo=99). */
+    { '&', 0x45, "Vault Guardian", 110, 17, 6, 9, 15, 5, 80, 99, 99, AB_REGEN },
 };
 const unsigned char nmondef = sizeof(mondef) / sizeof(mondef[0]);
 

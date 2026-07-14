@@ -9,6 +9,7 @@ signed char   px, py;
 int           php, pmaxhp, pmana, pmaxmana;
 int           ppoison;
 int           pgold;
+unsigned char porb;
 unsigned char pweapon, parmor;
 unsigned char pshield, ptimestop, plight;
 unsigned char pstr, pint, pcon, pdex, plevel;
@@ -24,7 +25,7 @@ static int stat_hp(void)    { return 6 + pcon + (plevel - 1) * (4 + pcon / 6); }
 static int stat_mana(void)  { return 2 * pint + (plevel - 1) * (pint / 2); }
 
 void char_begin(void) {                  /* fresh level-1 hero from the rolled stats */
-    plevel = 1; pxp = 0; pxpnext = 20; ppoison = 0; pgold = 0;
+    plevel = 1; pxp = 0; pxpnext = 20; ppoison = 0; pgold = 0; porb = 0;
     pweapon = 0; parmor = 0; pshield = 0; ptimestop = 0; plight = 0;
     pmaxhp = stat_hp();     php   = pmaxhp;
     pmaxmana = stat_mana(); pmana = pmaxmana;
@@ -93,5 +94,9 @@ unsigned char try_move(signed char dx, signed char dy) {
     px = nx; py = ny;
     if (gmap[py][px] == T_STAIRS) msg_add("A stairway leads down (press >).");
     else if (gmap[py][px] == T_SHRINE) msg_add("An altar stands here. (p)ray.");
+    else if (gmap[py][px] == T_ORB) {              /* lift the Orb -> the escape begins */
+        gmap[py][px] = T_FLOOR; porb = 1;
+        msg_add("You lift the Shimmering Orb! The vault groans and starts to seal.");
+    }
     return 1;
 }

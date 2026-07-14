@@ -68,7 +68,9 @@ void gen_level(void) {
         }
     }
     px = rcx[0]; py = rcy[0];
-    gmap[rcy[nrooms - 1]][rcx[nrooms - 1]] = T_STAIRS;
+    /* the deepest room holds the down-stairs -- except on L15, where it holds the
+     * Shimmering Orb (there is no way further down). */
+    gmap[rcy[nrooms - 1]][rcx[nrooms - 1]] = (depth >= 15) ? T_ORB : T_STAIRS;
 
     /* At most one altar per floor (you can buy repeatedly at one, so more add no
      * value). Chance starts at 20% and climbs 20 points each altar-less floor,

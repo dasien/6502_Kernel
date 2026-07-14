@@ -133,6 +133,17 @@ void main(void) {
         flush_input();                     /* one turn per key press; drop the pile-up */
         if (k == 'Q' || k == 'q') break;   /* ESC can't quit: arrows start with ESC */
 
+        if (k == 'W') {                    /* DEBUG: warp to L15, godlike, to test the endgame */
+            depth = 15;
+            pstr = pint = pcon = pdex = 18; plevel = 10;
+            pweapon = 5; parmor = 5;
+            pmaxhp = 200; php = 200; pmaxmana = 80; pmana = 80;
+            gen_level(); spawn_monsters(); spawn_items(); light();
+            set_msg("DEBUG: warped to L15, godlike. Slay the Guardian, take the Orb, climb out.");
+            render(1);
+            continue;
+        }
+
         moved = 0;
         msg_clear();
         if      (k == 'h') moved = try_move(-1, 0);

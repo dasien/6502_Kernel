@@ -42,6 +42,7 @@ extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy
 #define T_FLOOR  1
 #define T_STAIRS 2
 #define T_SHRINE 3    /* an altar: stand on it and (p)ray to spend gold */
+#define T_ORB    4    /* the Shimmering Orb on L15; step on it to lift it */
 
 /* ---- colour attributes ([R:7][BR:6][bg:5-3][fg:2-0]) ---- */
 #define A_WALL   0x47   /* bright white */
@@ -118,6 +119,7 @@ struct MonDef {
 };
 extern const struct MonDef mondef[];
 extern const unsigned char nmondef;
+#define MON_GUARDIAN 14    /* roster index of the L15 Orb guardian (dlo=99: never random) */
 
 /* item kinds (the effect when used) */
 #define IT_HEAL   0   /* restore HP */
@@ -157,6 +159,7 @@ extern signed char   px, py;
 extern int           php, pmaxhp, pmana, pmaxmana;
 extern int           ppoison;                /* remaining poison ticks */
 extern int           pgold;                  /* gold purse */
+extern unsigned char porb;                   /* 1 once the Shimmering Orb is lifted */
 extern unsigned char pweapon, parmor;        /* permanent gear bonuses (Yacor-style) */
 extern unsigned char pshield, ptimestop, plight;   /* temporary spell effects (turns left) */
 extern unsigned char pstr, pint, pcon, pdex, plevel;

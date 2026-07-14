@@ -71,17 +71,20 @@ void spawn_monsters(void) {
     unsigned char i, ty;
     nmon = 0;
     for (i = 1; i < nrooms && nmon < MAX_MON; i++) {
-        if (rndn(3) != 0) {                      /* ~2/3 of rooms get a creature */
+        if (depth == 15 && i == nrooms - 1) {    /* the Orb's room: the Guardian */
+            ty = MON_GUARDIAN;
+        } else {
+            if (rndn(3) == 0) continue;          /* ~1/3 of rooms stay empty */
             ty = pick_type();
-            mon[nmon].type  = ty;
-            mon[nmon].hp    = mondef[ty].hp + rndn(3);
-            mon[nmon].x     = rcx[i];
-            mon[nmon].y     = rcy[i];
-            mon[nmon].alive = 1;
-            mon[nmon].carry = 0;
-            ent[rcy[i]][rcx[i]] = nmon + 1;
-            nmon++;
         }
+        mon[nmon].type  = ty;
+        mon[nmon].hp    = mondef[ty].hp + rndn(3);
+        mon[nmon].x     = rcx[i];
+        mon[nmon].y     = rcy[i];
+        mon[nmon].alive = 1;
+        mon[nmon].carry = 0;
+        ent[rcy[i]][rcx[i]] = nmon + 1;
+        nmon++;
     }
 }
 

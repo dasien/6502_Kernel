@@ -55,16 +55,19 @@ static void clear_row(unsigned char y) {
 #define V_PLAYER 8
 #define V_SHRINE 9
 #define V_DSHRINE 10
+#define V_ORB    11
+#define V_DORB   12
 #define VC_MON   16     /* monster view codes: VC_MON + roster index (so each type diffs) */
 #define VC_ITEM  48     /* floor-item view codes: VC_ITEM + item index */
-static const unsigned char vglyph[11] = { ' ', '.', '#', '>', '.', '#', '>', 'r', '@', 234, 234 };
-static const unsigned char vattrs[11] = { A_TEXT, A_DIM, A_DIM, A_DIM,
+static const unsigned char vglyph[13] = { ' ', '.', '#', '>', '.', '#', '>', 'r', '@', 234, 234, 235, 235 };
+static const unsigned char vattrs[13] = { A_TEXT, A_DIM, A_DIM, A_DIM,
                                           A_FLOOR, A_WALL, A_STAIRS, A_MON, A_PLAYER,
-                                          A_WALL, A_DIM };   /* shrine lit / dim */
+                                          A_WALL, A_DIM,      /* shrine lit / dim */
+                                          A_PLAYER, A_DIM };  /* orb lit (bright yellow) / dim */
 
 static int  shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
 static int  shlevel = -1, shmana = -1, shgold = -1;
-static unsigned char shpsn = 2;                    /* last poisoned flag (impossible init) */
+static unsigned char shpsn = 2, shorb = 2;         /* last poisoned / has-orb flags */
 
 /* the single-value status fields, table-driven (name/HP/MP/PSN stay inline) */
 static const struct { unsigned char lcol, vcol, va; const char *lbl; } sfld[] = {
@@ -107,10 +110,10 @@ void render(unsigned char full) {
                 if (e) { code = (e <= MAX_MON) ? (VC_MON + occ_type(e))       /* monster */
                                                : (VC_ITEM + iocc_type(e - MAX_MON)); }  /* item */
                 else { t = gp[x]; code = (t == T_WALL) ? V_WALL : (t == T_STAIRS) ? V_STAIR :
-                                                 (t == T_SHRINE) ? V_SHRINE : V_FLOOR; }
+                                                 (t == T_SHRINE) ? V_SHRINE : (t == T_ORB) ? V_ORB : V_FLOOR; }
             } else if (vsp[x] & VSEEN) {
                 t = gp[x]; code = (t == T_WALL) ? V_DWALL : (t == T_STAIRS) ? V_DSTAIR :
-                                          (t == T_SHRINE) ? V_DSHRINE : V_DFLOOR;
+                                          (t == T_SHRINE) ? V_DSHRINE : (t == T_ORB) ? V_DORB : V_DFLOOR;
             } else code = V_BLANK;
             if (code != sh[x]) {
                 unsigned char g, at;
@@ -126,7 +129,8 @@ void render(unsigned char full) {
     pbx0 = litx0; pby0 = lity0; pbx1 = litx1; pby1 = lity1;
 
     if (full || depth != shdepth || php != shhp || pmaxhp != shmax ||
-        plevel != shlevel || pmana != shmana || pgold != shgold || (ppoison > 0) != shpsn) {
+        plevel != shlevel || pmana != shmana || pgold != shgold ||
+        (ppoison > 0) != shpsn || porb != shorb) {
         int sv[7];
         unsigned char i;
         sv[0] = plevel; sv[1] = pstr; sv[2] = pint; sv[3] = pcon;
@@ -141,9 +145,10 @@ void render(unsigned char full) {
             put_str(sfld[i].lcol, STA_ROW, sfld[i].lbl, A_TEXT);
             put_num(sfld[i].vcol, STA_ROW, sv[i], sfld[i].va);
         }
-        if (ppoison > 0) put_str(73, STA_ROW, "PSN", A_MON);
+        if (ppoison > 0) put_str(72, STA_ROW, "PSN", A_MON);
+        if (porb)        put_str(76, STA_ROW, "ORB", A_PLAYER);
         shdepth = depth; shhp = php; shmax = pmaxhp; shlevel = plevel; shmana = pmana;
-        shgold = pgold; shpsn = (ppoison > 0);
+        shgold = pgold; shpsn = (ppoison > 0); shorb = porb;
     }
 
     /* message row: repaint whenever there's a line (it changes almost every turn;
