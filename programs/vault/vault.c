@@ -112,6 +112,21 @@ static void roll_screen(void) {
     if (n == 0) { pname[0]='H'; pname[1]='E'; pname[2]='R'; pname[3]='O'; pname[4]=0; }
 }
 
+/* end-of-game screen: won = escaped to the surface with the Orb; else died. */
+static void outcome_screen(unsigned char won) {
+    cls();
+    if (won) {
+        put_str(27, 8,  "YOU CLIMB INTO THE DAWN", A_STAIRS);
+        put_str(19, 10, "The Shimmering Orb blazes; light floods the world.", A_PLAYER);
+        put_str(35, 12, "YOU WIN!", A_PLAYER);
+    } else {
+        put_str(32, 8,  "YOU HAVE DIED", A_MON);
+        put_str(24, 10, "The sunless dark closes over you forever.", A_DIM);
+    }
+    put_str(33, 16, "Press a key.", A_TEXT);
+    flush_input(); INCH();
+}
+
 void main(void) {
     int k;
     unsigned char moved;
@@ -135,9 +150,7 @@ void main(void) {
 
         if (k == 'W') {                    /* DEBUG: warp to L15, godlike, to test the endgame */
             depth = 15;
-            pstr = pint = pcon = pdex = 18; plevel = 10;
-            pweapon = 5; parmor = 5;
-            pmaxhp = 200; php = 200; pmaxmana = 80; pmana = 80;
+            debug_buff();
             gen_level(); spawn_monsters(); spawn_items(); light();
             set_msg("DEBUG: warped to L15, godlike. Slay the Guardian, take the Orb, climb out.");
             render(1);
@@ -172,22 +185,21 @@ void main(void) {
             moved = 0;                                 /* an offering: a turn passes */
         }
         else if (k == '>') {
-            if (gmap[py][px] == T_STAIRS) {
+            if (gmap[py][px] != T_STAIRS) { set_msg("There are no stairs here."); render(0); continue; }
+            if (porb) {                                /* escaping: the stairs lead UP */
+                if (--depth <= 0) { outcome_screen(1); break; }   /* reached the surface = win */
+                set_msg("You climb toward the surface...");
+            } else {
                 depth++; set_msg("You descend deeper into the vault...");
-                gen_level(); spawn_monsters(); spawn_items(); light(); render(1);
-            } else { set_msg("There are no stairs here."); render(0); }
+            }
+            gen_level(); spawn_monsters(); spawn_items(); light(); render(1);
             continue;
         } else { continue; }
 
         if (moved) try_pickup();                       /* grab whatever we stepped onto */
         player_tick();                                 /* effects + regen (poison, shield...) */
         mon_turn();                                    /* frozen if Time Stop is active */
-        if (php <= 0) {
-            msg_add("You die in the dark. Press a key.");
-            render(0);
-            flush_input(); INCH();         /* flush so the death screen isn't skipped */
-            break;
-        }
+        if (php <= 0) { render(0); outcome_screen(0); break; }
         if (moved) light();
         render(0);
     }

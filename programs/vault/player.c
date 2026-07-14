@@ -30,6 +30,15 @@ void char_begin(void) {                  /* fresh level-1 hero from the rolled s
     pmaxhp = stat_hp();     php   = pmaxhp;
     pmaxmana = stat_mana(); pmana = pmaxmana;
 }
+/* DEBUG: a high-level, well-geared hero whose HP/mana come from the stat formula
+ * (so a later level-up raises them, never resets them). */
+void debug_buff(void) {
+    pstr = pint = pcon = pdex = 18;
+    pweapon = 5; parmor = 5;
+    plevel = 20; pxp = 0; pxpnext = 20 * plevel * plevel;   /* ~8000 to next: won't level mid-test */
+    pmaxhp = stat_hp();     php   = pmaxhp;
+    pmaxmana = stat_mana(); pmana = pmaxmana;
+}
 void gain_xp(int amt) {
     pxp += amt;
     while (pxp >= pxpnext) {              /* level up: full heal + bigger pools */
@@ -92,11 +101,12 @@ unsigned char try_move(signed char dx, signed char dy) {
     }
     if (gmap[ny][nx] == T_WALL) return 0;
     px = nx; py = ny;
-    if (gmap[py][px] == T_STAIRS) msg_add("A stairway leads down (press >).");
+    if (gmap[py][px] == T_STAIRS)
+        msg_add(porb ? "A stairway leads up (press >)." : "A stairway leads down (press >).");
     else if (gmap[py][px] == T_SHRINE) msg_add("An altar stands here. (p)ray.");
     else if (gmap[py][px] == T_ORB) {              /* lift the Orb -> the escape begins */
-        gmap[py][px] = T_FLOOR; porb = 1;
-        msg_add("You lift the Shimmering Orb! The vault groans and starts to seal.");
+        gmap[py][px] = T_STAIRS; porb = 1;         /* a way up opens where it lay */
+        msg_add("You lift the Shimmering Orb! The vault groans -- climb out (>)!");
     }
     return 1;
 }

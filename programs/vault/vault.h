@@ -167,6 +167,7 @@ extern char          pname[13];
 unsigned char roll3d6(void);
 void          char_begin(void);                 /* fresh level-1 hero from rolled stats */
 void          gain_xp(int amt);
+void          debug_buff(void);                  /* DEBUG: godlike hero (formula-consistent) */
 void          player_combatant(struct Combatant *c);
 void          player_tick(void);                 /* per-turn upkeep: effects + regen */
 void          player_bless(unsigned char which); /* shrine boon: +1 to stat 0=S 1=I 2=C 3=D */
