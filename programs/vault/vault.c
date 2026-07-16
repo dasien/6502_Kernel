@@ -13,6 +13,7 @@
 
 int           depth;
 int           seal_left;
+int           score_dmg, score_heal, score_mana, score_kills, score_deep;
 char          msg[80];
 static unsigned char mlen;
 static unsigned int  rngv;
@@ -141,18 +142,44 @@ static void roll_screen(void) {
     if (n == 0) { pname[0]='H'; pname[1]='E'; pname[2]='R'; pname[3]='O'; pname[4]=0; }
 }
 
-/* end-of-game screen: won = escaped to the surface with the Orb; else died. */
+/* end-of-game screen: won = escaped to the surface with the Orb; else died.
+ * Score rewards how deep you got AND how far you climbed back (round-trip depth),
+ * plus kills, gold, and damage dealt; healing/mana are small tie-breakers. */
 static void outcome_screen(unsigned char won) {
+    int dep    = score_deep + (score_deep - depth);   /* deepest reached + levels climbed */
+    int p_dep  = dep * 10;
+    int p_kill = score_kills * 3;
+    int p_dmg  = score_dmg / 2;
+    int p_heal = score_heal / 4;
+    int p_mana = score_mana / 4;
+    int p_win  = won ? 500 : 0;
+    int total  = p_dep + p_kill + p_dmg + p_heal + p_mana + pgold + p_win;
+    unsigned char r;
+
     cls();
     if (won) {
-        put_str(27, 8,  "YOU CLIMB INTO THE DAWN", A_STAIRS);
-        put_str(19, 10, "The Shimmering Orb blazes; light floods the world.", A_PLAYER);
-        put_str(35, 12, "YOU WIN!", A_PLAYER);
+        put_str(28, 2, "YOU CLIMB INTO THE DAWN", A_STAIRS);
+        put_str(20, 4, "The Shimmering Orb blazes; light floods the world.", A_PLAYER);
+        put_str(36, 6, "YOU WIN!", A_PLAYER);
     } else {
-        put_str(32, 8,  "YOU HAVE DIED", A_MON);
-        put_str(24, 10, "The sunless dark closes over you forever.", A_DIM);
+        put_str(33, 2, "YOU HAVE DIED", A_MON);
+        put_str(25, 4, "The sunless dark closes over you forever.", A_DIM);
     }
-    put_str(33, 16, "Press a key.", A_TEXT);
+    put_str(26, 9, "TALLY", A_DIM);  put_str(48, 9, "COUNT", A_DIM);  put_str(58, 9, "POINTS", A_DIM);
+    r = 11;
+    #define ROW(lbl, cnt, pts) do { put_str(26, r, (lbl), A_TEXT); \
+        put_num(48, r, (cnt), A_STAIRS); put_num(58, r, (pts), A_PLAYER); r++; } while (0)
+    ROW("Depth (round-trip)", dep,         p_dep);
+    ROW("Creatures slain",    score_kills, p_kill);
+    ROW("Damage dealt",       score_dmg,   p_dmg);
+    ROW("Healing done",       score_heal,  p_heal);
+    ROW("Mana spent",         score_mana,  p_mana);
+    ROW("Gold gathered",      pgold,       pgold);
+    if (won) ROW("Escaped with the Orb", 1, p_win);
+    #undef ROW
+    r++;
+    put_str(26, r, "TOTAL SCORE", A_STAIRS); put_num(58, r, total, A_PLAYER);
+    put_str(33, 23, "Press a key.", A_TEXT);
     flush_input(); INCH();
 }
 
@@ -164,7 +191,8 @@ void main(void) {
     if (rngv == 0) rngv = 0xACE1;      /* xorshift must not start at zero */
     roll_screen();
     char_begin();
-    depth = 1;
+    depth = 1; score_deep = 1;
+    score_dmg = score_heal = score_mana = score_kills = 0;
     set_msg("You enter the Sunless Vault.  (i)tems  (c)ast  >:descend  Q:quit");
     gen_level();
     spawn_monsters();
@@ -179,7 +207,7 @@ void main(void) {
         if (k == 'Q' || k == 'q') break;   /* ESC can't quit: arrows start with ESC */
 
         if (k == 'W') {                    /* DEBUG: warp to L15, godlike, to test the endgame */
-            depth = 15;
+            depth = 15; score_deep = 15;
             debug_buff();
             gen_level(); spawn_monsters(); spawn_items(); light();
             set_msg("DEBUG: warped to L15, godlike. Slay the Guardian, take the Orb, climb out.");
@@ -220,7 +248,8 @@ void main(void) {
                 if (--depth <= 0) { outcome_screen(1); break; }   /* reached the surface = win */
                 set_msg("You climb toward the surface...");
             } else {
-                depth++; set_msg("You descend deeper into the vault...");
+                depth++; if (depth > score_deep) score_deep = depth;
+                set_msg("You descend deeper into the vault...");
             }
             gen_level(); spawn_monsters(); spawn_items(); light(); render(1);
             continue;

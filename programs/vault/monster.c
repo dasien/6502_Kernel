@@ -38,10 +38,12 @@ static unsigned char step_free(signed char x, signed char y) {
 /* apply damage; on death drop any carried item + award XP. Returns 1 if it died. */
 unsigned char mon_hurt(struct Mon *m, int dmg) {
     m->hp -= dmg;
+    score_dmg += dmg;
     if (m->hp <= 0) {
         m->alive = 0;
         ent[(unsigned char)m->y][(unsigned char)m->x] = m->carry;   /* leave the item behind */
         gain_xp(mondef[m->type].xp);
+        score_kills++;
         return 1;
     }
     return 0;

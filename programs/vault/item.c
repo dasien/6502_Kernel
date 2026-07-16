@@ -79,10 +79,13 @@ void try_pickup(void) {
 static void use_item(unsigned char slot) {
     unsigned char ty = inv[slot], i;
     switch (itemdef[ty].kind) {
-        case IT_HEAL:
+        case IT_HEAL: {
+            int old = php;
             php += itemdef[ty].mag; if (php > pmaxhp) php = pmaxhp;
+            score_heal += php - old;
             msg_add("You feel much better.");
             break;
+        }
         case IT_MANA:
             pmana += itemdef[ty].mag; if (pmana > pmaxmana) pmana = pmaxmana;
             msg_add("Magic surges within you.");
@@ -126,6 +129,7 @@ unsigned char shrine_menu(void) {
     if (k == 'a') {
         if (pgold < rcost) { msg_add("Not enough gold."); return 0; }
         pgold -= rcost; nrest++;
+        score_heal += pmaxhp - php;
         php = pmaxhp; pmana = pmaxmana;
         msg_add("The gods restore your body and mind.");
         return 1;

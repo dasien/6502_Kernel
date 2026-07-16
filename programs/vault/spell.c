@@ -14,7 +14,7 @@ static unsigned char cast_spell(unsigned char idx) {
     if (s->kind == SP_TIMESTOP) {                 /* capstone: needs a minimum, eats all */
         if (pmana < s->cost) { msg_add("Not enough mana to still time."); return 0; }
         ptimestop = (unsigned char)(5 + pint / 4);
-        pmana = 0;
+        score_mana += pmana; pmana = 0;
         msg_add("Time shudders to a halt!");
         return 1;
     }
@@ -29,10 +29,13 @@ static unsigned char cast_spell(unsigned char idx) {
             if (mon_hurt(m, 3 + pint / 2 + rndn(4))) msg_add("-- it is destroyed!");
             break;
         }
-        case SP_HEAL:
+        case SP_HEAL: {
+            int old = php;
             php += 8 + pint; if (php > pmaxhp) php = pmaxhp;
+            score_heal += php - old;
             msg_add("Warmth knits your wounds.");
             break;
+        }
         case SP_LIGHT:
             plight = (unsigned char)(20 + pint);        /* torch: widen the sight radius */
             light();                                    /* recompute FOV at the bigger radius */
@@ -47,7 +50,7 @@ static unsigned char cast_spell(unsigned char idx) {
             msg_add("The world folds -- you blink away.");
             break;
     }
-    pmana -= s->cost;
+    pmana -= s->cost; score_mana += s->cost;
     return 1;
 }
 

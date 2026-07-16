@@ -204,6 +204,8 @@ unsigned char shrine_menu(void);             /* the 'p' altar menu; 1 if a turn 
 #define SEAL_SECONDS 600              /* real-time escape deadline once the Orb is lifted */
 extern int           depth;
 extern int           seal_left;       /* escape: seconds until the vault seals */
+/* score tallies (round-trip depth is computed from score_deep + current depth) */
+extern int           score_dmg, score_heal, score_mana, score_kills, score_deep;
 extern char          msg[80];
 unsigned int  rnd16(void);
 unsigned char rndn(unsigned char n);
