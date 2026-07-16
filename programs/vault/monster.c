@@ -74,7 +74,7 @@ void spawn_monsters(void) {
         if (depth == 15 && i == nrooms - 1) {    /* the Orb's room: the Guardian */
             ty = MON_GUARDIAN;
         } else {
-            if (rndn(3) == 0) continue;          /* ~1/3 of rooms stay empty */
+            if (!porb && rndn(3) == 0) continue; /* ~1/3 empty normally; every room swarms on escape */
             ty = pick_type();
         }
         mon[nmon].type  = ty;

@@ -12,6 +12,7 @@
 #include "vault.h"
 
 int           depth;
+int           seal_left;
 char          msg[80];
 static unsigned char mlen;
 static unsigned int  rngv;
@@ -73,6 +74,34 @@ static int readkey(void) {
 /* one turn per key press: discard input that piled up during a slow frame (or a
  * held key), so the backlog can't run you past danger or spill onto the prompt. */
 static void flush_input(void) { while (INCH_NB() != -1) ; }
+
+/* escape input: a NON-blocking wait that ticks the real-time seal clock off the
+ * RTC while the player deliberates (so thinking costs time now), pausing while
+ * Time Stop is up. Returns the next key (arrows -> hjkl) or -2 when time runs out.
+ * Menus and level transitions run outside this loop, so their real seconds aren't
+ * counted -- the pause falls out naturally (last-second is re-read on re-entry). */
+static int escape_input(void) {
+    static unsigned char last = 0xFF;           /* persists across turns (0xFF = resync) */
+    for (;;) {
+        int c;
+        unsigned char s = rtc_sec();
+        if (s != last) {                        /* a real second elapsed */
+            if (last != 0xFF && !ptimestop && seal_left > 0) {   /* Time Stop freezes the seal */
+                seal_left--;
+                draw_seal();
+                if (seal_left == 0) return -2;  /* the vault seals */
+            }
+            last = s;
+        }
+        c = INCH_NB();
+        if (c == -1) continue;                  /* nothing yet: keep the clock ticking */
+        if (c != 0x1B) return c;
+        c = INCH_NB(); if (c != '[') return -1;
+        c = INCH_NB();
+        switch (c) { case 'A': return 'k'; case 'B': return 'j'; case 'C': return 'l'; case 'D': return 'h'; }
+        return -1;
+    }
+}
 
 /* ---- title / stat-roll / name entry ---- */
 static void roll_screen(void) {
@@ -144,8 +173,9 @@ void main(void) {
     render(1);
 
     for (;;) {
-        k = readkey();
+        k = porb ? escape_input() : readkey();
         flush_input();                     /* one turn per key press; drop the pile-up */
+        if (k == -2) { outcome_screen(0); break; }   /* the seal clock ran out */
         if (k == 'Q' || k == 'q') break;   /* ESC can't quit: arrows start with ESC */
 
         if (k == 'W') {                    /* DEBUG: warp to L15, godlike, to test the endgame */

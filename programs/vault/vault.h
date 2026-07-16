@@ -27,6 +27,7 @@ extern void          vfill(unsigned char ch);        /* fill char for chip block
 extern void          vcmd(unsigned char cmd);         /* chip-side clear / fill-row */
 extern void          vhidecur(void);
 extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy */
+extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for change */
 
 #define VCMD_CLEAR   0x01
 #define VCMD_FILLROW 0x04
@@ -82,6 +83,7 @@ void put_num(unsigned char x, unsigned char y, int v, unsigned char a);
 void menu_row(unsigned char idx, unsigned char lcol, unsigned char tcol,
               unsigned char row, const char *text, unsigned char a);
 void render(unsigned char full);
+void draw_seal(void);                        /* redraw the escape timer on the status row */
 
 /* ---- combat.c: actor-vs-actor resolution ----
  * A Combatant is a snapshot of the numbers that drive one exchange, filled in by
@@ -199,7 +201,9 @@ unsigned char inventory_screen(void);        /* the 'i' menu; 1 if a turn passed
 unsigned char shrine_menu(void);             /* the 'p' altar menu; 1 if a turn passed */
 
 /* ---- vault.c: core (RNG, messages, shared progress) ---- */
+#define SEAL_SECONDS 600              /* real-time escape deadline once the Orb is lifted */
 extern int           depth;
+extern int           seal_left;       /* escape: seconds until the vault seals */
 extern char          msg[80];
 unsigned int  rnd16(void);
 unsigned char rndn(unsigned char n);

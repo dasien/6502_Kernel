@@ -148,8 +148,9 @@ unsigned char inventory_screen(void) {
 
     cls();
     put_str(34, 2, "INVENTORY", A_STAIRS);
-    put_str(28, 3, "Weapon +", A_TEXT); put_num(36, 3, pweapon, A_FLOOR);
-    put_str(40, 3, "Armor +", A_TEXT);  put_num(47, 3, parmor, A_FLOOR);
+    put_str(24, 3, "Weapon +", A_TEXT); put_num(32, 3, pweapon, A_FLOOR);
+    put_str(36, 3, "Armor +", A_TEXT);  put_num(43, 3, parmor, A_FLOOR);
+    put_str(47, 3, "Gold", A_TEXT);     put_num(52, 3, pgold, A_PLAYER);
     if (ninv == 0) {
         put_str(34, 5, "(empty)", A_DIM);
     } else {

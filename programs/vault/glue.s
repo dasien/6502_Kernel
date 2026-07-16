@@ -16,7 +16,7 @@
 .export _vaddr, _vputc, _vgetc, _vhidecur
 .export _vattr, _vgetcolor, _vputcolor
 .export _vfill, _vcmd
-.export _rng_seed
+.export _rng_seed, _rtc_sec
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (also resets the kernel cursor)
@@ -86,6 +86,15 @@ RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
         eor     #$AC
         tax                     ; -> high byte
         pla                     ; low byte back into A
+        rts
+.endproc
+
+; unsigned char rtc_sec(void) -- latch the clock and return the BCD seconds byte.
+; The escape loop only tests it for change (a new second passed), so BCD is fine.
+.proc _rtc_sec
+        sta     RTC_LATCH
+        lda     RTC_SEC
+        ldx     #$00
         rts
 .endproc
 

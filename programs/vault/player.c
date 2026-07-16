@@ -106,6 +106,7 @@ unsigned char try_move(signed char dx, signed char dy) {
     else if (gmap[py][px] == T_SHRINE) msg_add("An altar stands here. (p)ray.");
     else if (gmap[py][px] == T_ORB) {              /* lift the Orb -> the escape begins */
         gmap[py][px] = T_STAIRS; porb = 1;         /* a way up opens where it lay */
+        seal_left = SEAL_SECONDS;                  /* the real-time escape clock starts */
         msg_add("You lift the Shimmering Orb! The vault groans -- climb out (>)!");
     }
     return 1;

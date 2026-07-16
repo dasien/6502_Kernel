@@ -69,12 +69,24 @@ static int  shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
 static int  shlevel = -1, shmana = -1, shgold = -1;
 static unsigned char shpsn = 2, shorb = 2;         /* last poisoned / has-orb flags */
 
-/* the single-value status fields, table-driven (name/HP/MP/PSN stay inline) */
+/* the single-value status fields, table-driven (name/HP/MP + gold/seal + PSN inline) */
 static const struct { unsigned char lcol, vcol, va; const char *lbl; } sfld[] = {
     { 13, 16, A_STAIRS, "LV" }, { 43, 44, A_FLOOR, "S" }, { 47, 48, A_FLOOR, "I" },
     { 51, 52, A_FLOOR, "C" },   { 55, 56, A_FLOOR, "D" }, { 59, 62, A_STAIRS, "DL" },
-    { 65, 67, A_PLAYER, "G" },
 };
+#define NSFLD 6
+
+/* the escape seal timer, "SEAL m:ss" (red under 30s), shown in place of gold while
+ * carrying the Orb. Redrawn per turn AND once a second by the escape input loop. */
+void draw_seal(void) {
+    int s = seal_left, m; char b[6];
+    if (s < 0) s = 0;
+    m = s / 60;                                     /* fixed mm:ss so it never leaves stale digits */
+    b[0] = (char)('0' + m / 10); b[1] = (char)('0' + m % 10); b[2] = ':';
+    b[3] = (char)('0' + (s % 60) / 10); b[4] = (char)('0' + s % 10); b[5] = 0;
+    put_str(65, STA_ROW, "SEAL", A_TEXT);
+    put_str(70, STA_ROW, b, (s < 120) ? A_MON : A_STAIRS);   /* red in the last 2 minutes */
+}
 
 /* Diff repaint. full=1 wipes the screen + resets the shadow buffer (new level);
  * otherwise we scan only the union of last frame's lit box and this one. The cell
@@ -131,22 +143,21 @@ void render(unsigned char full) {
     if (full || depth != shdepth || php != shhp || pmaxhp != shmax ||
         plevel != shlevel || pmana != shmana || pgold != shgold ||
         (ppoison > 0) != shpsn || porb != shorb) {
-        int sv[7];
+        int sv[NSFLD];
         unsigned char i;
-        sv[0] = plevel; sv[1] = pstr; sv[2] = pint; sv[3] = pcon;
-        sv[4] = pdex;   sv[5] = depth; sv[6] = pgold;
+        sv[0] = plevel; sv[1] = pstr; sv[2] = pint; sv[3] = pcon; sv[4] = pdex; sv[5] = depth;
         clear_row(STA_ROW);
         put_str(0,  STA_ROW, pname, A_STAIRS);
         put_str(19, STA_ROW, "HP", A_TEXT);  put_num(22, STA_ROW, php, A_MON);
         put_str(25, STA_ROW, "/", A_TEXT);   put_num(26, STA_ROW, pmaxhp, A_TEXT);
         put_str(31, STA_ROW, "MP", A_TEXT);  put_num(34, STA_ROW, pmana, A_STAIRS);
         put_str(37, STA_ROW, "/", A_TEXT);   put_num(38, STA_ROW, pmaxmana, A_TEXT);
-        for (i = 0; i < 7; i++) {
+        for (i = 0; i < NSFLD; i++) {
             put_str(sfld[i].lcol, STA_ROW, sfld[i].lbl, A_TEXT);
             put_num(sfld[i].vcol, STA_ROW, sv[i], sfld[i].va);
         }
-        if (ppoison > 0) put_str(72, STA_ROW, "PSN", A_MON);
-        if (porb)        put_str(76, STA_ROW, "ORB", A_PLAYER);
+        if (porb) draw_seal();                       /* escaping: seal clock here (gold lives on 'i') */
+        if (ppoison > 0) put_str(76, STA_ROW, "PSN", A_MON);
         shdepth = depth; shhp = php; shmax = pmaxhp; shlevel = plevel; shmana = pmana;
         shgold = pgold; shpsn = (ppoison > 0); shorb = porb;
     }
