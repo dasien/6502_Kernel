@@ -264,6 +264,12 @@ or studied:
   **no reSID or other GPL code is used**. With thanks to the SID/C64 community
   whose datasheets and reverse-engineering notes made a faithful model possible.
   See `docs/sound_design.md`.
+- **The Sunless Vault** (`VAULT.PRG`) — an original text roguelike written from
+  scratch for MFC (no ported code). Its integer, turn-based, data-driven engine
+  follows the design of the author's own **Dungeon of Yacor**, and its play draws
+  inspiration from two classics of the genre — **Telengard** by **Daniel Lawrence**
+  and **Sword of Fargoal** by **Jeff McCord** — as design influences only; no code
+  or assets from those games are used. See `programs/vault/`.
 
 See `docs/cc65_to_prg.md` for the C-to-`.PRG` build pipeline.
 
