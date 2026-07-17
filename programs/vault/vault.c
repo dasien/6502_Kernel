@@ -112,7 +112,10 @@ static void roll_screen(void) {
     while (!accepted) {                       /* roll 3d6 per stat; reroll at will */
         pstr = roll3d6(); pint = roll3d6(); pcon = roll3d6(); pdex = roll3d6();
         cls();
-        put_str(31, 3,  "THE SUNLESS VAULT", A_STAIRS);
+        put_str(31, 2,  "THE SUNLESS VAULT", A_STAIRS);
+        put_str(15, 4,  "The Orb was stolen and the world went dark. Descend fifteen", A_DIM);
+        put_str(15, 5,  "floors, take it from the Guardian, and climb out before the", A_DIM);
+        put_str(15, 6,  "vault seals.   (Read STORY.TXT for the full tale.)", A_DIM);
         put_str(34, 9,  "ROLL YOUR HERO", A_TEXT);
         put_str(34, 11, "STR", A_TEXT); put_num(40, 11, pstr, A_STAIRS);
         put_str(34, 12, "INT", A_TEXT); put_num(40, 12, pint, A_STAIRS);
