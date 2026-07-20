@@ -8,6 +8,10 @@
 signed char   px, py;
 int           php, pmaxhp, pmana, pmaxmana;
 int           ppoison;
+int           pdrain;
+int           pstun;
+int           pstunimm;
+int           pconfuse;
 int           pgold;
 unsigned char porb;
 unsigned char pweapon, parmor;
@@ -25,7 +29,8 @@ static int stat_hp(void)    { return 6 + pcon + (plevel - 1) * (4 + pcon / 6); }
 static int stat_mana(void)  { return 2 * pint + (plevel - 1) * (pint / 2); }
 
 void char_begin(void) {                  /* fresh level-1 hero from the rolled stats */
-    plevel = 1; pxp = 0; pxpnext = 20; ppoison = 0; pgold = 0; porb = 0;
+    plevel = 1; pxp = 0; pxpnext = 20; ppoison = 0; pdrain = 0; pstun = 0; pstunimm = 0;
+    pconfuse = 0; pgold = 0; porb = 0;
     pweapon = 0; parmor = 0; pshield = 0; ptimestop = 0; plight = 0;
     pmaxhp = stat_hp();     php   = pmaxhp;
     pmaxmana = stat_mana(); pmana = pmaxmana;
@@ -34,7 +39,7 @@ void char_begin(void) {                  /* fresh level-1 hero from the rolled s
  * (so a later level-up raises them, never resets them). */
 void debug_buff(void) {
     pstr = pint = pcon = pdex = 18;
-    pweapon = 5; parmor = 5;
+    pweapon = 5; parmor = 5; ppoison = 0; pdrain = 0; pstun = 0; pstunimm = 0; pconfuse = 0;
     plevel = 20; pxp = 0; pxpnext = 20 * plevel * plevel;   /* ~8000 to next: won't level mid-test */
     pmaxhp = stat_hp();     php   = pmaxhp;
     pmaxmana = stat_mana(); pmana = pmaxmana;
@@ -73,7 +78,10 @@ void player_bless(unsigned char which) {
 /* per-turn upkeep: tick temporary effects, bleed poison, and regenerate slowly */
 void player_tick(void) {
     static unsigned char hreg, mreg;
-    if (ppoison > 0)   { php--; ppoison--; msg_add("The poison gnaws."); }
+    if (ppoison > 0)   { player_take(1); ppoison--; msg_add("The poison gnaws."); }
+    if (pdrain > 0)    pdrain--;             /* the drain link fades on its own if you break away */
+    if (pstunimm > 0)  pstunimm--;
+    if (pconfuse > 0)  pconfuse--;
     if (pshield > 0)   pshield--;
     if (ptimestop > 0) ptimestop--;
     if (plight > 0)    plight--;

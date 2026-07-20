@@ -99,17 +99,25 @@ Creatures appear within a floor range, so the deeper you go the nastier it gets.
 | `b` | bat | 1–4 | 4 | hard to hit (evasive) |
 | `k` | kobold | 1–4 | 6 | |
 | `s` | snake | 2–5 | 7 | **poison** |
+| `S` | skeleton | 2–6 | 9 | risen dead |
 | `g` | goblin | 2–6 | 10 | |
+| `░` | shadow | 3–8 | 12 | **dark and hard to see** — a drifting smudge; evasive |
 | `o` | orc | 3–8 | 15 | lightly armored |
+| `d` | wolf | 3–8 | 14 | swift hunter |
 | `z` | zombie | 3–8 | 20 | slow but tough |
 | `G` | gnoll | 4–9 | 18 | |
 | `O` | ogre | 5–11 | 30 | hits hard |
 | `w` | wraith | 6–12 | 24 | evasive, **poison** |
+| `V` | vampire | 7–13 | 38 | **life drain** — for a few turns after it hits, damage you take heals *it* (shown as `DRN`); kill it to end the drain |
 | `T` | troll | 7–13 | 42 | **regenerates** — finish it fast |
+| `B` | basilisk | 8–14 | 40 | **gaze may paralyze you** for a turn or two |
+| `M` | mind flayer | 8–14 | 36 | **may confuse you** — your steps go the wrong way for a few turns |
 | `W` | wyvern | 8–14 | 34 | |
+| `N` | necromancer | 9–15 | 30 | **raises skeletons** — kill it before it fills the room |
 | `D` | demon | 10–15 | 52 | |
 | `Y` | drake | 12–15 | 68 | |
-| `&` | **Vault Guardian** | 15 | 110 | the boss; hits hard and regenerates |
+| `H` | hydra | 12–15 | 80 | **strikes 1–3 times per turn** |
+| `Æ` | **Vault Guardian** | 15 | 110 | the boss; hits hard and regenerates |
 
 **Poison** stacks a few ticks per hit and drains HP each turn until it wears off
 (shown as `PSN` on the status bar). **Regenerators** heal a little every turn
@@ -155,8 +163,9 @@ Now and then a floor holds an **altar** (`Ω`). Stand on it and press `p` to spe
 - **Restore body and mind** — refill HP and mana.
 - **Blessing of Might / Mind / Vigor / Grace** — a permanent **+1** to STR / INT / CON / DEX (Vigor also raises max HP, Mind your mana pool).
 
-Every purchase raises the price of the next. Gold spent is gold you don't score —
-so it's a real trade between power now and points later.
+Every purchase raises the price of the next. Your score counts the gold you
+*gather*, not what's left in your purse, so spending it at altars costs you nothing
+on the scoreboard — buy freely.
 
 ## The escape
 
@@ -184,7 +193,7 @@ The end screen tallies:
 | Damage dealt | ÷2 |
 | Healing done | ÷4 |
 | Mana spent | ÷4 |
-| Gold gathered | ×1 |
+| Gold gathered (total found, not what's left) | ×1 |
 | Escaped with the Orb | +500 |
 
 Getting deep and climbing back out is where the points are — a clean escape is
@@ -195,7 +204,7 @@ worth far more than any hoard.
 - **Rest between fights** — wait on a cleared tile to regen HP/mana before pushing on.
 - **Bank an escape** — keep enough mana for a Teleport (only 2), and save Time Stop
   for a swarmed choke point during the climb.
-- **Spend or save?** — altar blessings make you stronger for the run but cost score.
-  Buy what you need to survive; hoard what you don't.
+- **Use the altars** — score counts gold *gathered*, not gold kept, so blessings are
+  effectively free on the scoreboard; spend on whatever helps you survive the descent.
 - **Learn the depth bands** — if you're seeing trolls and wyverns, the ogres and
   gnolls are behind you; plan gear and spells for what's ahead.

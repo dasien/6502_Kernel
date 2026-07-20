@@ -26,8 +26,17 @@ const struct MonDef mondef[] = {
     { 'W', 0x46, "wyvern",   34, 12,  6,  4,  8,  2,  20,  8, 14,  0 },
     { 'D', 0x41, "demon",    52, 14,  6,  6, 10,  3,  30, 10, 15,  0 },
     { 'Y', 0x45, "drake",    68, 15,  5,  8, 12,  4,  45, 12, 15,  0 },
+    /* --- creatures drawn from Dungeon of Yacor's bestiary (index MON_SKELETON..) --- */
+    { 'S', 0x07, "skeleton",      9,  6,  3,  1,  3,  1,   4,  2,  6,  0 },          /* MON_SKELETON=14 */
+    { 176, 0x40, "shadow",       12,  9,  9,  2,  4,  0,   8,  3,  8,  0 },          /* dark gray: hard to see */
+    { 'd', 0x07, "wolf",         14,  9,  5,  2,  5,  1,   9,  3,  8,  0 },
+    { 'V', 0x41, "vampire",      38, 13,  6,  3,  7,  2,  32,  7, 13,  AB_DRAIN },
+    { 'B', 0x42, "basilisk",     40, 12,  4,  4,  8,  3,  26,  8, 14,  AB_STUN },
+    { 'N', 0x45, "necromancer",  30, 12,  6,  3,  6,  2,  28,  9, 15,  AB_SUMMON },
+    { 'H', 0x42, "hydra",        80, 14,  2,  4,  9,  4,  55, 12, 15,  AB_MULTI },
+    { 'M', 0x45, "mind flayer",  36, 13,  7,  3,  7,  2,  30,  8, 14,  AB_CONFUSE },
     /* index MON_GUARDIAN -- placed by hand on L15, never rolled (dlo=99). */
-    { '&', 0x45, "Vault Guardian", 110, 17, 6, 9, 15, 5, 80, 99, 99, AB_REGEN },
+    { 146, 0x45, "Vault Guardian", 110, 17, 6, 9, 15, 5, 80, 99, 99, AB_REGEN },
 };
 const unsigned char nmondef = sizeof(mondef) / sizeof(mondef[0]);
 

@@ -14,6 +14,7 @@
 int           depth;
 int           seal_left;
 int           score_dmg, score_heal, score_mana, score_kills, score_deep;
+int           score_gold;
 char          msg[80];
 static unsigned char mlen;
 static unsigned int  rngv;
@@ -115,7 +116,7 @@ static void roll_screen(void) {
         put_str(31, 2,  "THE SUNLESS VAULT", A_STAIRS);
         put_str(15, 4,  "The Orb was stolen and the world went dark. Descend fifteen", A_DIM);
         put_str(15, 5,  "floors, take it from the Guardian, and climb out before the", A_DIM);
-        put_str(15, 6,  "vault seals.   (Read STORY.TXT for the full tale.)", A_DIM);
+        put_str(15, 6,  "vault seals.", A_DIM);
         put_str(34, 9,  "ROLL YOUR HERO", A_TEXT);
         put_str(34, 11, "STR", A_TEXT); put_num(40, 11, pstr, A_STAIRS);
         put_str(34, 12, "INT", A_TEXT); put_num(40, 12, pint, A_STAIRS);
@@ -156,7 +157,7 @@ static void outcome_screen(unsigned char won) {
     int p_heal = score_heal / 4;
     int p_mana = score_mana / 4;
     int p_win  = won ? 500 : 0;
-    int total  = p_dep + p_kill + p_dmg + p_heal + p_mana + pgold + p_win;
+    int total  = p_dep + p_kill + p_dmg + p_heal + p_mana + score_gold + p_win;
     unsigned char r;
 
     cls();
@@ -177,7 +178,7 @@ static void outcome_screen(unsigned char won) {
     ROW("Damage dealt",       score_dmg,   p_dmg);
     ROW("Healing done",       score_heal,  p_heal);
     ROW("Mana spent",         score_mana,  p_mana);
-    ROW("Gold gathered",      pgold,       pgold);
+    ROW("Gold gathered",      score_gold,  score_gold);
     if (won) ROW("Escaped with the Orb", 1, p_win);
     #undef ROW
     r++;
@@ -196,6 +197,7 @@ void main(void) {
     char_begin();
     depth = 1; score_deep = 1;
     score_dmg = score_heal = score_mana = score_kills = 0;
+    score_gold = 0;
     set_msg("You enter the Sunless Vault.  (i)tems  (c)ast  >:descend  Q:quit");
     gen_level();
     spawn_monsters();
@@ -220,6 +222,24 @@ void main(void) {
 
         moved = 0;
         msg_clear();
+
+        if (pstun > 0) {                   /* paralyzed by a basilisk: the turn passes, you can't act */
+            pstun--;
+            set_msg("You are paralyzed and cannot move!");
+            player_tick();
+            mon_turn();
+            if (php <= 0) { render(0); outcome_screen(0); break; }
+            render(0);
+            continue;
+        }
+
+        /* confused (mind flayer): a movement key stumbles off in a random direction */
+        if (pconfuse > 0 && (k == 'h' || k == 'j' || k == 'k' || k == 'l')) {
+            static const char cmove[4] = { 'h', 'j', 'k', 'l' };
+            k = cmove[rndn(4)];
+            msg_add("You stagger in confusion!");
+        }
+
         if      (k == 'h') moved = try_move(-1, 0);
         else if (k == 'l') moved = try_move(1, 0);
         else if (k == 'k') moved = try_move(0, -1);

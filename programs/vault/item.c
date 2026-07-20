@@ -58,7 +58,8 @@ void try_pickup(void) {
 
     if (itemdef[ty].kind == IT_GOLD) {              /* currency, not a pack item */
         int amt = 10 + depth * 3 + rndn((unsigned char)(10 + depth * 4));
-        pgold += amt;
+        pgold += amt;                 /* spendable purse */
+        score_gold += amt;            /* gross collected, for the end-screen tally */
         msg_add("You find"); msg_num(amt); msg_add("gold.");
     } else if (itemdef[ty].kind == IT_WEAPON) {     /* permanent attack buff, used at once */
         pweapon++;

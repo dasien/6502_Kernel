@@ -107,9 +107,12 @@ void resolve_attack(const struct Combatant *atk, const struct Combatant *def,
 #define AB_REGEN   0x01    /* heals a little each turn */
 #define AB_POISON  0x02    /* a landed hit poisons the hero */
 #define AB_RANGED  0x04    /* (reserved for a later step) */
-#define AB_SPLIT   0x08    /* (reserved) */
-#define AB_SUMMON  0x10    /* (reserved) */
-#define AB_TELE    0x20    /* (reserved) */
+#define AB_SUMMON  0x08    /* raises fresh creatures on nearby cells (necromancer) */
+#define AB_STUN    0x10    /* a landed hit may paralyze the hero for a turn (basilisk) */
+#define AB_DRAIN   0x20    /* a hit drains life: heals the attacker + lingers (vampire) */
+#define AB_MULTI   0x40    /* strikes 1-3 times per turn (hydra) */
+#define AB_TELE    0x80    /* (reserved) */
+#define AB_CONFUSE 0x100   /* a hit may confuse the hero: movement goes random (mind flayer) */
 struct MonDef {
     unsigned char glyph, attr;
     const char   *name;
@@ -117,11 +120,12 @@ struct MonDef {
     unsigned char acc, eva, dmin, dmax, armor;
     unsigned char xp;
     unsigned char dlo, dhi;                  /* depth range this type appears on */
-    unsigned char abil;
+    unsigned int  abil;                      /* ability bitmask (AB_*) -- 16-bit for headroom */
 };
 extern const struct MonDef mondef[];
 extern const unsigned char nmondef;
-#define MON_GUARDIAN 14    /* roster index of the L15 Orb guardian (dlo=99: never random) */
+#define MON_SKELETON 14    /* roster index of the skeleton (what the necromancer raises) */
+#define MON_GUARDIAN 22    /* roster index of the L15 Orb guardian (dlo=99: never random) */
 
 /* item kinds (the effect when used) */
 #define IT_HEAL   0   /* restore HP */
@@ -160,6 +164,10 @@ extern const unsigned char nspelldef;
 extern signed char   px, py;
 extern int           php, pmaxhp, pmana, pmaxmana;
 extern int           ppoison;                /* remaining poison ticks */
+extern int           pdrain;                 /* turns a vampire's drain link is live (damage taken heals it) */
+extern int           pstun;                  /* turns the hero is paralyzed (basilisk gaze) */
+extern int           pstunimm;               /* turns immune to re-stun (so a stun can't chain-lock you) */
+extern int           pconfuse;               /* turns the hero's movement is randomized (mind flayer) */
 extern int           pgold;                  /* gold purse */
 extern unsigned char porb;                   /* 1 once the Shimmering Orb is lifted */
 extern unsigned char pweapon, parmor;        /* permanent gear bonuses (Yacor-style) */
@@ -187,6 +195,7 @@ void          mon_turn(void);
 unsigned char occ_type(unsigned char oc);   /* type of the monster at occ value oc */
 struct Mon   *nearest_vis_mon(void);         /* closest visible live creature, or 0 */
 unsigned char mon_hurt(struct Mon *m, int dmg);   /* apply damage; 1 if it died */
+void          player_take(int dmg);          /* damage the hero (routes to a draining vampire) */
 
 /* ---- spell.c ---- */
 unsigned char spell_screen(void);            /* the 'c' menu; 1 if a turn passed */
@@ -206,6 +215,7 @@ extern int           depth;
 extern int           seal_left;       /* escape: seconds until the vault seals */
 /* score tallies (round-trip depth is computed from score_deep + current depth) */
 extern int           score_dmg, score_heal, score_mana, score_kills, score_deep;
+extern int           score_gold;      /* gross gold collected (not the spendable purse pgold) */
 extern char          msg[80];
 unsigned int  rnd16(void);
 unsigned char rndn(unsigned char n);

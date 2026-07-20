@@ -67,7 +67,7 @@ static const unsigned char vattrs[13] = { A_TEXT, A_DIM, A_DIM, A_DIM,
 
 static int  shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
 static int  shlevel = -1, shmana = -1, shgold = -1;
-static unsigned char shpsn = 2, shorb = 2;         /* last poisoned / has-orb flags */
+static unsigned char shpsn = 2, shdrn = 2, shorb = 2;   /* last poisoned / drained / has-orb flags */
 
 /* the single-value status fields, table-driven (name/HP/MP + gold/seal + PSN inline) */
 static const struct { unsigned char lcol, vcol, va; const char *lbl; } sfld[] = {
@@ -142,7 +142,7 @@ void render(unsigned char full) {
 
     if (full || depth != shdepth || php != shhp || pmaxhp != shmax ||
         plevel != shlevel || pmana != shmana || pgold != shgold ||
-        (ppoison > 0) != shpsn || porb != shorb) {
+        (ppoison > 0) != shpsn || (pdrain > 0) != shdrn || porb != shorb) {
         int sv[NSFLD];
         unsigned char i;
         sv[0] = plevel; sv[1] = pstr; sv[2] = pint; sv[3] = pcon; sv[4] = pdex; sv[5] = depth;
@@ -157,9 +157,10 @@ void render(unsigned char full) {
             put_num(sfld[i].vcol, STA_ROW, sv[i], sfld[i].va);
         }
         if (porb) draw_seal();                       /* escaping: seal clock here (gold lives on 'i') */
-        if (ppoison > 0) put_str(76, STA_ROW, "PSN", A_MON);
+        if (ppoison > 0)     put_str(76, STA_ROW, "PSN", A_MON);   /* one DoT tag; poison wins if both */
+        else if (pdrain > 0) put_str(76, STA_ROW, "DRN", A_MON);
         shdepth = depth; shhp = php; shmax = pmaxhp; shlevel = plevel; shmana = pmana;
-        shgold = pgold; shpsn = (ppoison > 0); shorb = porb;
+        shgold = pgold; shpsn = (ppoison > 0); shdrn = (pdrain > 0); shorb = porb;
     }
 
     /* message row: repaint whenever there's a line (it changes almost every turn;
