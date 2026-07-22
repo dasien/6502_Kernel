@@ -173,6 +173,7 @@ extern unsigned char porb;                   /* 1 once the Shimmering Orb is lif
 extern unsigned char pweapon, parmor;        /* permanent gear bonuses (Yacor-style) */
 extern unsigned char pshield, ptimestop, plight;   /* temporary spell effects (turns left) */
 extern unsigned char pstr, pint, pcon, pdex, plevel;
+extern int           pxp, pxpnext;           /* XP so far / next-level threshold (status bar) */
 extern char          pname[13];
 unsigned char roll3d6(void);
 void          char_begin(void);                 /* fresh level-1 hero from rolled stats */

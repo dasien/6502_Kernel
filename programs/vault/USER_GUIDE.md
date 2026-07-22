@@ -36,7 +36,7 @@ top with the Orb wins; dying or letting the vault seal loses.
 | Arrow keys **or** `h` `j` `k` `l` | Move west / south / north / east (bump a creature to attack it) |
 | `Space` or `.` | Wait one turn |
 | `>` | Use the stairs you're standing on (down, or **up** once you hold the Orb) |
-| `i` | Inventory — shows gold, weapon/armor bonuses, and carried potions/scrolls; press a letter to use one |
+| `i` | Character sheet — your stats, HP/MP, XP, gold, weapon/armor bonuses, and carried potions/scrolls; press a letter to use one |
 | `c` | Cast a spell (lists the spells your INT allows) |
 | `p` | Pray at an altar (only while standing on one) |
 | `Q` | Quit to DOS |
@@ -74,7 +74,7 @@ Four stats, rolled at the start (minimum 8) and raised permanently at altars:
 
 - **HP** = `6 + CON + (level−1)·(4 + CON/6)`.
 - **Mana** = `2·INT + (level−1)·(INT/2)`.
-- **XP / leveling** — kills grant XP; leveling up fully heals you and enlarges both pools.
+- **XP / leveling** — kills grant XP; leveling up fully heals you and enlarges both pools. The status bar shows your progress as `XP have/needed`.
 - **Natural recovery** — you regain ~1 HP every 15 turns and ~1 mana every 25 turns (HP recovery pauses while poisoned), so you can rest by waiting on a safe tile.
 - **Gear** — weapon/armor upgrades add a permanent `+N` to damage / damage-soak.
 

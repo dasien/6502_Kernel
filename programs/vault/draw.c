@@ -66,15 +66,15 @@ static const unsigned char vattrs[13] = { A_TEXT, A_DIM, A_DIM, A_DIM,
                                           A_PLAYER, A_DIM };  /* orb lit (bright yellow) / dim */
 
 static int  shdepth = -1, shhp = -1, shmax = -1;   /* last status shown */
-static int  shlevel = -1, shmana = -1, shgold = -1;
+static int  shlevel = -1, shmana = -1, shgold = -1, shxp = -1;
 static unsigned char shpsn = 2, shdrn = 2, shorb = 2;   /* last poisoned / drained / has-orb flags */
 
-/* the single-value status fields, table-driven (name/HP/MP + gold/seal + PSN inline) */
+/* the single-value status fields, table-driven. STR/INT/CON/DEX moved to the
+ * character/inventory page, freeing the middle of the row for the XP indicator. */
 static const struct { unsigned char lcol, vcol, va; const char *lbl; } sfld[] = {
-    { 13, 16, A_STAIRS, "LV" }, { 43, 44, A_FLOOR, "S" }, { 47, 48, A_FLOOR, "I" },
-    { 51, 52, A_FLOOR, "C" },   { 55, 56, A_FLOOR, "D" }, { 59, 62, A_STAIRS, "DL" },
+    { 13, 16, A_STAIRS, "LV" }, { 59, 62, A_STAIRS, "DL" },
 };
-#define NSFLD 6
+#define NSFLD 2
 
 /* the escape seal timer, "SEAL m:ss" (red under 30s), shown in place of gold while
  * carrying the Orb. Redrawn per turn AND once a second by the escape input loop. */
@@ -86,6 +86,19 @@ void draw_seal(void) {
     b[3] = (char)('0' + (s % 60) / 10); b[4] = (char)('0' + s % 10); b[5] = 0;
     put_str(65, STA_ROW, "SEAL", A_TEXT);
     put_str(70, STA_ROW, b, (s < 120) ? A_MON : A_STAIRS);   /* red in the last 2 minutes */
+}
+
+/* "XP n/next" progress toward the next level. Lives where the STR/INT/CON/DEX
+ * fields used to be (those moved to the character/inventory page), so it has a
+ * fixed home clear of the DL field and the escape seal clock. */
+static void draw_xp(void) {
+    char b[6];
+    unsigned char c = 46;
+    put_str(43, STA_ROW, "XP", A_TEXT);
+    put_num(c, STA_ROW, pxp, A_STAIRS);
+    c = (unsigned char)(c + utoa(pxp, b));       /* advance past the digits just drawn */
+    put_str(c, STA_ROW, "/", A_TEXT);
+    put_num((unsigned char)(c + 1), STA_ROW, pxpnext, A_STAIRS);
 }
 
 /* Diff repaint. full=1 wipes the screen + resets the shadow buffer (new level);
@@ -141,11 +154,11 @@ void render(unsigned char full) {
     pbx0 = litx0; pby0 = lity0; pbx1 = litx1; pby1 = lity1;
 
     if (full || depth != shdepth || php != shhp || pmaxhp != shmax ||
-        plevel != shlevel || pmana != shmana || pgold != shgold ||
+        plevel != shlevel || pmana != shmana || pgold != shgold || pxp != shxp ||
         (ppoison > 0) != shpsn || (pdrain > 0) != shdrn || porb != shorb) {
         int sv[NSFLD];
         unsigned char i;
-        sv[0] = plevel; sv[1] = pstr; sv[2] = pint; sv[3] = pcon; sv[4] = pdex; sv[5] = depth;
+        sv[0] = plevel; sv[1] = depth;
         clear_row(STA_ROW);
         put_str(0,  STA_ROW, pname, A_STAIRS);
         put_str(19, STA_ROW, "HP", A_TEXT);  put_num(22, STA_ROW, php, A_MON);
@@ -156,11 +169,12 @@ void render(unsigned char full) {
             put_str(sfld[i].lcol, STA_ROW, sfld[i].lbl, A_TEXT);
             put_num(sfld[i].vcol, STA_ROW, sv[i], sfld[i].va);
         }
+        draw_xp();                                   /* XP progress in the freed middle slot */
         if (porb) draw_seal();                       /* escaping: seal clock here (gold lives on 'i') */
         if (ppoison > 0)     put_str(76, STA_ROW, "PSN", A_MON);   /* one DoT tag; poison wins if both */
         else if (pdrain > 0) put_str(76, STA_ROW, "DRN", A_MON);
         shdepth = depth; shhp = php; shmax = pmaxhp; shlevel = plevel; shmana = pmana;
-        shgold = pgold; shpsn = (ppoison > 0); shdrn = (pdrain > 0); shorb = porb;
+        shgold = pgold; shxp = pxp; shpsn = (ppoison > 0); shdrn = (pdrain > 0); shorb = porb;
     }
 
     /* message row: repaint whenever there's a line (it changes almost every turn;

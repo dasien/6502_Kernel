@@ -19,7 +19,7 @@ unsigned char pshield, ptimestop, plight;
 unsigned char pstr, pint, pcon, pdex, plevel;
 char          pname[13];
 
-static int    pxp, pxpnext;
+int           pxp, pxpnext;      /* accumulated XP and the next-level threshold (shown on the status bar) */
 
 unsigned char roll3d6(void) {          /* 3d6, floored at 8 so no hero is hopeless */
     unsigned char r = (unsigned char)(3 + rndn(6) + rndn(6) + rndn(6));

@@ -145,26 +145,81 @@ unsigned char shrine_menu(void) {
     return 0;
 }
 
-/* the 'i' menu: list carried items, pick one to use. Returns 1 if a turn passed
- * (an item was used), 0 if it was only viewed. The caller repaints the map. */
+/* draw "a/b" at (x,y): the '/' follows a's digits exactly (widths vary). */
+static void put_frac(unsigned char x, unsigned char y, int a, int b, unsigned char att) {
+    char t[6];
+    unsigned char c;
+    put_num(x, y, a, att);
+    c = (unsigned char)(x + utoa(a, t));
+    put_str(c, y, "/", A_TEXT);
+    put_num((unsigned char)(c + 1), y, b, att);
+}
+
+/* two-column labelled sheet: left pair (L1 label / V1 value), right pair (L2/V2) */
+#define L1 26
+#define V1 34
+#define L2 50
+#define V2 56
+
+/* the 'i' page: a labelled character sheet -- paired fields in two columns, then
+ * XP and the gear/pack in a single column. The pack STACKS by type (only
+ * heal/mana/map potions & scrolls ever land here, so it's at most three rows).
+ * Returns 1 if a turn passed (an item was used). */
 unsigned char inventory_screen(void) {
     int k;
-    unsigned char i;
+    unsigned char i, t, r;
+    unsigned char types[6], counts[6], nd = 0;   /* distinct pack types + tallies */
+
+    /* tally the pack by item type so identical items collapse to one row */
+    for (t = 0; t < nitemdef; t++) {
+        unsigned char c = 0;
+        for (i = 0; i < ninv; i++) if (inv[i] == t) c++;
+        if (c) { types[nd] = t; counts[nd] = c; nd++; }
+    }
 
     cls();
-    put_str(34, 2, "INVENTORY", A_STAIRS);
-    put_str(24, 3, "Weapon +", A_TEXT); put_num(32, 3, pweapon, A_FLOOR);
-    put_str(36, 3, "Armor +", A_TEXT);  put_num(43, 3, parmor, A_FLOOR);
-    put_str(47, 3, "Gold", A_TEXT);     put_num(52, 3, pgold, A_PLAYER);
-    if (ninv == 0) {
-        put_str(34, 5, "(empty)", A_DIM);
+    put_str(L1, 3, "Name:",  A_TEXT); put_str(V1, 3, pname,  A_STAIRS);
+    put_str(L2, 3, "Level:", A_TEXT); put_num(V2, 3, plevel, A_STAIRS);
+
+    put_str(L1, 5, "STR:", A_TEXT); put_num(V1, 5, pstr, A_FLOOR);
+    put_str(L2, 5, "INT:", A_TEXT); put_num(V2, 5, pint, A_FLOOR);
+    put_str(L1, 6, "CON:", A_TEXT); put_num(V1, 6, pcon, A_FLOOR);
+    put_str(L2, 6, "DEX:", A_TEXT); put_num(V2, 6, pdex, A_FLOOR);
+
+    put_str(L1, 8, "HP:", A_TEXT); put_frac(V1, 8, php,   pmaxhp,   A_MON);
+    put_str(L2, 8, "MP:", A_TEXT); put_frac(V2, 8, pmana, pmaxmana, A_STAIRS);
+    put_str(L1, 9, "XP:", A_TEXT); put_frac(V1, 9, pxp,   pxpnext,  A_FLOOR);
+
+    put_str(L1, 11, "Weapon:", A_TEXT); put_str(V1, 11, "+", A_TEXT); put_num(V1 + 1, 11, pweapon, A_FLOOR);
+    put_str(L1, 12, "Armor:",  A_TEXT); put_str(V1, 12, "+", A_TEXT); put_num(V1 + 1, 12, parmor,  A_FLOOR);
+    put_str(L1, 13, "Gold:",   A_TEXT); put_num(V1, 13, pgold, A_PLAYER);
+
+    put_str(L1, 15, "Pack", A_STAIRS);
+    if (nd == 0) {
+        put_str(L1 + 2, 16, "(empty)", A_DIM);
     } else {
-        for (i = 0; i < ninv; i++)
-            menu_row(i, 28, 31, (unsigned char)(5 + i), itemdef[inv[i]].name, A_TEXT);
+        for (i = 0; i < nd; i++) {
+            const char *nm = itemdef[types[i]].name;
+            r = (unsigned char)(16 + i);
+            menu_row(i, L1, L1 + 3, r, nm, A_TEXT);
+            if (counts[i] > 1) {                     /* "(N)" after the name; nothing when single */
+                char b[6];
+                unsigned char len = 0, c;
+                while (nm[len]) len++;
+                c = (unsigned char)(L1 + 3 + len + 1);
+                put_str(c, r, "(", A_DIM);
+                put_num((unsigned char)(c + 1), r, counts[i], A_TEXT);
+                put_str((unsigned char)(c + 1 + utoa(counts[i], b)), r, ")", A_DIM);
+            }
+        }
     }
-    put_str(22, (unsigned char)(7 + ninv), "[a-z] use    [any other] back", A_DIM);
+    put_str(L1, 24, "[a-z] use    [any other] back", A_DIM);
 
     k = INCH();
-    if (k >= 'a' && k < 'a' + (int)ninv) { use_item((unsigned char)(k - 'a')); return 1; }
+    if (k >= 'a' && k < 'a' + (int)nd) {          /* use one of the chosen stack */
+        t = types[k - 'a'];
+        for (i = 0; i < ninv; i++) if (inv[i] == t) { use_item(i); break; }
+        return 1;
+    }
     return 0;
 }
