@@ -32,10 +32,13 @@ extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for
 #define VCMD_CLEAR   0x01
 #define VCMD_FILLROW 0x04
 
-/* ---- screen layout: rows 0..22 map, 23 message, 24 status ---- */
+/* ---- screen layout: rows 0..21 map, 22/23 the two-line log, 24 status ----
+ * The combat log is split by actor: MSG_ROW (22) is what YOU do this turn, and
+ * MSG2_ROW (23) is what the world does back (monster attacks, poison, etc.). */
 #define MAP_W    80
-#define MAP_H    23
-#define MSG_ROW  23
+#define MAP_H    22
+#define MSG_ROW  22
+#define MSG2_ROW 23
 #define STA_ROW  24
 
 /* ---- tiles ---- */
@@ -196,6 +199,7 @@ void          mon_turn(void);
 unsigned char occ_type(unsigned char oc);   /* type of the monster at occ value oc */
 struct Mon   *nearest_vis_mon(void);         /* closest visible live creature, or 0 */
 unsigned char mon_hurt(struct Mon *m, int dmg);   /* apply damage; 1 if it died */
+const char   *mon_hp_hint(struct Mon *m);         /* vague remaining-health band for the log */
 void          player_take(int dmg);          /* damage the hero (routes to a draining vampire) */
 
 /* ---- spell.c ---- */
@@ -217,12 +221,14 @@ extern int           seal_left;       /* escape: seconds until the vault seals *
 /* score tallies (round-trip depth is computed from score_deep + current depth) */
 extern int           score_dmg, score_heal, score_mana, score_kills, score_deep;
 extern int           score_gold;      /* gross gold collected (not the spendable purse pgold) */
-extern char          msg[80];
+extern char          msg[80];                /* log line 1: your actions */
+extern char          msg2[80];               /* log line 2: what the world does to you */
 unsigned int  rnd16(void);
 unsigned char rndn(unsigned char n);
 signed char   sgn(int v);
 void          msg_clear(void);
 void          msg_add(const char *s);
+void          msg2_add(const char *s);       /* append to log line 2 (monster/world events) */
 void          msg_num(int v);                /* append a decimal number to the log */
 signed char   utoa(int v, char *buf);        /* int -> reversed ASCII digits; count */
 void          set_msg(const char *s);

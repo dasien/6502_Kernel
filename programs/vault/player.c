@@ -78,7 +78,7 @@ void player_bless(unsigned char which) {
 /* per-turn upkeep: tick temporary effects, bleed poison, and regenerate slowly */
 void player_tick(void) {
     static unsigned char hreg, mreg;
-    if (ppoison > 0)   { player_take(1); ppoison--; msg_add("The poison gnaws."); }
+    if (ppoison > 0)   { player_take(1); ppoison--; msg2_add("The poison gnaws."); }
     if (pdrain > 0)    pdrain--;             /* the drain link fades on its own if you break away */
     if (pstunimm > 0)  pstunimm--;
     if (pconfuse > 0)  pconfuse--;
@@ -101,10 +101,13 @@ unsigned char try_move(signed char dx, signed char dy) {
         player_combatant(&a);
         mon_combatant(m, &d);
         resolve_attack(&a, &d, &r);
-        if (!r.hit) { msg_add("You miss the"); msg_add(d.name); return 0; }
+        if (!r.hit) { msg_add("You miss the"); msg_add(d.name); msg_add("."); return 0; }
         if (r.crit) msg_add("Critical hit!");
-        if (mon_hurt(m, r.dmg)) { msg_add("You slay the"); msg_add(d.name); }
-        else                    { msg_add("You hit the");  msg_add(d.name); }
+        if (mon_hurt(m, r.dmg)) { msg_add("You slay the"); msg_add(d.name); msg_add("!"); }
+        else {
+            msg_add("You strike the"); msg_add(d.name); msg_add(".");
+            msg_add("It is"); msg_add(mon_hp_hint(m)); msg_add("!");
+        }
         return 0;
     }
     if (gmap[ny][nx] == T_WALL) return 0;

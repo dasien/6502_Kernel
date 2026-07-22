@@ -25,8 +25,9 @@ static unsigned char cast_spell(unsigned char idx) {
         case SP_MISSILE: {
             struct Mon *m = nearest_vis_mon();
             if (!m) { msg_add("No target in sight."); return 0; }   /* no turn spent */
-            msg_add("A bolt of force strikes the"); msg_add(mondef[m->type].name);
-            if (mon_hurt(m, 3 + pint / 2 + rndn(4))) msg_add("-- it is destroyed!");
+            msg_add("A bolt of force strikes the"); msg_add(mondef[m->type].name); msg_add(".");
+            if (mon_hurt(m, 3 + pint / 2 + rndn(4))) msg_add("It is destroyed!");
+            else { msg_add("It is"); msg_add(mon_hp_hint(m)); msg_add("!"); }
             break;
         }
         case SP_HEAL: {

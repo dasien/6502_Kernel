@@ -71,6 +71,17 @@ unsigned char mon_hurt(struct Mon *m, int dmg) {
     return 0;
 }
 
+/* a vague health band for the hit log -- reads better than raw numbers in a text
+ * crawl. Based on current HP vs the roster's base max (spawn jitter/regen can put
+ * hp a touch over max, which just reads as "barely hurt"). */
+const char *mon_hp_hint(struct Mon *m) {
+    int mx = (int)mondef[m->type].hp, hp = m->hp;
+    if (hp * 4 > mx * 3) return "barely hurt";      /* > 75% */
+    if (hp * 2 > mx)     return "wounded";          /* 50-75% */
+    if (hp * 4 > mx)     return "badly hurt";       /* 25-50% */
+    return "near death";                            /* <= 25% */
+}
+
 /* how a creature presents to the combat resolver -- straight from its roster row */
 void mon_combatant(struct Mon *m, struct Combatant *c) {
     const struct MonDef *d = &mondef[m->type];
@@ -129,7 +140,7 @@ static void mon_summon(struct Mon *nec) {
         mon[nmon].alive = 1;  mon[nmon].carry = 0;
         ent[(unsigned char)sy][(unsigned char)sx] = nmon + 1;
         nmon++;
-        msg_add("The necromancer raises a skeleton!");
+        msg2_add("The necromancer raises a skeleton!");
         return;
     }
 }
@@ -158,22 +169,22 @@ void mon_turn(void) {
                     mon_combatant(m, &a);
                     player_combatant(&def);
                     resolve_attack(&a, &def, &r);
-                    if (!r.hit) { msg_add("The"); msg_add(d->name); msg_add("misses."); continue; }
+                    if (!r.hit) { msg2_add("The"); msg2_add(d->name); msg2_add("misses."); continue; }
                     /* arm the drain link BEFORE the damage so this very swing feeds it too */
                     if (d->abil & AB_DRAIN) { pdrain = (int)(1 + rndn(3)); drainer = m; }
                     player_take(r.dmg);
-                    msg_add("The"); msg_add(d->name);
-                    msg_add(r.crit ? "savages you!" : "hits you.");
-                    if (d->abil & AB_POISON) { ppoison += 4; msg_add("Poison!"); }
-                    if (d->abil & AB_DRAIN)  msg_add("It drains your life!");
+                    msg2_add("The"); msg2_add(d->name);
+                    msg2_add(r.crit ? "savages you!" : "hits you.");
+                    if (d->abil & AB_POISON) { ppoison += 4; msg2_add("Poison!"); }
+                    if (d->abil & AB_DRAIN)  msg2_add("It drains your life!");
                     /* stun only when not already stunned AND past the immunity window, so a
                      * basilisk can't chain-lock you -- and neither can the message re-fire.
                      * pstunimm counts down every turn (incl. the stun turns): 2 stun + 1 free. */
                     if ((d->abil & AB_STUN) && pstun == 0 && pstunimm == 0 && rndn(3) == 0) {
-                        pstun = 2; pstunimm = 4; msg_add("Its gaze paralyzes you!");
+                        pstun = 2; pstunimm = 4; msg2_add("Its gaze paralyzes you!");
                     }
                     if ((d->abil & AB_CONFUSE) && pconfuse == 0 && rndn(3) == 0) {
-                        pconfuse = 5; msg_add("Your mind reels -- you are confused!");
+                        pconfuse = 5; msg2_add("Your mind reels -- you are confused!");
                     }
                 }
             } else {                                                    /* else step closer */

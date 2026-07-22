@@ -179,6 +179,6 @@ void render(unsigned char full) {
 
     /* message row: repaint whenever there's a line (it changes almost every turn;
      * diffing it isn't worth an 80-byte shadow buffer). */
-    clear_row(MSG_ROW);
-    put_str(0, MSG_ROW, msg, A_TEXT);
+    clear_row(MSG_ROW);  put_str(0, MSG_ROW,  msg,  A_TEXT);   /* line 1: your actions */
+    clear_row(MSG2_ROW); put_str(0, MSG2_ROW, msg2, A_TEXT);   /* line 2: what the world does */
 }

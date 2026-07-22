@@ -16,7 +16,8 @@ int           seal_left;
 int           score_dmg, score_heal, score_mana, score_kills, score_deep;
 int           score_gold;
 char          msg[80];
-static unsigned char mlen;
+char          msg2[80];
+static unsigned char mlen, m2len;
 static unsigned int  rngv;
 
 /* ---- RNG: 16-bit xorshift (7,9,8) ---- */
@@ -29,13 +30,21 @@ unsigned int rnd16(void) {
 unsigned char rndn(unsigned char n) { return (unsigned char)(rnd16() % n); }
 signed char   sgn(int v) { return (v < 0) ? -1 : (v > 0 ? 1 : 0); }
 
-/* ---- turn message log (events append; drawn together by render) ---- */
-void msg_clear(void) { msg[0] = 0; mlen = 0; }
-void msg_add(const char *s) {
-    if (mlen && mlen < 79) msg[mlen++] = ' ';
-    while (*s && mlen < 79) msg[mlen++] = *s++;
-    msg[mlen] = 0;
+/* ---- turn message log: two actor-split lines (see MSG_ROW/MSG2_ROW) ---- */
+/* append s to buf, joining tokens with a space -- but NOT before trailing
+ * punctuation, so msg_add("goblin")+msg_add(".") reads "goblin." not "goblin ." */
+static void mappend(char *buf, unsigned char *len, const char *s) {
+    unsigned char l = *len;
+    char c = *s;
+    if (l && l < 79 && c != '.' && c != ',' && c != '!' && c != '?' && c != ';' && c != ':')
+        buf[l++] = ' ';
+    while (*s && l < 79) buf[l++] = *s++;
+    buf[l] = 0;
+    *len = l;
 }
+void msg_clear(void) { msg[0] = 0; mlen = 0; msg2[0] = 0; m2len = 0; }
+void msg_add(const char *s)  { mappend(msg,  &mlen,  s); }
+void msg2_add(const char *s) { mappend(msg2, &m2len, s); }
 /* int -> ASCII digits into buf, LEAST significant first; returns the digit count.
  * Shared by put_num (screen) and msg_num (log), which both emit buf in reverse. */
 signed char utoa(int v, char *buf) {

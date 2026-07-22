@@ -89,6 +89,12 @@ When you bump a creature (or it attacks you), the hit is resolved as:
 Your accuracy rises with DEX and level; your damage with STR and your weapon
 bonus; your armor with the armor bonus (and the Shield spell).
 
+The message log is two lines: the **top** line is what *you* do this turn (e.g.
+`You strike the goblin. It is badly hurt!`), the **bottom** line is what the world
+does back (`The goblin hits you.`). After a hit that doesn't kill, the top line
+hints at the foe's remaining health — *barely hurt*, *wounded*, *badly hurt*, or
+*near death* — so you can judge whether to press the attack or back off.
+
 ## Monster manual
 
 Creatures appear within a floor range, so the deeper you go the nastier it gets.
