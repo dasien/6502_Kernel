@@ -14,8 +14,6 @@ MainWindow::MainWindow(QWidget* parent)
     , display_widget_(nullptr)
     , status_sidebar_(nullptr)
     , sidebar_layout_(nullptr)
-    , reset_button_(nullptr)
-    , nmi_button_(nullptr)
     , status_label_(nullptr)
     , cpu_header_label_(nullptr)
     , current_byte_label_(nullptr)
@@ -190,32 +188,12 @@ void MainWindow::setupUI()
     sidebar_layout_->addWidget(flags_values_label_);
     
     sidebar_layout_->addStretch();
-    
-    // Create a container for sidebar + reset button
-    QWidget* sidebar_container = new QWidget(this);
-    QVBoxLayout* sidebar_container_layout = new QVBoxLayout(sidebar_container);
-    sidebar_container_layout->setContentsMargins(0, 0, 0, 0);
-    sidebar_container_layout->setSpacing(5);
-    
-    // Add the status sidebar to the container
-    sidebar_container_layout->addWidget(status_sidebar_);
-    
-    // Create control buttons
-    reset_button_ = new QPushButton("Reset", this);
-    nmi_button_ = new QPushButton("NMI", this);  // non-maskable "stop" key
 
-    // Add Reset and NMI buttons centered below the sidebar
-    QHBoxLayout* reset_layout = new QHBoxLayout();
-    reset_layout->addStretch();
-    reset_layout->addWidget(reset_button_);
-    reset_layout->addWidget(nmi_button_);
-    reset_layout->addStretch();
+    // Add the CPU status sidebar directly to the display row (display_widget added
+    // above). It's hidden by default and toggled from the View menu; Reset/NMI now
+    // live in the Control menu, so the old button row is gone.
+    display_layout_->addWidget(status_sidebar_);
 
-    sidebar_container_layout->addLayout(reset_layout);
-    
-    // Add sidebar container to horizontal layout (display_widget already added above)
-    display_layout_->addWidget(sidebar_container);
-    
     // Add display layout to main layout
     main_layout_->addLayout(display_layout_);
     
@@ -224,7 +202,12 @@ void MainWindow::setupUI()
     
     // Set window properties
     setWindowTitle("6502 Computer Emulator");
-    
+
+    // The register panel is a debug view now -- hidden by default (toggle from the
+    // View menu). Hide it BEFORE sizing so the default window doesn't reserve its
+    // width; showing it later grows the window (see the View action's adjustSize()).
+    status_sidebar_->hide();
+
     // Let the window size itself naturally instead of fixing the size
     resize(sizeHint());
     setMinimumSize(sizeHint());
@@ -243,7 +226,29 @@ void MainWindow::setupMenus()
     QAction* exit_action = file_menu->addAction("E&xit");
     exit_action->setShortcut(QKeySequence::Quit);
     connect(exit_action, &QAction::triggered, this, &QWidget::close);
-    
+
+    // Control menu: the machine controls that used to be on-screen buttons.
+    QMenu* control_menu = menuBar()->addMenu("&Control");
+
+    QAction* reset_action = control_menu->addAction("&Reset");
+    reset_action->setShortcut(QKeySequence("Ctrl+R"));
+    connect(reset_action, &QAction::triggered, this, &MainWindow::onResetClicked);
+
+    QAction* nmi_action = control_menu->addAction("&NMI");
+    nmi_action->setShortcut(QKeySequence("Ctrl+N"));
+    connect(nmi_action, &QAction::triggered, this, &MainWindow::onNmiClicked);
+
+    // View menu: toggle the CPU register/PC/SP panel (a debug view, off by default).
+    QMenu* view_menu = menuBar()->addMenu("&View");
+
+    QAction* show_registers_action = view_menu->addAction("CPU &Registers");
+    show_registers_action->setCheckable(true);
+    show_registers_action->setChecked(false);          // hidden by default
+    connect(show_registers_action, &QAction::toggled, this, [this](bool checked) {
+        status_sidebar_->setVisible(checked);
+        adjustSize();                                  // grow/shrink the window to fit
+    });
+
     // Help menu
     QMenu* help_menu = menuBar()->addMenu("&Help");
     
@@ -259,9 +264,7 @@ void MainWindow::setupMenus()
 
 void MainWindow::connectSignals()
 {
-    connect(reset_button_, &QPushButton::clicked, this, &MainWindow::onResetClicked);
-    connect(nmi_button_, &QPushButton::clicked, this, &MainWindow::onNmiClicked);
-    
+    // Reset/NMI are wired to the Control-menu actions in setupMenus().
     connect(status_timer_, &QTimer::timeout, this, &MainWindow::updateStatus);
     
     // Connect execution timer to run computer cycles

@@ -4,7 +4,6 @@
 #include <QMainWindow>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QPushButton>
 #include <QLabel>
 #include <QTimer>
 #include "Computer6502.h"
@@ -41,11 +40,8 @@ private:
     QHBoxLayout* display_layout_;
     
     DisplayWidget* display_widget_;
-    QWidget* status_sidebar_;
+    QWidget* status_sidebar_;   ///< CPU register/PC/SP panel; hidden by default, View-menu toggle
     QVBoxLayout* sidebar_layout_;
-    
-    QPushButton* reset_button_;
-    QPushButton* nmi_button_;
 
     QLabel* status_label_;
     
