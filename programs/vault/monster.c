@@ -56,7 +56,10 @@ static unsigned char step_free(signed char x, signed char y) {
     return gmap[y][x] != T_WALL && !(ent[y][x] && ent[y][x] <= MAX_MON);
 }
 
-/* apply damage; on death drop any carried item + award XP. Returns 1 if it died. */
+/* apply damage; on death drop any carried item + tally the kill. Returns 1 if it
+ * died. The caller awards XP (gain_xp) AFTER printing its kill message, so the
+ * "You grow stronger!" level-up line follows "You slay the ..." rather than
+ * preceding it. m->type stays valid after death for that. */
 unsigned char mon_hurt(struct Mon *m, int dmg) {
     m->hp -= dmg;
     score_dmg += dmg;
@@ -64,7 +67,6 @@ unsigned char mon_hurt(struct Mon *m, int dmg) {
         m->alive = 0;
         if (m == drainer) { drainer = 0; pdrain = 0; }   /* its death ends the life drain at once */
         ent[(unsigned char)m->y][(unsigned char)m->x] = m->carry;   /* leave the item behind */
-        gain_xp(mondef[m->type].xp);
         score_kills++;
         return 1;
     }

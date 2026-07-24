@@ -103,7 +103,10 @@ unsigned char try_move(signed char dx, signed char dy) {
         resolve_attack(&a, &d, &r);
         if (!r.hit) { msg_add("You miss the"); msg_add(d.name); msg_add("."); return 0; }
         if (r.crit) msg_add("Critical hit!");
-        if (mon_hurt(m, r.dmg)) { msg_add("You slay the"); msg_add(d.name); msg_add("!"); }
+        if (mon_hurt(m, r.dmg)) {
+            msg_add("You slay the"); msg_add(d.name); msg_add("!");
+            gain_xp(mondef[m->type].xp);        /* after the kill line, so level-up follows it */
+        }
         else {
             msg_add("You strike the"); msg_add(d.name); msg_add(".");
             msg_add("It is"); msg_add(mon_hp_hint(m)); msg_add("!");
