@@ -3,6 +3,7 @@
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QMessageBox>
+#include <QActionGroup>
 #include <cstdio>
 
 MainWindow::MainWindow(QWidget* parent)
@@ -120,6 +121,13 @@ void MainWindow::setupUI()
     // Create central widget and main layout
     central_widget_ = new QWidget(this);
     setCentralWidget(central_widget_);
+
+    // Paint the area around the display black (not the default light gray): when
+    // the window is larger than the 640x400 screen (zoomed, maximized, or full
+    // screen) the surround stays dark instead of a harsh bright field. The #id
+    // selector targets only this widget, so children keep their own styling.
+    central_widget_->setObjectName("central");
+    central_widget_->setStyleSheet("QWidget#central { background-color: black; }");
     
     main_layout_ = new QVBoxLayout(central_widget_);
     
@@ -205,17 +213,33 @@ void MainWindow::setupUI()
 
     // The register panel is a debug view now -- hidden by default (toggle from the
     // View menu). Hide it BEFORE sizing so the default window doesn't reserve its
-    // width; showing it later grows the window (see the View action's adjustSize()).
+    // width; showing it (or zooming) refits the window via fitWindowToContents().
     status_sidebar_->hide();
 
-    // Let the window size itself naturally instead of fixing the size
+    // Size the window to the content; the View > Zoom actions and the register
+    // toggle refit it (and it stays freely resizable / full-screen-capable).
     resize(sizeHint());
     setMinimumSize(sizeHint());
     
-    // Set up status bar
+    // Set up status bar (dark to match the black surround)
+    statusBar()->setStyleSheet("QStatusBar { background: black; } QStatusBar QLabel { color: #bbb; }");
     status_label_ = new QLabel("System running", this);
-    
+
     statusBar()->addWidget(status_label_);
+}
+
+// Resize the window to fit its content after a fixed-size child changes (display
+// zoom) or the register panel is shown/hidden. Force the layout to recompute first
+// (a stale hint would clip the display), then resize to the fresh sizeHint. The
+// window stays freely resizable / full-screen-capable; the minimum tracks the
+// content so it can't be dragged small enough to clip the screen.
+void MainWindow::fitWindowToContents()
+{
+    if (central_widget_->layout())
+        central_widget_->layout()->activate();
+    setMinimumSize(0, 0);            // allow shrinking (e.g. zoom 3x -> 1x)
+    resize(sizeHint());
+    setMinimumSize(sizeHint());
 }
 
 void MainWindow::setupMenus()
@@ -246,8 +270,26 @@ void MainWindow::setupMenus()
     show_registers_action->setChecked(false);          // hidden by default
     connect(show_registers_action, &QAction::toggled, this, [this](bool checked) {
         status_sidebar_->setVisible(checked);
-        adjustSize();                                  // grow/shrink the window to fit
+        fitWindowToContents();                         // grow/shrink the window to fit
     });
+
+    // Zoom submenu: integer scale of the display (crisp, nearest-neighbor). The
+    // window resizes to fit each factor; the black surround handles any slack.
+    view_menu->addSeparator();
+    QMenu* zoom_menu = view_menu->addMenu("&Zoom");
+    QActionGroup* zoom_group = new QActionGroup(this);   // exclusive: one factor at a time
+    for (int f = 1; f <= 3; ++f)
+    {
+        QAction* zoom_action = zoom_menu->addAction(QString("%1x").arg(f));
+        zoom_action->setCheckable(true);
+        zoom_action->setChecked(f == 1);                 // 1x is the native default
+        zoom_action->setShortcut(QKeySequence(QString("Ctrl+%1").arg(f)));
+        zoom_group->addAction(zoom_action);
+        connect(zoom_action, &QAction::triggered, this, [this, f]() {
+            display_widget_->setScale(f);
+            fitWindowToContents();
+        });
+    }
 
     // Help menu
     QMenu* help_menu = menuBar()->addMenu("&Help");
