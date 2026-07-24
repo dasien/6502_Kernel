@@ -32,6 +32,7 @@ private:
     void setupMenus();
     void connectSignals();
     void updateCpuStatusSidebar();
+    void fitWindowToContents();   ///< resize the window to exactly fit its content (zoom / panel toggle)
     
     // UI Components
     QWidget* central_widget_;

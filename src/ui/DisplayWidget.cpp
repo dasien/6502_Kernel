@@ -86,6 +86,14 @@ void DisplayWidget::setCharacterSize(const int width, const int height)
     update();
 }
 
+void DisplayWidget::setScale(int factor)
+{
+    if (factor < 1) factor = 1;
+    // Native cell is 8x16 (classic VGA 80x25). Zoom multiplies both; the glyph
+    // blit nearest-neighbor scales into the cell, so integer factors stay crisp.
+    setCharacterSize(8 * factor, 16 * factor);
+}
+
 void DisplayWidget::setBackgroundColor(const QColor& color)
 {
     background_color_ = color;
@@ -298,8 +306,10 @@ void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
 }
 
 // Blit one 8x16 glyph from the CP437 character ROM into a cell: each scanline
-// byte's bits select fg (1) or bg (0). The cell is exactly 8x16, so the image
-// maps 1:1 (no scaling).
+// byte's bits select fg (1) or bg (0). The glyph is built at its native 8x16 and
+// drawn into the char_width_ x char_height_ cell -- at 1x that's 1:1; when zoomed
+// the QPainter nearest-neighbor scales it (SmoothPixmapTransform is off), so the
+// pixels stay crisp.
 void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
                               const uint8_t glyph, const QColor& fg, const QColor& bg)
 {
@@ -315,7 +325,7 @@ void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
         for (int c = 0; c < 8; ++c)
             line[c] = (bits & (0x80 >> c)) ? fg_rgb : bg_rgb;
     }
-    painter.drawImage(x * char_width_, y * char_height_, img);
+    painter.drawImage(QRect(x * char_width_, y * char_height_, char_width_, char_height_), img);
 }
 
 void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,

@@ -23,6 +23,9 @@ public:
 
     // Display configuration
     void setCharacterSize(int width, int height);
+    // Integer zoom: cell = (8*factor) x (16*factor) px, glyphs nearest-neighbor
+    // scaled so text stays crisp. factor 1 = native 640x400.
+    void setScale(int factor);
     void setBackgroundColor(const QColor& color);
     void setForegroundColor(const QColor& color);
     void setFont(const QFont& font);
