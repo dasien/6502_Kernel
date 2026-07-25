@@ -87,8 +87,9 @@ add_custom_target(disk
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/term/TERM.PRG     ${DISKROOT}/TERM.PRG
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/irc/IRC.PRG       ${DISKROOT}/IRC.PRG
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/micromax/CHESS.PRG ${DISKROOT}/GAMES/CHESS.PRG
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/vault/VAULT.PRG    ${DISKROOT}/GAMES/VAULT.PRG
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/vault/STORY.TXT    ${DISKROOT}/STORY.TXT
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${DISKROOT}/SVAULT
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/vault/VAULT.PRG    ${DISKROOT}/SVAULT/VAULT.PRG
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/vault/STORY.TXT    ${DISKROOT}/SVAULT/STORY.TXT
     COMMAND mkdisk create ${CMAKE_BINARY_DIR}/disk.img ${DISKROOT}/diskmap.txt
     DEPENDS mkdisk
     COMMENT "Assembling disk.img from disk/ + built app .PRGs"

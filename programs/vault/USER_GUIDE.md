@@ -5,17 +5,17 @@ of Yacor**; mechanics inspired by **Telengard** and **Sword of Fargoal**.*
 
 The Shimmering Orb was stolen from the Temple of Dawn and hidden at the bottom of
 a fifteen-floor vault, and the world went dark. You are sent down to take it back
-and carry it into the light. (The full tale is on the disk — `TYPE STORY.TXT` at
-the `]` prompt.)
+and carry it into the light. (The full tale ships in the game's drawer — `OPEN
+SVAULT` then `TYPE STORY.TXT`.)
 
 ---
 
 ## Getting in
 
-At the DOS `]` prompt:
+The game and its backstory live in the **SVAULT** drawer. At the DOS `]` prompt:
 
 ```
-OPEN GAMES
+OPEN SVAULT
 VAULT
 ```
 
