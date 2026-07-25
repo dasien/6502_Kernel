@@ -236,6 +236,22 @@ TEST_F(DosFat16Test, EnumeratesAllFilesWithSizes) {
     EXPECT_EQ(entries[3].size, 0u);
 }
 
+// A drawer with >14 files spans multiple directory clusters (#79). The 6502 DOS
+// must follow the directory's FAT chain to open a file living past the first
+// cluster. 40 files + '.'/'..' = 42 entries = 3 clusters; GAME39 sits in the 3rd.
+TEST_F(DosFat16Test, OpensFileInMultiClusterDrawer) {
+    std::vector<Fat16File> files;
+    for (int i = 0; i < 40; ++i)
+        files.push_back({"GAME" + std::to_string(i) + ".PRG",
+                         std::vector<uint8_t>(4, static_cast<uint8_t>('A' + (i % 26))),
+                         "GAMES"});
+    writeImage(files);
+
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("GAMES/GAME39.PRG", out));   // last entry, 3rd cluster
+    EXPECT_EQ(out, std::vector<uint8_t>(4, static_cast<uint8_t>('A' + (39 % 26))));
+}
+
 TEST_F(DosFat16Test, EmptyDirectoryYieldsNothing) {
     writeImage({});
     EXPECT_TRUE(enumerate().empty());

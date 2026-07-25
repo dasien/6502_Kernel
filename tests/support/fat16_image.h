@@ -99,15 +99,12 @@ public:
             if (d == drawerOrder.size()) { drawerOrder.push_back(f.drawer); drawerFiles.emplace_back(); }
             drawerFiles[d].push_back(&f);
         }
-        // Root can hold at most kRootEntries entries (root files + drawers). One
-        // drawer cluster holds clusterBytes()/32 entries incl. '.'/'..'. Fail
-        // loudly rather than silently overflowing the directory.
+        // Root is a fixed region of at most kRootEntries entries (root files +
+        // drawers); fail loudly rather than overflow it. A drawer's own directory
+        // is NOT fixed -- it grows across clusters below.
         const size_t perCluster = clusterBytes() / 32;
         if (rootFiles.size() + drawerOrder.size() > kRootEntries)
             throw std::runtime_error("fat16: too many root entries (raise kRootEntries or use drawers)");
-        for (const auto &df : drawerFiles)
-            if (df.size() + 2 > perCluster)
-                throw std::runtime_error("fat16: drawer has too many files for one cluster");
 
         size_t rootIdx = 0;
         for (const Fat16File *file : rootFiles) {
@@ -115,16 +112,30 @@ public:
             writeDirEntry(root + rootIdx++ * 32, file->name, placeData(*file), size);
         }
         for (size_t d = 0; d < drawerOrder.size(); ++d) {
-            const uint16_t dirCluster = nextCluster++;   // the drawer's directory cluster
-            fat[dirCluster] = 0xFFFF;
-            uint8_t *dir = &img[(dataStart + (dirCluster - 2) * kSectorsPerCluster) * kBytesPerSector];
-            writeDotEntries(dir, dirCluster);
+            // A drawer's directory grows across as many clusters as its entries
+            // need ('.' + '..' + one per file). Allocate them contiguously and
+            // chain them in the FAT, just like a file's data -- the 6502 DOS and
+            // the reader both walk the directory's cluster chain.
+            const size_t entries = drawerFiles[d].size() + 2;   // incl. '.' and '..'
+            const uint16_t dirClusters =
+                static_cast<uint16_t>((entries + perCluster - 1) / perCluster);
+            const uint16_t firstDir = nextCluster;
+            if (static_cast<uint32_t>(firstDir) + dirClusters > 2u + dataClusters)
+                throw std::runtime_error("fat16: image full (raise dataClusters)");
+            for (uint16_t c = 0; c < dirClusters; ++c)
+                fat[firstDir + c] = (c + 1 < dirClusters) ? (firstDir + c + 1) : 0xFFFF;
+            nextCluster += dirClusters;
+
+            // Contiguous clusters are contiguous bytes in the image, so the entries
+            // can be written linearly across the whole directory region.
+            uint8_t *dir = &img[(dataStart + (firstDir - 2) * kSectorsPerCluster) * kBytesPerSector];
+            writeDotEntries(dir, firstDir);
             size_t slot = 2;                              // entries after '.' and '..'
             for (const Fat16File *file : drawerFiles[d]) {
                 const uint32_t size = static_cast<uint32_t>(file->data.size());
                 writeDirEntry(dir + slot++ * 32, file->name, placeData(*file), size);
             }
-            writeDirEntry(root + rootIdx++ * 32, drawerOrder[d], dirCluster, 0, 0x10);
+            writeDirEntry(root + rootIdx++ * 32, drawerOrder[d], firstDir, 0, 0x10);
         }
 
         // Serialize the FAT (little-endian 16-bit entries).

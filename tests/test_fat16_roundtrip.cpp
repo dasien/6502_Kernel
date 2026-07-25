@@ -47,6 +47,27 @@ TEST(Fat16Roundtrip, ReadsRootAndDrawers) {
     }
 }
 
+// A drawer with more entries than fit in one cluster (>14 files) builds and
+// round-trips intact -- the multi-cluster directory case (#79). 40 files + '.'/'..'
+// = 42 entries = 3 clusters of 16.
+TEST(Fat16Roundtrip, DrawerSpansMultipleClusters) {
+    std::vector<Fat16File> in = {{"EDIT.PRG", bytesOf("edit"), ""}};
+    const int kFiles = 40;
+    for (int i = 0; i < kFiles; ++i)
+        in.push_back({"GAME" + std::to_string(i) + ".PRG",
+                      bytesOf("body-" + std::to_string(i)), "GAMES"});
+    const auto img = Fat16ImageBuilder::build(in, Fat16ImageBuilder::kHostFat16Clusters);
+    Fat16ImageReader reader(img);
+    const auto out = reader.readAll();
+
+    ASSERT_EQ(out.size(), in.size());
+    for (const auto &want : in) {
+        const Fat16File *got = find(out, want.drawer, want.name);
+        ASSERT_NE(got, nullptr) << "missing " << want.drawer << "/" << want.name;
+        EXPECT_EQ(got->data, want.data) << want.drawer << "/" << want.name;
+    }
+}
+
 // Reader -> readAll -> Builder reproduces the image byte-for-byte (what mkdisk
 // `read` then `create` does; also the basis for `update`).
 TEST(Fat16Roundtrip, RebuildFromReadAllIsIdentical) {
