@@ -241,7 +241,7 @@ DOS_SIGNATURE:
 ;   1.14 DATE command shows the date/time from the new RTC device ($FE55-$FE5C)
 ;   1.15 files are timestamped from the RTC on write; CATALOG shows the date/time
 DOS_VERSION:
-    .BYTE $01, $0F                      ; version 1.15 (major, minor)
+    .BYTE $01, $10                      ; version 1.16 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door

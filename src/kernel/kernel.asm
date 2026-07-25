@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.21
+; Version:      3.22
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -285,7 +285,7 @@ PAGE_SUSPEND       = $1F           ; ESC at --MORE-- suspends paging for the res
 PAGE_IN_BREAK      = $20           ; guard: inside the page-break prompt (don't re-count)
 CMD_LINE_COUNT     = $21           ; Lines printed since the last pause/command (was $0D)
 PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
-RNG_SEED           = $23           ; Random number generator seed (was $0F)
+RNG_STATE_LO       = $23           ; RNG 16-bit LFSR state, low byte (was RNG_SEED)
 RNG_MAX            = $24           ; Maximum value for random number (was $10)
 ; $25-$34 was the runtime hex lookup table; now reclaimed (NIBBLE_TO_ASCII
 ; computes hex digits). $25-$28 reused as M: move scratch; $29-$34 free.
@@ -295,6 +295,9 @@ MOVE_DEND_LO       = $27           ; M: destination end = dest + (end - start), 
 MOVE_DEND_HI       = $28           ; M: destination end high
 SOUND_ENABLE       = $29           ; 1 = system sound on (BEL beep + sound ABI); 0 = muted
 BEEP_TIMER         = $2A           ; jiffies until the BEL beep auto-gates-off (0 = idle)
+RNG_STATE_HI       = $2B           ; RNG 16-bit LFSR state, high byte
+RNG_TMP            = $2F           ; RNG scratch: multiplier during range reduction
+RNG_TMP2           = $30           ; RNG scratch: product low during range reduction
 DEC_TEMP_LO        = $35           ; Decimal conversion temporary low byte
 DEC_TEMP_HI        = $36           ; Decimal conversion temporary high byte
 DEC_DIGIT_IDX      = $37           ; Decimal digit index/counter
@@ -420,6 +423,16 @@ VREG_CURSOR_LO     = $FE34         ; cursor cell low
 VREG_CURSOR_HI     = $FE35         ; cursor cell high (bit7 = hidden)
 VREG_CMD_PARAM     = $FE36         ; command parameter / fill char
 
+; RTC (real-time clock) registers in the I/O page. Writing RTC_LATCH snapshots the
+; live clock into the read registers. Used here only to seed the RNG at boot so
+; random sequences differ from run to run.
+RTC_LATCH          = $FE55
+RTC_SEC            = $FE56         ; BCD seconds
+RTC_MIN            = $FE57         ; BCD minutes
+RTC_HOUR           = $FE58         ; BCD hours
+RTC_FATTIME_LO     = $FE5D         ; host-packed FAT time (sub-second-ish entropy)
+RTC_FATTIME_HI     = $FE5E
+
 VCMD_CLEAR         = $01           ; fill whole screen (char=param, color=latch)
 VCMD_SCROLL_UP     = $02           ; scroll up one row, blank bottom
 VCMD_SCROLL_DOWN   = $03           ; scroll down one row, blank top
@@ -510,9 +523,23 @@ ZP_CLEAR_LOOP:
 ; MONITOR INITIALIZATION
 ; ================================================================
 
-    ; Initialize RNG seed
-    LDA #$01                    ; Non-zero seed (LFSR can't use 0)
-    STA RNG_SEED                ; Initialize RNG
+    ; Seed the 16-bit RNG LFSR from the real-time clock so sequences differ each
+    ; boot (was a constant $01). Fold the clock + sub-second FAT-time bits into
+    ; both state bytes; the LFSR forbids the all-zero state, so force low=$01 then.
+    STA RTC_LATCH               ; snapshot the live clock (written value irrelevant)
+    LDA RTC_SEC
+    EOR RTC_HOUR
+    EOR RTC_FATTIME_LO
+    STA RNG_STATE_LO
+    LDA RTC_MIN
+    EOR RTC_HOUR
+    EOR RTC_FATTIME_HI
+    STA RNG_STATE_HI
+    ORA RNG_STATE_LO            ; both state bytes zero?
+    BNE RNG_SEED_OK
+    LDA #$01                    ; avoid the forbidden all-zero LFSR state
+    STA RNG_STATE_LO
+RNG_SEED_OK:
     STA PAGE_ENABLE             ; pager on by default (a future setting can disable it)
     STZ CMD_LINE_COUNT          ; pager state starts clean
     STZ PAGE_SUSPEND
@@ -554,18 +581,30 @@ CLEAR_MON_VAR_LOOP:
 ; Input: RNG_MAX = maximum value
 ; Output: A = random number from 1 to RNG_MAX
 ; Modifies: A
+; Return a random number 1..RNG_MAX. Uses multiply-high range reduction --
+; result = hi(raw * RNG_MAX) + 1 -- so every 1..MAX value can appear and the
+; output rides the full 65535 LFSR period. (The old rejection method exposed a
+; tiny fixed cycle for small MAX -- e.g. only 9 values for d10.) RNG_MAX preserved.
 GET_RANDOM_NUMBER:
     PHX
-    PHY
-
-RANDOM_RETRY:
-    JSR GET_RANDOM          ; Get 0-255
-    CMP RNG_MAX             ; Compare to max
-    BCS RANDOM_RETRY        ; If >= max, try again
-
-    INC A                   ; Make it 1-based (1 to RNG_MAX) — 65C02 INC accumulator
-
-    PLY
+    JSR GET_RANDOM          ; A = raw 0..255
+    STA RNG_TMP             ; multiplier (consumed low-bit-first below)
+    LDA #$00
+    STA RNG_TMP2            ; product low = 0
+                            ; A = product high (accumulator) = 0
+    LDX #$08
+GRN_MUL:
+    LSR RNG_TMP             ; next multiplier bit -> carry
+    BCC GRN_NOADD
+    CLC
+    ADC RNG_MAX             ; product-high += multiplicand
+GRN_NOADD:
+    ROR A                   ; product-high >> 1, ADC carry into bit7 (65C02 ROR A)
+    ROR RNG_TMP2            ; product-low  >> 1, receives product-high's LSB
+    DEX
+    BNE GRN_MUL
+    ; A = hi(raw * RNG_MAX) = 0..RNG_MAX-1
+    INC A                   ; 1..RNG_MAX (65C02 INC A)
     PLX
     RTS
 
@@ -574,17 +613,20 @@ RANDOM_RETRY:
 ; Output: A = pseudo-random byte (1-255, never 0)
 ; Modifies: A
 ; Preserves: X, Y
+; 16-bit Galois LFSR (taps 16,14,13,11; left-shift feedback mask $002D, i.e. EOR
+; the low byte with $2D when bit15 shifts out). Period 65535 -- verified full and
+; near-uniform after range reduction. Advances the state; returns the low byte.
 GET_RANDOM:
-    LDA RNG_SEED            ; Get current seed
-    ASL                     ; Shift left
-    BCC NO_XOR              ; Branch if no carry
-
-    ; If carry set, XOR with polynomial
-    EOR #$1D                ; $1D = %00011101 (taps at bits 0,2,3,4)
+    ASL RNG_STATE_LO        ; 16-bit shift left; old bit15 -> carry
+    ROL RNG_STATE_HI
+    BCC NO_XOR              ; no feedback unless a 1 shifted out
+    LDA RNG_STATE_LO
+    EOR #$2D                ; only the low byte has taps ($002D)
+    STA RNG_STATE_LO
 
 NO_XOR:
-    STA RNG_SEED            ; Store new value
-    RTS                     ; Return with random value in A
+    LDA RNG_STATE_LO        ; return the low byte as the random value
+    RTS
 
 ; ================================================================
 ; MONITOR HEX CONVERSION ROUTINES
