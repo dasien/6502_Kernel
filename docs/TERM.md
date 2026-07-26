@@ -5,6 +5,18 @@ through the emulated 6551 ACIA and a host Hayes-modem/telnet bridge, renders
 ANSI/VT100 with full CP437, keeps a scrollback buffer, and transfers files with
 XMODEM to and from the FAT16 disk.
 
+## Quick reference
+
+| Key | Action |
+|-----|--------|
+| `^D` | Dial (saved-list menu or `host:port` prompt) |
+| `^S` | XMODEM **send** a disk file |
+| `^R` | XMODEM **receive** to a disk file |
+| `^X` | Hang up (`+++ATH`) |
+| `^Q` | Quit to DOS |
+| PgUp / PgDn | Scroll back / forward |
+| ESC | Cancel the dial prompt; abort a transfer |
+
 ## Starting
 
 From the DOS `]` prompt:
@@ -94,15 +106,3 @@ TERM is an 80×25 ANSI/VT100 terminal:
 
 The ACIA runs at **19200 baud, 8N1** (polled). The host modem bridge maps the
 `host:port` you dial to a TCP/telnet connection.
-
-## Quick reference
-
-| Key | Action |
-|-----|--------|
-| `^D` | Dial (saved-list menu or `host:port` prompt) |
-| `^S` | XMODEM **send** a disk file |
-| `^R` | XMODEM **receive** to a disk file |
-| `^X` | Hang up (`+++ATH`) |
-| `^Q` | Quit to DOS |
-| PgUp / PgDn | Scroll back / forward |
-| ESC | Cancel the dial prompt; abort a transfer |

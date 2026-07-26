@@ -6,6 +6,27 @@ scrolling chat window with a pinned input line, a status bar, and scrollback.
 Formatting from other users (colour, bold, reverse) renders where the display
 can express it; the rest is stripped so text stays readable.
 
+## Quick reference
+
+| Key / Command | Action |
+|---------------|--------|
+| **Enter** | Send the input line (message or command) |
+| `^Q` | Quit to DOS |
+| PgUp / PgDn | Scroll back / forward through history |
+| Home / End | Jump to oldest line / live tail |
+| ESC | Cancel/quit from the setup prompts |
+| `/join #channel` | Join a channel |
+| `/part [#channel]` | Leave a channel (bare = current) |
+| `/nick <name>` | Change your nickname |
+| `/msg <nick> <text>` | Send a private message |
+| `/me <action>` | Send an action to the current channel |
+| `/list [filter]` | List channels |
+| `/names [#channel]` | List users in a channel |
+| `/whois <nick>` | Look up a user |
+| `/raw <command>` | Send a raw IRC line |
+| `/server` / `/disconnect` | Disconnect and pick another server |
+| `/quit` | Quit to DOS |
+
 ## Starting
 
 From the DOS `]` prompt:
@@ -130,24 +151,3 @@ which maps `host:port` to a TCP connection. It answers server `PING` keepalives
 automatically, and responds to CTCP `VERSION` and `PING` requests. A dropped
 carrier (`NO CARRIER` / `ERROR`) marks the session `[offline]` and prints a
 notice in the chat window.
-
-## Quick reference
-
-| Key / Command | Action |
-|---------------|--------|
-| **Enter** | Send the input line (message or command) |
-| `^Q` | Quit to DOS |
-| PgUp / PgDn | Scroll back / forward through history |
-| Home / End | Jump to oldest line / live tail |
-| ESC | Cancel/quit from the setup prompts |
-| `/join #channel` | Join a channel |
-| `/part [#channel]` | Leave a channel (bare = current) |
-| `/nick <name>` | Change your nickname |
-| `/msg <nick> <text>` | Send a private message |
-| `/me <action>` | Send an action to the current channel |
-| `/list [filter]` | List channels |
-| `/names [#channel]` | List users in a channel |
-| `/whois <nick>` | Look up a user |
-| `/raw <command>` | Send a raw IRC line |
-| `/server` / `/disconnect` | Disconnect and pick another server |
-| `/quit` | Quit to DOS |

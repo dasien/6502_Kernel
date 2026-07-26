@@ -6,6 +6,34 @@ program by name. Think Apple II / CP/M — a command shell with a filesystem, no
 menu. BASIC, the assembler, the monitor, and the disk programs (EDIT, TERM, IRC,
 CHESS, VAULT, …) are all things you type at this prompt.
 
+## Quick reference
+
+| Command | Action |
+|---------|--------|
+| `name` | launch a DOS command, ROM program, or disk `.PRG` |
+| `&name` | force the disk `.PRG` over a same-named ROM program |
+| `MON` | enter the monitor (`Q` returns to DOS) |
+| `BANKS` | list the built-in ROM programs |
+| `CATALOG` / `CAT` `[pat]` | list files (supports `*` / `?` wildcards) |
+| `TYPE` / `MORE` `name` | display a text file |
+| `COPY src,dst` | copy a file |
+| `MOVE src,dst` | move or rename a file |
+| `RENAME old,new` | rename a file |
+| `ERASE name` | delete a file |
+| `LOAD name[,addr]` | load a file into memory |
+| `SAVE name,ssss-eeee` | save a memory range to a file |
+| `IMPORT name` / `EXPORT name` | host ↔ disk file exchange |
+| `NEWDRAWER name` | create a drawer |
+| `OPEN name` / `CLOSE` | enter / leave a drawer |
+| `DROPDRAWER name` | remove an empty drawer |
+| `DRAWER/FILE`, `/FILE` | cross-drawer / root path |
+| `DISKFREE` | free space (bytes + KB) |
+| `MEMMAP` | memory map |
+| `VERSION` | OS version |
+| `DATE` | date and time |
+| `CLS` / `CLEAR` | clear the screen |
+| `HELP` | list built-in commands |
+
 ## Signing on
 
 At power-up the machine prints a sign-on box and drops you at the prompt:
@@ -175,31 +203,3 @@ MFC/OS stores everything on a single FAT16 disk image (`disk.img`). Because it's
 a standard FAT16 volume, macOS can mount the same image read/write, so files you
 create on the machine appear on the Mac and vice versa. Files use 8.3 names
 (up to eight characters, a dot, and a three-character extension).
-
-## Quick reference
-
-| Command | Action |
-|---------|--------|
-| `name` | launch a DOS command, ROM program, or disk `.PRG` |
-| `&name` | force the disk `.PRG` over a same-named ROM program |
-| `MON` | enter the monitor (`Q` returns to DOS) |
-| `BANKS` | list the built-in ROM programs |
-| `CATALOG` / `CAT` `[pat]` | list files (supports `*` / `?` wildcards) |
-| `TYPE` / `MORE` `name` | display a text file |
-| `COPY src,dst` | copy a file |
-| `MOVE src,dst` | move or rename a file |
-| `RENAME old,new` | rename a file |
-| `ERASE name` | delete a file |
-| `LOAD name[,addr]` | load a file into memory |
-| `SAVE name,ssss-eeee` | save a memory range to a file |
-| `IMPORT name` / `EXPORT name` | host ↔ disk file exchange |
-| `NEWDRAWER name` | create a drawer |
-| `OPEN name` / `CLOSE` | enter / leave a drawer |
-| `DROPDRAWER name` | remove an empty drawer |
-| `DRAWER/FILE`, `/FILE` | cross-drawer / root path |
-| `DISKFREE` | free space (bytes + KB) |
-| `MEMMAP` | memory map |
-| `VERSION` | OS version |
-| `DATE` | date and time |
-| `CLS` / `CLEAR` | clear the screen |
-| `HELP` | list built-in commands |

@@ -4,6 +4,21 @@ The **monitor** is MFC's low-level machine-language console: examine and change
 memory, run code, transfer files, and convert numbers. It's where the system
 began, and it's still the fastest way to poke at the machine directly.
 
+## Quick reference
+
+| Command | Action |
+|---------|--------|
+| `R:xxxx[-yyyy]` | Read / dump memory |
+| `W:xxxx [bb …]` | Write mode / inline write |
+| `F:start-end,bb` | Fill range with a byte |
+| `M:start-end,dest,mode` | Move (1) or copy (0) a block |
+| `X:start-end,pat` | Search for a byte pattern |
+| `G:xxxx` | Run code at xxxx |
+| `L:xxxx` / `S:start-end` | Load / save a file (host dialog) |
+| `D:nnnnn` / `H:xxxx` | Decimal↔hex conversion |
+| `C:` `T:` `Z:` | Clear / stack dump / zero-page dump |
+| `?` `.` `ESC` `Q` | Help / recall / exit-abort / quit to DOS |
+
 ## Entering and leaving
 
 From the DOS `]` prompt type `MON`. The monitor prompts with the **current
@@ -96,18 +111,3 @@ the module catalog. See `BASIC.md`, `ASSEMBLER.md`, `FORTH.md`.
 - `S:` a working range before experimenting, so you can `L:` it back.
 - `T:`/`Z:` are quick windows into stack and zero-page state while debugging.
 - `.` saves retyping when iterating on the same command.
-
-## Quick reference
-
-| Command | Action |
-|---------|--------|
-| `R:xxxx[-yyyy]` | Read / dump memory |
-| `W:xxxx [bb …]` | Write mode / inline write |
-| `F:start-end,bb` | Fill range with a byte |
-| `M:start-end,dest,mode` | Move (1) or copy (0) a block |
-| `X:start-end,pat` | Search for a byte pattern |
-| `G:xxxx` | Run code at xxxx |
-| `L:xxxx` / `S:start-end` | Load / save a file (host dialog) |
-| `D:nnnnn` / `H:xxxx` | Decimal↔hex conversion |
-| `C:` `T:` `Z:` | Clear / stack dump / zero-page dump |
-| `?` `.` `ESC` `Q` | Help / recall / exit-abort / quit to DOS |

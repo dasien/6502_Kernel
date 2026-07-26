@@ -6,6 +6,21 @@ lines, and loads/saves plain-text files on the FAT16 disk in your current
 drawer. It has vertical and horizontal scrolling, a reverse-video block cursor,
 a status line, and incremental search.
 
+## Quick reference
+
+| Key | Action |
+|-----|--------|
+| Arrows | Move the cursor (wraps at line ends) |
+| Home / End | Start / end of line |
+| PgUp / PgDn | Up / down one screenful |
+| Enter | Split the line at the cursor |
+| Backspace / Delete | Delete the character before the cursor (joins lines) |
+| `^S` | Save (prompts `Save as:` if unnamed) |
+| `^O` | Open a file (prompts `Open:`) |
+| `^F` | Incremental search (arrows step matches, Enter keep, ESC cancel) |
+| `^Q` | Quit to DOS (press twice if there are unsaved changes) |
+| ESC | Cancel a prompt or search (never quits) |
+
 ## Starting
 
 From the DOS `]` prompt:
@@ -113,18 +128,3 @@ editing and restored on exit). It holds up to **600 lines**; individual line
 length is bounded only by available heap memory. Filenames are up to 15
 characters. If memory runs out mid-edit the status line shows `No memory` and
 the edit is refused rather than corrupting the document.
-
-## Quick reference
-
-| Key | Action |
-|-----|--------|
-| Arrows | Move the cursor (wraps at line ends) |
-| Home / End | Start / end of line |
-| PgUp / PgDn | Up / down one screenful |
-| Enter | Split the line at the cursor |
-| Backspace / Delete | Delete the character before the cursor (joins lines) |
-| `^S` | Save (prompts `Save as:` if unnamed) |
-| `^O` | Open a file (prompts `Open:`) |
-| `^F` | Incremental search (arrows step matches, Enter keep, ESC cancel) |
-| `^Q` | Quit to DOS (press twice if there are unsaved changes) |
-| ESC | Cancel a prompt or search (never quits) |

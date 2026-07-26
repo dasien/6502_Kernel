@@ -5,6 +5,18 @@ Group, W. F. Ragsdale Release 1.1) running as an MFC bank-switched module. It gi
 you an interactive Forth interpreter/compiler: a stack machine you drive by typing
 words. Standard fig-FORTH vocabulary applies — the FIG glossary is the reference.
 
+## Quick reference
+
+| Input | Effect |
+|-------|--------|
+| `FORTH` (at DOS `]`) | Launch the FORTH module |
+| `n m + .` | Push `n`, `m`, add, print result |
+| `: NAME … ;` | Define a new word |
+| `.S` | Show the data stack (non-destructive) |
+| `VLIST` / `WORDS` | List the dictionary |
+| `HEX` / `DECIMAL` | Set the number base |
+| `MON` | Quit back to DOS |
+
 ## Starting
 
 FORTH lives in **module bank 3**. Launch it from the DOS `]` prompt by name:
@@ -68,15 +80,3 @@ banner.
   current session — they are gone once you exit or relaunch.
 - This is a faithful fig-FORTH port. Behavior, words, and error messages match the
   FIG model; there are no MFC-specific Forth words to learn beyond `MON` for exit.
-
-## Quick reference
-
-| Input | Effect |
-|-------|--------|
-| `FORTH` (at DOS `]`) | Launch the FORTH module |
-| `n m + .` | Push `n`, `m`, add, print result |
-| `: NAME … ;` | Define a new word |
-| `.S` | Show the data stack (non-destructive) |
-| `VLIST` / `WORDS` | List the dictionary |
-| `HEX` / `DECIMAL` | Set the number base |
-| `MON` | Quit back to DOS |

@@ -7,6 +7,47 @@ module design. (User-facing manuals live in the `UPPERCASE.md` docs.)
 **Contents:** Part 1 System overview · Part 2 Memory & zero-page map ·
 Part 3 Kernel API · Part 4 Bank-switched modules
 
+### Table of Contents
+
+- [Part 1 — System overview](#part-1--system-overview)
+  - [Overview](#overview)
+  - [Block diagram](#block-diagram)
+  - [Components](#components)
+  - [Memory map (summary)](#memory-map-summary)
+  - [Data flow](#data-flow)
+  - [System integration](#system-integration)
+- [Part 2 — Memory & zero-page map](#part-2--memory--zero-page-map)
+  - [Overall Address Space](#overall-address-space)
+  - [Zero Page](#zero-page)
+  - [Stack (`$0100-$01FF`)](#stack-0100-01ff)
+  - [System Variables (`$0200-$03FF`)](#system-variables-0200-03ff)
+  - [Video (VIC) register port (`$FE2D-$FE37`)](#video-vic-register-port-fe2d-fe37)
+  - [Sound (SID) register port (`$FE38-$FE54`)](#sound-sid-register-port-fe38-fe54)
+  - [Real-time clock (RTC) register port (`$FE55-$FE5C`)](#real-time-clock-rtc-register-port-fe55-fe5c)
+  - [I/O — PIA (`$FE00-$FE23`)](#io--pia-fe00-fe23)
+  - [ROM Layout](#rom-layout)
+  - [Interrupt Vectors (`$FFFA-$FFFF`)](#interrupt-vectors-fffa-ffff)
+  - [Free RAM for User Programs](#free-ram-for-user-programs)
+  - [Key Constants (from `kernel.asm`)](#key-constants-from-kernelasm)
+- [Part 3 — Kernel API ($FF00 jump table)](#part-3--kernel-api-ff00-jump-table)
+  - [Overview](#overview-1)
+  - [Calling convention](#calling-convention)
+  - [Jump table (summary)](#jump-table-summary)
+  - [Details](#details)
+- [Part 4 — Bank-switched modules](#part-4--bank-switched-modules)
+  - [Goal](#goal)
+  - [Memory map (target)](#memory-map-target)
+  - [Prerequisite: relocate I/O out of the module window (`$DC00` → `$FE00`)](#prerequisite-relocate-io-out-of-the-module-window-dc00--fe00)
+  - [Bank-select register — `MODULE_BANK = $FE23`](#bank-select-register--module_bank--fe23)
+  - [Emulator changes (`Memory`)](#emulator-changes-memory)
+  - [Module contract](#module-contract)
+  - [Module directory (in the kernel ROM)](#module-directory-in-the-kernel-rom)
+  - [`B:` — Bank menu (replaces per-module commands)](#b--bank-menu-replaces-per-module-commands)
+  - [Host-side bank registry](#host-side-bank-registry)
+  - [Settled decisions](#settled-decisions)
+  - [Migration](#migration)
+  - [Implementation phases](#implementation-phases)
+
 ---
 
 ## Part 1 — System overview

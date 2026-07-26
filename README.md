@@ -204,7 +204,7 @@ mkdisk update <image> <diskmap.txt>   # replace/add listed files, keep the rest
 
 For detailed development information and project context, see:
 - **[CLAUDE.md](CLAUDE.md)** - Development guidelines and architecture documentation  
-- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, ASSEMBLER, FORTH, EDIT, TERM, IRC) + architecture reference
+- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, ASSEMBLER, FORTH, EDIT, TERM, IRC), the architecture reference (ARCHITECTURE.md), and the internals deep-dive (SYSTEM_INTERNALS.md)
 
 ## Tips for Effective Use
 

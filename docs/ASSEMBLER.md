@@ -9,6 +9,31 @@ and data directives — straight into memory, where you run it from the monitor 
 It targets the WDC 65C02 instruction set (so `BRA`, `STZ`, `PHX`, `BBRn`, and the
 rest are all available).
 
+## Quick reference
+
+| Command | Action |
+|---------|--------|
+| `D xxxx` | Disassemble 16 instructions from `xxxx` |
+| `A xxxx` | Line assembler from `xxxx` (Enter/ESC on empty line exits) |
+| `L` | Load a source file from the host |
+| `B` | Build the loaded source (`OK`, or `? LINE nnnn`) |
+| ESC | Exit to the monitor |
+
+| Syntax | Example |
+|--------|---------|
+| Label | `LOOP:` |
+| Constant | `SCREEN = $0400` |
+| Comment | `; note` |
+| Hex / decimal | `$D020` / `4096` |
+| Current address | `*` |
+| Add / subtract | `MESSAGE+1`, `*-3` |
+| Low / high byte | `#<MESSAGE`, `#>MESSAGE` |
+| `.ORG` / `*=` | `.ORG $0800` |
+| `.BYTE` / `.DB` | `.BYTE $01,$02,$03` |
+| `.WORD` / `.DW` | `.WORD $0800,$FF00` |
+| `.ASCII` / `.TX` | `.ASCII "HELLO"` |
+| `.END` | end of source |
+
 ## Starting
 
 The Dev Tools are a bankable ROM module, launched **by name** from the DOS `]`
@@ -258,28 +283,3 @@ The repository's `examples/` directory has ready-to-load `.asm` sources —
 `add_print.asm`, `hello_world.asm`, `count_loop.asm`, `colors.asm`,
 `multiply.asm`, and more. Load one with `L`, build it with `B`, then run it from
 the monitor with `G:` at the program's origin.
-
-## Quick reference
-
-| Command | Action |
-|---------|--------|
-| `D xxxx` | Disassemble 16 instructions from `xxxx` |
-| `A xxxx` | Line assembler from `xxxx` (Enter/ESC on empty line exits) |
-| `L` | Load a source file from the host |
-| `B` | Build the loaded source (`OK`, or `? LINE nnnn`) |
-| ESC | Exit to the monitor |
-
-| Syntax | Example |
-|--------|---------|
-| Label | `LOOP:` |
-| Constant | `SCREEN = $0400` |
-| Comment | `; note` |
-| Hex / decimal | `$D020` / `4096` |
-| Current address | `*` |
-| Add / subtract | `MESSAGE+1`, `*-3` |
-| Low / high byte | `#<MESSAGE`, `#>MESSAGE` |
-| `.ORG` / `*=` | `.ORG $0800` |
-| `.BYTE` / `.DB` | `.BYTE $01,$02,$03` |
-| `.WORD` / `.DW` | `.WORD $0800,$FF00` |
-| `.ASCII` / `.TX` | `.ASCII "HELLO"` |
-| `.END` | end of source |

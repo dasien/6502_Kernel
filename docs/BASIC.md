@@ -6,6 +6,26 @@ module in the `$B000-$DFFF` window, so it loads instantly with no disk access.
 It has full **floating point**, string handling, arrays, and the usual BASIC
 statements and functions — anything an EhBASIC reference documents works here.
 
+## Quick reference
+
+| At the `]` prompt | Action |
+|-------------------|--------|
+| `BASIC` | Launch MFC BASIC |
+| `BANKS` | List ROM modules (BASIC is bank 1) |
+
+| In BASIC | Action |
+|----------|--------|
+| `RUN` | Run the program (`RUN n` from line n) |
+| `LIST` | List the program (`LIST a-b` for a range) |
+| `NEW` | Erase the program in memory |
+| `SAVE` | Save as a host `.bas` file (macOS Save dialog) |
+| `LOAD` | Load a host `.bas` file (macOS Open dialog) |
+| `RND(1)` | Next random number, 0 to 1 |
+| `BYE` | Exit BASIC, return to the DOS `]` prompt |
+
+*MFC BASIC is derived from EhBASIC by Lee Davison; see any EhBASIC reference for
+the complete language.*
+
 ## Starting
 
 From the DOS `]` prompt, type its name:
@@ -102,23 +122,3 @@ applies** for the full statement and function set (`PRINT`, `INPUT`, `IF/THEN`,
 `POKE`, and so on). The MFC-specific differences are just the three things above:
 how you launch it (`BASIC` from DOS), how `LOAD`/`SAVE` work (host `.bas`
 picker), and how you exit (`BYE`).
-
-## Quick reference
-
-| At the `]` prompt | Action |
-|-------------------|--------|
-| `BASIC` | Launch MFC BASIC |
-| `BANKS` | List ROM modules (BASIC is bank 1) |
-
-| In BASIC | Action |
-|----------|--------|
-| `RUN` | Run the program (`RUN n` from line n) |
-| `LIST` | List the program (`LIST a-b` for a range) |
-| `NEW` | Erase the program in memory |
-| `SAVE` | Save as a host `.bas` file (macOS Save dialog) |
-| `LOAD` | Load a host `.bas` file (macOS Open dialog) |
-| `RND(1)` | Next random number, 0 to 1 |
-| `BYE` | Exit BASIC, return to the DOS `]` prompt |
-
-*MFC BASIC is derived from EhBASIC by Lee Davison; see any EhBASIC reference for
-the complete language.*
