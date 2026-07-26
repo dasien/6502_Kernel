@@ -16,13 +16,14 @@ This project implements a complete 6502-based computer system kernel for emulate
 - Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
 - Interactive monitor with comprehensive debugging tools
 - **MFC/OS** DOS shell (`]` prompt) with a resident FAT16 filesystem and launch-by-name for disk programs
-- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
-- Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched with the `B:` command (with human-readable `.bas` LOAD/SAVE)
+- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **The Sunless Vault** roguelike, and the Scott Adams adventures) — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
+- Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched by typing `BASIC` at the DOS prompt (with human-readable `.bas` LOAD/SAVE via a host file dialog)
 - **System-wide `--More--` pager**: long output from any program (DOS, monitor, BASIC, ASM, FORTH) pauses each screenful (SPACE advances, ESC stops)
 - Memory manipulation and program execution capabilities
 - Streamlined architecture with universal commands and simplified modes
 - File I/O operations for loading and saving programs
 - Comprehensive search, fill, move, and copy operations
+- **Assembly examples** in `examples/` — a dozen runnable 6502 programs (loops, keyboard input, color, hex dump, an 8×8 multiply, a guess-the-number game) with a guide and ABI quick reference (`examples/README.md`)
 
 ## Monitor Program
 
@@ -54,20 +55,16 @@ The `NNNN>` prompt indicates you're in monitor command mode. You can now enter a
 
 ## Monitor Commands
 
-For complete command documentation including syntax, examples, and detailed usage information, see:
-
-### **📖 [Complete Command Reference](docs/command_help.md)**
-
-The command reference provides comprehensive documentation for all monitor commands, organized by category:
+For complete command documentation including syntax and examples, see the
+**[Monitor manual](docs/MONITOR.md)**.
 
 ### Quick Command Summary
 
 | Category | Commands | Description |
 |----------|----------|-------------|
-| **Memory Operations** | [R:](docs/read_command.md), [W:](docs/write_command.md), [F:](docs/fill_command.md), [M:](docs/move_copy_command.md), [X:](docs/search_command.md) | Read, write, fill, move/copy, and search memory |
-| **Program Operations** | [G:](docs/run_command.md), [L:](docs/load_command.md), [S:](docs/save_command.md) | Execute, load, and save programs |
-| **Modules** | B: | Module bank menu — map and run a ROM module (BASIC is bank 1) |
-| **Number Conversion** | [D:](docs/decimal_to_hex_command.md), [H:](docs/hex_to_decimal_command.md) | Convert between decimal and hexadecimal |
+| **Memory Operations** | R:, W:, F:, M:, X: | Read, write, fill, move/copy, and search memory |
+| **Program Operations** | G:, L:, S: | Execute, load, and save programs |
+| **Number Conversion** | D:, H: | Convert between decimal and hexadecimal |
 | **Display Commands** | C:, T:, Z: | Clear screen, show stack, show zero page |
 | **System Commands** | ?, ESC, . | Help, exit mode, command recall |
 
@@ -75,7 +72,6 @@ The command reference provides comprehensive documentation for all monitor comma
 
 Commands are listed alphabetically by command letter (matching the on-screen `?` help):
 
-- **B: Module Bank Menu** - List the available ROM modules and map/run one in the `$B000-$DFFF` window; BASIC is module bank 1 (modules return to the monitor on exit). See [docs/module_slot_design.md](docs/module_slot_design.md)
 - **C: Clear Screen** - Clear the display
 - **D: Decimal to Hex** - Convert decimal (0-65535) to hexadecimal format
 - **F: Fill Memory** - High-performance memory filling with progress feedback
@@ -98,7 +94,7 @@ The monitor provides clear, consistent error messages:
 - **`RANGE?`** - Invalid or out-of-bounds address range
 - **`VALUE?`** - Invalid hexadecimal characters in input
 
-### **📖 [Detailed Architecture Reference](docs/system_architecture.md)**
+### **📖 [Detailed Architecture Reference](docs/ARCHITECTURE.md)**
 
 ### Memory Layout
 
@@ -111,9 +107,9 @@ The monitor provides clear, consistent error messages:
 - **$E000-$FFFF**: Kernel ROM (8 KB; CODE ~3,900 bytes, rest free for growth)
 - **$FE00-$FE22**: PIA registers (keyboard, file I/O, timer) — an I/O page reserved within the kernel region
 
-See [docs/kernel_memory_map.md](docs/kernel_memory_map.md) for the full map.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full memory map and zero-page allocation.
 
-### **📖 [Kernel Services Guide](docs/kernel_user_functions.md)**
+### **📖 [Kernel Services Guide](docs/ARCHITECTURE.md)**
 
 
 User programs can access kernel services via the jump table at $FF00:
@@ -126,10 +122,10 @@ User programs can access kernel services via the jump table at $FF00:
 | $FF09 | GET_KEYSTROKE | Wait for key press |
 | $FF0C | CLEAR_SCREEN | Clear display |
 | $FF0F | GET_RANDOM_NUMBER | Generate random byte |
-| $FF12 | RETURN_FROM_MODULE | Module exit point — unmaps the bank, returns to monitor (BASIC `BYE`) |
+| $FF12 | RETURN_FROM_MODULE | Module exit point — unmaps the bank, returns to DOS (BASIC `BYE`) |
 | $FF2D | SET_ATTR | Set the color/attribute latch for subsequent output (A = `[R][BR][bg:3][fg:3]`) |
 
-(Abridged — see [docs/kernel_memory_map.md](docs/kernel_memory_map.md) for the full 16-entry table, including the decimal-conversion and module-launch services.)
+(Abridged — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full 19-entry ABI table, including the decimal-conversion and module-launch services.)
 
 ### File I/O Interface
 
@@ -172,7 +168,9 @@ The GUI loads `cmake-build-debug/disk.img`. It is assembled from a **diskmap
 bundle** — the repo `disk/` directory holds `diskmap.txt` (the disk layout, one
 path per line; `DRAWER/NAME` = a one-level drawer) plus the stable content
 (`SYSTEM/` config lists, `GAMES/` the Scott Adams games). The rebuildable apps
-(`EDIT`/`TERM`/`IRC`, `GAMES/CHESS`) are staged from their fresh `.PRG` builds.
+(`EDIT`/`TERM`/`IRC`, `GAMES/CHESS`, and the `SVAULT/` drawer holding `VAULT.PRG`
+and `STORY.TXT`) are staged from their fresh builds. Drawers grow across as many
+FAT16 clusters as they need, so a drawer is not capped at one cluster of files.
 
 ```bash
 ninja disk                                  # (re)assemble cmake-build-debug/disk.img
@@ -190,20 +188,23 @@ mkdisk update <image> <diskmap.txt>   # replace/add listed files, keep the rest
 ### Project Structure
 ```
 6502-kernel/
-├── src/                    # C++ source files
-│   ├── computer/          # CPU, memory, VIC, PIA emulation
-│   ├── ui/                # Qt GUI
-│   └── kernel/            # 6502 assembly (kernel.asm, basic.asm) + ld65 configs
-├── include/                # C++ header files
+├── src/                   # C++ emulator sources
+│   ├── computer/          # CPU, memory, VIC, PIA, ACIA, SID, RTC, block device
+│   ├── ui/                # Qt GUI (MainWindow, DisplayWidget)
+│   └── kernel/            # 6502 assembly: kernel.asm, basic.asm, dos/, assembler/, forth/
+├── include/               # C++ headers
+├── programs/              # cc65/asm disk programs: edit, term, irc, micromax, scottfree, vault, common
+├── examples/              # Runnable 6502 assembly examples (+ README.md)
+├── disk/                  # diskmap.txt + committed disk content (SYSTEM/, GAMES/)
+├── vendor/                # Pristine upstream sources we port/derive from
+├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, dat2c
 ├── docs/                  # Documentation
-├── examples/              # Example 6502 programs
-├── tools/cmake/           # CMake modules
-└── tests/                 # Unit and integration tests
+└── tests/                 # Unit and integration tests (GoogleTest)
 ```
 
 For detailed development information and project context, see:
 - **[CLAUDE.md](CLAUDE.md)** - Development guidelines and architecture documentation  
-- **[docs/](docs/)** - Detailed command documentation and requirements
+- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, ASSEMBLER, FORTH, EDIT, TERM, IRC) + architecture reference
 
 ## Tips for Effective Use
 
