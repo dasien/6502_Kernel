@@ -32,12 +32,6 @@ Docs are split by audience: **manuals** (how to *use* a program) are `UPPERCASE.
 
 | Doc | Covers |
 |-----|--------|
-| [dos_design.md](dos_design.md) | DOS/filesystem design notes |
-| [basic_label_glossary.md](basic_label_glossary.md) | EhBASIC internal label map |
-| [kernel_flow.md](kernel_flow.md) | Kernel execution flow |
-| [kernel_call_tree.md](kernel_call_tree.md) | Kernel routine call tree |
-| [kernel_command_infrastructure.md](kernel_command_infrastructure.md) | Monitor command dispatch internals |
-| [research_references.md](research_references.md) | External references |
-| [UI.md](UI.md) | Host GUI notes |
+| [SYSTEM_INTERNALS.md](SYSTEM_INTERNALS.md) | Deep-dive internals: kernel execution flow & call tree, monitor command dispatch, DOS/filesystem design, BASIC label glossary, host GUI, and external references |
 
 Assembly examples live in [`../examples/`](../examples/) (see its `README.md`).

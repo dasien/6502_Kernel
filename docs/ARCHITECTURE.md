@@ -153,7 +153,7 @@ keyboard and file I/O are exposed through a small PIA-style register block at
 a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
 RAM (bank 0) or one of up to 255 pre-loaded ROM modules. See
 `Part 4 (Bank-switched modules)`. The `$9000-$AFFF` **DOS ROM** is an always-mapped (never
-banked) read-only region holding the resident filesystem; see `dos_design.md`.
+banked) read-only region holding the resident filesystem; see `SYSTEM_INTERNALS.md`.
 
 ### Zero Page
 
@@ -329,7 +329,7 @@ two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
 **byte stream** (BASIC `LOAD`/`SAVE` — one byte at a time via the data register).
 Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 512-byte sectors — the storage layer beneath the MFC-DOS FAT16 filesystem (see
-`dos_design.md`); it is independent of the PIA file models above.
+`SYSTEM_INTERNALS.md`); it is independent of the PIA file models above.
 
 | Address | Register | Purpose |
 |---------|----------|---------|
