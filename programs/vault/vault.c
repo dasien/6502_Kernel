@@ -220,7 +220,9 @@ void main(void) {
         if (k == -2) { outcome_screen(0); break; }   /* the seal clock ran out */
         if (k == 'Q' || k == 'q') break;   /* ESC can't quit: arrows start with ESC */
 
-        if (k == 'W') {                    /* DEBUG: warp to L15, godlike, to test the endgame */
+        /* DEBUG warp — disabled for release. Uncomment to jump to L15 godlike
+         * and test the endgame (also uses debug_buff() in player.c).
+        if (k == 'W') {
             depth = 15; score_deep = 15;
             debug_buff();
             gen_level(); spawn_monsters(); spawn_items(); light();
@@ -228,6 +230,7 @@ void main(void) {
             render(1);
             continue;
         }
+        */
 
         moved = 0;
         msg_clear();
