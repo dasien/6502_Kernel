@@ -1,5 +1,10 @@
 # BuildKernel.cmake - Build 6502 kernel ROM from assembly source
 
+# The emulator is useless without the ROMs built here, so a missing cc65 is a
+# configuration error by default rather than a warning. Set -DREQUIRE_CC65=OFF
+# to configure the host tools alone.
+option(REQUIRE_CC65 "Fail configuration if the cc65 toolchain (ca65/ld65) is missing" ON)
+
 # Find cc65 toolchain
 find_program(CA65_FOUND ca65)
 find_program(LD65_FOUND ld65)
@@ -204,8 +209,22 @@ if(CA65_FOUND AND LD65_FOUND)
     )
 
 else()
-    message(WARNING "cc65 toolchain not found. Please install ca65 and ld65 to build kernel ROM automatically.")
-    message(STATUS "You can manually build the kernel ROM with:")
-    message(STATUS "  ca65 kernel/asm/kernel.asm -o build/kernel/kernel.o")
-    message(STATUS "  ld65 -C kernel/config/memory.cfg build/kernel/kernel.o -o build/kernel/kernel.rom")
+    # No ROMs means no machine: 6502-kernel would still compile and link, then
+    # abort at startup with "Could not open kernel.rom". Fail here instead.
+    set(_cc65_help
+"cc65 toolchain not found (both ca65 and ld65 are required).
+The emulator cannot run without the ROMs cc65 builds -- 6502-kernel would
+compile and then abort at startup on a missing kernel.rom.
+Install it:
+  Debian/Ubuntu/Mint   sudo apt install cc65
+  Fedora               sudo dnf install cc65
+  Arch                 sudo pacman -S cc65
+  macOS                brew install cc65
+To configure the host tools anyway (no runnable emulator):
+  cmake -DREQUIRE_CC65=OFF ...")
+    if(REQUIRE_CC65)
+        message(FATAL_ERROR ${_cc65_help})
+    else()
+        message(WARNING ${_cc65_help})
+    endif()
 endif()

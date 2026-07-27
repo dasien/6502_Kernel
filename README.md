@@ -139,27 +139,85 @@ The kernel provides memory-mapped file I/O at:
 ## Building and Development
 
 ### Prerequisites
-- CMake 3.20 or later
-- C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 2019+)
-- cc65 toolchain (ca65 assembler and ld65 linker)
-- Qt6 or Qt5 (optional, for GUI support)
+
+| Dependency | Needed for | If missing |
+|---|---|---|
+| CMake 3.20+, Ninja | the build itself | nothing builds |
+| C++20 compiler (GCC 10+, Clang 10+, MSVC 2019+) | the emulator | nothing builds |
+| **cc65** (`ca65`, `ld65`, `cl65`) | assembling every ROM and `.PRG` | configuration fails — the emulator cannot run without its ROMs |
+| **Qt6** or Qt5 — Core, Widgets, **Network** | the GUI machine; Network drives TERM/IRC | you get a non-interactive console demo, not the computer |
+| **Qt Multimedia** | SID audio | everything works, silently |
+| Python 3 | opcode-table drift test | that one test is skipped |
+
+GoogleTest is **not** a prerequisite — the build fetches v1.14.0 itself when tests are enabled.
+
+```bash
+# Debian / Ubuntu / Mint  (verified)
+sudo apt install build-essential cmake ninja-build cc65 qt6-base-dev qt6-multimedia-dev
+
+# Fedora        (untested)
+sudo dnf install gcc-c++ cmake ninja-build cc65 qt6-qtbase-devel qt6-qtmultimedia-devel
+# Arch          (untested)
+sudo pacman -S base-devel cmake ninja cc65 qt6-base qt6-multimedia
+# macOS         (untested)
+brew install cmake ninja cc65 qt
+```
+
+> **If you install a dependency later, delete the build directory before
+> rebuilding.** CMake caches "not found" results, so adding Qt or Qt Multimedia
+> to an existing build tree leaves the emulator GUI-less or mute with no error.
+> `./build.sh --fresh` does this for you.
 
 ### Build Instructions
 
 ```bash
-# Option 1: Use the convenient build script (recommended)
+# Option 1: the build script -- configures, builds, and assembles disk.img
 ./build.sh
+./build.sh --fresh              # after installing a new dependency
 
-# Option 2: Manual out-of-source build
-cd cmake-build-debug
-cmake -G Ninja ..
-ninja
+# Option 2: CMake presets directly (see CMakePresets.json)
+cmake --preset dev              # dev | debug | release | no-gui
+cmake --build --preset dev
+cmake --build --preset dev-disk # assemble disk.img
+```
 
-# Build outputs:
-# - Executable: cmake-build-debug/bin/6502-kernel
-# - Kernel ROM: cmake-build-debug/kernel/kernel.rom
-# - BASIC ROM:  cmake-build-debug/kernel/basic.rom
-# - Memory map: cmake-build-debug/kernel/kernel.map
+Configuration ends with a summary of what was actually enabled — check it before
+filing a bug about missing sound or a missing window:
+
+```
+======== 6502-kernel configuration ========
+  Qt GUI ......... yes (Qt6)
+  SID audio ...... yes
+  cc65 ROMs ...... yes
+  Tests .......... yes
+===========================================
+```
+
+Build outputs land in `cmake-build-debug/`: `bin/6502-kernel`, `kernel/*.rom`
+(kernel, dos, basic, assembler, forth), `kernel/kernel.map`, and `disk.img`.
+
+### Running
+
+```bash
+cd cmake-build-debug/bin && ./6502-kernel
+```
+
+**Run it from `bin/`.** The ROMs and disk image are opened by relative path
+(`../kernel/*.rom`, `../disk.img`), so launching from anywhere else fails with
+"Could not open kernel.rom". A healthy boot lands at the MFC/OS prompt:
+
+```
+              MFC 6502  OPERATIONAL
+           MFC/OS 1.16   34816 BYTES FREE
+]
+```
+
+Type `CATALOG` to list the disk, or `HELP` for the command set.
+
+### Verifying the build
+
+```bash
+ctest --test-dir cmake-build-debug        # 20 tests: CPU, banking, FAT16, ACIA/XMODEM, SID, RTC, ROM layout
 ```
 
 ### Disk image (`mkdisk`)

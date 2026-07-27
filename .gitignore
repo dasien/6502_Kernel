@@ -41,6 +41,17 @@ kernel.map
 kernel.rom
 kernel.o
 
+# Disk-program build intermediates. programs/<x>/build.sh (and the term_bin /
+# irc_bin ninja targets) run ca65/cl65 with the source dir as cwd, so the object
+# files land next to the sources. Anchored to programs/ so the committed .PRG
+# deliverables -- and any .bin tracked elsewhere in the tree -- are untouched.
+# This supersedes the per-program .gitignore files and covers new programs too.
+programs/**/*.o
+programs/**/*.bin
+programs/**/*.map
+programs/**/*.lst
+programs/**/*.lbl
+
 # Block-device backing image (runtime data; created on first write)
 disk.img
 *.img

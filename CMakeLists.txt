@@ -107,3 +107,46 @@ install(FILES ${CMAKE_BINARY_DIR}/kernel/kernel.rom
     DESTINATION share/6502-kernel
     OPTIONAL
 )
+
+# ----------------------------------------------------------------
+# Configuration summary
+#
+# QT_FOUND / QT_MULTIMEDIA_FOUND are CACHE variables, so installing a missing
+# dependency later does NOT flip them on a re-run of ninja -- the build dir has
+# to be deleted. The hints below say so, because silently building a mute or
+# GUI-less emulator is the easiest way to lose an hour on this project.
+# ----------------------------------------------------------------
+message(STATUS "")
+message(STATUS "======== 6502-kernel configuration ========")
+if(QT_FOUND)
+    message(STATUS "  Qt GUI ......... yes (Qt${QT_VERSION})")
+else()
+    message(STATUS "  Qt GUI ......... NO  -- console-only, not the interactive machine")
+    message(STATUS "                   install qt6-base-dev, delete this build dir, re-run cmake")
+endif()
+if(QT_FOUND AND QT_MULTIMEDIA_FOUND)
+    message(STATUS "  SID audio ...... yes")
+elseif(QT_FOUND)
+    message(STATUS "  SID audio ...... NO  -- the emulator runs silently")
+    message(STATUS "                   install qt6-multimedia-dev, delete this build dir, re-run cmake")
+endif()
+if(CA65_FOUND AND LD65_FOUND)
+    message(STATUS "  cc65 ROMs ...... yes")
+else()
+    message(STATUS "  cc65 ROMs ...... NO  -- host tools only, the emulator will not run")
+endif()
+if(BUILD_TESTS)
+    message(STATUS "  Tests .......... yes")
+else()
+    message(STATUS "  Tests .......... no   (enable with -DBUILD_TESTS=ON)")
+endif()
+message(STATUS "===========================================")
+message(STATUS "")
+message(STATUS "  Build      cmake --build ${CMAKE_BINARY_DIR}")
+message(STATUS "  Disk image cmake --build ${CMAKE_BINARY_DIR} --target disk")
+if(BUILD_TESTS)
+    message(STATUS "  Test       ctest --test-dir ${CMAKE_BINARY_DIR}")
+endif()
+message(STATUS "  Run        cd ${CMAKE_BINARY_DIR}/bin && ./6502-kernel")
+message(STATUS "             (the ROMs and disk.img load via relative paths -- run it from bin/)")
+message(STATUS "")
