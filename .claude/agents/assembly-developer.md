@@ -205,4 +205,4 @@ When completing assembly development tasks, provide:
 - [6502 Instruction Set Reference](https://www.masswerk.at/6502/6502_instruction_set.html)
 - [6502.org Documentation](http://www.6502.org/documents)
 - VIC-II, SID, and CIA chip specifications
-- Project-specific memory map documentation in `kernel_memory_map.md`
+- Project-specific memory map documentation in `docs/ARCHITECTURE.md`

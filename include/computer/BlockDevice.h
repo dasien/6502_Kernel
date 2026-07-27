@@ -18,7 +18,7 @@ namespace Computer
      * @brief A simple 512-byte-sector block device backed by a host `disk.img`.
      *
      * This is the storage foundation for MFC-DOS (the resident FAT16 filesystem
-     * lives a layer above this; see docs/dos_design.md). Rather than emulating an
+     * lives a layer above this; see docs/SYSTEM_INTERNALS.md). Rather than emulating an
      * SD/SPI controller, the 6502 talks to a single host image file through four
      * memory-mapped registers in the I/O page, just after MODULE_BANK ($FE23):
      *

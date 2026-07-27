@@ -1228,7 +1228,7 @@ front door. This turns the project from "a monitor with ROM modules" into a smal
 References that shape this: cpm65 (a 6502 OS with BIOS/BDOS/CCP layering, disk-as-a-
 host-file, relocatable programs), the X16 emulator's `sdcard.c` (host `.img` file,
 512-byte blocks), and mike42's 6502 SD reader (the block device). See
-`research_references.md`.
+Part 7 — External references (below).
 
 ---
 

@@ -2,7 +2,7 @@
 ; dos.asm - MFC-DOS resident ROM ($9000-$AFFF, always mapped)
 ; ================================================================
 ; The resident operating system for MFC-DOS: the FAT16 filesystem driver and
-; (later) the DOS command shell. See docs/dos_design.md.
+; (later) the DOS command shell. See docs/SYSTEM_INTERNALS.md.
 ;
 ; This region is always mapped by the emulator (it is NOT in the bankable
 ; $B000-$DFFF module window), so its routines are reachable at all times. The

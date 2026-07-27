@@ -36,7 +36,7 @@
 ; Screen RAM:   $0400-$07E7 (1000 bytes, 40x25 text)
 ; I/O page:     $FE00-$FE23 (PIA: keyboard, file I/O, timer; $FE23 MODULE_BANK).
 ;               Moved here from the old $DC00 so $B000-$DFFF is a clean, bankable
-;               module window (see module_slot_design.md).
+;               module window (see docs/ARCHITECTURE.md, Part 4).
 ;
 ; ================================================================
 ; FEATURES
@@ -110,7 +110,7 @@
 ; 2026-06-08  v2.2.7 Relocated memory-mapped I/O from $DC00 to a reserved page at
 ;                   $FE00-$FEFF (inside the kernel region) so $B000-$DFFF is a
 ;                   clean, I/O-free window. Phase 1 of the bankable module-slot
-;                   plan (docs/module_slot_design.md). Behavior-preserving.
+;                   plan (docs/ARCHITECTURE.md, Part 4). Behavior-preserving.
 ; 2026-06-08  v2.2.8 SCROLL_SCREEN page copies made strictly sequential (P0..P3):
 ;                   the interleaved form corrupted bytes spanning a screen page
 ;                   boundary on every scroll (seen via Z:/T:/repeat-? scrolling).
@@ -400,7 +400,7 @@ FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 
 ; Module-slot bank select. Writing n maps bank n into the $B000-$DFFF module
 ; window: 0 = RAM (boot/default), 1..255 = read-only ROM modules. Reading returns
-; the current bank. Lives in the always-mapped I/O page (see module_slot_design.md).
+; the current bank. Lives in the always-mapped I/O page (see docs/ARCHITECTURE.md, Part 4).
 MODULE_BANK        = $FE23         ; bank-select register for the $B000-$DFFF window
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
@@ -411,7 +411,7 @@ MODULE_WINDOW_END  = $DFFF         ; last byte of the bankable module window
 ; VREG_ADDR_LO/HI, then read/write the auto-incrementing VREG_CHAR/VREG_COLOR
 ; data ports. VREG_ATTR is the current-attribute latch applied to VREG_CHAR
 ; writes; VREG_CMD drives chip-side block ops; VREG_CURSOR_LO/HI position the
-; displayed cursor (high-byte bit7 = hidden). See docs/kernel_memory_map.md.
+; displayed cursor (high-byte bit7 = hidden). See docs/ARCHITECTURE.md, Part 2.
 VREG_ADDR_LO       = $FE2D         ; cell index low (0..1999)
 VREG_ADDR_HI       = $FE2E         ; cell index high
 VREG_CHAR          = $FE2F         ; char data port (auto-increments index)
@@ -3625,7 +3625,7 @@ LIST_MODULES:
 ;   bytes 1-2   entry address (little-endian) - JMP target after mapping
 ;   bytes 3-4   pointer to the null-terminated launch name (typed at the DOS ])
 ; Adding a module = add a record + name string here and register its ROM image
-; as that bank in the host bank table (Computer6502). See module_slot_design.md.
+; as that bank in the host bank table (Computer6502). See docs/ARCHITECTURE.md, Part 4.
 ; ----------------------------------------------------------------
 MODULE_DIR_RECSIZE = 5
 MODULE_DIR:

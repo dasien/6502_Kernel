@@ -7,7 +7,7 @@
 ; Assembler:    ca65  (-I src/kernel/assembler for opcodes_65c02.inc)
 ;
 ; A bank-switched ROM module for the $B000-$DFFF window (module bank 2; see
-; docs/module_slot_design.md). The kernel's B: bank menu maps this bank and JMPs
+; docs/ARCHITECTURE.md, Part 4). The kernel maps this bank by name and JMPs
 ; to the entry at $B000; the module returns to the monitor via $FF12.
 ;
 ; Module ABI: reaches the system ONLY through the kernel jump table at $FF00 (the
