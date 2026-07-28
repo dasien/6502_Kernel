@@ -76,6 +76,7 @@ public:
         testScrollIntegrity();
         testGoPromptNewline();
         testFillCommand();
+        testFillMoveStateGuards();
         testReadCommand();
         testMoveCommand();
         testMoveOverlapBackward();
@@ -1088,12 +1089,51 @@ private:
 
     void testFillCommand() {
         // Test fill command
+        clearScreen();
         sendCommand("F:8000-8007,BB");
         verifyResponse("OK", "Fill Memory F:8000-8007,BB");
 
-        // Verify the fill worked
+        // Verify the fill worked. Clear first: the echoed command line still holds
+        // "BB", so without this the assertion passes even if F: and R: do nothing.
+        clearScreen();
         sendCommand("R:8000-8007");
         verifyResponse("BB", "Verify Fill Result");
+        verifyMemEquals(0x8000, 0xBB, "F: actually wrote $8000");
+        verifyMemEquals(0x8007, 0xBB, "F: actually wrote $8007");
+    }
+
+    // F: and M: keep their live pointer, loop bound and fill byte in ordinary RAM
+    // and re-read them each iteration, so a range covering that state rewrote the
+    // loop as it ran: F:0000-00FF,00 hung the machine outright, F:0200-02FF,AA set
+    // the bound to $AAAA and wiped all of user RAM, and an M: destination over the
+    // same span (or one whose end carried past $FFFF) ran away. All must be refused.
+    void testFillMoveStateGuards() {
+        // Marker in user RAM: the runaway fill used to obliterate $0800-$8FFF.
+        computer.getMemory()->write(0x0800, 0x5A);
+
+        clearScreen();
+        sendCommand("F:0000-00FF,00");        // used to loop forever
+        verifyResponse("RANGE?", "F: over zero page is refused");
+
+        clearScreen();
+        sendCommand("F:0200-02FF,AA");        // used to corrupt MON_ENDADDR -> $AAAA
+        verifyResponse("RANGE?", "F: over monitor page-2 state is refused");
+        verifyMemEquals(0x0800, 0x5A, "User RAM survives the refused fill");
+
+        clearScreen();
+        sendCommand("M:0800-08FF,0000,0");    // destination over the monitor's pointers
+        verifyResponse("RANGE?", "M: destination over monitor state is refused");
+
+        clearScreen();
+        sendCommand("M:0000-00FF,FFF0,0");    // dest+length carries past $FFFF
+        verifyResponse("RANGE?", "M: destination wrapping past $FFFF is refused");
+        verifyMemEquals(0x0800, 0x5A, "User RAM survives the refused moves");
+
+        // The monitor must still be alive and working after all that.
+        clearScreen();
+        sendCommand("F:8100-8103,77");
+        verifyResponse("OK", "Monitor still works after refused ranges");
+        verifyMemEquals(0x8100, 0x77, "A legitimate fill still writes memory");
     }
 
     void testReadCommand() {

@@ -31,13 +31,13 @@ namespace Computer
         {
         case kRegChar:
         {
-            const uint8_t value = screen_buffer_[cell_index_];
+            const uint8_t value = screen_buffer_[cell()];
             advanceIndex();
             return value;
         }
         case kRegColor:
         {
-            const uint8_t value = color_buffer_[cell_index_];
+            const uint8_t value = color_buffer_[cell()];
             advanceIndex();
             return value;
         }
@@ -71,14 +71,14 @@ namespace Computer
         {
             // Full 8-bit CP437 code point. Reverse/bright/color all live in the
             // attribute plane (VREG_ATTR latch), so the whole byte is the glyph.
-            screen_buffer_[cell_index_] = value;
-            color_buffer_[cell_index_] = attr_latch_;
+            screen_buffer_[cell()] = value;
+            color_buffer_[cell()] = attr_latch_;
             advanceIndex();
             dirty_flag_ = true;
             break;
         }
         case kRegColor:
-            color_buffer_[cell_index_] = value;
+            color_buffer_[cell()] = value;
             advanceIndex();
             dirty_flag_ = true;
             break;
@@ -160,7 +160,7 @@ namespace Computer
 
     void VIC::cmdFillRow()
     {
-        const uint16_t row_start = (cell_index_ / kScreenWidth) * kScreenWidth;
+        const uint16_t row_start = (cell() / kScreenWidth) * kScreenWidth;
         for (uint16_t x = 0; x < kScreenWidth; ++x)
         {
             screen_buffer_[row_start + x] = cmd_param_;

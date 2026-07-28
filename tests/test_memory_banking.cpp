@@ -223,4 +223,58 @@ TEST_F(MemoryBankingTest, ShortImageIsZeroPadded) {
     EXPECT_EQ(mem.read(kWinEnd), 0x00);       // padded
 }
 
+// ================================================================
+// Kernel ROM write protection ($E000-$FFFF)
+// ================================================================
+
+// Guest writes to the kernel ROM must be ignored once a ROM is installed, as on
+// the real board. Without this, `F:E000-FFFF,00` from the monitor zeroed the
+// running kernel and the $FFFA reset/IRQ/NMI vectors, and the machine died.
+TEST_F(MemoryBankingTest, KernelRomIgnoresWritesWhenProtected) {
+    // Seed via loadProgram (the loader path, which bypasses protection by design).
+    mem.loadProgram({0xA9, 0x42}, Memory::kKernelRomStart);
+    mem.loadProgram({0x00, 0xE0}, 0xFFFC); // reset vector
+    mem.setRomWriteProtect(true);
+
+    mem.write(Memory::kKernelRomStart, 0x00);
+    mem.write(0xFFFC, 0xFF);
+    mem.write(0xFFFF, 0xFF);
+    EXPECT_EQ(mem.read(Memory::kKernelRomStart), 0xA9) << "ROM byte must be unchanged";
+    EXPECT_EQ(mem.read(0xFFFC), 0x00) << "reset vector must be unchanged";
+
+    // RAM below the ROM is unaffected by the protection.
+    mem.write(0x0800, 0x5A);
+    EXPECT_EQ(mem.read(0x0800), 0x5A);
+}
+
+// The I/O page lives inside $E000-$FFFF but is decoded before the ROM check, so
+// protection must not break the bank register.
+TEST_F(MemoryBankingTest, ProtectionDoesNotBlockTheIoPage) {
+    mem.loadBank(1, std::vector<uint8_t>(Memory::kModuleWindowSize, 0x11));
+    mem.setRomWriteProtect(true);
+    mem.write(kBankReg, 1);
+    EXPECT_EQ(mem.read(kBankReg), 1) << "MODULE_BANK must still be writable";
+    EXPECT_EQ(mem.read(kWinStart), 0x11);
+}
+
+// writeWord is the loader/test back door and writes RAM directly, but it used to
+// index ram_[0x10000]: `address + 1` promotes to int, so it did not wrap. readWord
+// always wrapped, so the two disagreed at the top of memory.
+TEST_F(MemoryBankingTest, WriteWordWrapsAtTopOfMemory) {
+    mem.writeWord(0xFFFF, 0xBEEF);
+    EXPECT_EQ(mem.read(0xFFFF), 0xEF); // low byte at $FFFF
+    EXPECT_EQ(mem.read(0x0000), 0xBE); // high byte wrapped to $0000
+    EXPECT_EQ(mem.readWord(0xFFFF), 0xBEEF); // and readWord agrees
+}
+
+// loadProgram had no bound: an image longer than the space above start_address ran
+// off the end of the 64K vector.
+TEST_F(MemoryBankingTest, LoadProgramClampsAtEndOfMemory) {
+    std::vector<uint8_t> img(0x40, 0x77);
+    mem.loadProgram(img, 0xFFF0); // only 16 bytes of room
+    EXPECT_EQ(mem.read(0xFFF0), 0x77);
+    EXPECT_EQ(mem.read(0xFFFF), 0x77);
+    EXPECT_EQ(mem.read(0x0000), 0x00) << "must clamp, not wrap into zero page";
+}
+
 } // namespace

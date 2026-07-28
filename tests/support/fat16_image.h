@@ -72,19 +72,26 @@ public:
         // and copy the bytes in. Returns the first cluster (0 for an empty file).
         auto placeData = [&](const Fat16File &file) -> uint16_t {
             const uint32_t size = static_cast<uint32_t>(file.data.size());
-            const uint16_t clusters =
-                size == 0 ? 0
-                          : static_cast<uint16_t>((size + clusterBytes() - 1) / clusterBytes());
+            // 32-bit: a file >= 32 MB overflows a uint16_t cluster count, and a
+            // count of 0 would emit an entry with firstCluster 0 and a huge size.
+            const uint32_t clusters =
+                size == 0 ? 0 : (size + clusterBytes() - 1) / clusterBytes();
+            // Capacity check, as the drawer-directory path below already does. Without
+            // it, fat[cluster] and the memcpy into img both indexed past their vectors
+            // -- a bundle larger than the volume corrupted the heap instead of failing.
+            if (static_cast<uint32_t>(nextCluster) + clusters > 2u + dataClusters)
+                throw std::runtime_error("fat16: image full (raise dataClusters) placing '" +
+                                         file.name + "'");
             const uint16_t first = clusters ? nextCluster : 0;
-            for (uint16_t c = 0; c < clusters; ++c) {
-                const uint16_t cluster = nextCluster + c;
-                fat[cluster] = (c + 1 < clusters) ? (cluster + 1) : 0xFFFF;
+            for (uint32_t c = 0; c < clusters; ++c) {
+                const uint16_t cluster = static_cast<uint16_t>(nextCluster + c);
+                fat[cluster] = (c + 1 < clusters) ? static_cast<uint16_t>(cluster + 1) : 0xFFFF;
                 const uint32_t lba = dataStart + (cluster - 2) * kSectorsPerCluster;
                 const uint32_t off = c * clusterBytes();
                 const uint32_t n = std::min<uint32_t>(clusterBytes(), size - off);
                 std::memcpy(&img[lba * kBytesPerSector], &file.data[off], n);
             }
-            nextCluster += clusters;
+            nextCluster = static_cast<uint16_t>(nextCluster + clusters);
             return first;
         };
 

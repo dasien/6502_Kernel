@@ -64,6 +64,42 @@ TEST(VicCharPlane, ScrollRegionPinsRowsBelow)
     EXPECT_EQ(v.getCharacterAt(0, 2), 'P'); // row 2 pinned (below the region)
 }
 
+// A write to VREG_ADDR_LO deliberately does not wrap (the stale high byte would
+// corrupt the address before the high byte arrives), so cell_index_ can hold up to
+// $07FF while the planes are only kScreenSize (2000) entries. Indexing the arrays
+// with it directly wrote past the end of the object -- at index 2047 a glyph write
+// landed 47 bytes into the colour plane, and a colour write ran past the plane into
+// the VIC's own control fields. Every access is now bounded.
+TEST(VicCharPlane, OutOfRangeCellIndexDoesNotCorruptState)
+{
+    VIC v;
+    putAt(v, 5, 'A');                      // a known cell to check afterwards
+    v.write(VIC::kRegAttr, 0x02);
+
+    // Drive the index out of range the way 6502 code can: high byte then low byte.
+    v.write(VIC::kRegAddrHi, 0x07);
+    v.write(VIC::kRegAddrLo, 0xFF);        // cell_index_ = 2047 > kScreenSize - 1
+    v.write(VIC::kRegChar, 'Z');           // must land in-bounds, not past the plane
+    v.write(VIC::kRegColor, 0x41);         // (kRegChar auto-advanced to 2048 -> 48)
+
+    // The write must resolve to the wrapped cell (2047 % 2000 = 47). Unfixed, the
+    // glyph went to screen_buffer_[2047] -- 47 bytes PAST the plane, landing in the
+    // colour plane instead -- so cell 47's character stayed blank. Asserting the
+    // wrapped cell is what discriminates; checking some other cell does not, because
+    // the stray byte lands at a specific offset determined by the overrun distance.
+    const uint16_t wrapped = 2047 % VIC::kScreenSize;   // 47
+    EXPECT_EQ(v.getCharacterAt(wrapped, 0), 'Z')
+        << "the glyph must land in the character plane at the wrapped cell";
+    EXPECT_EQ(v.getColorAt(5, 0), 0x02) << "an unrelated colour cell must be intact";
+    EXPECT_EQ(v.getCharacterAt(5, 0), 'A') << "an unrelated cell must be untouched";
+
+    // The chip is still usable: its control state was not overwritten.
+    v.write(VIC::kRegAddrHi, 0x00);
+    v.write(VIC::kRegAddrLo, 0x0A);
+    v.write(VIC::kRegChar, 'Q');
+    EXPECT_EQ(v.getCharacterAt(10, 0), 'Q');
+}
+
 // Clearing the screen resets the scroll region to the whole screen.
 TEST(VicCharPlane, ClearResetsScrollRegion)
 {

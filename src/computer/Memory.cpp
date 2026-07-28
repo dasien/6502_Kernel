@@ -145,6 +145,13 @@ namespace Computer
             return;
         }
 
+        // Kernel ROM is read-only once installed. The I/O page ($FE00-$FE5E) sits
+        // inside this range but is matched above, so it still reaches its devices.
+        if (rom_write_protect_ && address >= kKernelRomStart)
+        {
+            return;
+        }
+
         ram_[address] = value;
     }
 
@@ -155,15 +162,23 @@ namespace Computer
         return low | (high << 8);
     }
 
+    // NOTE: writeWord and loadProgram write ram_ directly, bypassing I/O decoding,
+    // bank routing and ROM protection. That is deliberate -- they are the loader /
+    // test back door (ROM images are installed through loadProgram, and the CPU
+    // tests seed the $FFFE vector with writeWord). Guest code never reaches them;
+    // it goes through write(). Both used to index past ram_: `address + 1` promotes
+    // to int, so writeWord(0xFFFF) wrote ram_[0x10000], and loadProgram had no
+    // bound at all -- an oversized image ran off the end of the vector.
     void Memory::writeWord(uint16_t address, uint16_t value)
     {
         ram_[address] = value & 0xFF;
-        ram_[address + 1] = (value >> 8) & 0xFF;
+        ram_[static_cast<uint16_t>(address + 1)] = (value >> 8) & 0xFF; // wraps at $FFFF
     }
 
     void Memory::loadProgram(const std::vector<uint8_t> &program, uint16_t start_address)
     {
-        for (size_t i = 0; i < program.size(); ++i)
+        const size_t n = std::min(program.size(), ram_.size() - start_address);
+        for (size_t i = 0; i < n; ++i)
         {
             ram_[start_address + i] = program[i];
         }

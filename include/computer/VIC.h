@@ -130,6 +130,13 @@ namespace Computer
         void cmdFillRow();
         void advanceIndex() const;
 
+        /// The cell index, clamped into range, for use when indexing the planes.
+        /// A write to VREG_ADDR_LO deliberately does NOT wrap (the stale high byte
+        /// would corrupt the address before the high byte arrives), so cell_index_
+        /// can legitimately hold up to $07FF while kScreenSize is 2000 -- indexing
+        /// the std::arrays with it directly ran off the end of the object.
+        [[nodiscard]] uint16_t cell() const { return cell_index_ % kScreenSize; }
+
         // Helper functions
         [[nodiscard]] uint16_t coordinatesToOffset(uint16_t x, uint16_t y) const;
         void offsetToCoordinates(uint16_t offset, uint16_t &x, uint16_t &y) const;

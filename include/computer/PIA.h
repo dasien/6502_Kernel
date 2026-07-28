@@ -236,6 +236,11 @@ namespace Computer
         size_t stream_pos_ = 0;              // read position into stream_buffer_
         std::string stream_filename_;        // chosen filename for the write stream
 
+        /// True while a host file dialog is open. The dialog runs a nested event
+        /// loop, so the emulation timer re-enters processFileOperations(); without
+        /// this, dialogs stack up one per timer tick. See processFileOperations().
+        bool in_host_dialog_ = false;
+
         // Close the active stream: flush a write stream to disk, reset state.
         void closeStream();
 

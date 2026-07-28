@@ -158,6 +158,11 @@ namespace Computer
             vecsSegment->start
         );
 
+        // The kernel ROM is in place: from here on $E000-$FFFF ignores stores, as
+        // it does on the real board. Without this a stray write (or `F:E000-FFFF,00`
+        // from the monitor) overwrites the running kernel and the reset vectors.
+        memory.setRomWriteProtect(true);
+
         // Module bank table: pre-load each module ROM into a switchable bank in
         // the $B000-$DFFF window (MODULE_BANK selects one; the kernel B: menu maps
         // them on demand). Banks must match the kernel's MODULE_DIR: 1 = BASIC,

@@ -590,6 +590,18 @@ static int local_read(unsigned int cell, char *buf, int max)
     }
 }
 
+/* Bounded string copy that always NUL-terminates. srv_addr[] entries point into the
+   600-byte srvbuf and are terminated only at whitespace or end-of-line, so a long
+   line in SYSTEM/IRC.LST yields a token of nearly 600 characters. strcpy'ing that
+   into server[80] ran ~500 bytes off the end -- and since cc65's C stack grows down
+   from $8F00, that overwrote setup()'s other locals and the caller's frame. */
+static void copy_str(char *dst, const char *src, int size)
+{
+    int i = 0;
+    while (src[i] && i < size - 1) { dst[i] = src[i]; i++; }
+    dst[i] = 0;
+}
+
 /* Prompt for server/nick/channel and dial. Returns 0 once connected+registered,
    or 1 if the user pressed ESC to quit. Retries the whole flow if a dial fails
    or is cancelled, so a bad address doesn't strand the user on "Connecting...". */
@@ -607,7 +619,7 @@ static int setup(void)
         load_server_list();
         if (arg_server[0]) {                    /* launched as "IRC host:port": use it, skip
                                                    the menu; only for this first connect */
-            strcpy(server, arg_server);
+            copy_str(server, arg_server, (int)sizeof(server));
             arg_server[0] = 0;
         }
         if (!server[0] && srv_count) {
@@ -627,7 +639,8 @@ static int setup(void)
             k = INCH();
             row++;
             if (k == KEY_ESC) return 1;
-            if (k >= '1' && k < '1' + srv_count) strcpy(server, srv_addr[k - '1']);
+            if (k >= '1' && k < '1' + srv_count)
+                copy_str(server, srv_addr[k - '1'], (int)sizeof(server));
         }
         if (!server[0]) {
             put_at((unsigned int)row * COLS, "Server:   ", 0);

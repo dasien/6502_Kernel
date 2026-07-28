@@ -821,6 +821,22 @@ LAB_1269:
 ; wait for Basic command
 
 LAB_1274:
+                              ; MFC: force VEC_OUT back to the screen (kernel
+                              ; PRINT_CHAR at $FF00). SAVE redirects it to the file
+                              ; stream and LOAD to a null sink, restoring it only on
+                              ; the normal path -- but the ctrl-C check inside
+                              ; LAB_LIST pulls the return address and jumps straight
+                              ; here, so an interrupted SAVE left every later byte
+                              ; (Break, Ready, the prompt, keyboard echo) going to
+                              ; the file stream instead of the screen. The session
+                              ; looked hung and only RESET recovered it. Anything
+                              ; that reaches the warm start has finished with its
+                              ; redirect, so resetting it here is always correct.
+      LDA   #$00              ; low byte of $FF00
+      STA   VEC_OUT
+      LDA   #$FF              ; high byte of $FF00
+      STA   VEC_OUT+1
+
                               ; clear ON IRQ/NMI bytes
       LDA   #$00              ; clear A
       STA   IrqBase           ; clear enabled byte

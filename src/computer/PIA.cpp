@@ -347,7 +347,22 @@ void PIA::processFileOperations()
     if (!hasFileOperation() || !memory_) {
         return;
     }
-    
+
+    // Re-entrancy guard. The host dialogs below run a nested Qt event loop, and the
+    // emulation timer keeps firing inside it -- re-entering here every millisecond.
+    // file_command_/file_status_ are only cleared once a dialog returns, so
+    // hasFileOperation() was still true and a fresh dialog stacked on top of the
+    // last one for as long as the user hesitated (each adding a stack frame, and
+    // each completing its own load once one was finally chosen).
+    if (in_host_dialog_) {
+        return;
+    }
+    in_host_dialog_ = true;
+    struct DialogGuard {
+        bool &flag;
+        ~DialogGuard() { flag = false; }
+    } dialog_guard{in_host_dialog_};
+
     if (file_command_ == kFileLoadCommand) {
         PIA_LOG("PIA: File load request - Address: $%04X\n", file_address_);
 

@@ -55,6 +55,10 @@ namespace Computer
         static constexpr uint16_t kModuleWindowEnd = 0xDFFF;
         static constexpr size_t kModuleWindowSize = 0x3000; // 12 KB
 
+        /// Kernel ROM ($E000-$FFFF, 8KB): monitor + BIOS, the $FF00 ABI jump table
+        /// and the $FFFA vectors. The I/O page is carved out of it at $FE00-$FE5E.
+        static constexpr uint16_t kKernelRomStart = 0xE000;
+
         /// MODULE_BANK select register. Write n to map bank n into the window;
         /// read returns the current bank. Lives in the always-mapped I/O page.
         static constexpr uint16_t kModuleBankRegister = 0xFE23;
@@ -108,6 +112,17 @@ namespace Computer
          * @note Used to load kernel ROM segments and user programs
          */
         void loadProgram(const std::vector<uint8_t> &program, uint16_t start_address);
+
+        /**
+         * @brief Make the kernel ROM region ($E000-$FFFF) ignore writes
+         * @param protect true once a kernel ROM image has been installed
+         * @note Off by default so a bare Memory (used by CPU unit tests, which poke
+         *       the $FFFE vector directly) stays fully writable. Computer6502 turns
+         *       it on after loading the ROM segments, matching the real board where
+         *       ROM at $E000 simply ignores stores -- without it, `F:E000-FFFF,00`
+         *       from the monitor zeroes the running kernel and its reset vectors.
+         */
+        void setRomWriteProtect(bool protect) { rom_write_protect_ = protect; }
 
         /**
          * @brief Set or update the video chip for memory-mapped I/O
@@ -201,6 +216,9 @@ namespace Computer
         /// Always-mapped DOS ROM image ($9000-$AFFF). Empty = not installed
         /// (region behaves as RAM); otherwise exactly kDosRomSize bytes.
         std::vector<uint8_t> dos_rom_;
+
+        /// True once a kernel ROM is installed: writes to $E000-$FFFF are ignored.
+        bool rom_write_protect_ = false;
     };
 } // namespace Computer
 

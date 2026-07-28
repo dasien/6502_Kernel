@@ -69,7 +69,21 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
+    // Order matters. sid_audio_ and modem_ are QObject children of this window, so
+    // Qt would destroy them AFTER this body runs -- but they hold raw pointers into
+    // computer_ (getSid() / getAcia()). Deleting the machine first left the audio
+    // sink still started, so its thread kept calling generateSamples() on a freed
+    // Sid (freed mutex, freed regs_): an intermittent use-after-free on every close
+    // while sound was playing. Tear the consumers down first, then the machine.
+#ifdef HAVE_SID_AUDIO
+    delete sid_audio_;
+    sid_audio_ = nullptr;
+#endif
+    delete modem_;
+    modem_ = nullptr;
+
     delete computer_;
+    computer_ = nullptr;
 }
 
 

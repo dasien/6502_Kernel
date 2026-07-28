@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.23
+; Version:      3.24
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,10 +15,10 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~3975 bytes
-;   CODE segment:  $E000-$EF62 (3939 bytes)
+; ROM (Used):      ~4390 bytes
+;   CODE segment:  $E000-$EFE2 (4067 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
-;   JUMPS segment: $FF00-$FF2F (48 bytes) - kernel API jump table (16 entries)
+;   JUMPS segment: $FF00-$FF3B (60 bytes) - kernel API jump table (20 entries)
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
 ; Zero Page:    placed above EhBASIC's $00-$13 and below its ~$5B-$FF (~21 bytes used)
@@ -258,6 +258,19 @@
 ;                   monotonic tick counter (JIFFY_LO/HI at $31/$32) that programs
 ;                   read for frame pacing. The read is SEI-guarded so the two
 ;                   bytes can't tear. First consumer: real-time games.
+; 2026-07-28  v3.24 Bulk-write and break-path safety. F: and M: now refuse a range
+;                   that covers the monitor's own loop state (RANGE_HITS_STATE /
+;                   DEST_HITS_STATE, span MON_STATE_FIRST..MON_STATE_LAST): those
+;                   commands re-read their pointer, bound and fill byte from RAM
+;                   every iteration, so F:0000-00FF,00 rewrote its own pointer and
+;                   looped forever, and F:0200-02FF,AA set the bound to $AAAA and
+;                   wiped all of user RAM before printing OK. M: also rejects a
+;                   destination whose end carries past $FFFF (its loops end on the
+;                   source address only, so the write wrapped into zero page).
+;                   NMI_HANDLER_BREAK now clears PAGE_IN_BREAK and MODULE_BANK:
+;                   STOP pressed at a --MORE-- prompt left the pager disabled for
+;                   the rest of the session, and STOP inside a module left that
+;                   ROM mapped so the monitor showed ROM while reporting RAM.
 ;
 ; ================================================================
 
@@ -1876,6 +1889,67 @@ RANGE_INVALID:
     SEC                         ; Set carry for invalid range
     RTS
 
+; ----------------------------------------------------------------
+; RANGE_HITS_STATE / DEST_HITS_STATE - refuse a bulk write over the monitor's own
+; loop-control state
+; ----------------------------------------------------------------
+; F: and M: keep their live pointer, their loop bound and their fill byte in
+; ordinary RAM (MON_CURRADDR $14/$15, MON_ENDADDR $026E/F, MON_FILL_VALUE $0279,
+; MOVE_DEST/MOVE_DEND $25-$28), and re-read them every iteration. A range that
+; covers those bytes therefore rewrites the loop as it runs:
+;   F:0000-00FF,00  zeroed MON_CURRADDR mid-loop -> pointer reset -> ran forever,
+;                   dead until reset
+;   F:0200-02FF,AA  wrote $AA into MON_ENDADDR -> bound became $AAAA -> wiped all
+;                   of user RAM ($0800-$8FFF) and then printed OK
+;   M:0800-08FF,0000,0  destination walked over MON_CURRADDR/JUMP_VECTOR and the
+;                   copy ran away
+; Rather than validate each variable, refuse any range overlapping the whole
+; contiguous span the monitor lives in, MON_STATE_FIRST..MON_STATE_LAST. That also
+; covers the command buffer holding the command being executed, which is equally
+; unsurvivable. Individual bytes in the span are still reachable with W:.
+; Out: carry set = the range overlaps monitor state (refuse). Modifies: A.
+; ----------------------------------------------------------------
+MON_STATE_FIRST    = MON_CURRADDR_LO    ; $0014 - first byte of monitor workspace
+MON_STATE_LAST     = MON_COPY_MODE      ; $027C - last byte of monitor page-2 state
+
+RANGE_HITS_STATE:
+    ; safe if start > MON_STATE_LAST (range lies entirely above the workspace)
+    LDA #<MON_STATE_LAST
+    CMP MON_CURRADDR_LO
+    LDA #>MON_STATE_LAST
+    SBC MON_CURRADDR_HI
+    BCC RHS_SAFE
+    ; safe if end < MON_STATE_FIRST (range lies entirely below it)
+    LDA MON_ENDADDR_LO
+    CMP #<MON_STATE_FIRST
+    LDA MON_ENDADDR_HI
+    SBC #>MON_STATE_FIRST
+    BCC RHS_SAFE
+    SEC                         ; overlaps -> caller must refuse
+    RTS
+RHS_SAFE:
+    CLC
+    RTS
+
+; Same test for M:'s destination range (MOVE_DEST..MOVE_DEND), which is computed
+; after the source range has been validated.
+DEST_HITS_STATE:
+    LDA #<MON_STATE_LAST
+    CMP MOVE_DEST_LO
+    LDA #>MON_STATE_LAST
+    SBC MOVE_DEST_HI
+    BCC DHS_SAFE
+    LDA MOVE_DEND_LO
+    CMP #<MON_STATE_FIRST
+    LDA MOVE_DEND_HI
+    SBC #>MON_STATE_FIRST
+    BCC DHS_SAFE
+    SEC
+    RTS
+DHS_SAFE:
+    CLC
+    RTS
+
 RANGE_VALID:
     CLC                         ; Clear carry for valid range
     RTS
@@ -2860,6 +2934,9 @@ CMD_FILL_MEMORY:
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS FILL_RANGE_ERROR        ; If invalid range, show error
 
+    JSR RANGE_HITS_STATE        ; refuse a fill over the monitor's own loop state
+    BCS FILL_RANGE_ERROR        ; (it would hang or run away -- see RANGE_HITS_STATE)
+
     JSR FILL_RANGE_CORE         ; Fill [MON_CURRADDR..MON_ENDADDR] with MON_FILL_VALUE
 
     ; Print success message
@@ -2916,7 +2993,8 @@ CMD_MOVE_MEMORY:
     ; Validate address range (start <= end)
     JSR VALIDATE_ADDRESS_RANGE  ; Use common range validation
     BCS MOVE_RANGE_ERROR        ; If invalid range, show error
-    BRA MOVE_RANGE_VALID        ; Continue with valid range
+    JSR RANGE_HITS_STATE        ; refuse a source range over the monitor's own state
+    BCC MOVE_RANGE_VALID        ; Continue with valid range
 
 MOVE_RANGE_ERROR:
     JSR PRINT_RANGE_ERROR       ; Print range error message
@@ -2964,6 +3042,14 @@ MOVE_RANGE_VALID:
     LDA MOVE_DEND_HI
     ADC MOVE_DEST_HI
     STA MOVE_DEND_HI
+    BCC MOVE_DEST_NOWRAP        ; dest+length carried past $FFFF: the copy would
+    JMP MOVE_DEST_ERROR         ;   wrap into zero page and overwrite its own
+MOVE_DEST_NOWRAP:               ;   pointers (the loops end on SOURCE == end only)
+
+    JSR DEST_HITS_STATE         ; refuse a destination over the monitor's own state
+    BCC MOVE_DEST_OK
+    JMP MOVE_DEST_ERROR
+MOVE_DEST_OK:
 
     ; Check for overlapping memory regions
     ; If destination is between source start and end, we need backward copy
@@ -3158,6 +3244,27 @@ MOVE_CLEAR_CONTINUE:
 
 MOVE_CLEAR_DONE:
     JMP MOVE_SUCCESS            ; Show success message
+
+; Destination rejected after CMD_MOVE_MEMORY pushed its saved state: restore it (so
+; the prompt address stays consistent, as the rest of the monitor expects) and
+; report RANGE?. The restore is inline in both exits on purpose -- it cannot be a
+; subroutine, because the JSR return address would sit on top of the six saved bytes
+; and the PLAs would pull that instead.
+MOVE_DEST_ERROR:
+    PLA
+    STA MON_DEST_ADDR_HI
+    PLA
+    STA MON_DEST_ADDR_LO
+    PLA
+    STA MON_ENDADDR_HI
+    PLA
+    STA MON_ENDADDR_LO
+    PLA
+    STA MON_CURRADDR_HI
+    PLA
+    STA MON_CURRADDR_LO
+    JSR PRINT_RANGE_ERROR
+    RTS
 
 MOVE_SUCCESS:
     ; Restore all original address variables from stack
@@ -3410,6 +3517,16 @@ NMI_HANDLER:
 NMI_HANDLER_BREAK:
     LDX #STACK_TOP              ; reset the stack (discard interrupted context)
     TXS
+    ; STOP can land anywhere, including places that own global state which their
+    ; normal exit would have restored. Reset that state here, or it stays wrong for
+    ; the rest of the session:
+    STZ PAGE_IN_BREAK           ; STOP pressed AT a --MORE-- prompt skipped the
+                                ;   clear after HANDLE_PAGE_BREAK, which left the
+                                ;   pager permanently disabled system-wide
+    STZ MODULE_BANK             ; STOP inside a module left its ROM mapped at
+                                ;   $B000-$DFFF, so the monitor showed ROM while
+                                ;   reporting RAM and F:/W: there silently did
+                                ;   nothing (writes to a mapped bank are dropped)
     CLI                         ; monitor runs with interrupts enabled
     JMP MONITOR_MAIN           ; back to a fresh monitor prompt
 

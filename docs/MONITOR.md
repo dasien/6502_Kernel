@@ -37,7 +37,8 @@ the current mode or aborts a paged/interactive operation.
 - Addresses are 4-digit **hex**, no `$` prefix, leading zeros required
   (`0400`, not `400`); case-insensitive.
 - Ranges use a dash: `8000-8FFF`. Extra parameters follow commas: `8000-8FFF,FF`.
-- Errors: `ERROR?` (bad syntax), `RANGE?` (end before start), `VALUE?` (bad hex/value).
+- Errors: `ERROR?` (bad syntax), `RANGE?` (end before start, or a protected range —
+  see `F:`/`M:` below), `VALUE?` (bad hex/value).
 
 ## Memory commands
 
@@ -54,6 +55,16 @@ interactive hex entry — type bytes, ESC to leave. You can also write inline:
 
 **`M:` — Move / copy.** `M:start-end,dest,mode` copies (`mode 0`) or moves
 (`mode 1`, clearing the source) a block, handling overlap; reports the byte count.
+
+> **`F:` and `M:` refuse `$0014-$027C`, and report `RANGE?`.** That span holds the
+> monitor's own live pointer, loop bound and fill byte, plus the buffer holding the
+> command being executed — and both commands re-read that state on every iteration.
+> A fill or copy across it rewrites the loop as it runs: `F:0000-00FF,00` used to
+> reset its own pointer and hang the machine, and `F:0200-02FF,AA` used to set the
+> bound to `$AAAA` and wipe all of user RAM before printing `OK`. `M:` also refuses a
+> destination whose end would carry past `$FFFF`, since its loops stop on the source
+> address only. Individual bytes in the span are still reachable with `W:`, and
+> `Z:`/`T:` still display them.
 
 **`X:` — Search.** `X:start-end,pattern` searches for a 1–16-byte hex pattern
 (space-separated), printing each match address; paged, ESC aborts.
