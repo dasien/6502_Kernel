@@ -313,15 +313,25 @@ bool PIA::hasFileOperation() const
 
 void PIA::closeStream()
 {
-    // Flush a pending write stream to disk.
+    // Flush a pending write stream to disk. The result MUST be reported: this is
+    // the only point at which a host write failure can reach the 6502, and
+    // unconditionally reporting success meant a BASIC SAVE (or DOS EXPORT) onto a
+    // read-only or full volume printed "SAVED" while the program was lost.
+    bool ok = true;
     if (stream_mode_ == kStreamWrite) {
         std::ofstream file(stream_filename_, std::ios::binary);
-        if (file.is_open() && !stream_buffer_.empty()) {
-            file.write(reinterpret_cast<const char*>(stream_buffer_.data()),
-                       static_cast<std::streamsize>(stream_buffer_.size()));
+        if (!file.is_open()) {
+            ok = false;
+        } else {
+            if (!stream_buffer_.empty()) {
+                file.write(reinterpret_cast<const char*>(stream_buffer_.data()),
+                           static_cast<std::streamsize>(stream_buffer_.size()));
+            }
+            file.flush();
+            ok = file.good();
         }
-        PIA_LOG("PIA: Stream write closed - %zu bytes to '%s'\n",
-               stream_buffer_.size(), stream_filename_.c_str());
+        PIA_LOG("PIA: Stream write closed - %zu bytes to '%s' (%s)\n",
+               stream_buffer_.size(), stream_filename_.c_str(), ok ? "ok" : "FAILED");
     }
 
     stream_mode_ = kStreamNone;
@@ -329,7 +339,7 @@ void PIA::closeStream()
     stream_pos_ = 0;
     stream_filename_.clear();
     file_command_ = kFileIdle;
-    file_status_ = kFileSuccess;
+    file_status_ = ok ? kFileSuccess : kFileError;
 }
 
 void PIA::processFileOperations()

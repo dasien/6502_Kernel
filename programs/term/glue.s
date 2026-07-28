@@ -205,6 +205,16 @@ ACIA_CONTROL    = $FE2C
 .endproc
 
 ; void dclose(void)
+; char dclose(void) -- 0 = ok, 1 = error
+; FS_CLOSE reports carry set if the final flush or the directory-entry finalize
+; failed, which is how a full disk surfaces on the last sector of a transfer.
 .proc _dclose
-        jmp     FS_CLOSE
+        jsr     FS_CLOSE
+        bcs     @err
+        lda     #$00
+        ldx     #$00
+        rts
+@err:   lda     #$01
+        ldx     #$00
+        rts
 .endproc

@@ -82,6 +82,9 @@ same disk the DOS `CATALOG`/`TYPE`/`COPY` commands see.
 
 - **`^R` — Receive:** prompts `Receive as:`; type a filename. TERM creates/opens
   it on the disk and runs the XMODEM receiver; on success it prints `Received OK`.
+  If the disk fills up mid-transfer the receiver cancels and prints
+  `Transfer failed - disk full?` rather than acknowledging blocks it could not
+  store (which would have left a silently short file).
 - **`^S` — Send:** prompts `Send file:`; type an existing disk filename. If it's
   not found you get `Not found`; otherwise TERM sends it and prints `Sent OK`.
 

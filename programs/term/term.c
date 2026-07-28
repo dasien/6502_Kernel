@@ -46,7 +46,7 @@ char dopen_read(char *name);     /* 0 = ok, 1 = error */
 char dopen_write(char *name);    /* 0 = ok, 1 = error */
 int  dgetb(void);                /* next byte 0..255, or -1 at EOF */
 char dputb(char c);              /* 0 = ok, 1 = error */
-void dclose(void);
+char dclose(void);               /* 0 = ok, 1 = flush/finalize failed */
 
 #define COLS 80
 #define ROWS 25
@@ -472,7 +472,12 @@ static int xmodem_recv(void)
 
             errcount = 0;
             if ((unsigned char)b1 == (unsigned char)blocknum) {
-                for (i = 0; i < 128; i++) dputb((char)data[i]);
+                /* Never ACK a block we failed to store: the sender would move on
+                   and the saved file would be silently short. A write failure here
+                   (a full disk) is fatal to the transfer, so cancel and report. */
+                for (i = 0; i < 128; i++) {
+                    if (dputb((char)data[i])) { send_can(); return 2; }
+                }
                 blocknum = (blocknum + 1) & 0xFF;
                 xstatus_blk("XMODEM RECV  block ", blocknum);
                 acia_put(X_ACK);
@@ -542,13 +547,20 @@ static int xmodem_send(void)
 static void do_recv(void)
 {
     char name[16];
+    int r;
     local_print("\r\nReceive as: ");
     local_line(name, sizeof(name));
     if (!name[0]) return;
     if (dopen_write(name)) { local_print("Open failed\r\n"); return; }
     xstatus("XMODEM RECEIVE  (ESC aborts)");
-    if (xmodem_recv()) { dclose(); local_print("\r\nTransfer failed\r\n"); }
-    else { dclose(); local_print("\r\nReceived OK\r\n"); }
+    r = xmodem_recv();
+    /* Report "Received OK" only if the transfer AND the close both succeeded --
+       the final sector is flushed and the directory entry finalized by FS_CLOSE,
+       so a disk that fills at the very end fails there, not in the loop above. */
+    if (dclose() && !r) r = 2;
+    if (r == 2)     local_print("\r\nTransfer failed - disk full?\r\n");
+    else if (r)     local_print("\r\nTransfer failed\r\n");
+    else            local_print("\r\nReceived OK\r\n");
     xstatus("");
 }
 

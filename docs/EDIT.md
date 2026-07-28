@@ -65,13 +65,21 @@ horizontally — long lines scroll sideways past the 80-column edge.
 
 Press **Ctrl-S** to save. If the document already has a name (you launched with
 `EDIT filename` or previously saved), it writes straight back to that file.
-Otherwise you get a `Save as:` prompt — type a filename (up to 15 characters)
+Otherwise you get a `Save as:` prompt — type a filename (up to 47 characters,
+enough for a `DRAWER/NAME.EXT` path)
 and press Enter, or press **ESC** to cancel.
 
 Files are written to the **FAT16 disk in your current drawer**, the same disk
 the DOS `CATALOG`, `TYPE`, and `COPY` commands see. Every line is terminated
 with a newline. On success the status line shows `Saved` and the dirty marker
-clears; on failure it shows `Save failed`.
+clears.
+
+If the save fails — the volume filled up partway, or the file could not be
+opened — the status line shows `Save failed` or `Save failed - disk full?`, the
+dirty marker **stays set**, and the filename is not adopted. Press Ctrl-S again
+(after freeing space, or with a different name) to retry; the document in memory
+is untouched. Note that the partially written file is left on the disk, because
+opening for write truncates the old contents.
 
 ## Opening a file (`^O`)
 
@@ -125,6 +133,12 @@ MFC EDIT name* L3/12 C7  Saved
 EDIT is an 80×25 display drawn directly to screen RAM in green-on-black, with its
 own reverse-video block cursor (the kernel's hardware cursor is hidden while
 editing and restored on exit). It holds up to **600 lines**; individual line
-length is bounded only by available heap memory. Filenames are up to 15
+length is bounded only by available heap memory. Filenames are up to 47
 characters. If memory runs out mid-edit the status line shows `No memory` and
 the edit is refused rather than corrupting the document.
+
+If a file you open is **too big to hold** — more than 600 lines, or the heap runs
+out mid-line — the status line shows `Too big - partial, unnamed` and the
+filename is deliberately *not* remembered. Ctrl-S will prompt you for a name, so
+you cannot accidentally write the partial document back over the original and
+lose the part that was dropped.

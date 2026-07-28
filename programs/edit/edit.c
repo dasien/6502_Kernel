@@ -30,7 +30,7 @@ char dopen_read(char *name);    /* DOS file I/O: 0 = ok, 1 = error */
 char dopen_write(char *name);
 int  dgetb(void);               /* next byte 0..255, or -1 at EOF */
 char dputb(char c);
-void dclose(void);
+char dclose(void);              /* 0 = ok, 1 = flush/finalize failed */
 
 /* ---- VIC video port (glue.s); the screen is not memory-mapped ---- */
 void vaddr(unsigned int cell);  /* point the data port at a cell (0..1999) */
@@ -72,7 +72,12 @@ int cx = 0, cy = 0;             /* cursor: column, row (in the document) */
 int rowoff = 0;                 /* first document row shown at screen top */
 int coloff = 0;                 /* first document column shown at screen left */
 char dirty = 0;                 /* unsaved changes since last load/save */
-char curname[16];               /* current filename ("" = none yet) */
+/* Current filename ("" = none yet). Sized to hold any path the DOS accepts
+   (DOS_ARGBUF_MAX = 48, i.e. 47 chars + NUL). It used to be 16, which silently
+   truncated a path like "SYSTEM/README.TXT" to "SYSTEM/README.T" -- so Ctrl-S
+   wrote to a DIFFERENT, new file and the edits to the real one were lost. */
+#define NAMEMAX   48
+char curname[NAMEMAX];
 char statusmsg[32];             /* transient status text (until next key) */
 char full_redraw = 1;           /* 1 = repaint the whole text area next refresh */
 char quit_armed = 0;            /* a dirty Ctrl-Q was issued; next one quits */
@@ -249,17 +254,25 @@ static int prompt(char *label, char *buf, int max)
     }
 }
 
+/* Write the document to `name`. Every dputb/dclose result is checked: a full disk
+   makes FS_PUTB fail partway, and the DOS then finalizes the entry at however many
+   bytes made it -- so ignoring the result reported "Saved", cleared the dirty flag,
+   and left the user with a silently truncated file (the original contents are gone,
+   because opening for write truncates). On failure we keep `dirty` set and do NOT
+   adopt `name`, so the document is still recoverable with another Ctrl-S. */
 static void save(void)
 {
-    char name[16]; int r, c;
+    char name[NAMEMAX]; int r, c;
     if (curname[0]) strcpy(name, curname);
-    else if (!prompt("Save as: ", name, 16)) { msg("Cancelled"); return; }
+    else if (!prompt("Save as: ", name, NAMEMAX)) { msg("Cancelled"); return; }
     if (dopen_write(name)) { msg("Save failed"); return; }
     for (r = 0; r < numrows; r++) {
-        for (c = 0; c < row[r].len; c++) dputb(row[r].chars[c]);
-        dputb('\n');                            /* terminate every line */
+        for (c = 0; c < row[r].len; c++) {
+            if (dputb(row[r].chars[c])) { dclose(); msg("Save failed - disk full?"); return; }
+        }
+        if (dputb('\n')) { dclose(); msg("Save failed - disk full?"); return; }
     }
-    dclose();
+    if (dclose()) { msg("Save failed - disk full?"); return; }
     strcpy(curname, name);
     dirty = 0;
     msg("Saved");
@@ -268,36 +281,44 @@ static void save(void)
 /* Read a named file into the document (shared by Ctrl-O and the launch argument). */
 static void load_named(const char *name)
 {
-    int c, r, i;
+    int c, r, i, incomplete;
     if (dopen_read((char *)name)) { msg("Not found"); return; }
     clear_doc();
     row[0].chars = 0; row[0].len = 0; row[0].cap = 0; numrows = 1;
+    incomplete = 0;
     for (;;) {
         c = dgetb();
         if (c < 0) break;
         if (c == '\r') continue;                /* tolerate CRLF */
         if (c == '\n') {
-            if (numrows >= MAXROWS) break;
+            if (numrows >= MAXROWS) { incomplete = 1; break; }
             row[numrows].chars = 0; row[numrows].len = 0; row[numrows].cap = 0;
             numrows++;
         } else {
             r = numrows - 1;
             if (row_reserve(r, row[r].len + 1)) row[r].chars[row[r].len++] = (char)c;
+            else incomplete = 1;                /* out of heap: this byte is lost */
         }
     }
     dclose();
     /* a trailing newline made an extra empty row -- drop it (round-trips save) */
     if (numrows > 1 && row[numrows - 1].len == 0) { free(row[numrows - 1].chars); numrows--; }
     cx = cy = rowoff = coloff = 0; dirty = 0; full_redraw = 1;
-    for (i = 0; name[i] && i < (int)sizeof(curname) - 1; i++) curname[i] = name[i];
-    curname[i] = 0;                             /* bounded copy (curname is 16 bytes) */
+
+    /* A file we could not hold in full (past MAXROWS, or out of heap mid-line) must
+       NOT keep its name: a later Ctrl-S would write the partial document back over
+       the original and destroy everything we dropped. Leaving curname empty makes
+       Ctrl-S prompt for a name, so overwriting becomes a deliberate act. */
+    if (incomplete) { curname[0] = 0; msg("Too big - partial, unnamed"); return; }
+    for (i = 0; name[i] && i < NAMEMAX - 1; i++) curname[i] = name[i];
+    curname[i] = 0;
     msg("Loaded");
 }
 
 static void load(void)
 {
-    char name[16];
-    if (!prompt("Open: ", name, 16)) { msg("Cancelled"); return; }
+    char name[NAMEMAX];
+    if (!prompt("Open: ", name, NAMEMAX)) { msg("Cancelled"); return; }
     load_named(name);
 }
 

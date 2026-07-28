@@ -159,7 +159,16 @@ VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
         rts
 .endproc
 
-; void dclose(void)
+; char dclose(void) -- 0 = ok, 1 = error
+; FS_CLOSE returns carry set if the flush or the directory-entry finalize failed
+; (e.g. the volume filled up). Discarding that let a truncated save report success.
 .proc _dclose
-        jmp     FS_CLOSE
+        jsr     FS_CLOSE
+        bcs     @err
+        lda     #$00
+        ldx     #$00
+        rts
+@err:   lda     #$01
+        ldx     #$00
+        rts
 .endproc

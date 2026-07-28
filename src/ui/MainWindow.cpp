@@ -247,19 +247,27 @@ void MainWindow::setupMenus()
     // File menu
     QMenu* file_menu = menuBar()->addMenu("&File");
     
+    // NOTE: these use Ctrl+SHIFT deliberately. Application QAction shortcuts are
+    // resolved before the focused widget's keyPressEvent, and DisplayWidget maps
+    // Ctrl+A..Z to control bytes $01..$1A for the guest -- so a plain Ctrl+letter
+    // shortcut here silently steals that key from the running program. Ctrl+Q used
+    // to close the emulator instead of reaching EDIT's guarded "unsaved changes"
+    // quit (losing the document), and Ctrl+R reset the machine instead of starting
+    // TERM's XMODEM receive. Ctrl+Shift+<key> cannot be produced as a control byte,
+    // so the guest keeps the whole Ctrl+letter space.
     QAction* exit_action = file_menu->addAction("E&xit");
-    exit_action->setShortcut(QKeySequence::Quit);
+    exit_action->setShortcut(QKeySequence("Ctrl+Shift+Q"));
     connect(exit_action, &QAction::triggered, this, &QWidget::close);
 
     // Control menu: the machine controls that used to be on-screen buttons.
     QMenu* control_menu = menuBar()->addMenu("&Control");
 
     QAction* reset_action = control_menu->addAction("&Reset");
-    reset_action->setShortcut(QKeySequence("Ctrl+R"));
+    reset_action->setShortcut(QKeySequence("Ctrl+Shift+R"));
     connect(reset_action, &QAction::triggered, this, &MainWindow::onResetClicked);
 
     QAction* nmi_action = control_menu->addAction("&NMI");
-    nmi_action->setShortcut(QKeySequence("Ctrl+N"));
+    nmi_action->setShortcut(QKeySequence("Ctrl+Shift+N"));
     connect(nmi_action, &QAction::triggered, this, &MainWindow::onNmiClicked);
 
     // View menu: toggle the CPU register/PC/SP panel (a debug view, off by default).
