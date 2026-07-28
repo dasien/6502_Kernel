@@ -626,7 +626,7 @@ See `examples/` for runnable programs that use these calls, and
 ## Part 4 — Bank-switched modules
 
 
-**Status:** Phases 1–4 implemented (kernel v3.22). I/O is at `$FE00`, the module
+**Status:** Phases 1–5 implemented (kernel v3.23). I/O is at `$FE00`, the module
 window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
 bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
 `assembler.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
@@ -644,8 +644,10 @@ The dev-tools module (v0.6) provides:
   the byte-stream file interface; symbol table at `$9E00`.
 
 It reaches the system only through the `$FF00` jump table (extended in Phase 4 with
-`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`). Source authoring is on the host for
-now; an in-machine editor + resident filesystem remain a future enhancement.
+`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`). Source can be authored either on the
+host (`L`) or on the machine: the resident FAT16 filesystem and the full-screen
+`EDIT` program (see [EDIT.md](EDIT.md)) close the loop, so **edit → assemble → SAVE →
+run by name** all happen at the `]` prompt without host involvement.
 
 ### Goal
 
@@ -673,10 +675,10 @@ The kernel stays at `$E000–$FFFF` (8 KB), unchanged in start address.
 $0000–$07FF   Zero page / stack / system vars / screen      (unchanged)
 $0800–$AFFF   User RAM (~42 KB)                              (module working RAM)
 $B000–$DFFF   MODULE WINDOW (12 KB) — backed by selected bank; clean, no I/O hole
-$E000–$EEC3   Kernel CODE (~3.7 KB today)                    (start unchanged)
-$EEC4–$FDFF   free kernel ROM (~3.9 KB)                      (kernel growth room)
+$E000–$EF7C   Kernel CODE (~3.9 KB at v3.23)                 (start unchanged)
+$EF7D–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
 $FE00–$FEFF   I/O page (relocated here from $DC00)
-$FF00–$FFF9   Kernel API jump table (grows upward; ~83 entries possible, 7 used)
+$FF00–$FFF9   Kernel API jump table (grows upward; ~83 entries possible, 20 used)
 $FFFA–$FFFF   NMI / RESET / IRQ vectors
 ```
 
@@ -886,6 +888,10 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
    (`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`) so the module reuses the kernel
    instead of duplicating input/parsing/printing.
 
-Future (post-Phase-4): in-machine generic text editor + resident filesystem (so
-source can be authored and saved on the machine instead of host-loaded); richer
-assembler (macros, more directives); more modules.
+5. **[DONE]** **In-machine authoring**: the resident FAT16 filesystem (MFC-DOS,
+   `$9000-$AFFF`) and the full-screen `EDIT` program mean source is written and
+   saved on the machine rather than host-loaded. Self-hosting is complete.
+
+Still open: a richer assembler (macros, more directives); single-step and
+breakpoints in the monitor; more modules; and the undecided monitor-to-bank
+relocation.

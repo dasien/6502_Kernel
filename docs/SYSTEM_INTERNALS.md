@@ -1187,8 +1187,10 @@ prompt, gated by `PAGE_ENABLE` (default on) and reset per command in
 code of their own — long `TYPE`/`CATALOG`/`LIST`/`WORDS`/dumps pause each screenful;
 SPACE (or any key) advances, ESC stops. As a result `MORE` is now identical to
 `TYPE` (it dispatches to it); the old per-command DOS pager was removed. A future
-settings facility will expose `PAGE_ENABLE` so paging can be turned off. `DATE`/`TIME` are deferred (no
-RTC; only a ~60 Hz timer IRQ). `BANKS` lists the ROM modules. Decimal conversion was
+settings facility will expose `PAGE_ENABLE` so paging can be turned off. `DATE` shows
+the date and time from the host-time RTC (`$FE55-$FE5C`, added in the RTC phase-1
+commit); the same clock timestamps files, so `CATALOG` shows a date/time per entry.
+`BANKS` lists the ROM modules. Decimal conversion was
 promoted to the BIOS ABI (kernel v3.12): `K_PRINT_DEC` ($FF27, 32-bit → decimal,
 right-justifiable) and `K_PARSE_DEC` ($FF2A, decimal → 16-bit). The monitor's `H:`/`D:`
 and the DOS (`CATALOG` sizes, `DISKFREE`) all share these — one implementation each.
@@ -1533,9 +1535,11 @@ and flips the boot target.
   (`fsck_msdos` clean, `hdiutil attach` exchanges files both ways). An in-machine
   `FORMAT` is still a possible later addition.
 - `BLK_LBA` width (16-bit/32 MB vs wider).
-- Subdirectories, multiple open files, long names — deferred.
-- Editor cursor addressing — a small `K_SET_CURSOR` ABI entry vs direct screen-RAM
-  writes (decided at phase 5).
+- Nested subdirectories, multiple open files, long names — deferred. (One level of
+  drawer *is* implemented, and a drawer may span several clusters.)
+- ~~Editor cursor addressing~~ — **settled**: `EDIT` draws straight to screen RAM and
+  paints its own reverse-video block cursor, hiding the kernel's hardware cursor
+  while editing and restoring it on exit. No `K_SET_CURSOR` ABI entry was added.
 - Whether/when to do the monitor-to-bank relocation.
 
 ---
