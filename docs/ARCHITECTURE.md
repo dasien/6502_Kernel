@@ -229,6 +229,7 @@ EhBASIC interpreter, which uses page zero heavily. The split:
 | `$2A` | `BEEP_TIMER` | jiffies until the BEL beep auto-gates off (0 = idle) |
 | `$2B` | `RNG_STATE_HI` | RNG 16-bit LFSR state, high byte |
 | `$2F-$30` | `RNG_TMP/RNG_TMP2` | RNG range-reduction scratch (multiplier / product) |
+| `$31-$32` | `JIFFY_LO/JIFFY_HI` | 60 Hz monotonic tick counter, advanced by the timer IRQ (`K_GET_JIFFIES`) |
 | `$35-$36` | `DEC_TEMP_LO/HI` | Decimal-conversion temp |
 | `$37` | `DEC_DIGIT_IDX` | Decimal digit index |
 | `$38-$39` | `DEC_RESULT_LO/HI` | Decimal-conversion result |
@@ -396,7 +397,7 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 |---------|-------|---------|
 | `CODE` | `$E000-$EF44` (3909 B) | Monitor code and data |
 | `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK` + VIC + SID) |
-| `JUMPS` | `$FF00-$FF38` (57 B) | Kernel API jump table (19 entries) |
+| `JUMPS` | `$FF00-$FF3B` (60 B) | Kernel API jump table (20 entries) |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
 | (free) | ~`$EF45-$FDFF` | ~3.6 KB unused |
 
@@ -423,6 +424,7 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 | `$FF30` | `K_PRINT_HELP_LINE` | `PRINT_HELP_LINE` — print `"syntax"`<TAB>`"desc"` (TAB pads to a fixed column) for two-column help listings |
 | `$FF33` | `K_SOUND_TONE` | `SOUND_TONE` — play a tone on SID voice 1 (A = freq low, X = freq high); honors `SOUND_ENABLE` |
 | `$FF36` | `K_SOUND_OFF` | `SOUND_OFF` — stop voice 1 (gate off) |
+| `$FF39` | `K_GET_JIFFIES` | `GET_JIFFIES` — read the 60 Hz monotonic tick counter (returns A = low, X = high) |
 
 The jump table is also the **module ABI**: a ROM module reaches kernel services
 only through these entries, so it is independent of where the kernel's internal
@@ -517,6 +519,7 @@ never move, so a program built today keeps working as the kernel evolves.
 | `$FF30` | `K_PRINT_HELP_LINE` | Print a TAB-aligned "syntax / description" help line |
 | `$FF33` | `K_SOUND_TONE` | Play a tone on SID voice 1 (A = freq lo, X = freq hi) |
 | `$FF36` | `K_SOUND_OFF` | Stop SID voice 1 (gate off) |
+| `$FF39` | `K_GET_JIFFIES` | Read the 60 Hz monotonic tick counter (A = lo, X = hi) |
 
 ### Details
 
@@ -604,6 +607,14 @@ low byte, `X` = frequency high (`Fout = FREQ * clock / 2^24`). Honors the
 `SOUND_ENABLE` mute (`$29`).
 
 **`K_SOUND_OFF` — `$FF36`** — stop voice 1 (gate off).
+
+**`K_GET_JIFFIES` — `$FF39`** — read the monotonic 60 Hz tick counter; returns
+`A` = low byte, `X` = high byte. It starts at 0 on RESET, is advanced by the timer
+IRQ, and wraps every 65536 ticks (~18.2 minutes) — compare deltas with unsigned
+subtraction and the wrap is harmless. The read is `SEI`-guarded internally so the
+two bytes can't tear, and the caller's interrupt-enable state is preserved. Use it
+for frame pacing in real-time programs (a fixed-tick accumulator loop) rather than
+counting instructions, which drifts with host speed.
 
 ---
 

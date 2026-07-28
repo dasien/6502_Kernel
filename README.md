@@ -125,7 +125,7 @@ User programs can access kernel services via the jump table at $FF00:
 | $FF12 | RETURN_FROM_MODULE | Module exit point — unmaps the bank, returns to DOS (BASIC `BYE`) |
 | $FF2D | SET_ATTR | Set the color/attribute latch for subsequent output (A = `[R][BR][bg:3][fg:3]`) |
 
-(Abridged — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full 19-entry ABI table, including the decimal-conversion and module-launch services.)
+(Abridged — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full 20-entry ABI table, including the decimal-conversion, module-launch, sound, and timing services.)
 
 ### File I/O Interface
 

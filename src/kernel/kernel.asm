@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.22
+; Version:      3.23
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -250,6 +250,14 @@
 ;                   ABI K_SOUND_TONE ($FF33) / K_SOUND_OFF ($FF36) plays/stops a
 ;                   tone on voice 1. Both honor SOUND_ENABLE (default on; the hook
 ;                   for a future SETTINGS mute).
+; 2026-07-25  v3.22 RNG rework: seeded from the RTC instead of a constant, a
+;                   16-bit Galois LFSR (period 65535) replaces the 8-bit one, and
+;                   GET_RANDOM_NUMBER reduces to 1..RNG_MAX by multiply-high
+;                   instead of rejection sampling (no more short cycles).
+; 2026-07-28  v3.23 K_GET_JIFFIES ($FF39): the timer IRQ now advances a 16-bit
+;                   monotonic tick counter (JIFFY_LO/HI at $31/$32) that programs
+;                   read for frame pacing. The read is SEI-guarded so the two
+;                   bytes can't tear. First consumer: real-time games.
 ;
 ; ================================================================
 
@@ -288,7 +296,8 @@ PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
 RNG_STATE_LO       = $23           ; RNG 16-bit LFSR state, low byte (was RNG_SEED)
 RNG_MAX            = $24           ; Maximum value for random number (was $10)
 ; $25-$34 was the runtime hex lookup table; now reclaimed (NIBBLE_TO_ASCII
-; computes hex digits). $25-$28 reused as M: move scratch; $29-$34 free.
+; computes hex digits). $25-$28 reused as M: move scratch; $29-$32 since taken by
+; sound/RNG/jiffy state; $33-$34 still free.
 MOVE_DEST_LO       = $25           ; M: captured original destination low (copy mutates MON_DEST_ADDR)
 MOVE_DEST_HI       = $26           ; M: captured original destination high
 MOVE_DEND_LO       = $27           ; M: destination end = dest + (end - start), low
@@ -298,6 +307,8 @@ BEEP_TIMER         = $2A           ; jiffies until the BEL beep auto-gates-off (
 RNG_STATE_HI       = $2B           ; RNG 16-bit LFSR state, high byte
 RNG_TMP            = $2F           ; RNG scratch: multiplier during range reduction
 RNG_TMP2           = $30           ; RNG scratch: product low during range reduction
+JIFFY_LO           = $31           ; 60 Hz monotonic tick counter, low byte (K_GET_JIFFIES)
+JIFFY_HI           = $32           ; 60 Hz monotonic tick counter, high byte
 DEC_TEMP_LO        = $35           ; Decimal conversion temporary low byte
 DEC_TEMP_HI        = $36           ; Decimal conversion temporary high byte
 DEC_DIGIT_IDX      = $37           ; Decimal digit index/counter
@@ -3358,6 +3369,13 @@ IRQ_HANDLER:
     PHA                         ; preserve A (X/Y untouched)
     STA TIMER_IRQ_ACK           ; acknowledge the timer (value ignored)
 
+    ; Advance the monotonic jiffy counter (K_GET_JIFFIES). INC touches no
+    ; register, and RTI restores the flags, so this is free of side effects.
+    INC JIFFY_LO
+    BNE IRQ_JIFFY_DONE
+    INC JIFFY_HI                ; carry into the high byte (wraps ~every 18 min)
+IRQ_JIFFY_DONE:
+
     ; Count down an in-progress BEL beep and gate it off when it expires.
     LDA BEEP_TIMER
     BEQ IRQ_CHECK_BASIC         ; 0 = no beep running
@@ -3450,6 +3468,21 @@ SOUND_TONE_MUTE:
 SOUND_OFF:
     STZ BEEP_TIMER
     STZ SID_V1_CTRL
+    RTS
+
+; GET_JIFFIES ($FF39) - read the monotonic 60 Hz tick counter.
+; Returns: A = low byte, X = high byte. Counts up from 0 at RESET and wraps
+; every 65536 ticks (~18.2 minutes); callers should compare deltas with unsigned
+; subtraction so the wrap is harmless. The timer IRQ increments it, so the read
+; is made atomic (SEI) to avoid tearing between the two bytes; PHP/PLP preserves
+; the caller's interrupt-enable state. Real-time programs use this for frame
+; pacing (a fixed-tick accumulator loop).
+GET_JIFFIES:
+    PHP                         ; save the caller's I flag
+    SEI                         ; block the timer IRQ across the 16-bit read
+    LDA JIFFY_LO
+    LDX JIFFY_HI
+    PLP                         ; restore interrupt state
     RTS
 
 ; ================================================================
@@ -3678,6 +3711,7 @@ K_SET_ATTR:      JMP SET_ATTR           ; $FF2D - set the color/attribute latch 
 K_PRINT_HELP_LINE: JMP PRINT_HELP_LINE  ; $FF30 - print "syntax"<TAB>"desc" (TAB pads to col 22)
 K_SOUND_TONE:    JMP SOUND_TONE         ; $FF33 - play a tone on voice 1 (A=freq lo, X=freq hi)
 K_SOUND_OFF:     JMP SOUND_OFF          ; $FF36 - stop voice 1 (gate off)
+K_GET_JIFFIES:   JMP GET_JIFFIES        ; $FF39 - read the 60 Hz tick counter (A=lo, X=hi)
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

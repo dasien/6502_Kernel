@@ -240,8 +240,10 @@ DOS_SIGNATURE:
 ;   1.13 kernel SID sound chip: BEL beeps; K_SOUND_TONE/OFF ABI (kernel v3.21)
 ;   1.14 DATE command shows the date/time from the new RTC device ($FE55-$FE5C)
 ;   1.15 files are timestamped from the RTC on write; CATALOG shows the date/time
+;   1.16 kernel RNG reworked: RTC-seeded 16-bit LFSR (kernel v3.22)
+;   1.17 kernel K_GET_JIFFIES ($FF39): 60 Hz monotonic tick counter (kernel v3.23)
 DOS_VERSION:
-    .BYTE $01, $10                      ; version 1.16 (major, minor)
+    .BYTE $01, $11                      ; version 1.17 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
