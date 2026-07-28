@@ -90,6 +90,7 @@ add_custom_target(disk
     COMMAND ${CMAKE_COMMAND} -E make_directory ${DISKROOT}/SVAULT
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/vault/VAULT.PRG    ${DISKROOT}/SVAULT/VAULT.PRG
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/vault/STORY.TXT    ${DISKROOT}/SVAULT/STORY.TXT
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/kpanic/KPANIC.PRG  ${DISKROOT}/GAMES/KPANIC.PRG
     COMMAND mkdisk create ${CMAKE_BINARY_DIR}/disk.img ${DISKROOT}/diskmap.txt
     DEPENDS mkdisk
     COMMENT "Assembling disk.img from disk/ + built app .PRGs"
