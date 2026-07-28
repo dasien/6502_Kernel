@@ -564,4 +564,167 @@ TEST_F(DosFat16Test, SkipsDeletedEntries) {
     EXPECT_EQ(entries[0].name, "KEEP.TXT");
 }
 
+// ================================================================
+// Write-path regressions (data loss)
+// ================================================================
+
+// A write whose name matches a DRAWER must be refused. _DOS_DIR_FIND_FOR_WRITE
+// used to compare only the 11 name bytes, so it took the drawer's slot, freed the
+// drawer's *directory* cluster chain, and rewrote the entry as a $20 file --
+// orphaning every file inside. `SAVE GAMES,0800-0809` (a missing '/') was enough.
+TEST_F(DosFat16Test, WriteOntoDrawerNameIsRefused) {
+    writeImage({{"A.TXT", std::vector<uint8_t>(10, 'a')},
+                {"CHESS.PRG", std::vector<uint8_t>(20, 'c'), "GAMES"},
+                {"PIRATE.PRG", std::vector<uint8_t>(30, 'p'), "GAMES"}});
+
+    EXPECT_FALSE(fsWriteFile("GAMES", std::vector<uint8_t>(10, 'x')))
+        << "writing a file over a drawer name must fail";
+
+    // The drawer is still a drawer, and its contents are still reachable.
+    const mfcdos_test::Fat16ImageReader reader(readImageFile());
+    mfcdos_test::Fat16ImageReader::Entry games{};
+    ASSERT_TRUE(reader.find("GAMES", games));
+    EXPECT_TRUE(games.attr & 0x10) << "GAMES must still be a directory";
+
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("GAMES/CHESS.PRG", out));
+    EXPECT_EQ(out, std::vector<uint8_t>(20, 'c'));
+    ASSERT_TRUE(openReadClose("GAMES/PIRATE.PRG", out));
+    EXPECT_EQ(out, std::vector<uint8_t>(30, 'p'));
+}
+
+// Guards the invariant the DOS shell's write-error paths now depend on: after
+// FS_PUTB fails on a full volume, FS_CLOSE finalizes the entry so the partial
+// chain is reclaimable by ERASE.
+//
+// NOTE: this is an invariant test, NOT the regression test for the orphan-chain
+// bug. _FS_CLOSE_WRITE was always correct -- the bug was that SAVE/IMPORT/COPY
+// jumped straight to their error message without closing, leaving
+// first_cluster=0/size=0 on disk while the clusters stayed chained (and
+// _DOS_FREE_CHAIN stops below cluster 2, so ERASE freed nothing and the volume was
+// permanently unwritable). Those shell paths run the command interpreter, so they
+// are unreachable from this ABI-level fixture: the regression test for them is
+// testDosSaveDiskFullReclaims() in test_monitor_integration.cpp. This case passes
+// with or without the shell fix -- it exists so a future change to
+// _FS_CLOSE_WRITE cannot silently break what that shell fix relies on.
+TEST_F(DosFat16Test, DiskFullWriteIsFinalizedAndReclaimable) {
+    // 8 data clusters: 1 holds A.TXT, so BIG.DAT runs out partway through.
+    const std::vector<uint8_t> img =
+        Fat16ImageBuilder::build({{"A.TXT", std::vector<uint8_t>(10, 'a')}}, /*dataClusters=*/8);
+    std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char *>(img.data()),
+            static_cast<std::streamsize>(img.size()));
+    f.close();
+
+    // Open for write, then stream bytes until FS_PUTB reports failure.
+    const std::string name = "BIG.DAT";
+    for (size_t i = 0; i < name.size(); ++i)
+        mem_->write(kNameAddr + i, static_cast<uint8_t>(name[i]));
+    mem_->write(kNameAddr + name.size(), 0);
+
+    bool carry = true;
+    ASSERT_TRUE(callRoutine(kFsOpen, carry, kNameAddr & 0xFF, kNameAddr >> 8, /*mode=*/1));
+    ASSERT_FALSE(carry);
+
+    size_t written = 0;
+    for (int i = 0; i < 20000; ++i) {
+        ASSERT_TRUE(callRoutine(kFsPutb, carry, 0x5A));
+        if (carry) break; // disk full
+        ++written;
+    }
+    ASSERT_GT(written, 0u);
+    ASSERT_LT(written, 20000u) << "the volume should have filled up";
+
+    ASSERT_TRUE(callRoutine(kFsClose, carry)); // what the shell now does on @werr
+
+    {
+        const mfcdos_test::Fat16ImageReader reader(readImageFile());
+        mfcdos_test::Fat16ImageReader::Entry big{};
+        ASSERT_TRUE(reader.find("BIG.DAT", big));
+        EXPECT_NE(big.firstCluster, 0)
+            << "a part-written file must record its chain, or ERASE cannot free it";
+        EXPECT_EQ(big.size, written);
+    }
+
+    // The whole chain must come back, and A.TXT must be untouched.
+    EXPECT_TRUE(fsDelete("BIG.DAT"));
+    const mfcdos_test::Fat16ImageReader after(readImageFile());
+    EXPECT_EQ(after.allocatedClusters(), 1) << "only A.TXT's cluster should remain";
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("A.TXT", out));
+    EXPECT_EQ(out, std::vector<uint8_t>(10, 'a'));
+}
+
+// Deleted directory slots must be reusable. The root is a fixed 16-entry region,
+// and the scan used to skip $E5 slots outright, so once the root had been filled
+// once, every later root-level write failed with DIR FULL forever -- even with the
+// entire data area free. 15 files + 1 leaves no end-of-directory slot, so each
+// cycle here can only succeed by reclaiming the previous one's $E5 entry.
+TEST_F(DosFat16Test, DeletedRootSlotIsReclaimed) {
+    std::vector<Fat16File> files;
+    for (int i = 0; i < 15; ++i)
+        files.push_back({"F" + std::to_string(i) + ".TXT", std::vector<uint8_t>(4, 'z')});
+    writeImage(files); // exactly one free root slot remains
+
+    for (int cycle = 0; cycle < 20; ++cycle) {
+        ASSERT_TRUE(fsWriteFile("T.TXT", std::vector<uint8_t>(8, 't')))
+            << "write failed on cycle " << cycle << " -- deleted slot not reclaimed";
+        ASSERT_TRUE(fsDelete("T.TXT")) << "delete failed on cycle " << cycle;
+    }
+
+    // The 15 originals must have survived every cycle.
+    const auto entries = enumerate();
+    EXPECT_EQ(entries.size(), 15u);
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("F7.TXT", out));
+    EXPECT_EQ(out, std::vector<uint8_t>(4, 'z'));
+}
+
+// A genuinely full root must still report failure -- the reclaim path must not
+// invent a slot when no deleted entry exists.
+TEST_F(DosFat16Test, FullRootStillRejectsNewFile) {
+    std::vector<Fat16File> files;
+    for (int i = 0; i < 16; ++i)
+        files.push_back({"F" + std::to_string(i) + ".TXT", std::vector<uint8_t>(4, 'z')});
+    writeImage(files);
+
+    EXPECT_FALSE(fsWriteFile("EXTRA.TXT", std::vector<uint8_t>(4, 'x')));
+    EXPECT_EQ(enumerate().size(), 16u);
+}
+
+// FS_CLOSE after a FAILED FS_OPEN(write) must do nothing. _FS_OPEN committed the
+// write mode before validating, so a caller that cleaned up with FS_CLOSE
+// finalized the *previous* file's directory entry under the new name -- observed
+// silently renaming the last-written file -- and reported success.
+TEST_F(DosFat16Test, CloseAfterFailedOpenLeavesPreviousFileAlone) {
+    std::vector<Fat16File> files;
+    for (int i = 0; i < 15; ++i)
+        files.push_back({"F" + std::to_string(i) + ".TXT", std::vector<uint8_t>(4, 'z')});
+    writeImage(files);
+
+    // Fill the last root slot with a known file through the write path.
+    ASSERT_TRUE(fsWriteFile("LAST.TXT", std::vector<uint8_t>(30, 'L')));
+
+    // Now the root is full: this open must fail.
+    const std::string name = "NOPE.TXT";
+    for (size_t i = 0; i < name.size(); ++i)
+        mem_->write(kNameAddr + i, static_cast<uint8_t>(name[i]));
+    mem_->write(kNameAddr + name.size(), 0);
+    bool carry = false;
+    ASSERT_TRUE(callRoutine(kFsOpen, carry, kNameAddr & 0xFF, kNameAddr >> 8, /*mode=*/1));
+    ASSERT_TRUE(carry) << "open into a full root must fail";
+
+    callRoutine(kFsClose, carry); // the cleanup that used to corrupt the directory
+
+    const mfcdos_test::Fat16ImageReader reader(readImageFile());
+    mfcdos_test::Fat16ImageReader::Entry e{};
+    EXPECT_FALSE(reader.find("NOPE.TXT", e)) << "a failed open must not create an entry";
+    ASSERT_TRUE(reader.find("LAST.TXT", e)) << "LAST.TXT must not have been renamed";
+    EXPECT_EQ(e.size, 30u);
+
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("LAST.TXT", out));
+    EXPECT_EQ(out, std::vector<uint8_t>(30, 'L'));
+}
+
 } // namespace

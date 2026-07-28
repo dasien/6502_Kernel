@@ -44,6 +44,7 @@ public:
         testPromptColorReset();
         testPagerLongType();
         testDosFileVerbs();
+        testDosSaveDiskFullReclaims();
         testDosTransfer();
         testDosUtils();
         testDate();
@@ -192,6 +193,47 @@ public:
         // ERASE the renamed file.
         sendCommand("ERASE RENAMED.BIN");
         verifyResponse("ERASED", "DOS ERASE reports ERASED");
+    }
+
+    // Regression: a SAVE that runs out of clusters must not leak its partial
+    // chain. The write-error path used to jump straight to WRITE ERROR without
+    // calling _FS_CLOSE, so the directory entry kept first_cluster=0/size=0 while
+    // the clusters stayed chained -- and _DOS_FREE_CHAIN stops below cluster 2, so
+    // ERASE walked from cluster 0 and freed nothing. The space was gone for good
+    // and the volume could never be written to again.
+    //
+    // This drives the real DOS shell (not the FS ABI) because the bug lives in the
+    // shell's error path. The volume is filled by FAT allocation rather than by
+    // shrinking it -- a tiny volume does not work, because the DOS derives its
+    // cluster count from the BPB and the block device simply grows the host file,
+    // so the write "succeeds" past the intended end. 124 + 1 of 128 clusters are
+    // taken, leaving 3; BIG.DAT (2050 bytes = 5 clusters) allocates 3 and fails.
+    // The discriminating assertion is the SECOND SAVE: it only succeeds if the
+    // ERASE actually recovered those 3 clusters.
+    void testDosSaveDiskFullReclaims() {
+        std::string a = "hi\r\n";
+        mountDisk({{"FILL.DAT", std::vector<uint8_t>(124 * 512, 'F')},   // 124 clusters
+                   {"A.TXT", std::vector<uint8_t>(a.begin(), a.end())}}); // 1 cluster
+
+        clearScreen();                                   // DOS mode -> CLS
+        sendCommand("SAVE BIG.DAT,0800-0FFF", 900000);   // needs 5 clusters, 3 free
+        verifyResponse("WRITE ERROR", "SAVE past end of disk reports WRITE ERROR");
+
+        clearScreen();
+        sendCommand("ERASE BIG.DAT", 300000);
+        verifyResponse("ERASED", "Partially written file can be erased");
+
+        // The reclaimed clusters must be usable again. The clearScreen() above is
+        // load-bearing: verifyAbsent() below would pass on the stale WRITE ERROR.
+        clearScreen();
+        sendCommand("SAVE OK.DAT,0800-08FF", 300000);    // 258 bytes = 1 cluster
+        verifyResponse("SAVED", "Space is reclaimed after erasing a failed SAVE");
+        verifyAbsent("WRITE ERROR", "Reclaimed disk is writable again");
+
+        // A.TXT must have survived all of it.
+        clearScreen();
+        sendCommand("TYPE A.TXT", 300000);
+        verifyResponse("hi", "Pre-existing file survives a failed SAVE + ERASE");
     }
 
     // Launch-by-name for a disk program (.PRG). Save a tiny program (header +
@@ -474,12 +516,18 @@ private:
     std::string disk_path_;
     int tests_passed;
     int tests_failed;
+    bool in_monitor_ = false;   // false = at the DOS ']' prompt (where we boot)
 
     // Default cycle budget is generous so multi-line output (e.g. the help
     // listing, ~18 lines) fully prints and the keystroke queue drains before
     // the next command - otherwise a backlog delays later commands past their
     // verification point.
     bool sendCommand(const std::string& command, int cycles = 60000) {
+        // Track which shell we are talking to, so clearScreen() can pick the right
+        // clear command (the DOS and the monitor do not share a command set).
+        if (command == "MON") in_monitor_ = true;
+        else if (command == "Q") in_monitor_ = false;
+
         // Send each character
         for (char c : command) {
             computer.getPia()->addKeypress(c);
@@ -528,8 +576,14 @@ private:
 
     // Clear the screen so a following verifyResponse() can't match stale text
     // (e.g. "OK" left by a prior command, or hex digits inside an echoed command).
+    // Clear the screen so a test's assertions cannot match leftover text. The two
+    // shells have different verbs: the monitor clears with "C:", the DOS with
+    // "CLS". Sending the wrong one does NOT clear -- it prints an error and leaves
+    // the old screen in place, which silently makes verifyAbsent() vacuous and can
+    // let a verifyResponse() match output from an earlier command. in_monitor_ is
+    // maintained by sendCommand() (MON enters, Q leaves).
     void clearScreen() {
-        sendCommand("C:");
+        sendCommand(in_monitor_ ? "C:" : "CLS");
     }
 
     // Launch the assembler module by name from the DOS prompt (replaces the old

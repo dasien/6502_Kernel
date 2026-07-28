@@ -181,6 +181,9 @@ DOS_ARGBUF_MAX   = 48                   ; buffer size (47 chars + NUL)
 ; FAT timestamp snapshot (read from the RTC's FAT-format registers on write)
 DOS_FTIME        = $03B2                ; word: packed FAT time (hh:mm:ss/2)
 DOS_FDATE        = $03B4                ; word: packed FAT date (y-1980:month:day)
+DOS_W_FREE_LBA   = $03B6                ; word: sector of the first reclaimable ($E5)
+                                        ;   directory slot seen this scan (0 = none)
+DOS_W_FREE_IDX   = $03B8                ; byte: slot index within DOS_W_FREE_LBA
 
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
@@ -1170,9 +1173,10 @@ _DOS_DO_SAVE:
     LDX #>MSG_DOS_SAVED
     JMP _DOS_PERR
 @werr:
-    JMP _DOS_PERR_WRITE
-@usage:
-    JMP _DOS_PERR_USAGE
+    JSR _FS_CLOSE                       ; a PUTB that failed mid-file leaves the
+    JMP _DOS_PERR_WRITE                 ; chain allocated but the dir entry at
+@usage:                                 ; cluster 0, so ERASE could never free it.
+    JMP _DOS_PERR_USAGE                 ; (No-op if the close already happened.)
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_LOAD - LOAD NAME[,AAAA]  (load addr from header unless overridden)
@@ -1297,7 +1301,8 @@ _DOS_DO_IMPORT:
     LDA #FIO_CLOSE
     STA FIO_COMMAND
 @abort2:
-    JMP _DOS_PERR_WRITE
+    JSR _FS_CLOSE                       ; finalize, so a part-written file is not
+    JMP _DOS_PERR_WRITE                 ; an unreclaimable orphan chain
 @hosterr:
     JMP _DOS_PERR_HOST
 @usage:
@@ -1896,7 +1901,8 @@ _DOS_COPY_COMMON:
 @notfound:
     JMP _DOS_PERR_NOFILE
 @werr:
-    JMP _DOS_PERR_WRITE
+    JSR _FS_CLOSE                       ; see SAVE's @werr: never leave an orphan
+    JMP _DOS_PERR_WRITE                 ; chain behind on a mid-copy failure
 @usage:
     JMP _DOS_PERR_USAGE
 
@@ -2762,6 +2768,7 @@ _FS_OPEN:
     JSR _FS_DIR_NEXT
     BCC @check
 @err:
+    STZ DOS_W_MODE                      ; nothing open (see _FS_OPEN_WRITE's @err)
     SEC                                 ; not found / not mounted
     RTS
 @found:
@@ -2883,8 +2890,9 @@ _FS_OPEN_WRITE:
     CLC
     RTS
 @err:
-    SEC
-    RTS
+    STZ DOS_W_MODE                      ; no file is open: leaving write mode set
+    SEC                                 ; would let a later FS_CLOSE finalize the
+    RTS                                 ; PREVIOUS file's directory entry
 
 ; ----------------------------------------------------------------
 ; _FS_PUTB - append the byte in A to the open file
@@ -3155,11 +3163,17 @@ _DOS_FREE_CHAIN:
 ; _DOS_DIR_FIND_FOR_WRITE - locate the directory slot for DOS_NAME83
 ; ----------------------------------------------------------------
 ; Reuses an existing entry of the same name (and frees its old cluster chain),
-; otherwise appends at the end-of-directory slot. Scans the directory given by
-; DOS_TGT_CLUS (0 = root). A subdirectory that runs out of slots grows by a
-; cluster; the fixed root reports DIR FULL. Sets DOS_W_DIRENT_LBA/IDX. Carry set
-; if full / disk full. (Deleted slots are not reclaimed yet.)
+; otherwise reclaims the first deleted ($E5) slot, otherwise appends at the
+; end-of-directory slot. Scans the directory given by DOS_TGT_CLUS (0 = root). A
+; subdirectory that runs out of slots grows by a cluster; the fixed root reports
+; DIR FULL. Sets DOS_W_DIRENT_LBA/IDX. Carry set if full / disk full.
+;
+; A name that matches a DRAWER is refused (carry set) rather than reused: taking
+; a directory's slot would free its directory cluster chain and orphan every file
+; inside it, so `SAVE GAMES,...` (a missing '/') would destroy the drawer.
 _DOS_DIR_FIND_FOR_WRITE:
+    STZ DOS_W_FREE_LBA                  ; no reclaimable deleted slot seen yet
+    STZ DOS_W_FREE_LBA+1
     JSR _DOS_DIR_OPEN                   ; arm iterator on DOS_TGT_CLUS
 @loop:
     LDA DOS_DIR_MODE
@@ -3170,14 +3184,14 @@ _DOS_DIR_FIND_FOR_WRITE:
 @rootcount:
     LDA DOS_DIR_LEFT
     ORA DOS_DIR_LEFT+1
-    BEQ @full                           ; root is fixed -> DIR FULL
+    BEQ @exhausted                      ; root is fixed -> reclaim or DIR FULL
 @read:
     JSR _DOS_READ_DIR_ENTRY            ; DOS_ENTRY = slot at DOS_DIR_LBA/IDX
-    BCS @full
+    BCS @exhausted
     LDA DOS_ENTRY+DIR_NAME
-    BEQ @usehere                        ; $00 end-of-directory -> append here
+    BEQ @atend                          ; $00 end-of-directory
     CMP #DIRENT_DELETED
-    BEQ @next                           ; deleted -> skip (no reclaim yet)
+    BEQ @deleted                        ; deleted -> remember it, keep scanning
     LDX #$00                            ; live entry: compare the 8.3 name
 @cmp:
     LDA DOS_ENTRY,X
@@ -3186,7 +3200,10 @@ _DOS_DIR_FIND_FOR_WRITE:
     INX
     CPX #11
     BNE @cmp
-    ; name matches: reuse this slot, free its old chain (truncate)
+    LDA DOS_ENTRY+DIR_ATTR              ; name matches -- but a drawer is not a
+    AND #ATTR_DIRECTORY                 ; file, and freeing its chain would
+    BNE @full                           ; orphan everything in it
+    ; name matches an existing file: reuse this slot, free its old chain (truncate)
     JSR _DOS_SAVE_DIRENT_POS
     LDA DOS_ENTRY+DIR_CLUSTER_LO
     STA DOS_ARG_CLUS
@@ -3195,18 +3212,56 @@ _DOS_DIR_FIND_FOR_WRITE:
     JSR _DOS_FREE_CHAIN
     CLC
     RTS
+@deleted:
+    LDA DOS_W_FREE_LBA                  ; latch the FIRST deleted slot only, so a
+    ORA DOS_W_FREE_LBA+1                ; same-name match found later still wins
+    BNE @next
+    LDA DOS_DIR_LBA
+    STA DOS_W_FREE_LBA
+    LDA DOS_DIR_LBA+1
+    STA DOS_W_FREE_LBA+1
+    LDA DOS_DIR_IDX
+    STA DOS_W_FREE_IDX
 @next:
     JSR _DOS_DIR_ADVANCE
     BRA @loop
+@exhausted:
+    JSR _DOS_RECLAIM_SLOT               ; no free slot left: reuse a deleted one
+    BCC @ok
+@full:
+    SEC
+    RTS
 @grow:
+    JSR _DOS_RECLAIM_SLOT               ; prefer a deleted slot over growing
+    BCC @ok
     JSR _DOS_DIR_GROW                   ; allocate+chain+zero a new dir cluster
     BCS @full
-    ; fall through: cursor now at the new (zeroed) cluster's first slot
-@usehere:
+    ; cursor now at the new (zeroed) cluster's first slot
     JSR _DOS_SAVE_DIRENT_POS
+    BRA @ok
+@atend:
+    JSR _DOS_RECLAIM_SLOT               ; prefer a deleted slot over consuming the
+    BCC @ok                             ; end-of-directory slot
+    JSR _DOS_SAVE_DIRENT_POS
+@ok:
     CLC
     RTS
-@full:
+
+; Commit the latched deleted slot as the write target. Carry clear if one was
+; latched (DOS_W_DIRENT_* now points at it), carry set if none was seen.
+_DOS_RECLAIM_SLOT:
+    LDA DOS_W_FREE_LBA
+    ORA DOS_W_FREE_LBA+1
+    BEQ @none
+    LDA DOS_W_FREE_LBA
+    STA DOS_W_DIRENT_LBA
+    LDA DOS_W_FREE_LBA+1
+    STA DOS_W_DIRENT_LBA+1
+    LDA DOS_W_FREE_IDX
+    STA DOS_W_DIRENT_IDX
+    CLC
+    RTS
+@none:
     SEC
     RTS
 
