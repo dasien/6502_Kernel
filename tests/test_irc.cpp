@@ -597,3 +597,47 @@ TEST_F(IrcTest, ServerMenuReappearsAfterDisconnect)
     EXPECT_NE(s.find("IRC servers:"), std::string::npos) << s;
     EXPECT_NE(s.find("Alpha Net"), std::string::npos) << s;
 }
+
+// "NO CARRIER" inside a chat message must not be mistaken for the modem's result
+// code. The check was an unanchored strstr() tested before the ':'-prefix branch, so
+// when another user typed the phrase the client marked itself offline and swallowed
+// their message. A real result code arrives as its own bare line; the check is now
+// anchored, like the ERROR one beside it.
+TEST_F(IrcTest, NoCarrierInsideAMessageIsNotADisconnect)
+{
+    mountDisk({});
+    type("test.irc:6667\r");
+    type("mfc\r");
+    type("#t\r");
+
+    std::string tx;
+    bool connected = false, fed = false;
+    for (int i = 0; i < 60'000'000; ++i) {
+        if (!cpu->executeSingleInstruction()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
+            connected = true;
+        }
+        if (connected && !fed && tx.find("JOIN #t") != std::string::npos) {
+            // Someone says the phrase in the channel, then a normal line after it.
+            const std::string ev =
+                ":alice!u@h PRIVMSG #t :NO CARRIER\r\n"
+                ":bob!u@h PRIVMSG #t :still here\r\n";
+            for (char ch : ev) acia->hostSend(static_cast<uint8_t>(ch));
+            fed = true;
+        }
+        if (fed && tx.find("JOIN #t") != std::string::npos && i > 40'000'000) break;
+    }
+    for (int i = 0; i < 3'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+
+    const std::string s = screen();
+    EXPECT_NE(s.find("alice"), std::string::npos)
+        << "the message must be displayed, not swallowed as a carrier drop";
+    EXPECT_NE(s.find("still here"), std::string::npos)
+        << "the session must keep processing lines";
+    EXPECT_EQ(s.find("* disconnected"), std::string::npos)
+        << "a chat message must not trigger the disconnect notice";
+    EXPECT_NE(s.find("[online]"), std::string::npos)
+        << "the status bar must still read online";
+}

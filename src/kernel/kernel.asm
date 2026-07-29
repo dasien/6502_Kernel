@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.26
+; Version:      3.27
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,8 +15,8 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~4227 bytes
-;   CODE segment:  $E000-$EF40 (3905 bytes)
+; ROM (Used):      ~4273 bytes
+;   CODE segment:  $E000-$EF6E (3951 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
 ;   JUMPS segment: $FF00-$FF3B (60 bytes) - kernel API jump table (20 entries)
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
@@ -258,6 +258,16 @@
 ;                   monotonic tick counter (JIFFY_LO/HI at $31/$32) that programs
 ;                   read for frame pacing. The read is SEI-guarded so the two
 ;                   bytes can't tear. First consumer: real-time games.
+; 2026-07-29  v3.27 T: and Z: snapshot the page before dumping it. The dump walks
+;                   MON_CURRADDR ($14/$15) as its cursor and PRINT_CHAR rewrites its
+;                   own scratch ($16/$17, $1A-$1D) between bytes, so a live Z: showed
+;                   the dump's own state where the kernel's workspace lives: poke
+;                   $14/$15 with W: and Z: reported "14 00", not what was poked.
+;                   DUMP_ONE_PAGE now copies the page to MON_SNAP_BUF ($0400, free
+;                   RAM) with absolute,X -- any zero-page pointer used for the copy
+;                   would appear in its own dump -- and arms MON_DUMP_SNAP so
+;                   DUMP_MEMORY_RANGE reads the copy. Disarmed on exit, so R: and W:
+;                   always read live memory.
 ; 2026-07-29  v3.26 ABI contract fixes. K_READ_LINE ($FF15) now really returns the
 ;                   line length in A with Z set for an empty line, as documented --
 ;                   both exits tail-jumped to PRINT_NEWLINE, and PRINT_CHAR preserves
@@ -381,6 +391,8 @@ MON_FILL_VALUE     = $0279         ; Fill command byte value (was $0260)
 MON_DEST_ADDR_LO   = $027A         ; Move/Copy destination address low byte (was $0261)
 MON_DEST_ADDR_HI   = $027B         ; Move/Copy destination address high byte (was $0262)
 MON_COPY_MODE      = $027C         ; Move/Copy mode (0=copy, 1=move) (was $0263)
+MON_DUMP_SNAP      = $02DF         ; non-zero: DUMP_MEMORY_RANGE reads MON_SNAP_BUF
+MON_SNAP_BUF       = $0400         ; 256-byte page snapshot for T:/Z: (free RAM)
 MON_SEARCH_PATTERN = $027D         ; Search pattern buffer (16 bytes: $027D-$028C) (was $0264-$0273)
 MON_PATTERN_LEN    = $028D         ; Search pattern length (1-16 bytes) (was $0274)
 MON_LAST_CMD_BUF   = $028E         ; Last command buffer (80 bytes: $028E-$02DD) (was $0275-$02C4)
@@ -2141,6 +2153,28 @@ CMD_DUMP_ZERO_PAGE:
 DUMP_ONE_PAGE:
     STA MON_STARTADDR_HI
     STA MON_ENDADDR_HI
+    ; Snapshot the page BEFORE printing anything. PRINT_CHAR rewrites its own
+    ; zero-page scratch ($16/$17 message pointer, $1A-$1D VIC cell/temp) between
+    ; bytes, and the dump walks MON_CURRADDR ($14/$15) as its cursor -- so a live
+    ; Z: reported the dump's own state rather than what was in memory: W:0014 AB CD
+    ; followed by Z: showed "14 00", never AB CD. Read with absolute,X, since any
+    ; zero-page pointer used for the copy would itself appear in its own dump.
+    LDX #$00
+    CMP #$01
+    BEQ @snap1
+@snap0:
+    LDA $0000,X
+    STA MON_SNAP_BUF,X
+    INX
+    BNE @snap0
+    BRA @snapped
+@snap1:
+    LDA $0100,X
+    STA MON_SNAP_BUF,X
+    INX
+    BNE @snap1
+@snapped:
+    INC MON_DUMP_SNAP           ; make the dump read the snapshot, not live memory
     LDA MON_CURRADDR_LO         ; preserve the prompt address
     PHA
     LDA MON_CURRADDR_HI
@@ -2651,8 +2685,17 @@ DUMP_PRINT_BYTES:
     JMP DUMP_RANGE_DONE         ; We're past the end, done
 
 DUMP_PRINT_BYTE:
-    ; Load byte from memory and print as two hex digits (65C02 zp indirect)
+    ; Load byte from memory and print as two hex digits (65C02 zp indirect), or from
+    ; the page snapshot when T:/Z: armed it. For a page dump the address low byte IS
+    ; the offset into the snapshot.
+    LDA MON_DUMP_SNAP
+    BEQ DUMP_BYTE_LIVE
+    LDY MON_CURRADDR_LO
+    LDA MON_SNAP_BUF,Y
+    BRA DUMP_BYTE_SHOW
+DUMP_BYTE_LIVE:
     LDA (MON_CURRADDR_LO)
+DUMP_BYTE_SHOW:
     JSR PRINT_HEX_BYTE
 
     ; Check if this is the last byte
@@ -2685,9 +2728,11 @@ DUMP_NO_CARRY:
     JMP DUMP_RANGE_LOOP
 
 DUMP_ABORTED:
+    STZ MON_DUMP_SNAP           ; R:/W: always read live memory
     ; Just fall through to done
 
 DUMP_RANGE_DONE:
+    STZ MON_DUMP_SNAP
     JMP PRINT_NEWLINE_PAGED
 
 ; ================================================================

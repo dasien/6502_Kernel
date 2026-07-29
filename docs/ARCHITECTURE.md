@@ -626,7 +626,7 @@ See `examples/` for runnable programs that use these calls, and
 ## Part 4 — Bank-switched modules
 
 
-**Status:** Phases 1–5 implemented (kernel v3.26). I/O is at `$FE00`, the module
+**Status:** Phases 1–5 implemented (kernel v3.27). I/O is at `$FE00`, the module
 window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
 bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
 `assembler.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
@@ -675,8 +675,8 @@ The kernel stays at `$E000–$FFFF` (8 KB), unchanged in start address.
 $0000–$07FF   Zero page / stack / system vars / screen      (unchanged)
 $0800–$AFFF   User RAM (~42 KB)                              (module working RAM)
 $B000–$DFFF   MODULE WINDOW (12 KB) — backed by selected bank; clean, no I/O hole
-$E000–$EF40   Kernel CODE (~3.9 KB at v3.26)                 (start unchanged)
-$EF41–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
+$E000–$EF6E   Kernel CODE (~3.9 KB at v3.27)                 (start unchanged)
+$EF6F–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
 $FE00–$FEFF   I/O page (relocated here from $DC00)
 $FF00–$FFF9   Kernel API jump table (grows upward; ~83 entries possible, 20 used)
 $FFFA–$FFFF   NMI / RESET / IRQ vectors

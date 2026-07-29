@@ -799,6 +799,21 @@ LAB_OMER:
 ; do error #X, then warm start
 
 LAB_XERR:
+                              ; MFC: an error message must be visible no matter where
+                              ; VEC_OUT currently points. LOAD aims it at
+                              ; BASIC_NULLOUT to suppress the echo of the program
+                              ; being read, so an error raised *during* a load (a
+                              ; stray unnumbered statement, say) printed into the
+                              ; sink: the load carried on to EOF, printed "Ready",
+                              ; and left a partially loaded program with nothing said
+                              ; about it. SAVE aims VEC_OUT at the file stream, where
+                              ; a message would end up inside the saved file. Restore
+                              ; the screen first; LAB_1274 restores it again on the
+                              ; way out, which covers a break that skips this path.
+      LDA   #$00              ; VEC_OUT -> $FF00 (kernel PRINT_CHAR)
+      STA   VEC_OUT
+      LDA   #$FF
+      STA   VEC_OUT+1
       JSR   LAB_CRLF          ; print CR/LF
 
       LDA   LAB_BAER,X        ; get error message pointer low byte

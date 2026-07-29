@@ -92,6 +92,13 @@ host save dialog.
 
 **`T:` — Stack dump.** Pages through the stack page `$0100-$01FF`.
 
+> `T:` and `Z:` **snapshot** the page before printing it, so they show what was in
+> memory when you typed the command. Reading live, they reported their own working
+> state where the kernel's workspace lives: the dump walks its cursor through
+> `$14/$15` and printing rewrites `$16/$17` and `$1A-$1D` between bytes, so those
+> cells came back as the dump's current values rather than yours. The snapshot uses
+> free RAM at `$0400-$04FF`, so bear that in mind if you are inspecting that range.
+
 **`Z:` — Zero-page dump.** Pages through `$0000-$00FF` (system variables/workspace).
 
 Paged output advances with SPACE/ENTER and aborts with ESC.

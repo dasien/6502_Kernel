@@ -355,8 +355,13 @@ static void handle_line(char *s)
         aputs("PONG"); aputs(s + 4); acrlf();
         return;
     }
-    /* Link status lines from the modem (no ':' prefix). */
-    if (strstr(s, "NO CARRIER")) { online = 0; status_repaint(); chat_add("* disconnected (NO CARRIER)"); return; }
+    /* Link status lines from the modem (no ':' prefix). Anchored, like the ERROR
+       check below: a strstr() here matched the phrase ANYWHERE in the line, so when
+       another user typed "NO CARRIER" in the channel the client marked itself offline
+       and swallowed their message -- the line arrives as
+       ":nick!u@h PRIVMSG #chan :NO CARRIER". A real modem result code is its own
+       bare line. */
+    if (strncmp(s, "NO CARRIER", 10) == 0) { online = 0; status_repaint(); chat_add("* disconnected (NO CARRIER)"); return; }
     if (strncmp(s, "ERROR", 5) == 0) { online = 0; status_repaint(); chat_add(s); return; }
 
     if (s[0] == ':') {                          /* ":nick!user@host CMD ..." */

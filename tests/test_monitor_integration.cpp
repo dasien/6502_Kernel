@@ -20,6 +20,10 @@
 #include "computer/Computer6502.h"
 #include "support/fat16_image.h"
 
+// BASIC's page-2 output vector (PG2_TABS: ccflag $0200, ccbyte, ccnull, VEC_CC,
+// VEC_IN, then VEC_OUT). Only valid while BASIC is the running module.
+static constexpr uint16_t kBasicVecOut = 0x0207;
+
 class MonitorIntegrationTester {
 public:
     MonitorIntegrationTester() : tests_passed(0), tests_failed(0) {
@@ -90,6 +94,7 @@ public:
         testWriteCommand();
         testStackCommand();
         testZeroPageCommand();
+        testZeroPageShowsItsOwnCursorBytes();
         testHexToDecimal();
         testDecimalToHex();
         testDecimalOverflowNoCorruption();
@@ -942,6 +947,29 @@ private:
         verifyMemEquals(0xB000, 0xA0, "Window shows bank-1 ROM (LAB_COLD opcode)");
         sendKey('\r', 2000000);  // accept default memory size -> sign-on banner
         verifyResponse("MFC BASIC", "BASIC launches from bank 1");
+
+        // An error message must reach the screen even when VEC_OUT is redirected.
+        // LOAD aims VEC_OUT at BASIC_NULLOUT to suppress the echo of the program it
+        // is reading, so an error raised *during* a load went into the sink: the load
+        // ran on to EOF, printed "Ready", and left a partially loaded program with
+        // nothing said about it. LAB_XERR now restores VEC_OUT before printing.
+        //
+        // A real LOAD needs the host file dialog, which a headless build has not got,
+        // so reproduce the condition directly: point VEC_OUT at an RTS (exactly what
+        // BASIC_NULLOUT is) and then make a syntax error.
+        // Clear the screen from the HOST side, not with clearScreen(): that sends a
+        // DOS/monitor command, which BASIC cannot parse, so it (a) leaves the screen
+        // untouched and (b) raises an error of its own whose warm start restores
+        // VEC_OUT -- the assertion below then passed without the fix, satisfied by
+        // the leftover message. Exactly one error may occur while the sink is armed.
+        auto *mem = computer.getMemory();
+        computer.getVideoChip()->clearScreen();
+        mem->write(0x0500, 0x60);            // RTS -- a synthetic BASIC_NULLOUT
+        mem->write(kBasicVecOut, 0x00);      // VEC_OUT -> $0500, as LOAD leaves it
+        mem->write(kBasicVecOut + 1, 0x05);
+
+        sendCommand("PRNT", 2000000);        // not a keyword -> Syntax error
+        verifyResponse("Syntax", "BASIC error is visible with VEC_OUT redirected");
     }
 
     // The dev-tools line assembler (A xxxx). Assembles a sequence covering many
@@ -1442,6 +1470,32 @@ private:
         clearScreen();
         sendCommand("");
         verifyResponse("8000>", "Z: preserves the prompt's current address");
+    }
+
+    // Z: must show what is IN zero page, including the bytes the dump itself uses.
+    // The dump walks MON_CURRADDR ($14/$15) as its cursor and PRINT_CHAR rewrites its
+    // own scratch ($16/$17, $1A-$1D) between bytes, so a live read reported the dump's
+    // own state: after poking $14/$15, Z: showed "14 00" rather than the poked values.
+    // T:/Z: now snapshot the page first. This is the review's exact repro.
+    void testZeroPageShowsItsOwnCursorBytes() {
+        auto *mem = computer.getMemory();
+        // Distinctive values in the dump's own cursor and in PRINT_CHAR's scratch.
+        mem->write(0x0014, 0xAB);
+        mem->write(0x0015, 0xCD);
+        mem->write(0x0016, 0xEF);
+
+        clearScreen();
+        sendCommand("Z:", 400000);
+        // The first dump line covers $0000-$0007; $14-$16 land on the third line,
+        // which reads "0010: xx xx xx xx AB CD EF ..".
+        verifyResponse("AB CD EF", "Z: reports the real $14-$16, not its own cursor");
+        drainPaging();
+
+        // And R: must still read LIVE memory -- the snapshot must not leak into it.
+        mem->write(0x8000, 0x11);
+        clearScreen();
+        sendCommand("R:8000-8000");
+        verifyResponse("11", "R: still reads live memory after a Z:");
     }
 
     // H: hex->decimal. Exercises the double-dabble (binary->BCD via decimal
