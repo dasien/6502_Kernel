@@ -89,8 +89,14 @@ protected:
         std::filesystem::remove(image_path_, ec);
     }
 
-    void writeImage(const std::vector<Fat16File> &files) {
-        const std::vector<uint8_t> img = Fat16ImageBuilder::build(files);
+    // rootEntries defaults to the shipped 512. The tests that deliberately exhaust
+    // the root pass a small value: filling 512 slots through FS_PUTB one byte at a
+    // time would be absurdly slow, and the behaviour under test is the same.
+    void writeImage(const std::vector<Fat16File> &files,
+                    uint16_t rootEntries = Fat16ImageBuilder::kRootEntries) {
+        const std::vector<uint8_t> img = Fat16ImageBuilder::build(
+            files, Fat16ImageBuilder::kDefaultDataClusters,
+            Fat16ImageBuilder::kNumFats, rootEntries);
         std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
         f.write(reinterpret_cast<const char *>(img.data()),
                 static_cast<std::streamsize>(img.size()));
@@ -568,6 +574,38 @@ TEST_F(DosFat16Test, SkipsDeletedEntries) {
 // Write-path regressions (data loss)
 // ================================================================
 
+// The root holds more than one sector's worth of entries. It used to be a single
+// 512-byte sector (16 entries), so the 17th root-level file failed with DIR FULL
+// however empty the data area was; images now declare 512 entries (32 sectors), the
+// mkfs.fat/newfs_msdos default. The 6502 driver already read RootEntCnt from the BPB
+// and advances the root LBA every 16 entries, so this needed no ROM change -- but
+// nothing had ever exercised it, and writing entry 17+ means _DOS_DIR_FIND_FOR_WRITE
+// and _DOS_DIR_ADVANCE both have to cross a root sector boundary.
+TEST_F(DosFat16Test, RootHoldsMoreThanOneSectorOfEntries) {
+    writeImage({});                                   // empty, 512-entry root
+
+    // 20 files: entries 1-16 live in the first root sector, 17-20 in the second.
+    for (int i = 0; i < 20; ++i) {
+        const std::string name = "R" + std::to_string(i) + ".TXT";
+        ASSERT_TRUE(fsWriteFile(name, std::vector<uint8_t>(4, static_cast<uint8_t>('a' + i))))
+            << "write failed at root entry " << (i + 1)
+            << " -- the root should no longer be capped at 16";
+    }
+
+    EXPECT_EQ(enumerate().size(), 20u) << "all 20 root entries must enumerate";
+
+    // Files on both sides of the boundary must read back correctly.
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("R3.TXT", out));        // first root sector
+    EXPECT_EQ(out, std::vector<uint8_t>(4, 'd'));
+    ASSERT_TRUE(openReadClose("R19.TXT", out));       // second root sector
+    EXPECT_EQ(out, std::vector<uint8_t>(4, static_cast<uint8_t>('a' + 19)));
+
+    // And the host still considers the volume clean.
+    const mfcdos_test::Fat16ImageReader reader(readImageFile());
+    EXPECT_EQ(reader.entries().size(), 20u);
+}
+
 // FS_GETB ($AF06) must preserve X. It only destroyed X on the path that crosses a
 // 512-byte sector boundary (_DOS_NEXT_SECTOR does LDX DOS_F_LBA+1, and
 // _DOS_CLUS_TO_LBA under it uses X as a loop counter), so a read loop holding an
@@ -877,7 +915,7 @@ TEST_F(DosFat16Test, DeletedRootSlotIsReclaimed) {
     std::vector<Fat16File> files;
     for (int i = 0; i < 15; ++i)
         files.push_back({"F" + std::to_string(i) + ".TXT", std::vector<uint8_t>(4, 'z')});
-    writeImage(files); // exactly one free root slot remains
+    writeImage(files, /*rootEntries=*/16); // exactly one free root slot remains
 
     for (int cycle = 0; cycle < 20; ++cycle) {
         ASSERT_TRUE(fsWriteFile("T.TXT", std::vector<uint8_t>(8, 't')))
@@ -899,7 +937,7 @@ TEST_F(DosFat16Test, FullRootStillRejectsNewFile) {
     std::vector<Fat16File> files;
     for (int i = 0; i < 16; ++i)
         files.push_back({"F" + std::to_string(i) + ".TXT", std::vector<uint8_t>(4, 'z')});
-    writeImage(files);
+    writeImage(files, /*rootEntries=*/16);   // a genuinely full root
 
     EXPECT_FALSE(fsWriteFile("EXTRA.TXT", std::vector<uint8_t>(4, 'x')));
     EXPECT_EQ(enumerate().size(), 16u);
@@ -913,7 +951,7 @@ TEST_F(DosFat16Test, CloseAfterFailedOpenLeavesPreviousFileAlone) {
     std::vector<Fat16File> files;
     for (int i = 0; i < 15; ++i)
         files.push_back({"F" + std::to_string(i) + ".TXT", std::vector<uint8_t>(4, 'z')});
-    writeImage(files);
+    writeImage(files, /*rootEntries=*/16);
 
     // Fill the last root slot with a known file through the write path.
     ASSERT_TRUE(fsWriteFile("LAST.TXT", std::vector<uint8_t>(30, 'L')));

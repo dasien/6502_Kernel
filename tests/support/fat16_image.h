@@ -2,15 +2,17 @@
  * @file fat16_image.h
  * @brief Minimal FAT16 disk-image builder for MFC-DOS filesystem tests.
  *
- * Builds an in-memory FAT16 volume (boot sector/BPB, one FAT, a single-sector-
- * region root directory, and a contiguous data region) from a list of 8.3 files.
+ * Builds an in-memory FAT16 volume (boot sector/BPB, one FAT, a fixed root-directory
+ * region, and a contiguous data region) from a list of 8.3 files.
  * The layout it produces is what the 6502 FAT16 driver in src/kernel/dos/dos.asm
  * is validated against; the same builder is intended to graduate into the
  * standalone disk-image generator tool in step 2.4.
  *
- * Deliberately simple (matches the driver's starting scope): 512-byte sectors,
- * 1 sector/cluster, 1 FAT, root directory only, 8.3 names, files allocated to
- * contiguous clusters. Not a general FAT formatter.
+ * Deliberately simple (matches the driver's scope): 512-byte sectors, 1 sector per
+ * cluster, 1 FAT by default, 8.3 names, files in contiguous clusters. One level of
+ * subdirectory ("drawer") is supported and grows across clusters as needed. The
+ * cluster count, FAT count and root size are all parameters, so tests can build the
+ * geometries real host tools produce. Not a general FAT formatter.
  */
 
 #ifndef MFCDOS_TEST_FAT16_IMAGE_H
@@ -37,7 +39,12 @@ public:
     static constexpr uint8_t kSectorsPerCluster = 1;
     static constexpr uint16_t kReservedSectors = 1;
     static constexpr uint8_t kNumFats = 1;
-    static constexpr uint16_t kRootEntries = 16;   // one 512-byte root sector
+    // 512 root entries = 32 root sectors, which is what mkfs.fat and newfs_msdos
+    // produce by default. It used to be 16 (a single sector): drawers were always
+    // unbounded, but the fixed root capped root-level files at 16 live entries, so a
+    // busy root hit "DIR FULL" with the data area nearly empty. Tests that
+    // deliberately fill the root pass a small value instead of paying for 512.
+    static constexpr uint16_t kRootEntries = 512;
     static constexpr uint32_t kDefaultDataClusters = 128; // small + fast for tests
     // A genuine FAT16 volume needs >= 4085 clusters, or host OSes treat it as
     // FAT12. The mkfat16 tool uses this so the image is host-mountable.
@@ -52,9 +59,11 @@ public:
     // to two FATs -- which is the only way to exercise the driver's FAT mirroring.
     static std::vector<uint8_t> build(const std::vector<Fat16File> &files,
                                       uint32_t dataClusters = kDefaultDataClusters,
-                                      uint8_t numFats = kNumFats) {
+                                      uint8_t numFats = kNumFats,
+                                      uint16_t rootEntries = kRootEntries) {
         const uint16_t fatSize = fatSectors(dataClusters);
-        const uint16_t rootSectors = kRootEntries * 32 / kBytesPerSector; // = 1
+        const uint16_t rootSectors =
+            static_cast<uint16_t>((rootEntries * 32 + kBytesPerSector - 1) / kBytesPerSector);
         const uint16_t fatStart = kReservedSectors;
         const uint16_t rootStart = fatStart + numFats * fatSize;
         const uint16_t dataStart = rootStart + rootSectors;
@@ -62,7 +71,7 @@ public:
 
         std::vector<uint8_t> img(totalSectors * kBytesPerSector, 0x00);
 
-        writeBootSector(img, fatSize, totalSectors, numFats);
+        writeBootSector(img, fatSize, totalSectors, numFats, rootEntries);
 
         // FAT[0]/FAT[1] are reserved (media + EOC markers).
         std::vector<uint16_t> fat(2 + dataClusters, 0x0000);
@@ -110,11 +119,11 @@ public:
             if (d == drawerOrder.size()) { drawerOrder.push_back(f.drawer); drawerFiles.emplace_back(); }
             drawerFiles[d].push_back(&f);
         }
-        // Root is a fixed region of at most kRootEntries entries (root files +
+        // Root is a fixed region of at most rootEntries entries (root files +
         // drawers); fail loudly rather than overflow it. A drawer's own directory
         // is NOT fixed -- it grows across clusters below.
         const size_t perCluster = clusterBytes() / 32;
-        if (rootFiles.size() + drawerOrder.size() > kRootEntries)
+        if (rootFiles.size() + drawerOrder.size() > rootEntries)
             throw std::runtime_error("fat16: too many root entries (raise kRootEntries or use drawers)");
 
         size_t rootIdx = 0;
@@ -185,7 +194,8 @@ private:
     }
 
     static void writeBootSector(std::vector<uint8_t> &img, uint16_t fatSize,
-                                uint32_t totalSectors, uint8_t numFats) {
+                                uint32_t totalSectors, uint8_t numFats,
+                                uint16_t rootEntries) {
         uint8_t *b = img.data();
         b[0] = 0xEB; b[1] = 0x3C; b[2] = 0x90;          // jump (cosmetic)
         std::memcpy(&b[3], "MFCDOS  ", 8);              // OEM name
@@ -193,7 +203,7 @@ private:
         b[0x0D] = kSectorsPerCluster;
         put16(&b[0x0E], kReservedSectors);
         b[0x10] = numFats;
-        put16(&b[0x11], kRootEntries);
+        put16(&b[0x11], rootEntries);
         if (totalSectors < 0x10000) {
             put16(&b[0x13], static_cast<uint16_t>(totalSectors)); // TotalSectors16
         } else {

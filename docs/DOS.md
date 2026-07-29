@@ -206,6 +206,10 @@ Linux and Windows all can — so files you create on the machine appear on the h
 and vice versa. Files use 8.3 names (up to eight characters, a dot, and a
 three-character extension).
 
+The root directory holds up to **512 files and drawers**; a drawer has no fixed
+limit and grows as you add files, so deep collections belong in drawers rather than
+at the root. (Root capacity used to be 16, one sector's worth.)
+
 **The image must be FAT16 with 512-byte sectors.** MFC/OS checks the volume when
 it mounts and refuses anything else, because driving a FAT12 or FAT32 volume as
 FAT16 would corrupt it on the very first write. If you format an image yourself,
