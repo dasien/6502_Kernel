@@ -1410,20 +1410,38 @@ private:
         verifyMemEquals(0x8053, 0x12, "Write Data $8053 = 12");
     }
 
+    // T: and Z: are one routine (DUMP_ONE_PAGE) differing only in the page. Beyond
+    // the base address, assert real content and -- the property the shared routine is
+    // responsible for -- that the prompt's current address survives the dump. T:
+    // used to park it in MON_DEST_ADDR (M:'s destination variable) while Z: used the
+    // stack; both use the stack now, so a mistake here would silently move the
+    // user's current address.
     void testStackCommand() {
-        // T: dumps 32 lines and pages at 24; verify the first page shows the
-        // base address, then drain the page break so the next test is clean.
+        // A marker low in the stack page: the live stack sits near $01FF, so $0110
+        // is untouched by the command itself.
+        computer.getMemory()->write(0x0110, 0xA5);
+        sendCommand("R:8000");                   // set a known current address
         clearScreen();
         sendCommand("T:");
         verifyResponse("0100:", "Stack Display Command");
+        verifyResponse("A5", "T: shows real stack-page content");
         drainPaging();
+        clearScreen();
+        sendCommand("");                         // bare Enter -> just reprint the prompt
+        verifyResponse("8000>", "T: preserves the prompt's current address");
     }
 
     void testZeroPageCommand() {
+        computer.getMemory()->write(0x0050, 0x5A); // outside the kernel's $14-$39 ZP
+        sendCommand("R:8000");
         clearScreen();
         sendCommand("Z:");
         verifyResponse("0000:", "Zero Page Display Command");
+        verifyResponse("5A", "Z: shows real zero-page content");
         drainPaging();
+        clearScreen();
+        sendCommand("");
+        verifyResponse("8000>", "Z: preserves the prompt's current address");
     }
 
     // H: hex->decimal. Exercises the double-dabble (binary->BCD via decimal
