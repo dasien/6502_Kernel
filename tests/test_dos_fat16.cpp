@@ -568,6 +568,80 @@ TEST_F(DosFat16Test, SkipsDeletedEntries) {
 // Write-path regressions (data loss)
 // ================================================================
 
+// A cluster link outside 2..DOS_MAX_CLUS must end the walk. _DOS_CLUS_TO_LBA computes
+// (c - 2) * spc + data_start with no guard, and none of its five callers check a
+// status, so a 0 link underflowed and pointed the LBA *before* the data area -- into
+// the root directory or the FAT. Reading then returned bytes from outside the file
+// (bounded only by its recorded size); on the directory path, which writes, a stray
+// link would flush a 32-byte entry over the FAT. Orphaned chains and host-side
+// repairs are exactly what leave such links behind.
+TEST_F(DosFat16Test, CorruptClusterLinkEndsTheChain) {
+    const auto content = pattern(1500, 0x77);           // 3 clusters
+    writeImage({{"BIG.DAT", content}});
+
+    // Point the first cluster's FAT link at cluster 0 (reserved, never valid).
+    std::vector<uint8_t> img = readImageFile();
+    const uint16_t bps = static_cast<uint16_t>(img[11] | (img[12] << 8));
+    const uint16_t reserved = static_cast<uint16_t>(img[14] | (img[15] << 8));
+    const size_t fat = static_cast<size_t>(reserved) * bps;
+    img[fat + 2 * 2] = 0x00;                            // FAT[2] = $0000
+    img[fat + 2 * 2 + 1] = 0x00;
+    {
+        std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char *>(img.data()),
+                static_cast<std::streamsize>(img.size()));
+    }
+
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("BIG.DAT", out)) << "the file should still open";
+    EXPECT_LE(out.size(), 512u)
+        << "the read must stop at the corrupt link, not follow it out of the data area";
+    // Whatever we did return has to be the real first cluster, not garbage.
+    ASSERT_FALSE(out.empty());
+    EXPECT_TRUE(std::equal(out.begin(), out.end(), content.begin()));
+}
+
+// FS_RENAME validated nothing. Renaming onto a name that already exists left TWO
+// entries of that name, each keeping a live cluster chain -- so a later write to
+// that name freed one chain while the other entry still pointed at those clusters,
+// cross-linking the files once they were reallocated.
+TEST_F(DosFat16Test, RenameOntoAnExistingNameIsRefused) {
+    writeImage({{"A.TXT", std::vector<uint8_t>(10, 'a')},
+                {"B.TXT", std::vector<uint8_t>(20, 'b')}});
+
+    EXPECT_FALSE(fsRename("A.TXT", "B.TXT")) << "renaming onto a live name must fail";
+
+    // Both files must be intact and distinct -- exactly one entry per name.
+    const auto entries = enumerate();
+    ASSERT_EQ(entries.size(), 2u);
+    int a = 0, b = 0;
+    for (const auto &e : entries) {
+        if (e.name == "A.TXT") ++a;
+        if (e.name == "B.TXT") ++b;
+    }
+    EXPECT_EQ(a, 1) << "A.TXT must still exist under its own name";
+    EXPECT_EQ(b, 1) << "there must not be two B.TXT entries";
+
+    std::vector<uint8_t> out;
+    ASSERT_TRUE(openReadClose("A.TXT", out));
+    EXPECT_EQ(out, std::vector<uint8_t>(10, 'a'));
+    ASSERT_TRUE(openReadClose("B.TXT", out));
+    EXPECT_EQ(out, std::vector<uint8_t>(20, 'b'));
+}
+
+// An all-space name is not a valid FAT name: it shows as a nameless CATALOG row and
+// can only be erased by accident. The DOS shell produced one from "RENAME A,",
+// because the new-name pointer lands on the NUL written at the end of the line.
+TEST_F(DosFat16Test, RenameToAnEmptyNameIsRefused) {
+    writeImage({{"A.TXT", std::vector<uint8_t>(10, 'a')}});
+
+    EXPECT_FALSE(fsRename("A.TXT", "")) << "an empty new name must fail";
+
+    const auto entries = enumerate();
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].name, "A.TXT") << "the file must keep its name";
+}
+
 // Mount must reject anything that is not a 512-byte-sector FAT16 volume, instead of
 // parsing the geometry "successfully" and destroying the image on the first write:
 // 12-bit FAT entries read as 16-bit give garbage chains, and marking a byte pair

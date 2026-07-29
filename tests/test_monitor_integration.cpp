@@ -44,6 +44,7 @@ public:
         testPromptColorReset();
         testPagerLongType();
         testDosRemainingVerbs();
+        testDosMissingArgUsage();
         testDosFileVerbs();
         testDosSaveDiskFullReclaims();
         testDosTransfer();
@@ -182,6 +183,38 @@ public:
         sendCommand("BANKS", 300000);
         verifyResponse("BASIC", "BANKS lists the BASIC module");
         verifyResponse("FORTH", "BANKS lists the FORTH module");
+    }
+
+    // A verb that needs an argument and is given none must print USAGE and leave the
+    // shell usable. This path had no coverage at all, and it is the one
+    // _DOS_ARG_OR_USAGE changed: on a missing argument the helper discards its own
+    // JSR return address (PLA/PLA) and tail-jumps to the usage message, so
+    // _DOS_PERR_USAGE's RTS unwinds to the handler's caller. Get that wrong and the
+    // handler resumes with a corrupt stack, or the stack leaks two bytes per error.
+    // Repeating it ten times and then requiring the shell to still work is the
+    // probe for a leak; a single case would not notice.
+    void testDosMissingArgUsage() {
+        mountDisk({{"KEEP.TXT", std::vector<uint8_t>(4, 'K')}});
+
+        clearScreen();
+        sendCommand("ERASE", 200000);            // no filename
+        verifyResponse("USAGE", "ERASE with no argument prints USAGE");
+
+        clearScreen();
+        sendCommand("SAVE", 200000);
+        verifyResponse("USAGE", "SAVE with no argument prints USAGE");
+
+        clearScreen();
+        sendCommand("RENAME", 200000);
+        verifyResponse("USAGE", "RENAME with no argument prints USAGE");
+
+        for (int i = 0; i < 10; ++i) sendCommand("ERASE", 120000);
+
+        // Still alive and functional after eleven usage errors?
+        clearScreen();
+        sendCommand("CATALOG", 300000);
+        verifyResponse("KEEP.TXT", "Shell still works after repeated USAGE errors");
+        verifyAbsent("USAGE", "CATALOG output is not a stale USAGE message");
     }
 
     // DOS file verbs: SAVE (with .PRG header) / LOAD / RENAME / ERASE, exercised

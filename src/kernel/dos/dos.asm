@@ -884,6 +884,22 @@ _DOS_ARGSTART:
     SEC
     RTS
 
+; _DOS_ARG_OR_USAGE - _DOS_ARGSTART, but a missing argument abandons the command.
+; Every verb that requires an argument wrote the same 8-byte preamble:
+;     JSR _DOS_ARGSTART / BCC :+ / JMP @usage / :
+; (the JMP rather than a branch because @usage sits out of range at the end of the
+; handler). On failure this discards its own return address and tail-jumps to the
+; usage message, so _DOS_PERR_USAGE's RTS returns to the handler's caller -- exactly
+; what "JMP @usage" did -- and the rest of the handler does not run.
+_DOS_ARG_OR_USAGE:
+    JSR _DOS_ARGSTART
+    BCS @nousage
+    RTS                                 ; Y -> first argument character
+@nousage:
+    PLA                                 ; drop this call's return address
+    PLA
+    JMP _DOS_PERR_USAGE
+
 ; Shared error printers (newline + message, tail-call print).
 _DOS_PERR_USAGE:
     LDA #<MSG_DOS_USAGE
@@ -910,8 +926,7 @@ _DOS_PERR:
 ; _DOS_DO_ERASE - ERASE NAME
 ; ----------------------------------------------------------------
 _DOS_DO_ERASE:
-    JSR _DOS_ARGSTART
-    BCS @usage
+    JSR _DOS_ARG_OR_USAGE
     LDX MON_CMDLEN                      ; null-terminate the name
     LDA #$00
     STA MON_CMDBUF,X
@@ -924,15 +939,12 @@ _DOS_DO_ERASE:
     JMP _DOS_PERR
 @notfound:
     JMP _DOS_PERR_NOFILE
-@usage:
-    JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_RENAME - RENAME OLD,NEW
 ; ----------------------------------------------------------------
 _DOS_DO_RENAME:
-    JSR _DOS_ARGSTART
-    BCS @usage
+    JSR _DOS_ARG_OR_USAGE
     STY DOS_SH_NAMEIDX                  ; old name start
 @findc:
     CPY MON_CMDLEN
@@ -969,10 +981,7 @@ _DOS_DO_RENAME:
 ; _DOS_DO_SAVE - SAVE NAME,SSSS-EEEE  (writes a 2-byte load-address header)
 ; ----------------------------------------------------------------
 _DOS_DO_SAVE:
-    JSR _DOS_ARGSTART
-    BCC :+
-    JMP @usage
-:
+    JSR _DOS_ARG_OR_USAGE
     STY DOS_SH_NAMEIDX
 @findc:
     CPY MON_CMDLEN
@@ -1053,10 +1062,7 @@ _DOS_DO_SAVE:
 ; _DOS_DO_LOAD - LOAD NAME[,AAAA]  (load addr from header unless overridden)
 ; ----------------------------------------------------------------
 _DOS_DO_LOAD:
-    JSR _DOS_ARGSTART
-    BCC :+
-    JMP @usage
-:
+    JSR _DOS_ARG_OR_USAGE
     STY DOS_SH_NAMEIDX
     STZ DOS_SH_HASADDR
 @findc:
@@ -1129,10 +1135,7 @@ _DOS_DO_LOAD:
 ; _DOS_DO_IMPORT - IMPORT NAME : host file (picker) -> FAT16 file NAME
 ; ----------------------------------------------------------------
 _DOS_DO_IMPORT:
-    JSR _DOS_ARGSTART
-    BCC :+
-    JMP @usage
-:
+    JSR _DOS_ARG_OR_USAGE
     STY DOS_SH_NAMEIDX
     LDX MON_CMDLEN
     LDA #$00
@@ -1176,17 +1179,12 @@ _DOS_DO_IMPORT:
     JMP _DOS_PERR_WRITE                 ; an unreclaimable orphan chain
 @hosterr:
     JMP _DOS_PERR_HOST
-@usage:
-    JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_EXPORT - EXPORT NAME : FAT16 file NAME -> host file (save dialog)
 ; ----------------------------------------------------------------
 _DOS_DO_EXPORT:
-    JSR _DOS_ARGSTART
-    BCC :+
-    JMP @usage
-:
+    JSR _DOS_ARG_OR_USAGE
     LDX MON_CMDLEN
     LDA #$00
     STA MON_CMDBUF,X
@@ -1220,8 +1218,6 @@ _DOS_DO_EXPORT:
     JMP _DOS_PERR_HOST
 @notfound:
     JMP _DOS_PERR_NOFILE
-@usage:
-    JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_VER - print the OS version, read from the DOS_VERSION bytes
@@ -1343,10 +1339,7 @@ _DOS_DO_NEWDRAWER:
     BEQ :+
     JMP @notroot
 :
-    JSR _DOS_ARGSTART
-    BCC :+
-    JMP @usage
-:
+    JSR _DOS_ARG_OR_USAGE
     JSR _DOS_ARG_TO_NAME83              ; null-terminate at EOL, Y -> DOS_NAME83
     JSR _FS_ENSURE_MOUNT
     BCS @diskerr
@@ -1400,15 +1393,12 @@ _DOS_DO_NEWDRAWER:
     LDA #<MSG_DOS_NOTROOT
     LDX #>MSG_DOS_NOTROOT
     JMP _DOS_PERR
-@usage:
-    JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_OPEN - OPEN name: enter a drawer (resolves in root)
 ; ----------------------------------------------------------------
 _DOS_DO_OPEN:
-    JSR _DOS_ARGSTART
-    BCS @usage
+    JSR _DOS_ARG_OR_USAGE
     JSR _DOS_ARG_TO_NAME83
     STZ DOS_TGT_CLUS                    ; find the drawer in root
     STZ DOS_TGT_CLUS+1
@@ -1427,8 +1417,6 @@ _DOS_DO_OPEN:
     LDA #<MSG_DOS_NODRAWER
     LDX #>MSG_DOS_NODRAWER
     JMP _DOS_PERR
-@usage:
-    JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_CLOSE - CLOSE: return to the root directory
@@ -1446,8 +1434,7 @@ _DOS_DO_DROPDRAWER:
     LDA DOS_CWD_CLUS                    ; one level: only from root
     ORA DOS_CWD_CLUS+1
     BNE @notroot
-    JSR _DOS_ARGSTART
-    BCS @usage
+    JSR _DOS_ARG_OR_USAGE
     JSR _DOS_ARG_TO_NAME83
     STZ DOS_TGT_CLUS
     STZ DOS_TGT_CLUS+1
@@ -1489,8 +1476,6 @@ _DOS_DO_DROPDRAWER:
     LDA #<MSG_DOS_NOTROOT
     LDX #>MSG_DOS_NOTROOT
     JMP _DOS_PERR
-@usage:
-    JMP _DOS_PERR_USAGE
 
 ; _DOS_ARG_TO_NAME83 - In: Y = arg start index in MON_CMDBUF. Null-terminates the
 ; line, points DOS_PTR at the arg, parses it to DOS_NAME83. Preserves nothing.
@@ -1668,10 +1653,7 @@ _DOS_DO_MOVE:
     LDA #$01                            ; 1 = move (delete source after copying)
     STA DOS_SH_HASADDR
 _DOS_COPY_COMMON:
-    JSR _DOS_ARGSTART
-    BCC :+
-    JMP @usage
-:
+    JSR _DOS_ARG_OR_USAGE
     STY DOS_SH_NAMEIDX                  ; SRC name start
 @findc:
     CPY MON_CMDLEN
@@ -3298,6 +3280,20 @@ _FS_RENAME:
     STX DOS_PTR+1
     JSR _DOS_RESOLVE_PATH               ; old path -> DOS_TGT_CLUS + bare name
     BCS @err
+    ; Vet the NEW name FIRST, while DOS_W_DIRENT_* is still unused -- the duplicate
+    ; lookup below sets it, so it cannot run after the old slot has been located.
+    JSR @parse_new
+    JSR _DOS_NAME83_EMPTY               ; an all-space name is unreachable: it shows
+    BCS @err                            ;   as a nameless CATALOG row and is not
+                                        ;   valid FAT. "RENAME A," produced one,
+                                        ;   because the new-name pointer lands on the
+                                        ;   NUL the shell writes at MON_CMDLEN.
+    JSR _DOS_DIR_FIND_EXISTING          ; is the new name already taken?
+    BCC @err                            ;   yes -> refuse. Two entries of one name
+                                        ;   each keep a live chain, so a later SAVE
+                                        ;   frees one while the other still points
+                                        ;   at those clusters -> cross-linked files.
+    ; Locate the OLD entry, then overwrite its name field with the new one.
     LDA DOS_RES_NAMEPTR
     STA DOS_PTR
     LDA DOS_RES_NAMEPTR+1
@@ -3305,14 +3301,33 @@ _FS_RENAME:
     JSR _DOS_PARSE_NAME83               ; old -> DOS_NAME83
     JSR _DOS_DIR_FIND_EXISTING          ; locate the slot (in DOS_TGT_CLUS)
     BCS @err
-    LDA DOS_PTR2                        ; new (a plain name in the same dir) -> DOS_NAME83
+    JSR @parse_new                      ; new -> DOS_NAME83 again (the find above
+                                        ;   overwrote it with the old name)
+    JMP _DOS_DIR_WRITE_NAME             ; overwrite the 11-byte name (tail call)
+@parse_new:
+    LDA DOS_PTR2                        ; new (a plain name in the same dir)
     STA DOS_PTR
     LDA DOS_PTR2+1
     STA DOS_PTR+1
-    JSR _DOS_PARSE_NAME83
-    JMP _DOS_DIR_WRITE_NAME             ; overwrite the 11-byte name (tail call)
+    JMP _DOS_PARSE_NAME83               ; tail
 @err:
     SEC
+    RTS
+
+; _DOS_NAME83_EMPTY - carry set if DOS_NAME83 is all spaces (i.e. no name at all).
+_DOS_NAME83_EMPTY:
+    LDY #$00
+@lp:
+    LDA DOS_NAME83,Y
+    CMP #ASCII_SPACE
+    BNE @notempty
+    INY
+    CPY #11
+    BNE @lp
+    SEC
+    RTS
+@notempty:
+    CLC
     RTS
 
 ; _DOS_DIR_WRITE_NAME - rmw the 11-byte name field of the slot at DOS_W_DIRENT_*
@@ -3960,11 +3975,30 @@ _DOS_NEXT_CLUSTER:
     LDA DOS_ARG_VAL+1
     STA DOS_F_CLUS+1
     CMP #>FAT_EOC                       ; high byte >= $FF ?
-    BNE @ok
+    BNE @range
     LDA DOS_F_CLUS
     CMP #<FAT_EOC
     BCS @err                            ; $FFF8..$FFFF -> EOC
-@ok:
+@range:
+    ; A usable cluster is 2..DOS_MAX_CLUS. 0 and 1 are reserved, $FFF0-$FFF7 are
+    ; bad-cluster marks, and anything past the last cluster is outside the image.
+    ; _DOS_CLUS_TO_LBA computes (c-2)*spc + data_start with no guard of its own (and
+    ; none of its callers check a status), so a 0 in a chain underflows and puts the
+    ; LBA *before* the data area -- in the root directory or the FAT. On a read that
+    ; is only garbage, but the directory path WRITES, so a stray link would flush a
+    ; 32-byte entry over the FAT. Orphaned chains and host-side repairs are exactly
+    ; what leaves such links behind, so treat a corrupt one as end-of-chain.
+    LDA DOS_F_CLUS+1
+    BNE @cmpmax                         ; >= $0100, so certainly >= 2
+    LDA DOS_F_CLUS
+    CMP #$02
+    BCC @err
+@cmpmax:
+    LDA DOS_MAX_CLUS
+    CMP DOS_F_CLUS
+    LDA DOS_MAX_CLUS+1
+    SBC DOS_F_CLUS+1
+    BCC @err                            ; cluster > the volume's last cluster
     CLC
     RTS
 @err:
