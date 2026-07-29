@@ -450,9 +450,9 @@ file-stream LOAD/SAVE routines).
 
 | Address | Vector | Handler |
 |---------|--------|---------|
-| `$FFFA-$FFFB` | NMI | `NMI_HANDLER` (currently a bare RTI) |
+| `$FFFA-$FFFB` | NMI | `NMI_HANDLER` — STOP key: sets BASIC's `ON NMI` flag if armed, else breaks to the monitor (clearing the pager guard and unmapping any module bank) |
 | `$FFFC-$FFFD` | RESET | `RESET` (power-on entry) |
-| `$FFFE-$FFFF` | IRQ | `IRQ_HANDLER` (currently a bare RTI) |
+| `$FFFE-$FFFF` | IRQ | `IRQ_HANDLER` — acknowledges the ~60 Hz timer, advances the `K_GET_JIFFIES` counter, sets BASIC's `ON IRQ` flag if armed |
 
 ### Free RAM for User Programs
 
@@ -562,9 +562,9 @@ bits2-0 foreground (0-7). Colors: 0 black, 1 red, 2 green, 3 yellow, 4 blue,
 5 magenta, 6 cyan, 7 white. Default `$02` (green on black).
 
 **`K_PRINT_HELP_LINE` — `$FF30`** — print a command's `syntax`<TAB>`description`
-line with the description padded to column 22; used by the `?`/help screens.
-
-#### Input
+line with the description padded to column 22; used by the `?`/help screens. The
+string pointer goes in `MON_MSG_PTR` (`$16/$17`), as for `K_PRINT_MESSAGE`, and the
+string is `"<syntax>",$09,"<description>",0`.
 
 **`K_GET_KEYSTROKE` — `$FF09`** — **non-blocking**. Returns carry set with the key
 in A when one is waiting, carry clear when the buffer is empty. To wait for a key,
@@ -626,7 +626,7 @@ See `examples/` for runnable programs that use these calls, and
 ## Part 4 — Bank-switched modules
 
 
-**Status:** Phases 1–5 implemented (kernel v3.25). I/O is at `$FE00`, the module
+**Status:** Phases 1–5 implemented (kernel v3.26). I/O is at `$FE00`, the module
 window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
 bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
 `assembler.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
@@ -675,8 +675,8 @@ The kernel stays at `$E000–$FFFF` (8 KB), unchanged in start address.
 $0000–$07FF   Zero page / stack / system vars / screen      (unchanged)
 $0800–$AFFF   User RAM (~42 KB)                              (module working RAM)
 $B000–$DFFF   MODULE WINDOW (12 KB) — backed by selected bank; clean, no I/O hole
-$E000–$EF30   Kernel CODE (~3.9 KB at v3.25)                 (start unchanged)
-$EF31–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
+$E000–$EF40   Kernel CODE (~3.9 KB at v3.26)                 (start unchanged)
+$EF41–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
 $FE00–$FEFF   I/O page (relocated here from $DC00)
 $FF00–$FFF9   Kernel API jump table (grows upward; ~83 entries possible, 20 used)
 $FFFA–$FFFF   NMI / RESET / IRQ vectors

@@ -568,6 +568,44 @@ TEST_F(DosFat16Test, SkipsDeletedEntries) {
 // Write-path regressions (data loss)
 // ================================================================
 
+// FS_GETB ($AF06) must preserve X. It only destroyed X on the path that crosses a
+// 512-byte sector boundary (_DOS_NEXT_SECTOR does LDX DOS_F_LBA+1, and
+// _DOS_CLUS_TO_LBA under it uses X as a loop counter), so a read loop holding an
+// index in X survived every small-file test and corrupted itself on the 513th byte.
+// Reading past two boundaries with a sentinel in X is what makes that visible.
+TEST_F(DosFat16Test, FsGetbPreservesXAcrossSectorBoundaries) {
+    const auto content = pattern(1200, 0x64);          // spans 3 sectors/clusters
+    writeImage({{"BIG.DAT", content}});
+
+    const std::string name = "BIG.DAT";
+    for (size_t i = 0; i < name.size(); ++i)
+        mem_->write(kNameAddr + i, static_cast<uint8_t>(name[i]));
+    mem_->write(kNameAddr + name.size(), 0);
+
+    bool carry = true;
+    ASSERT_TRUE(callRoutine(kFsOpen, carry, kNameAddr & 0xFF, kNameAddr >> 8));
+    ASSERT_FALSE(carry);
+
+    std::vector<uint8_t> out;
+    int x_clobbered_at = -1;
+    for (int i = 0; i < 1300; ++i) {
+        // Sentinels in X and Y; the published ABI must bring both back.
+        if (!callRoutine(kFsGetb, carry, /*a=*/0, /*x=*/0x5A, /*y=*/0x3C)) break;
+        if (carry) break;                              // EOF
+        if (cpu_->reg.X != 0x5A && x_clobbered_at < 0) x_clobbered_at = i;
+        EXPECT_EQ(cpu_->reg.Y, 0x3C) << "Y must be preserved too (byte " << i << ")";
+        out.push_back(cpu_->reg.A);
+        if (x_clobbered_at >= 0 && out.size() > 600) break;   // enough to report
+    }
+    callRoutine(kFsClose, carry);
+
+    EXPECT_EQ(x_clobbered_at, -1)
+        << "X was destroyed at byte " << x_clobbered_at
+        << " -- the sector-boundary path must preserve it";
+    EXPECT_EQ(out.size(), content.size());
+    EXPECT_EQ(out, content);
+}
+
 // A cluster link outside 2..DOS_MAX_CLUS must end the walk. _DOS_CLUS_TO_LBA computes
 // (c - 2) * spc + data_start with no guard, and none of its five callers check a
 // status, so a 0 link underflowed and pointed the LBA *before* the data area -- into

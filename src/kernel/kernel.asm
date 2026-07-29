@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.25
+; Version:      3.26
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -15,8 +15,8 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $E000-$FFFF (8192 bytes)
-; ROM (Used):      ~4211 bytes
-;   CODE segment:  $E000-$EF30 (3889 bytes)
+; ROM (Used):      ~4227 bytes
+;   CODE segment:  $E000-$EF40 (3905 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
 ;   JUMPS segment: $FF00-$FF3B (60 bytes) - kernel API jump table (20 entries)
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
@@ -258,6 +258,16 @@
 ;                   monotonic tick counter (JIFFY_LO/HI at $31/$32) that programs
 ;                   read for frame pacing. The read is SEI-guarded so the two
 ;                   bytes can't tear. First consumer: real-time games.
+; 2026-07-29  v3.26 ABI contract fixes. K_READ_LINE ($FF15) now really returns the
+;                   line length in A with Z set for an empty line, as documented --
+;                   both exits tail-jumped to PRINT_NEWLINE, and PRINT_CHAR preserves
+;                   A, so callers always got $0D. PAGE_ADVANCE now saves MON_MSG_PTR
+;                   alongside X/Y: a message containing an embedded $0D that filled
+;                   the page had its pointer re-pointed at the --MORE-- prompt by
+;                   HANDLE_PAGE_BREAK and printed the prompt's tail instead of its own
+;                   remaining lines (confirmed, not theoretical). Also corrects the
+;                   ARCHITECTURE.md claim that NMI/IRQ are "a bare RTI" and documents
+;                   K_PRINT_HELP_LINE's input.
 ; 2026-07-29  v3.25 Size pass, behaviour-preserving: 178 bytes freed (4067 -> 3889).
 ;                   Deleted SAVE_MONITOR_STATE/RESTORE_MONITOR_STATE, which no
 ;                   longer had a single caller, and their four save variables.
@@ -1012,7 +1022,22 @@ PAGE_ADVANCE:
     INC PAGE_IN_BREAK
     PHX
     PHY
+    ; PRINT_MESSAGE ($FF03) and PRINT_HELP_LINE ($FF30) keep their string cursor in
+    ; MON_MSG_PTR as well as in Y, and the prompt printed below re-points it at
+    ; MSG_PAGE_PROMPT. Without this, a message containing an embedded $0D that
+    ; happened to fill the page resumed reading from the prompt string instead of
+    ; its own text -- silently printing the tail of "--MORE--" and then whatever
+    ; ROM followed it. Multi-line single-call messages exist (MSG_DOS_USAGE,
+    ; MSG_DOS_MEM), so save the pointer alongside X and Y.
+    LDA MON_MSG_PTR_LO
+    PHA
+    LDA MON_MSG_PTR_HI
+    PHA
     JSR HANDLE_PAGE_BREAK
+    PLA
+    STA MON_MSG_PTR_HI
+    PLA
+    STA MON_MSG_PTR_LO
     PLY
     PLX
     STZ PAGE_IN_BREAK
@@ -1188,7 +1213,7 @@ READ_CMD_ESCAPE:
     STA MON_CMDBUF              ; Put ESC as the only character
     LDA #$01
     STA MON_CMDLEN              ; Length = 1
-    JMP PRINT_NEWLINE
+    JMP READ_CMD_EXIT           ; shared exit: returns the length in A
 
 READ_CMD_CANCEL:
     ; Abandon the line in place: destructively backspace over the characters
@@ -1210,7 +1235,15 @@ READ_CMD_CANCEL_DONE:
 READ_CMD_DONE_CR:
     ; Command is complete - null terminate it
     STZ MON_CMDBUF,X            ; Null terminate the command
-    JMP PRINT_NEWLINE  ; Move to next line on screen
+READ_CMD_EXIT:
+    ; Shared exit. The published $FF15 contract is "length in A, zero flag set for
+    ; an empty line", but both exits used to end with a tail jump to PRINT_NEWLINE,
+    ; and PRINT_CHAR deliberately preserves A -- so callers always got $0D with Z
+    ; clear. A conforming caller doing "JSR $FF15 / BEQ empty" could never see an
+    ; empty line, and one using A as the length read 13 bytes of a 0-byte buffer.
+    JSR PRINT_NEWLINE           ; Move to next line on screen
+    LDA MON_CMDLEN              ; A = length, Z set when the line is empty
+    RTS
 
 ; ================================================================
 ; DOT COMMAND (LAST COMMAND RECALL) IMPLEMENTATION

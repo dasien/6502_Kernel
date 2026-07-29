@@ -1420,7 +1420,18 @@ the DOS prompt). (The dos.rom signature string stays "MFC-DOS" as an internal ma
      stubs, all in `src/kernel/dos/dos.asm`. Stable entry points live in a **DOS ABI
      jump table at `$AF00`** (mirrors the kernel `$FF00` table): `DOS_COLD`, `FS_OPEN`/
      `FS_GETB`/`FS_PUTB`/`FS_CLOSE`/`FS_DIR_FIRST`/`FS_DIR_NEXT` (stubs, carry=error),
-     `BLK_READ_SECTOR` (`$AF15`), `BLK_WRITE_SECTOR` (`$AF18`). DOS zero page uses the
+     `BLK_READ_SECTOR` (`$AF15`), `BLK_WRITE_SECTOR` (`$AF18`).
+
+     **Register contract for the `$AF00` FS entries:** results come back in **A and
+     the carry** (carry set = error / EOF). `FS_GETB` preserves **X and Y** — it used
+     to destroy X only on the path that crosses a 512-byte sector boundary, which is
+     the worst kind of bug: a read loop indexing with X passed every small-file test
+     and corrupted itself on the 513th byte, so it is now explicitly preserved and
+     pinned by `FsGetbPreservesXAcrossSectorBoundaries`. Every **other** FS entry
+     leaves **X undefined** (`FS_PUTB` clobbers it at entry testing `DOS_W_MODE`, and
+     the open/close/delete/rename paths run cluster and directory arithmetic through
+     X); assume only A and carry survive those. The cc65 glue in `programs/*/glue.s`
+     reloads X on return, which is why this went unnoticed for so long. DOS zero page uses the
      free `$3A-$5A` gap (`BLK_BUF_PTR=$3A`). Covered by `tests/test_dos_blockio.cpp`
      (`dos_blockio_tests`) which runs the real `dos.rom` routines.
    - **2.3 — DONE.** FAT16 read driver in `src/kernel/dos/dos.asm`, validated by

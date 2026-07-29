@@ -245,13 +245,18 @@ DOS_SIGNATURE:
 ;   1.15 files are timestamped from the RTC on write; CATALOG shows the date/time
 ;   1.16 kernel RNG reworked: RTC-seeded 16-bit LFSR (kernel v3.22)
 ;   1.17 kernel K_GET_JIFFIES ($FF39): 60 Hz monotonic tick counter (kernel v3.23)
+;   1.19 FS_GETB preserves X. It was destroyed only when the read crossed a
+;        512-byte sector boundary, so a loop indexing with X passed every
+;        small-file test and corrupted itself on the 513th byte. The rest of the
+;        $AF00 FS entries leave X undefined; that is now documented rather than
+;        left to be discovered.
 ;   1.18 host-interop safety: FAT writes are mirrored into every FAT copy (hosts
 ;        format with two by default, and a checker "repairing" the divergence
 ;        discards everything the machine wrote), and _FS_MOUNT validates the BPB
 ;        instead of trusting it -- a FAT12/FAT32 or non-512-byte-sector image is
 ;        refused rather than driven as FAT16 and destroyed on the first write
 DOS_VERSION:
-    .BYTE $01, $12                      ; version 1.18 (major, minor)
+    .BYTE $01, $13                      ; version 1.19 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -2747,7 +2752,14 @@ _FS_GETB:
     LDA DOS_F_OFF+1
     CMP #$02
     BNE @read
+    ; X must survive. This is the only path in FS_GETB that destroys it
+    ; (_DOS_NEXT_SECTOR does LDX DOS_F_LBA+1, and _DOS_CLUS_TO_LBA below it uses X
+    ; as a loop counter), and it is taken only every 512th byte -- so a read loop
+    ; holding an index in X worked through every small-file test and corrupted
+    ; itself on the 513th byte. PLX leaves the carry from _DOS_NEXT_SECTOR intact.
+    PHX
     JSR _DOS_NEXT_SECTOR
+    PLX
     BCS @eof                            ; chain ended unexpectedly
 @read:
     LDA BLK_DATA
