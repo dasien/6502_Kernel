@@ -43,6 +43,7 @@ public:
         testDosShell();
         testPromptColorReset();
         testPagerLongType();
+        testDosRemainingVerbs();
         testDosFileVerbs();
         testDosSaveDiskFullReclaims();
         testDosTransfer();
@@ -162,6 +163,25 @@ public:
         verifyResponse("RENAME", "Q returns to the DOS shell");
         // HELP is now a two-column verb/description list (like the monitor's ?).
         verifyResponse("clear the screen", "HELP shows command descriptions");
+    }
+
+    // The two verbs no other test drives. _DOS_DISPATCH is table-driven, so every
+    // verb's entry is data: a mistranscribed or missing row would only show up when
+    // that particular verb is typed. CLEAR is also the alias case (CLEAR and CLS
+    // must reach the same handler), and BANKS was the last built-in with no coverage.
+    void testDosRemainingVerbs() {
+        mountDisk({{"MARK.TXT", std::vector<uint8_t>(4, 'Q')}});
+
+        // CLEAR is an alias of CLS: put something on screen, then check it is gone.
+        sendCommand("CATALOG");
+        verifyResponse("MARK.TXT", "CATALOG printed before CLEAR");
+        sendCommand("CLEAR", 200000);
+        verifyAbsent("MARK.TXT", "CLEAR (alias of CLS) clears the screen");
+
+        // BANKS lists the ROM modules from the kernel's MODULE_DIR catalog.
+        sendCommand("BANKS", 300000);
+        verifyResponse("BASIC", "BANKS lists the BASIC module");
+        verifyResponse("FORTH", "BANKS lists the FORTH module");
     }
 
     // DOS file verbs: SAVE (with .PRG header) / LOAD / RENAME / ERASE, exercised

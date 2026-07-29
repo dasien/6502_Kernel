@@ -439,156 +439,41 @@ _DOS_PROMPT:
 ; _DOS_DISPATCH - match the typed verb and run its handler
 ; ----------------------------------------------------------------
 _DOS_DISPATCH:
-    LDA #<KW_CLS
-    LDX #>KW_CLS
+    ; Walk DOS_VERB_TAB: try each keyword, and on a match jump to its handler. If
+    ; none matches, fall through to launch-by-name below.
+    ;
+    ; Table-driven rather than 25 open-coded compare-and-jump blocks (~300 bytes of
+    ; near-identical code). Adding a verb is now one .word pair instead of five
+    ; instructions plus a uniquely-named local label, and the long chain of forward
+    ; branches that shape produced was a standing branch-range hazard.
+    ;
+    ; ORDER IS BEHAVIOUR and is preserved exactly from the old chain: a keyword that
+    ; is a prefix of another must come second (CATALOG before CAT), because
+    ; _DOS_VERB_MATCH accepts a keyword that ends at a space or end-of-line.
+    STZ DOS_TMP                         ; byte offset into the table
+@try:
+    LDX DOS_TMP
+    LDA DOS_VERB_TAB+1,X                ; keyword pointer high
+    BEQ @nomatch                        ; $0000 terminator: no built-in verb
+    TAX                                 ; matcher wants the pointer in A/X
+    LDY DOS_TMP
+    LDA DOS_VERB_TAB,Y                  ; keyword pointer low
     JSR _DOS_VERB_MATCH
-    BCS @ncls1
-    JMP _DOS_DO_CLS
-@ncls1:
-    LDA #<KW_CLEAR
-    LDX #>KW_CLEAR
-    JSR _DOS_VERB_MATCH
-    BCS @ncls2
-    JMP _DOS_DO_CLS
-@ncls2:
-    LDA #<KW_BANKS
-    LDX #>KW_BANKS
-    JSR _DOS_VERB_MATCH
-    BCS @nbanks
-    JMP _DOS_DO_BANKS
-@nbanks:
-    LDA #<KW_HELP
-    LDX #>KW_HELP
-    JSR _DOS_VERB_MATCH
-    BCS @n1
-    JMP _DOS_DO_HELP
-@n1:
-    LDA #<KW_MON
-    LDX #>KW_MON
-    JSR _DOS_VERB_MATCH
-    BCS @n2
-    JMP _DOS_DO_MON
-@n2:
-    LDA #<KW_CATALOG
-    LDX #>KW_CATALOG
-    JSR _DOS_VERB_MATCH
-    BCS @n3
-    JMP _DOS_DO_CAT
-@n3:
-    LDA #<KW_CAT
-    LDX #>KW_CAT
-    JSR _DOS_VERB_MATCH
-    BCS @n4
-    JMP _DOS_DO_CAT
-@n4:
-    LDA #<KW_TYPE
-    LDX #>KW_TYPE
-    JSR _DOS_VERB_MATCH
-    BCS @n5
-    JMP _DOS_DO_TYPE
-@n5:
-    LDA #<KW_SAVE
-    LDX #>KW_SAVE
-    JSR _DOS_VERB_MATCH
-    BCS @n6
-    JMP _DOS_DO_SAVE
-@n6:
-    LDA #<KW_LOAD
-    LDX #>KW_LOAD
-    JSR _DOS_VERB_MATCH
-    BCS @n7
-    JMP _DOS_DO_LOAD
-@n7:
-    LDA #<KW_ERASE
-    LDX #>KW_ERASE
-    JSR _DOS_VERB_MATCH
-    BCS @n8
-    JMP _DOS_DO_ERASE
-@n8:
-    LDA #<KW_RENAME
-    LDX #>KW_RENAME
-    JSR _DOS_VERB_MATCH
-    BCS @n9
-    JMP _DOS_DO_RENAME
-@n9:
-    LDA #<KW_IMPORT
-    LDX #>KW_IMPORT
-    JSR _DOS_VERB_MATCH
-    BCS @n10
-    JMP _DOS_DO_IMPORT
-@n10:
-    LDA #<KW_EXPORT
-    LDX #>KW_EXPORT
-    JSR _DOS_VERB_MATCH
-    BCS @n11
-    JMP _DOS_DO_EXPORT
-@n11:
-    LDA #<KW_COPY
-    LDX #>KW_COPY
-    JSR _DOS_VERB_MATCH
-    BCS @n12
-    JMP _DOS_DO_COPY
-@n12:
-    LDA #<KW_DISKFREE
-    LDX #>KW_DISKFREE
-    JSR _DOS_VERB_MATCH
-    BCS @n13
-    JMP _DOS_DO_FREE
-@n13:
-    LDA #<KW_MORE
-    LDX #>KW_MORE
-    JSR _DOS_VERB_MATCH
-    BCS @n14
-    JMP _DOS_DO_TYPE                    ; MORE == TYPE now: the kernel pages all output
-@n14:
-    LDA #<KW_VERSION
-    LDX #>KW_VERSION
-    JSR _DOS_VERB_MATCH
-    BCS @n15
-    JMP _DOS_DO_VER
-@n15:
-    LDA #<KW_MEMMAP
-    LDX #>KW_MEMMAP
-    JSR _DOS_VERB_MATCH
-    BCS @n16
-    JMP _DOS_DO_MEM
-@n16:
-    LDA #<KW_NEWDRAWER
-    LDX #>KW_NEWDRAWER
-    JSR _DOS_VERB_MATCH
-    BCS @n17
-    JMP _DOS_DO_NEWDRAWER
-@n17:
-    LDA #<KW_OPEN
-    LDX #>KW_OPEN
-    JSR _DOS_VERB_MATCH
-    BCS @n18
-    JMP _DOS_DO_OPEN
-@n18:
-    LDA #<KW_CLOSE
-    LDX #>KW_CLOSE
-    JSR _DOS_VERB_MATCH
-    BCS @n19
-    JMP _DOS_DO_CLOSE
-@n19:
-    LDA #<KW_DROPDRAWER
-    LDX #>KW_DROPDRAWER
-    JSR _DOS_VERB_MATCH
-    BCS @n20
-    JMP _DOS_DO_DROPDRAWER
-@n20:
-    LDA #<KW_MOVE
-    LDX #>KW_MOVE
-    JSR _DOS_VERB_MATCH
-    BCS @n21
-    JMP _DOS_DO_MOVE
-@n21:
-    LDA #<KW_DATE
-    LDX #>KW_DATE
-    JSR _DOS_VERB_MATCH
-    BCS @n22
-    JMP _DOS_DO_DATE
-@n22:
+    BCC @hit
+    LDA DOS_TMP                         ; next entry (4 bytes each)
+    CLC
+    ADC #$04
+    STA DOS_TMP
+    BRA @try
+@hit:
+    LDX DOS_TMP                         ; tail-jump to the handler, so its RTS
+    LDA DOS_VERB_TAB+2,X                ;   returns to _DOS_DISPATCH's caller just
+    STA DOS_PTR                         ;   as the old direct JMPs did
+    LDA DOS_VERB_TAB+3,X
+    STA DOS_PTR+1
+    JMP (DOS_PTR)
+
+@nomatch:
     ; No built-in command matched - launch a program by name. A leading '&'
     ; forces the disk path (skip the ROM-module check); otherwise modules win.
     LDX #$00                            ; name starts at offset 0...
@@ -2177,6 +2062,37 @@ MSG_DOS_NOTEMPTY:.BYTE "DRAWER NOT EMPTY", $0D, $0A, 0
 MSG_DOS_NODRAWER:.BYTE "NO SUCH DRAWER", $0D, $0A, 0
 MSG_DOS_NOTROOT: .BYTE "NOT IN ROOT", $0D, $0A, 0
 MSG_DOS_EXISTS:  .BYTE "NAME EXISTS", $0D, $0A, 0
+
+; Verb table: keyword pointer, handler address. Terminated by a $0000 keyword.
+; Aliases simply point at the same handler (CLEAR=CLS, CAT=CATALOG, MORE=TYPE).
+DOS_VERB_TAB:
+    .word KW_CLS,         _DOS_DO_CLS
+    .word KW_CLEAR,       _DOS_DO_CLS
+    .word KW_BANKS,       _DOS_DO_BANKS
+    .word KW_HELP,        _DOS_DO_HELP
+    .word KW_MON,         _DOS_DO_MON
+    .word KW_CATALOG,     _DOS_DO_CAT
+    .word KW_CAT,         _DOS_DO_CAT
+    .word KW_TYPE,        _DOS_DO_TYPE
+    .word KW_SAVE,        _DOS_DO_SAVE
+    .word KW_LOAD,        _DOS_DO_LOAD
+    .word KW_ERASE,       _DOS_DO_ERASE
+    .word KW_RENAME,      _DOS_DO_RENAME
+    .word KW_IMPORT,      _DOS_DO_IMPORT
+    .word KW_EXPORT,      _DOS_DO_EXPORT
+    .word KW_COPY,        _DOS_DO_COPY
+    .word KW_DISKFREE,    _DOS_DO_FREE
+    .word KW_MORE,        _DOS_DO_TYPE
+    .word KW_VERSION,     _DOS_DO_VER
+    .word KW_MEMMAP,      _DOS_DO_MEM
+    .word KW_NEWDRAWER,   _DOS_DO_NEWDRAWER
+    .word KW_OPEN,        _DOS_DO_OPEN
+    .word KW_CLOSE,       _DOS_DO_CLOSE
+    .word KW_DROPDRAWER,  _DOS_DO_DROPDRAWER
+    .word KW_MOVE,        _DOS_DO_MOVE
+    .word KW_DATE,        _DOS_DO_DATE
+    .word $0000                         ; end of table
+
 KW_CLS:          .BYTE "CLS", 0
 KW_CLEAR:        .BYTE "CLEAR", 0
 KW_BANKS:        .BYTE "BANKS", 0
