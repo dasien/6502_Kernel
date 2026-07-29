@@ -47,18 +47,22 @@ public:
     // order, each in contiguous clusters starting at cluster 2. dataClusters
     // sets the volume size (default small for tests; kHostFat16Clusters for a
     // host-mountable image).
+    // numFats defaults to 1 (what this project ships). Pass 2 to build the layout
+    // real host tools produce -- both Linux mkfs.fat and macOS newfs_msdos default
+    // to two FATs -- which is the only way to exercise the driver's FAT mirroring.
     static std::vector<uint8_t> build(const std::vector<Fat16File> &files,
-                                      uint32_t dataClusters = kDefaultDataClusters) {
+                                      uint32_t dataClusters = kDefaultDataClusters,
+                                      uint8_t numFats = kNumFats) {
         const uint16_t fatSize = fatSectors(dataClusters);
         const uint16_t rootSectors = kRootEntries * 32 / kBytesPerSector; // = 1
         const uint16_t fatStart = kReservedSectors;
-        const uint16_t rootStart = fatStart + kNumFats * fatSize;
+        const uint16_t rootStart = fatStart + numFats * fatSize;
         const uint16_t dataStart = rootStart + rootSectors;
         const uint32_t totalSectors = dataStart + dataClusters;
 
         std::vector<uint8_t> img(totalSectors * kBytesPerSector, 0x00);
 
-        writeBootSector(img, fatSize, totalSectors);
+        writeBootSector(img, fatSize, totalSectors, numFats);
 
         // FAT[0]/FAT[1] are reserved (media + EOC markers).
         std::vector<uint16_t> fat(2 + dataClusters, 0x0000);
@@ -145,11 +149,14 @@ public:
             writeDirEntry(root + rootIdx++ * 32, drawerOrder[d], firstDir, 0, 0x10);
         }
 
-        // Serialize the FAT (little-endian 16-bit entries).
-        uint8_t *fatBytes = &img[fatStart * kBytesPerSector];
-        for (size_t i = 0; i < fat.size(); ++i) {
-            fatBytes[i * 2] = fat[i] & 0xFF;
-            fatBytes[i * 2 + 1] = (fat[i] >> 8) & 0xFF;
+        // Serialize the FAT (little-endian 16-bit entries) into every copy, so a
+        // freshly built multi-FAT image starts out consistent.
+        for (uint8_t n = 0; n < numFats; ++n) {
+            uint8_t *fatBytes = &img[(fatStart + n * fatSize) * kBytesPerSector];
+            for (size_t i = 0; i < fat.size(); ++i) {
+                fatBytes[i * 2] = fat[i] & 0xFF;
+                fatBytes[i * 2 + 1] = (fat[i] >> 8) & 0xFF;
+            }
         }
 
         return img;
@@ -178,14 +185,14 @@ private:
     }
 
     static void writeBootSector(std::vector<uint8_t> &img, uint16_t fatSize,
-                                uint32_t totalSectors) {
+                                uint32_t totalSectors, uint8_t numFats) {
         uint8_t *b = img.data();
         b[0] = 0xEB; b[1] = 0x3C; b[2] = 0x90;          // jump (cosmetic)
         std::memcpy(&b[3], "MFCDOS  ", 8);              // OEM name
         put16(&b[0x0B], kBytesPerSector);
         b[0x0D] = kSectorsPerCluster;
         put16(&b[0x0E], kReservedSectors);
-        b[0x10] = kNumFats;
+        b[0x10] = numFats;
         put16(&b[0x11], kRootEntries);
         if (totalSectors < 0x10000) {
             put16(&b[0x13], static_cast<uint16_t>(totalSectors)); // TotalSectors16
@@ -198,7 +205,14 @@ private:
         put16(&b[0x18], 63);                             // sectors/track (cosmetic)
         put16(&b[0x1A], 255);                            // heads (cosmetic)
         b[0x26] = 0x29;                                  // extended boot signature
-        std::memcpy(&b[0x2B], "MFCDOS VOL ", 11);        // volume label
+        // "NO NAME" is the conventional BPB value for an unlabelled volume (it is
+        // what mkfs.fat writes with no -n). Naming the volume here would need a
+        // matching attr-$08 entry in the root directory, which checkers treat as
+        // authoritative -- declaring a label with no such entry made fsck.fat report
+        // the image as damaged and auto-remove the label. A real label entry would
+        // also burn one of only 16 root slots, and nothing on the machine displays
+        // it: both the DOS catalog and Fat16ImageReader skip attr-$08 entries.
+        std::memcpy(&b[0x2B], "NO NAME    ", 11);        // volume label (none)
         std::memcpy(&b[0x36], "FAT16   ", 8);            // fs type
         b[0x1FE] = 0x55; b[0x1FF] = 0xAA;                // boot signature
     }
@@ -233,18 +247,26 @@ private:
     // Write the '.' (self) and '..' (parent=root) entries at the start of a
     // one-level drawer's directory cluster, matching _DOS_INIT_DRAWER_CLUSTER.
     // The '.'/'..' names are raw (not 8.3), so set the bytes directly.
+    // Every subdirectory opens with '.' (itself) and '..' (its parent).
+    //
+    // Only the 11 NAME bytes are space-padded. Blanking the whole 32-byte entry
+    // with spaces also put $20 into offset $0C (DIR_NTRes), which the spec requires
+    // to be zero -- so Linux `fsck.fat` reported all six dot entries as damaged
+    // ("Is a dot with no 8.3 name flag set, clearing") and offered to rewrite the
+    // image. Regular entries were correct only by luck: writeDirEntry space-fills
+    // just the name and the rest of the image is already zeroed.
     static void writeDotEntries(uint8_t *dir, uint16_t selfCluster) {
-        std::memset(dir, ' ', 32);
+        std::memset(dir, 0, 32);
+        std::memset(dir, ' ', 11);        // name field only
         dir[0] = '.';
         dir[0x0B] = 0x10;                 // directory
         put16(&dir[0x1A], selfCluster);   // '.' -> this drawer's cluster
-        put32(&dir[0x1C], 0);
         uint8_t *dd = dir + 32;
-        std::memset(dd, ' ', 32);
+        std::memset(dd, 0, 32);
+        std::memset(dd, ' ', 11);
         dd[0] = '.'; dd[1] = '.';
         dd[0x0B] = 0x10;
         put16(&dd[0x1A], 0);              // '..' -> root
-        put32(&dd[0x1C], 0);
     }
 };
 

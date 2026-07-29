@@ -499,3 +499,23 @@ if(PYTHON3_EXECUTABLE)
 else()
     message(WARNING "python3 not found - skipping opcode_table_current test")
 endif()
+
+# Host-interop guard: a mkdisk-built image must be a FAT16 volume the host's own
+# checker accepts. Images are meant to be mountable on macOS/Linux/Windows, and that
+# was previously verified once by hand -- which went stale the moment drawers were
+# added (their '.'/'..' entries carried a bad DIR_NTRes byte, so fsck.fat reported
+# every image as damaged). This keeps it honest, and keeps fsck usable as the signal
+# for genuine corruption such as the two FAT copies disagreeing.
+find_program(FSCK_FAT_EXECUTABLE NAMES fsck.fat fsck.vfat dosfsck
+             HINTS /sbin /usr/sbin)
+if(FSCK_FAT_EXECUTABLE)
+    add_test(NAME fat16_image_clean
+        COMMAND ${CMAKE_COMMAND}
+        -DMKDISK=$<TARGET_FILE:mkdisk>
+        -DFSCK=${FSCK_FAT_EXECUTABLE}
+        -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}
+        -P ${CMAKE_SOURCE_DIR}/tests/scripts/validate_fat16_image.cmake)
+else()
+    message(STATUS "fsck.fat not found - skipping fat16_image_clean "
+                   "(install dosfstools to check host FAT16 interop)")
+endif()

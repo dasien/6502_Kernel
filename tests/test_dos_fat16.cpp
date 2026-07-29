@@ -568,6 +568,107 @@ TEST_F(DosFat16Test, SkipsDeletedEntries) {
 // Write-path regressions (data loss)
 // ================================================================
 
+// Mount must reject anything that is not a 512-byte-sector FAT16 volume, instead of
+// parsing the geometry "successfully" and destroying the image on the first write:
+// 12-bit FAT entries read as 16-bit give garbage chains, and marking a byte pair
+// $FFFF writes over a packed FAT12 table. On FAT32, RootEntCnt and FATSize16 are 0,
+// which collapses root_start onto fat_start -- directory entries would be written
+// into the FAT itself. Build a good image, then break one BPB field.
+class DosFat16MountTest : public DosFat16Test {
+protected:
+    // Write a valid image, patch one boot-sector byte, and report whether the DOS
+    // will still open a file on it.
+    bool mountsAfterPatch(size_t offset, uint8_t value, uint8_t value2 = 0,
+                          size_t offset2 = 0) {
+        std::vector<uint8_t> img = Fat16ImageBuilder::build(
+            {{"A.TXT", std::vector<uint8_t>(10, 'a')}});
+        img[offset] = value;
+        if (offset2) img[offset2] = value2;
+        std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char *>(img.data()),
+                static_cast<std::streamsize>(img.size()));
+        f.close();
+        std::vector<uint8_t> out;
+        return openReadClose("A.TXT", out);
+    }
+};
+
+TEST_F(DosFat16MountTest, SanityGoodVolumeStillMounts) {
+    // Guards the guard: if this failed, the rejections below would be meaningless.
+    EXPECT_TRUE(mountsAfterPatch(0x3A, '6')) << "an unmodified FAT16 image must mount";
+}
+
+TEST_F(DosFat16MountTest, RefusesFat12Volume) {
+    // BPB type string "FAT12   " instead of "FAT16   " (only the 5th char differs).
+    EXPECT_FALSE(mountsAfterPatch(0x3A, '2'));
+}
+
+// NOTE: these next two pass with or without the mount checks -- verified by reverting
+// dos.asm. Zeroing RootEntryCount or FATSize16 breaks the geometry so thoroughly that
+// the open fails downstream anyway (root_start collapses onto fat_start, so the
+// directory scan reads FAT bytes and finds nothing). They are kept as guards, not as
+// regression tests: the explicit check turns an accidental failure into a deliberate
+// refusal, and stops a future change from letting a FAT32 image half-work.
+TEST_F(DosFat16MountTest, RefusesFat32Geometry) {
+    // FAT32 marks the fixed root as absent: RootEntryCount == 0.
+    EXPECT_FALSE(mountsAfterPatch(0x11, 0x00, 0x00, 0x12));
+}
+
+TEST_F(DosFat16MountTest, RefusesZeroFatSize) {
+    // FATSize16 == 0 is the other FAT32 marker.
+    EXPECT_FALSE(mountsAfterPatch(0x16, 0x00, 0x00, 0x17));
+}
+
+TEST_F(DosFat16MountTest, RefusesNon512SectorSize) {
+    // 1024-byte sectors: every LBA computation would be wrong.
+    EXPECT_FALSE(mountsAfterPatch(0x0B, 0x00, 0x04, 0x0C));
+}
+
+// On a two-FAT volume every FAT copy must be updated. Host tools format with two
+// FATs by default (Linux `mkfs.fat -F 16` and macOS newfs_msdos both do), and the
+// driver used to write only FAT #1 -- so a host checker would find the copies
+// disagreeing and "repair" the volume by copying FAT #2 over FAT #1, silently
+// discarding every file the machine had written. Our own images use one FAT, so this
+// path is invisible unless the image is built with two.
+TEST_F(DosFat16Test, WritesAreMirroredIntoEveryFat) {
+    const std::vector<uint8_t> img = Fat16ImageBuilder::build(
+        {{"A.TXT", std::vector<uint8_t>(10, 'a')}},
+        Fat16ImageBuilder::kDefaultDataClusters, /*numFats=*/2);
+    {
+        std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char *>(img.data()),
+                static_cast<std::streamsize>(img.size()));
+    }
+
+    // A multi-cluster write, so several FAT entries are touched (chain + EOC).
+    ASSERT_TRUE(fsWriteFile("NEW.DAT", pattern(1500, 0x33)));
+
+    const std::vector<uint8_t> out = readImageFile();
+    // Geometry straight from the BPB.
+    const uint16_t bps = static_cast<uint16_t>(out[11] | (out[12] << 8));
+    const uint16_t reserved = static_cast<uint16_t>(out[14] | (out[15] << 8));
+    const uint8_t nfats = out[16];
+    const uint16_t fatSize = static_cast<uint16_t>(out[22] | (out[23] << 8));
+    ASSERT_EQ(nfats, 2) << "the image must really have two FATs";
+
+    const size_t fat1 = static_cast<size_t>(reserved) * bps;
+    const size_t fat2 = fat1 + static_cast<size_t>(fatSize) * bps;
+    const size_t bytes = static_cast<size_t>(fatSize) * bps;
+    ASSERT_LE(fat2 + bytes, out.size());
+
+    const bool identical = std::equal(out.begin() + fat1, out.begin() + fat1 + bytes,
+                                      out.begin() + fat2);
+    EXPECT_TRUE(identical)
+        << "FAT #2 diverged from FAT #1: a host fsck would 'repair' this by "
+           "discarding the file just written";
+
+    // And the file itself must still be readable, i.e. mirroring did not corrupt
+    // the chain it was mirroring.
+    std::vector<uint8_t> back;
+    ASSERT_TRUE(openReadClose("NEW.DAT", back));
+    EXPECT_EQ(back, pattern(1500, 0x33));
+}
+
 // A write whose name matches a DRAWER must be refused. _DOS_DIR_FIND_FOR_WRITE
 // used to compare only the 11 name bytes, so it took the drawer's slot, freed the
 // drawer's *directory* cluster chain, and rewrote the entry as a $20 file --

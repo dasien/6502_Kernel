@@ -142,9 +142,10 @@ This is how the assemble → `SAVE` → run-by-name loop closes: assemble in `AS
 Because the disk is a genuine FAT16 image, you can move files between the machine
 and your Mac two ways:
 
-- **In MFC/OS:** `IMPORT name` copies a host file (chosen from a macOS file
+- **In MFC/OS:** `IMPORT name` copies a host file (chosen from a host file
   picker) onto the disk; `EXPORT name` copies a disk file out to a host file.
-- **On the Mac:** mount `disk.img` directly and drag files in and out.
+- **On the host:** mount `disk.img` directly and drag files in and out (macOS
+  Finder, `mount -o loop` on Linux, or any tool that reads FAT16).
 
 ## Drawers (subdirectories)
 
@@ -200,6 +201,21 @@ and the time, so there is no separate time command.
 ## The disk
 
 MFC/OS stores everything on a single FAT16 disk image (`disk.img`). Because it's
-a standard FAT16 volume, macOS can mount the same image read/write, so files you
-create on the machine appear on the Mac and vice versa. Files use 8.3 names
-(up to eight characters, a dot, and a three-character extension).
+a standard FAT16 volume, your host can mount the same image read/write — macOS,
+Linux and Windows all can — so files you create on the machine appear on the host
+and vice versa. Files use 8.3 names (up to eight characters, a dot, and a
+three-character extension).
+
+**The image must be FAT16 with 512-byte sectors.** MFC/OS checks the volume when
+it mounts and refuses anything else, because driving a FAT12 or FAT32 volume as
+FAT16 would corrupt it on the very first write. If you format an image yourself,
+ask for FAT16 explicitly and make it at least ~2 MB — every formatter silently
+chooses FAT12 for small volumes:
+
+```
+mkfs.fat -F 16 disk.img          # Linux
+newfs_msdos -F 16 disk.img       # macOS
+```
+
+Two FATs (the default for both of those tools) are fine: MFC/OS keeps every copy
+in step, so a host filesystem check won't find them disagreeing.

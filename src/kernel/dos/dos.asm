@@ -245,8 +245,13 @@ DOS_SIGNATURE:
 ;   1.15 files are timestamped from the RTC on write; CATALOG shows the date/time
 ;   1.16 kernel RNG reworked: RTC-seeded 16-bit LFSR (kernel v3.22)
 ;   1.17 kernel K_GET_JIFFIES ($FF39): 60 Hz monotonic tick counter (kernel v3.23)
+;   1.18 host-interop safety: FAT writes are mirrored into every FAT copy (hosts
+;        format with two by default, and a checker "repairing" the divergence
+;        discards everything the machine wrote), and _FS_MOUNT validates the BPB
+;        instead of trusting it -- a FAT12/FAT32 or non-512-byte-sector image is
+;        refused rather than driven as FAT16 and destroyed on the first write
 DOS_VERSION:
-    .BYTE $01, $11                      ; version 1.17 (major, minor)
+    .BYTE $01, $12                      ; version 1.18 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -739,16 +744,7 @@ _DOS_DO_CAT:
     BNE @allf
     BRA @scan
 @havearg:
-    LDX MON_CMDLEN                      ; null-terminate the pattern at end-of-line
-    LDA #$00
-    STA MON_CMDBUF,X
-    TYA                                 ; DOS_PTR = &MON_CMDBUF[Y]
-    CLC
-    ADC #<MON_CMDBUF
-    STA DOS_PTR
-    LDA #>MON_CMDBUF
-    ADC #$00
-    STA DOS_PTR+1
+    JSR _DOS_ARGPTR                     ; terminate the line, DOS_PTR = &arg
     JSR _DOS_PARSE_PATTERN83            ; -> DOS_NAME83 (template, '?' = wildcard)
 @scan:
     JSR K_PRINT_NEWLINE
@@ -954,17 +950,7 @@ _DOS_DO_TYPE:
     BCC @skip
     JMP @noname                         ; nothing after TYPE
 @name:
-    LDX MON_CMDLEN                      ; null-terminate the line
-    LDA #$00
-    STA MON_CMDBUF,X
-    TYA                                 ; A/X = &MON_CMDBUF[Y]
-    CLC
-    ADC #<MON_CMDBUF
-    PHA
-    LDA #>MON_CMDBUF
-    ADC #$00
-    TAX
-    PLA
+    JSR _DOS_ARGPTR                     ; terminate the line, A/X = &arg
     LDY #$00                            ; read mode
     JSR _FS_OPEN
     BCS @notfound
@@ -1624,6 +1610,17 @@ _DOS_DO_DROPDRAWER:
 ; _DOS_ARG_TO_NAME83 - In: Y = arg start index in MON_CMDBUF. Null-terminates the
 ; line, points DOS_PTR at the arg, parses it to DOS_NAME83. Preserves nothing.
 _DOS_ARG_TO_NAME83:
+    JSR _DOS_ARGPTR
+    JMP _DOS_PARSE_NAME83               ; tail
+
+; ----------------------------------------------------------------
+; _DOS_ARGPTR - null-terminate the command line and point at its argument
+; ----------------------------------------------------------------
+; Terminates MON_CMDBUF at MON_CMDLEN and builds a pointer to MON_CMDBUF[Y], the
+; prologue every verb needs before parsing a name. Returned two ways so both
+; conventions in the shell can use it: DOS_PTR (for the parsers) and A/X (for the
+; ABI calls that take a pointer in A/X). Clobbers A and X.
+_DOS_ARGPTR:
     LDX MON_CMDLEN
     LDA #$00
     STA MON_CMDBUF,X
@@ -1634,7 +1631,9 @@ _DOS_ARG_TO_NAME83:
     LDA #>MON_CMDBUF
     ADC #$00
     STA DOS_PTR+1
-    JMP _DOS_PARSE_NAME83               ; tail
+    LDX DOS_PTR+1
+    LDA DOS_PTR
+    RTS
 
 ; ----------------------------------------------------------------
 ; _DOS_DO_FREE - DISKFREE: report free disk space in bytes and KB
@@ -2372,17 +2371,26 @@ _FS_MOUNT:
     LDX #$00
     JSR _DOS_READ_SECTOR
     BCC @read_ok
-    STZ DOS_MOUNTED                     ; read failed -> not mounted
-    SEC
-    RTS
+@badgeom:                               ; also the geometry-rejection exit below:
+    STZ DOS_MOUNTED                     ;   read failed, or not a 512-byte-sector
+    SEC                                 ;   FAT16 volume -> refuse to mount rather
+    RTS                                 ;   than destroy it on the first write
 @read_ok:
     ; seek to BPB offset $0B (BytesPerSector)
     LDA #$0B
     STA DOS_TMP
     STZ DOS_TMP+1
     JSR _DOS_SKIP_BYTES
-    LDA BLK_DATA                        ; $0B BytesPerSector lo (assume 512)
+    ; Validate the geometry before trusting it. Driving a volume that is not
+    ; 512-byte-sector FAT16 wrecks it on the first write: 12-bit FAT entries read as
+    ; 16-bit give garbage chains, and marking a "free" pair $FFFF writes two bytes
+    ; over a packed FAT12 table. FAT32 is worse -- RootEntCnt and FATSize16 are 0,
+    ; so root_start == fat_start and directory entries would be written into the FAT.
+    LDA BLK_DATA                        ; $0B BytesPerSector lo -- must be $0200
+    BNE @badgeom
     LDA BLK_DATA                        ; $0C BytesPerSector hi
+    CMP #$02
+    BNE @badgeom
     LDA BLK_DATA                        ; $0D SectorsPerCluster
     STA DOS_SEC_PER_CLUS
     LDA BLK_DATA                        ; $0E ReservedSectorCount lo = FAT start
@@ -2404,6 +2412,24 @@ _FS_MOUNT:
     STA DOS_FATSIZE
     LDA BLK_DATA                        ; $17 FATSize16 hi
     STA DOS_FATSIZE+1
+    LDA DOS_ROOT_ENTS                   ; a fixed root of 0 entries means FAT32
+    ORA DOS_ROOT_ENTS+1
+    BEQ @badgeom
+    LDA DOS_FATSIZE                     ; FATSize16 == 0 likewise means FAT32
+    ORA DOS_FATSIZE+1
+    BEQ @badgeom
+    ; Distinguish FAT12 from FAT16 by the BPB type string at $36 ("FAT16   " vs
+    ; "FAT12   "): the 5th character is the only byte that differs. The spec's own
+    ; discriminator is the cluster count (>= 4085 is FAT16), but this project's test
+    ; images are deliberately 128 clusters for speed and would fail that, so trust
+    ; the label the formatter wrote instead. Cursor is at $18; skip to $3A.
+    LDA #$22
+    STA DOS_TMP
+    STZ DOS_TMP+1
+    JSR _DOS_SKIP_BYTES
+    LDA BLK_DATA                        ; $3A = 5th char of the FS type string
+    CMP #'6'
+    BNE @badgeom
     ; root_start = FAT_start + NumFATs * FATSize
     STZ DOS_TMP
     STZ DOS_TMP+1
@@ -3929,7 +3955,34 @@ _DOS_READ_FAT_ENTRY:
 ; _DOS_WRITE_FAT_ENTRY - FAT[DOS_ARG_CLUS] = DOS_ARG_VAL (read-modify-write the
 ; FAT sector: seek positions the port at the entry, overwrite 2 bytes in the
 ; buffered sector, then flush it back). Carry on error.
+; Write DOS_ARG_VAL into the entry for DOS_ARG_CLUS, in every FAT the volume has.
+;
+; Hosts format with TWO FATs by default -- both Linux `mkfs.fat -F 16` and macOS
+; newfs_msdos/Disk Utility -- and updating only the first leaves the copies
+; disagreeing. A host checker then "repairs" the volume by copying FAT #2 over
+; FAT #1, which silently discards every file the machine wrote. Our own images use
+; one FAT, so this costs nothing there.
 _DOS_WRITE_FAT_ENTRY:
+    JSR _DOS_FAT_PUT                    ; FAT #1
+    BCS @err
+    LDA DOS_NUMFATS
+    CMP #$02
+    BCC @done                           ; single-FAT volume: nothing to mirror
+    JSR _DOS_FAT_BASE_ADD               ; base += FATSIZE -> FAT #2
+    JSR _DOS_FAT_PUT
+    PHP                                 ; keep the result across the restore
+    JSR _DOS_FAT_BASE_SUB               ; always put the base back
+    PLP
+    BCS @err
+@done:
+    CLC
+    RTS
+@err:
+    SEC
+    RTS
+
+; Store DOS_ARG_VAL into DOS_ARG_CLUS's entry in the FAT based at DOS_FAT_START.
+_DOS_FAT_PUT:
     JSR _DOS_FAT_SEEK
     BCS @err
     LDA DOS_ARG_VAL
@@ -3939,6 +3992,29 @@ _DOS_WRITE_FAT_ENTRY:
     JSR _DOS_BLK_FLUSH                  ; flush the FAT sector (BLK_LBA unchanged)
     BNE @err
     CLC
+    RTS
+@err:
+    SEC
+    RTS
+
+; Move the FAT base one FAT forward / back (DOS_FAT_START +/- DOS_FATSIZE).
+_DOS_FAT_BASE_ADD:
+    CLC
+    LDA DOS_FAT_START
+    ADC DOS_FATSIZE
+    STA DOS_FAT_START
+    LDA DOS_FAT_START+1
+    ADC DOS_FATSIZE+1
+    STA DOS_FAT_START+1
+    RTS
+_DOS_FAT_BASE_SUB:
+    SEC
+    LDA DOS_FAT_START
+    SBC DOS_FATSIZE
+    STA DOS_FAT_START
+    LDA DOS_FAT_START+1
+    SBC DOS_FATSIZE+1
+    STA DOS_FAT_START+1
     RTS
 @err:
     SEC
