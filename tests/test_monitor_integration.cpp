@@ -67,6 +67,10 @@ public:
         testTwoPassDirectives();
         testAssemblerListing();
         testAssemblerCaseInsensitive();
+        testAssemblerForwardEquate();
+        testAssemblerRangeDiagnostics();
+        testAssemblerLongLineDiagnosed();
+        testAssemblerOriginGuards();
 
         // Monitor tests run inside MON.
         sendCommand("MON");
@@ -1066,6 +1070,119 @@ private:
         verifyMemEquals(0x0807, 0x00, "ci: label 'start' lo (case-insensitive ref)");
         verifyMemEquals(0x0808, 0x08, "ci: label 'start' hi");
 
+        sendKey(0x1B, 200000);
+    }
+
+    // Feed a source into SRC_BUF and build it. Shared by the diagnostics tests.
+    void assembleSource(const char *src) {
+        Computer::Memory *mem = computer.getMemory();
+        uint16_t a = 0x8000;                     // SRC_BUF
+        for (const char *p = src; *p; ++p)
+            mem->write(a++, static_cast<uint8_t>(*p));
+        mem->write(a, 0x00);
+        launchAsm();
+        sendCommand("B", 400000);
+    }
+
+    // Regression: "NAME = expr" must be re-evaluated on pass 2. Pass 1 evaluated it
+    // with MSG still undefined (worth 0), pass 2 re-evaluated correctly and then
+    // threw the result away -- so every use of PTR assembled as 0 and printed OK.
+    void testAssemblerForwardEquate() {
+        assembleSource(".ORG $0900\n"
+                       "PTR = MSG\n"
+                       "LDA #<PTR\n"
+                       "LDX #>PTR\n"
+                       "RTS\n"
+                       "MSG: .BYTE $41,$42\n"
+                       ".END\n");
+        // MSG sits at $0900 + 2 + 2 + 1 = $0905.
+        verifyMemEquals(0x0900, 0xA9, "fwd equate: LDA #imm");
+        verifyMemEquals(0x0901, 0x05, "fwd equate: low byte of MSG (was 0)");
+        verifyMemEquals(0x0902, 0xA2, "fwd equate: LDX #imm");
+        verifyMemEquals(0x0903, 0x09, "fwd equate: high byte of MSG (was 0)");
+        verifyMemEquals(0x0905, 0x41, "fwd equate: .BYTE data follows");
+        sendKey(0x1B, 200000);
+    }
+
+    // Out-of-range operands used to be truncated silently: LDA #$100 assembled as
+    // A9 00, .BYTE 300 stored $2C, and a 5-digit hex value shifted its top nibble
+    // out ($12345 -> $2345). Branch range was the only check that existed, which
+    // made the inconsistency worse. Each must now report "? LINE".
+    void testAssemblerRangeDiagnostics() {
+        clearScreen();
+        assembleSource(".ORG $0900\nLDA #$100\n.END\n");
+        verifyResponse("? LINE", "asm: immediate > $FF is diagnosed");
+        sendKey(0x1B, 200000);
+
+        clearScreen();
+        assembleSource(".ORG $0900\n.BYTE 300\n.END\n");
+        verifyResponse("? LINE", "asm: .BYTE > 255 is diagnosed");
+        sendKey(0x1B, 200000);
+
+        clearScreen();
+        assembleSource(".ORG $0900\nLDA $12345\n.END\n");
+        verifyResponse("? LINE", "asm: hex wider than 4 digits is diagnosed");
+        sendKey(0x1B, 200000);
+    }
+
+    // A source line longer than the 79-char buffer had its tail dropped silently,
+    // so a split token assembled as something else (typically a label-only line),
+    // omitting the instruction from both passes and shifting every later label --
+    // while the build still printed OK. Only lost CODE is an error: a long trailing
+    // comment is harmless, and several shipped examples/*.asm rely on that (their
+    // comment lines run to 86 columns).
+    void testAssemblerLongLineDiagnosed() {
+        // Code pushed past the buffer -> refused.
+        std::string bad = ".ORG $0900\n";
+        bad.append(75, ' ');
+        bad += "LDA #$01\n.END\n";                // the instruction itself is cut off
+        clearScreen();
+        assembleSource(bad.c_str());
+        verifyResponse("? LINE", "asm: over-length CODE is diagnosed");
+        sendKey(0x1B, 200000);
+
+        // Same overall length, but everything past column 79 is comment -> accepted.
+        std::string ok = ".ORG $0900\nLDA #$5C   ; ";
+        ok.append(70, 'x');                       // comment runs well past 79 columns
+        ok += "\nRTS\n.END\n";
+        computer.getMemory()->write(0x0900, 0x00);
+        clearScreen();
+        assembleSource(ok.c_str());
+        verifyMemEquals(0x0900, 0xA9, "asm: long trailing comment still assembles");
+        verifyMemEquals(0x0901, 0x5C, "asm: operand survives a truncated comment");
+        verifyMemEquals(0x0902, 0x60, "asm: next line assembles after a long comment");
+        sendKey(0x1B, 200000);
+    }
+
+    // Pass 2 emits with plain stores, so the origin has to be writable RAM. An
+    // origin below $0200 wrote over the monitor's zero page and the 6502 stack
+    // (killing the machine mid-build); $9000+ landed in the DOS ROM, this module's
+    // own bank window or the kernel ROM, where writes are discarded -- so the build
+    // printed OK having emitted nothing. Also: with no .ORG at all the default is
+    // now $0800 (where a .PRG loads), not $0000.
+    void testAssemblerOriginGuards() {
+        clearScreen();
+        assembleSource(".ORG $0000\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin in zero page is refused");
+        sendKey(0x1B, 200000);
+
+        clearScreen();
+        assembleSource(".ORG $B000\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin in the module window is refused");
+        sendKey(0x1B, 200000);
+
+        clearScreen();
+        assembleSource(".ORG $E000\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin in the kernel ROM is refused");
+        sendKey(0x1B, 200000);
+
+        // No .ORG: assembles at the $0800 default and really emits there.
+        computer.getMemory()->write(0x0800, 0x00);
+        clearScreen();
+        assembleSource("LDA #$7E\nRTS\n.END\n");
+        verifyMemEquals(0x0800, 0xA9, "asm: default origin is $0800");
+        verifyMemEquals(0x0801, 0x7E, "asm: default-origin operand");
+        verifyMemEquals(0x0802, 0x60, "asm: default-origin RTS");
         sendKey(0x1B, 200000);
     }
 

@@ -3,7 +3,9 @@
 ; ================================================================
 ; Filename:     assembler.asm
 ; Author:       Brian Gentry
-; Version:      0.6 (Phase 4 sub-step 6: host source load + listing)
+; Version:      0.7 (diagnose what used to assemble silently wrong: forward
+;                    references in "NAME = expr", over-range operands, over-length
+;                    source lines, and an origin outside writable RAM)
 ; Assembler:    ca65  (-I src/kernel/assembler for opcodes_65c02.inc)
 ;
 ; A bank-switched ROM module for the $B000-$DFFF window (module bank 2; see
@@ -42,6 +44,11 @@ MON_MSG_PTR_HI   = $17
 MON_CMDBUF       = $0200            ; command input buffer (filled by K_READ_LINE)
 MON_CMDBUF_LEN   = 80               ; kernel command-buffer capacity
 MON_CMDLEN       = $026A            ; length of the line in MON_CMDBUF
+
+; Set by ASM2_NEXTLINE when a source line did not fit in MON_CMDBUF. Lives in the
+; free system RAM above the kernel's page-2/3 allocation (which ends at $02E2), not
+; in the module's zero page -- $C0-$DF is fully assigned.
+ASM2_TRUNC       = $02E3            ; non-zero: the current source line was cut short
 
 ASCII_ESC        = $1B
 DISASM_COUNT     = 16               ; instructions disassembled per D command
@@ -790,6 +797,8 @@ AH_LOOP:
     STA ASM_VAL
     INX
     INY
+    CPY #$05                        ; a 5th digit would shift the top nibble out:
+    BCS AH_ERR                      ;   "LDA $12345" silently became LDA $2345
     BRA AH_LOOP
 AH_DONE:
     CPY #$00
@@ -882,6 +891,10 @@ R_ACC:
     LDA #MODE_ACC
     JMP R_FIND
 R_IMM:
+    LDA ASM_VAL+1                   ; an immediate holds one byte: "LDA #$100"
+    BNE R_ERR                       ;   silently assembled as A9 00. (#<SYM / #>SYM
+                                    ;   have already been reduced to a byte, so a
+                                    ;   non-zero high byte really is out of range.)
     LDA #MODE_IMM
     JMP R_FIND
 R_DIR:
@@ -1064,8 +1077,13 @@ ASM2_PASS_RUN:
     STZ ASM2_LINENO
     STZ ASM2_LINENO+1
     STZ ASM2_END
-    STZ ASM_PC                      ; default origin; .ORG/*= overrides
-    STZ ASM_PC+1
+    ; Default origin $0800 -- where the DOS loads and runs a .PRG, so a source with
+    ; no .ORG assembles somewhere safe and runnable. It used to default to $0000, so
+    ; forgetting .ORG made pass 2 write opcodes over the monitor's zero page, the
+    ; assembler's own zero page and the 6502 stack, killing the machine mid-build.
+    STZ ASM_PC
+    LDA #$08
+    STA ASM_PC+1
 APR_LOOP:
     JSR ASM2_NEXTLINE
     BCS APR_DONE                    ; end of source
@@ -1073,6 +1091,11 @@ APR_LOOP:
     BNE APR_NOHI
     INC ASM2_LINENO+1
 APR_NOHI:
+    LDA ASM2_TRUNC                  ; code (not just a comment) lost off the end of
+    AND #$01                        ;   the 79-char buffer: refuse rather than
+    BEQ APR_LENOK                   ;   assemble a truncated token
+    JMP APR_ERR
+APR_LENOK:
     LDA ASM2_PASS                   ; pass 2: list "AAAA: " (PC at line start)
     CMP #$02
     BNE APR_NOLIST
@@ -1108,6 +1131,7 @@ APR_ERR:
 ; Carry clear if a line was read (MON_CMDLEN set); carry set at end of source.
 ; ----------------------------------------------------------------
 ASM2_NEXTLINE:
+    STZ ASM2_TRUNC                  ; assume the line fits
     LDY #$00                        ; offset from ASM2_SRC
     LDX #$00                        ; chars stored
 ANL_LOOP:
@@ -1117,10 +1141,28 @@ ANL_LOOP:
     BEQ ANL_EOL
     CMP #$0A
     BEQ ANL_EOL
+    CMP #';'                        ; remember where the comment starts: losing
+    BNE ANL_NOTCMT                  ;   comment text costs nothing, and plenty of
+    PHA                             ;   real sources carry long trailing comments
+    LDA #$02
+    TSB ASM2_TRUNC                  ; bit 1 = inside a comment
+    PLA
+ANL_NOTCMT:
     CPX #MON_CMDBUF_LEN-1
-    BCS ANL_NOSTORE                 ; line too long: keep scanning, stop storing
+    BCS ANL_TOOLONG                 ; line too long: keep scanning, stop storing
     STA MON_CMDBUF,X
     INX
+    BRA ANL_NOSTORE
+ANL_TOOLONG:
+    ; Dropping CODE is what hurts: a token cut in half assembled as something else
+    ; entirely -- typically a label-only line, which omitted the instruction from
+    ; BOTH passes and shifted every later label, while the build still printed OK.
+    ; A truncated comment is harmless, so only flag the former.
+    LDA #$02
+    BIT ASM2_TRUNC                  ; already past a ';'?
+    BNE ANL_NOSTORE                 ;   yes -> drop the tail quietly
+    LDA #$01
+    TSB ASM2_TRUNC                  ;   no  -> real text lost; bit 0 = error
 ANL_NOSTORE:
     INY
     BRA ANL_LOOP
@@ -1311,7 +1353,26 @@ TA_REST:
     BPL TA_REST
     LDA ASM2_PASS
     CMP #$01
-    BNE TA_HANDLED                  ; pass 2: already defined in pass 1
+    BEQ TA_DEFINE                   ; pass 1: create the symbol
+    ; Pass 2 must REFRESH the value, not skip it. The expression can reference a
+    ; label defined further down the source, which was still unknown in pass 1 and
+    ; evaluated as 0 -- so "PTR = MSG" ahead of "MSG:" stored 0, pass 2 re-evaluated
+    ; correctly and then threw the result away, and every use of PTR assembled as 0
+    ; with no error.
+    LDA ASM_VAL                     ; SYM_LOOKUP overwrites ASM_VAL with the stored
+    STA ASM_NAME_BUF                ; value, so stash the fresh one first.
+    LDA ASM_VAL+1                   ; ASM_NAME_BUF is free: TA_REST has already
+    STA ASM_NAME_BUF+1              ; copied the name back into ASM_LBL_BUF.
+    JSR SYM_LOOKUP                  ; locate the entry (leaves SYM_PTR on it)
+    BCS TA_ERR                      ; pass 1 defined it, so this cannot fail
+    LDY #SYM_NAME_LEN
+    LDA ASM_NAME_BUF
+    STA (SYM_PTR),Y
+    INY
+    LDA ASM_NAME_BUF+1
+    STA (SYM_PTR),Y
+    BRA TA_HANDLED
+TA_DEFINE:
     JSR SYM_ADD
     BCS TA_ERR
 TA_HANDLED:
@@ -1558,7 +1619,7 @@ ASM2_PSEUDO:
     BEQ AP_STAR
     INC ASM_IDX                     ; consume '.'
     JSR ASM2_PARSE_IDENT            ; directive word -> ASM_LBL_BUF
-    BCS AP_ERR
+    BCS AP_ERR_J
     LDA #<D_ORG
     LDY #>D_ORG
     JSR STREQ_LBL
@@ -1591,7 +1652,9 @@ ASM2_PSEUDO:
     LDY #>D_TX
     JSR STREQ_LBL
     BCS AP_ASCII_J
-    BRA AP_ERR
+    BRA AP_ERR_J
+AP_ERR_J:                           ; AP_ERR sits past the directive bodies, out of
+    JMP AP_ERR                      ;   short-branch range from the dispatch chain
 AP_BYTE_J:
     JMP AP_DO_BYTE
 AP_WORD_J:
@@ -1615,6 +1678,17 @@ AP_DO_ORG:
     JSR ASM2_SKIPSPC
     JSR EVAL_EXPR
     BCS AP_ERR
+    ; Reject an origin outside writable user RAM ($0200-$8FFF). Pass 2 emits with
+    ; plain stores, so an origin below $0200 wrote over the monitor's zero page and
+    ; the 6502 stack (killing the machine mid-build), and one at $9000+ landed in
+    ; the DOS ROM, this module's own bank window, or the kernel ROM -- where writes
+    ; are discarded, so the listing scrolled by and printed OK having emitted
+    ; nothing at all.
+    LDA ASM_VAL+1
+    CMP #$02
+    BCC AP_ERR                      ; < $0200: zero page / stack / system vars
+    CMP #$90
+    BCS AP_ERR                      ; >= $9000: DOS ROM, module window, kernel ROM
     LDA ASM_VAL
     STA ASM_PC
     LDA ASM_VAL+1
@@ -1630,6 +1704,8 @@ AP_DO_BYTE:
     JSR ASM2_SKIPSPC
     JSR EVAL_EXPR
     BCS ADB_ERR
+    LDA ASM_VAL+1                   ; ".BYTE 300" stored $2C with no complaint
+    BNE ADB_ERR                     ;   (use .WORD, or #< / #> to pick a byte)
     LDA ASM2_PASS
     CMP #$02
     BNE ADB_ADV
@@ -2129,7 +2205,7 @@ PUTS:
 .segment "DATA"
 
 MSG_BANNER:
-    .byte "MFC ASM v0.4", $0D, $0A
+    .byte "MFC ASM v0.7", $0D, $0A
     .byte "ASSEMBLER / DISASSEMBLER", $0D, $0A, $0A, $00
 MSG_PROMPT:
     .byte "A XXXX=ASM  D XXXX=DISASM  L=LOAD  B=BUILD  ESC=EXIT", $0D, $0A, $00

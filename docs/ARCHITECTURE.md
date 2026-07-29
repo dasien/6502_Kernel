@@ -633,7 +633,7 @@ bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
 catalog), modules return via `$FF12` (`RETURN_FROM_MODULE`, which unmaps the bank),
 and `RESET` zeroes the window so bank 0 boots clean.
 
-The dev-tools module (v0.6) provides:
+The dev-tools module (v0.7) provides:
 - **Disassembler** (`D xxxx`) — decodes via the canonical 65C02 table generated
   from the CPU emulator (`tools/gen_opcode_table.py` → `opcodes_65c02.inc`).
 - **Line assembler** (`A xxxx`) — immediate, no-file, numeric operands; quick patches.

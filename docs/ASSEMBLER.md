@@ -46,7 +46,7 @@ prompt (the old monitor `B:` menu was retired):
 The module clears the screen and shows its banner and command reminder:
 
 ```
-MFC ASM v0.4
+MFC ASM v0.7
 ASSEMBLER / DISASSEMBLER
 
 A XXXX=ASM  D XXXX=DISASM  L=LOAD  B=BUILD  ESC=EXIT
@@ -226,8 +226,39 @@ Operands and directive values can be simple expressions:
 Directive names are case-insensitive (`.org`, `.byte`, and `.ORG`, `.BYTE` are
 equivalent). Text inside a `"…"` string keeps its original case.
 
-If a file has no `.ORG` (or `*=`), assembly starts at **$0000**. Set an origin in
-user RAM so your program lands where you can run it — `$0800` is the usual choice.
+If a file has no `.ORG` (or `*=`), assembly starts at **$0800** — the address the
+DOS loads and runs a `.PRG` at, so a source with no origin still lands somewhere
+useful and runnable.
+
+**The origin must be writable RAM, `$0200-$8FFF`.** Pass 2 emits with ordinary
+stores, so anything else either destroys the machine or does nothing at all:
+
+| Origin | Why it is refused |
+|--------|-------------------|
+| below `$0200` | zero page, the 6502 stack and the monitor's own workspace |
+| `$9000-$AFFF` | the always-mapped DOS ROM — writes are discarded |
+| `$B000-$DFFF` | the module window, where the assembler itself is running |
+| `$E000-$FFFF` | the kernel ROM |
+
+An out-of-range origin reports `? LINE nnnn` at the offending `.ORG` rather than
+letting the build appear to succeed while emitting nothing.
+
+### Diagnostics
+
+The assembler reports `? LINE nnnn` — it never silently assembles something other
+than what you wrote. In particular:
+
+- **Operand too wide.** `LDA #$100` is an error, not `A9 00`; `.BYTE 300` is an
+  error, not `$2C`. Use `.WORD` for 16-bit data, or `#<value` / `#>value` to take a
+  specific byte of an address.
+- **Hex constant wider than four digits.** `LDA $12345` is an error rather than
+  quietly becoming `LDA $2345`.
+- **Code pushed past column 79.** The line is refused rather than truncated: a
+  cut-off token used to assemble as something else entirely (often a label-only
+  line), which dropped the instruction and shifted every later label. A long
+  *trailing comment* is fine — only lost code is an error, so wide comments (as in
+  `examples/`) still assemble.
+- **Branch out of range** is reported, as it always was.
 
 ### A complete example
 
