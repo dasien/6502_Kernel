@@ -57,6 +57,59 @@ target_include_directories(cpu_alu_tests PRIVATE
 
 target_compile_features(cpu_alu_tests PRIVATE cxx_std_20)
 
+# Hardware interrupt path (IRQ/NMI dispatch) and the 65C02 processor-control
+# instructions (WAI/STP). The v2.2 interrupt path drives the 60Hz timer and the
+# NMI stop key but was only ever exercised through those features.
+add_executable(cpu_interrupt_tests
+    test_cpu_interrupts.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+)
+
+target_link_libraries(cpu_interrupt_tests
+    gtest_main
+    gtest
+)
+
+target_include_directories(cpu_interrupt_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(cpu_interrupt_tests PRIVATE cxx_std_20)
+
+# Cycle-count accuracy for every defined 65C02 opcode, against datasheet reference
+# data. Guards the bus helpers against re-introducing the double-charge that put
+# every instruction over (JSR cost 11 cycles instead of 6).
+add_executable(cpu_cycle_tests
+    test_cpu_cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+)
+
+target_link_libraries(cpu_cycle_tests gtest_main gtest)
+
+target_include_directories(cpu_cycle_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(cpu_cycle_tests PRIVATE cxx_std_20)
+
 # Create unit test executable for the bankable module slot (Memory bank routing)
 add_executable(memory_banking_tests
     test_memory_banking.cpp
@@ -413,6 +466,12 @@ add_test(NAME cpu_alu_unit_tests
     COMMAND cpu_alu_tests)
 
 # Add module-slot bank-routing unit tests to CTest
+add_test(NAME cpu_interrupt_unit_tests
+    COMMAND cpu_interrupt_tests)
+
+add_test(NAME cpu_cycle_unit_tests
+    COMMAND cpu_cycle_tests)
+
 add_test(NAME memory_banking_unit_tests
     COMMAND memory_banking_tests)
 

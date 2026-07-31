@@ -175,6 +175,16 @@ public:
      */
     void setIrqLine(bool asserted);
 
+    /**
+     * @brief True while STP ($DB) has halted the processor. Only reset() revives it.
+     */
+    [[nodiscard]] bool isStopped() const { return stopped_; }
+
+    /**
+     * @brief True while WAI ($CB) is waiting for an interrupt to be signalled.
+     */
+    [[nodiscard]] bool isWaiting() const { return waiting_; }
+
 private:
     Memory &mem_;
     uint64_t cycles_;
@@ -184,6 +194,10 @@ private:
     // Hardware interrupt lines
     bool nmi_pending_ = false;  ///< edge-triggered NMI latch
     bool irq_line_ = false;     ///< level-sensitive IRQ line
+
+    // 65C02 processor-control states
+    bool waiting_ = false;      ///< WAI: halted until an interrupt is signalled
+    bool stopped_ = false;      ///< STP: halted until reset
 
     /// Push PC + status and vector through $FFFA (NMI) or $FFFE (IRQ).
     void serviceInterrupt(uint16_t vector);

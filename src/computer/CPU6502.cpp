@@ -16,6 +16,17 @@ void CPU6502::reset()
     reg.SP = 0xFF;
     reg.P = 0x20 | kInterrupt; // Set interrupt disable flag
 
+    // Reset is the only way out of STP, and it clears a pending WAI too.
+    stopped_ = false;
+    waiting_ = false;
+
+    // Drop a latched NMI: the edge that set it belongs to the machine that no
+    // longer exists, and servicing it after reset would vector through $FFFA
+    // before the reset handler ran a single instruction. The IRQ line is left
+    // alone on purpose -- it reflects a device still holding the line low, and
+    // the I flag set above already keeps it masked until code clears it.
+    nmi_pending_ = false;
+
     // Load reset vector from $FFFC/$FFFD
     reg.PC = mem_.readWord(0xFFFC);
     cycles_ = 0;
@@ -43,9 +54,12 @@ void CPU6502::updateZeroNegativeFlags(const uint8_t value)
     setFlag(kNegative, (value & 0x80) != 0);
 }
 
+// Bus helpers do NOT charge cycles. Each instruction handler adds its complete
+// published cycle count, so a helper that also charged would double-bill: the
+// opcode fetch alone put every instruction one cycle over, and JSR -- paying for
+// a fetch, an operand word and two stack pushes on top of its own 6 -- ran to 11.
 uint8_t CPU6502::readByte()
 {
-    cycles_++;
     return mem_.read(reg.PC++);
 }
 
@@ -53,7 +67,6 @@ uint16_t CPU6502::readWord()
 {
     const uint16_t word = mem_.readWord(reg.PC);
     reg.PC += 2;
-    cycles_ += 2;
     return word;
 }
 
@@ -61,13 +74,11 @@ void CPU6502::pushByte(const uint8_t value)
 {
     mem_.write(0x0100 + reg.SP, value);
     reg.SP--;
-    cycles_++;
 }
 
 uint8_t CPU6502::pullByte()
 {
     reg.SP++;
-    cycles_++;
     return mem_.read(0x0100 + reg.SP);
 }
 
@@ -95,6 +106,28 @@ void CPU6502::serviceInterrupt(const uint16_t vector)
 
 bool CPU6502::executeSingleInstruction()
 {
+    // STP halted the clock. Only reset() revives the processor, so burn a cycle
+    // and report success -- a stopped CPU is idle, not faulted, and callers that
+    // loop on this must still terminate.
+    if (stopped_)
+    {
+        cycles_++;
+        return true;
+    }
+
+    // WAI parks here until a line is signalled. Waking is independent of the I
+    // flag: a masked IRQ resumes execution without vectoring (the dispatch checks
+    // below decide that), which is exactly WAI's documented behaviour.
+    if (waiting_)
+    {
+        if (!nmi_pending_ && !irq_line_)
+        {
+            cycles_++;
+            return true;
+        }
+        waiting_ = false;
+    }
+
     // Service pending hardware interrupts between instructions: NMI is
     // non-maskable; IRQ only when the I flag is clear. Each counts as one step.
     if (nmi_pending_)
@@ -833,14 +866,14 @@ void CPU6502::handlePha()
 {
     // Push Accumulator onto stack
     pushByte(reg.A);
-    cycles_ += 2;
+    cycles_ += 3;
 }
 
 void CPU6502::handlePhp()
 {
     // Push Processor status onto stack
     pushByte(reg.P | kBreak | kUnused); // Break and unused flags are set when pushed
-    cycles_ += 2;
+    cycles_ += 3;
 }
 
 void CPU6502::handlePla()
@@ -848,7 +881,7 @@ void CPU6502::handlePla()
     // Pull Accumulator from stack
     reg.A = pullByte();
     updateZeroNegativeFlags(reg.A);
-    cycles_ += 3;
+    cycles_ += 4;
 }
 
 void CPU6502::handlePlp()
@@ -856,7 +889,7 @@ void CPU6502::handlePlp()
     // Pull Processor status from stack
     reg.P = pullByte() & ~(kBreak | kUnused); // Clear break and unused flags when pulled
     reg.P |= kUnused; // Unused flag is always set
-    cycles_ += 3;
+    cycles_ += 4;
 }
 
 void CPU6502::handlePhx()
@@ -2032,24 +2065,21 @@ void CPU6502::handleTrbTsbBase(const uint16_t address, const uint8_t pc_offset, 
 // 65C02 Processor Control
 void CPU6502::handleStp()
 {
-    // STP - $DB: Stop processor
-    // In a real implementation, this would halt the CPU
-    // For our emulator, we'll just add cycles and continue
+    // STP - $DB: stop the processor. The clock is halted outright; nothing short
+    // of reset restarts it, so no interrupt can revive a stopped CPU.
+    stopped_ = true;
     cycles_ += 3;
-
-    // TODO: In a full implementation, this should set a "stopped" flag
-    // that prevents further instruction execution until reset
 }
 
 void CPU6502::handleWai()
 {
-    // WAI - $CB: Wait for interrupt
-    // In a real implementation, this would wait for IRQ/NMI
-    // For our emulator, we'll just add cycles and continue
+    // WAI - $CB: halt until an interrupt is signalled. Note the wake-up does not
+    // depend on the interrupt being *enabled*: an IRQ arriving with the I flag set
+    // still resumes execution, it simply continues at the instruction after WAI
+    // rather than vectoring. That is the point of the instruction -- it lets code
+    // sync to an event without paying interrupt-dispatch latency.
+    waiting_ = true;
     cycles_ += 3;
-
-    // TODO: In a full implementation, this should wait for an interrupt
-    // and only resume execution when IRQ or NMI occurs
 }
 
 // 65C02 (Rockwell/WDC) single-bit memory operations on zero page.
