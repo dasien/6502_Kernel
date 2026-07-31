@@ -55,7 +55,7 @@ appears in front of the bracket (`GAMES]`) so you always know where you are.
 Type a program's name and press Enter. MFC/OS resolves it in this order:
 
 1. A built-in DOS command (below) or the monitor (`MON`).
-2. A built-in ROM program: `BASIC`, `ASM`, `FORTH`.
+2. A built-in ROM program: `BASIC`, `MON`, `FORTH`.
 3. A program file (`.PRG`) on the disk.
 
 You may leave off the `.PRG` extension — typing `EDIT` runs `EDIT.PRG`. Programs

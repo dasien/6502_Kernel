@@ -10,7 +10,7 @@ Docs are split by audience: **manuals** (how to *use* a program) are `UPPERCASE.
 | [MONITOR.md](MONITOR.md) | The machine-language monitor: memory, run, load/save, conversion |
 | [DOS.md](DOS.md) | MFC/OS shell: launching programs, files, drawers, disk commands |
 | [BASIC.md](BASIC.md) | MFC BASIC (EhBASIC): entering, running, LOAD/SAVE |
-| [ASSEMBLER.md](ASSEMBLER.md) | The DEV-TOOLS assembler/disassembler (`ASM`) |
+| [ASSEMBLER.md](ASSEMBLER.md) | Pointer — the assembler/disassembler is part of the monitor now |
 | [FORTH.md](FORTH.md) | The fig-FORTH module |
 | [EDIT.md](EDIT.md) | The full-screen text editor |
 | [TERM.md](TERM.md) | The serial/telnet terminal + XMODEM |

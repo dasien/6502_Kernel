@@ -18,7 +18,7 @@ This project implements a complete 6502-based computer system kernel for emulate
 - **MFC/OS** DOS shell (`]` prompt) with a resident FAT16 filesystem and launch-by-name for disk programs
 - Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **The Sunless Vault** roguelike, and the Scott Adams adventures) — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
 - Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched by typing `BASIC` at the DOS prompt (with human-readable `.bas` LOAD/SAVE via a host file dialog)
-- **System-wide `--More--` pager**: long output from any program (DOS, monitor, BASIC, ASM, FORTH) pauses each screenful (SPACE advances, ESC stops)
+- **System-wide `--More--` pager**: long output from any program (DOS, monitor, BASIC, FORTH) pauses each screenful (SPACE advances, ESC stops)
 - Memory manipulation and program execution capabilities
 - Streamlined architecture with universal commands and simplified modes
 - File I/O operations for loading and saving programs
@@ -103,7 +103,7 @@ The monitor provides clear, consistent error messages:
 - **$0200-$03FF**: Monitor variables and command buffers
 - **$0400-$07FF**: Free RAM (formerly the screen; the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE37`, not in the address map)
 - **$0800-$AFFF**: User RAM (module working RAM; EhBASIC program/variable space)
-- **$B000-$EFFF**: Module window (16 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC 1, DEV TOOLS 2, FORTH 3, MONITOR 4)
+- **$B000-$EFFF**: Module window (16 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC 1, FORTH 3, MONITOR 4; bank 2 free since the assembler joined the monitor)
 - **$F000-$FFFF**: Kernel BIOS (4 KB; CODE ~1,560 bytes, rest free for growth). The monitor is bank 4, not here.
 - **$FE00-$FE22**: PIA registers (keyboard, file I/O, timer) — an I/O page reserved within the kernel region
 

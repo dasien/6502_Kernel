@@ -83,6 +83,20 @@ anything today; all four are recorded so they are not rediscovered the hard way.
 - [ ] **`PIA::closeStream()` error reporting has no test.** It is the one fix from the 2026-07 review that landed inspection-only, with no test verified to fail against the unfixed build. Untestable while the filename comes from the host dialog — see below.
 - [ ] **Decide whether the PIA should honour the 6502-supplied filename at `$FE14-$FE1F`.** Today the host file dialog owns the filename, so `L:`/`S:`/`IMPORT` cannot be driven from a script or a test. Honouring the guest-supplied name would make those verbs scriptable *and* make `closeStream` testable, closing both items at once. **User decision pending** — it is a behaviour change to the host I/O contract, not just a fix.
 
+### Monitor and assembler consolidated (2026-07-31)
+- [x] The assembler/disassembler (bank 2, "DEV TOOLS") folded into the monitor and the
+  ASM module retired. The split only existed because the monitor used to be resident
+  in kernel ROM; once it became a bank too, building and testing crossed the DOS twice
+  per iteration and lost the source buffer each time. Period monitors (Supermon,
+  HESMON, the Apple II ROM monitor and its mini-assembler) all bundled them. Merged
+  module is 6,841 bytes of the 16 KB window; bank 2 is free.
+  - Commands take the monitor's colon grammar: `A:xxxx` `B:` `D:xxxx` `L:`. `D` went to
+    the disassembler, so base conversion moved to `#:nnnnn` and `$:xxxx`. `B:` and `L:`
+    reuse dispatch slots the retired bank menu and host-load command left empty.
+  - assembler.asm -> assembler.inc, included by monitor.asm; its eight duplicated
+    address definitions deleted in favour of kernel_vars.inc.
+  - ASSEMBLER.md folded into MONITOR.md and left as a pointer (existing links).
+
 ### Memory map
 - [x] **Kernel to a 4 KB window; banks grow to 16 KB.** With the monitor gone the BIOS
   is 1,562 bytes, so the kernel moved from $E000-$FFFF (8 KB) to $F000-$FFFF (4 KB) and

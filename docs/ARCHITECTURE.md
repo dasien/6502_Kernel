@@ -58,7 +58,7 @@ Part 3 Kernel API · Part 4 Bank-switched modules
 MFC is a software-defined computer built around a cycle-stepped **WDC 65C02** CPU.
 The C++/Qt host emulates the CPU and a set of memory-mapped peripherals; a 6502
 kernel ROM (BIOS + MFC/OS DOS) and bank-switched ROM modules (BASIC, the monitor, an
-assembler/DEV-TOOLS module, FORTH) run on top. It is **not** a Commodore 64 and
+the monitor with its built-in assembler, FORTH) run on top. It is **not** a Commodore 64 and
 does not use PETSCII — the display is 80×25 CP437 text with 16 colors.
 
 This document describes the components and how they interconnect. For the exact
@@ -99,7 +99,7 @@ the `Computer6502` class wires them together.
   against the Klaus2m5/amb5l functional, decimal, and 65C02-extended suites.
 - **Memory** — 64K store plus the address decoder: it overlays the kernel ROM at
   `$F000-$FFFF`, routes the I/O page (`$FE00-$FE5E`) to the peripherals, and drives
-  the bank-switched module window at `$B000-$EFFF` (BASIC / DEV TOOLS / FORTH / MONITOR,
+  the bank-switched module window at `$B000-$EFFF` (BASIC / FORTH / MONITOR,
   selected via `MODULE_BANK` at `$FE23`).
 - **VIC** — text video. The 80×25 screen and its per-cell color/attribute plane
   live **inside the chip**, reached through a small register port (`$FE2D-$FE37`):
@@ -132,7 +132,7 @@ $0000-$00FF  Zero page (kernel/monitor/DOS workspace)
 $0100-$01FF  Stack
 $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
-$B000-$EFFF  Bank-switched module window (BASIC, DEV TOOLS, FORTH, MONITOR)
+$B000-$EFFF  Bank-switched module window (BASIC 1, FORTH 3, MONITOR 4; 2 free)
 $F000-$FFFF  Kernel BIOS; jump table at $FF00, vectors at $FFFA
 $FE00-$FE5E  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC (carved out of the ROM window)
 ```
@@ -495,7 +495,7 @@ with the machine* lives in a bank module or on disk. Concretely:
 |---|---|
 | Screen output, cursor, scrolling, the pager | The monitor — **module bank 4** |
 | Keyboard input and line editing (`K_READ_LINE`, `.` recall) | BASIC — bank 1 |
-| Hex and decimal conversion (`K_PARSE_HEX`, `K_PRINT_DEC`, …) | DEV TOOLS (assembler/disassembler) — bank 2 |
+| Hex and decimal conversion (`K_PARSE_HEX`, `K_PRINT_DEC`, …) | FORTH — bank 3 |
 | IRQ/NMI handlers, the 60 Hz tick, NMI break-in | FORTH — bank 3 |
 | Sound (`K_SOUND_TONE`) and the RNG | EDIT / TERM / IRC — disk `.PRG` files |
 | Bank launching (`K_LAUNCH_BY_NAME`, `RETURN_FROM_MODULE`) | The filesystem and shell — MFC-DOS at `$8800` |
