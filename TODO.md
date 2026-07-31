@@ -83,6 +83,19 @@ anything today; all four are recorded so they are not rediscovered the hard way.
 - [ ] **`PIA::closeStream()` error reporting has no test.** It is the one fix from the 2026-07 review that landed inspection-only, with no test verified to fail against the unfixed build. Untestable while the filename comes from the host dialog — see below.
 - [ ] **Decide whether the PIA should honour the 6502-supplied filename at `$FE14-$FE1F`.** Today the host file dialog owns the filename, so `L:`/`S:`/`IMPORT` cannot be driven from a script or a test. Honouring the guest-supplied name would make those verbs scriptable *and* make `closeStream` testable, closing both items at once. **User decision pending** — it is a behaviour change to the host I/O contract, not just a fix.
 
+### Memory map
+- [x] **Kernel to a 4 KB window; banks grow to 16 KB.** With the monitor gone the BIOS
+  is 1,562 bytes, so the kernel moved from $E000-$FFFF (8 KB) to $F000-$FFFF (4 KB) and
+  the reclaimed $E000-$EFFF went to the module window, now $B000-$EFFF. Nothing needed
+  rebasing: the modules keep their $B000 base and simply have more room, which matters
+  for BASIC (10,613 bytes, 86% of the old 12 KB ceiling, now 65%). No ABI change.
+  - This exposed a latent host bug worth remembering: Computer6502 loaded kernel.rom by
+    subtracting a hardcoded $E000 from each segment address. At $F000 that offset ran
+    past the end of the (now 4 KB) file, the out-of-range iterators loaded nothing, and
+    the machine sat at $0000 with no diagnostic. The base now comes from
+    Memory::kKernelRomStart, the file size is checked against the window, and every
+    segment is bounds-checked. testRomWindowBoundaries pins it.
+
 ### Memory map (future, not urgent)
 - [ ] Reclaim ROM address space for user RAM by a *coordinated* relocation: shrink the kernel from 8KB ($E000-$FFFF) to a 4KB window ($F000-$FFFF) AND move the BASIC ROM up (e.g. $B000-$DFFF -> $C000-$EFFF). Done together, the reclaimed 4KB lands contiguous with the user RAM below BASIC, growing one usable block (shrinking the kernel alone just strands an isolated 4KB island between BASIC and the kernel — not worth it).
   - **Prerequisite (blocking):** the kernel must first shrink to fit a 4KB ROM. CODE is 3951 bytes at v3.27 ($E000-$EF6E), but the $FF00 API jump table caps contiguous code at $F000-$FEFF = 3840 bytes, so we must free **at least ~111 bytes** (more for headroom) before this is even possible. The v3.25 size pass already took 178 bytes out mechanically (dead SAVE/RESTORE_MONITOR_STATE, 33 JSR+JMP/JSR+RTS tail calls, T:/Z: merged into DUMP_ONE_PAGE, dead stores) — that is the end of the easy wins. The remaining ~111 needs a structural change, and note the obvious candidate is harder than it looks: table-driving the monitor's command dispatch is not the clean win the DOS verb table was, because the per-command stubs are NOT uniform (C:/T:/Z: share a shape, but D:/H: carry their own validation), so the table would need a parse-kind field and two mechanisms.

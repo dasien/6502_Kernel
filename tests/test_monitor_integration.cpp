@@ -68,6 +68,7 @@ public:
         // drop into the monitor (MON) for the pure-monitor command tests.
         testDosShell();
         testUserRamTopBoundary();
+        testRomWindowBoundaries();
         testPromptColorReset();
         testPagerLongType();
         testDosRemainingVerbs();
@@ -635,6 +636,38 @@ public:
         // A two-level path is rejected.
         sendCommand("COPY A/B/C.TXT,X.TXT");
         verifyResponse("FILE NOT FOUND", "two-level path is rejected");
+    }
+
+    // The top of the map: a 16 KB module window ($B000-$EFFF) under a 4 KB kernel
+    // BIOS ($F000-$FFFF). Worth asserting on the running machine, because the host
+    // loads kernel.rom by subtracting the window base from each segment address --
+    // when the kernel moved from $E000 to $F000 a stale literal there computed an
+    // offset past the end of the file, loaded nothing, and left the CPU sitting at
+    // $0000 with no error message of any kind. Every one of these would have caught
+    // it on the first run.
+    void testRomWindowBoundaries() {
+        Computer::Memory* mem = computer.getMemory();
+
+        // The kernel is actually resident and the reset vector points into it.
+        const uint16_t reset = mem->read(0xFFFC) | (mem->read(0xFFFD) << 8);
+        if (reset >= Computer::Memory::kKernelRomStart) { tests_passed++; }
+        else { tests_failed++; }
+        std::cout << std::left << std::setw(30) << "reset vector points into ROM"
+                  << ": " << (reset >= Computer::Memory::kKernelRomStart ? "PASS" : "FAIL")
+                  << " ($" << std::hex << reset << std::dec << ")" << std::endl;
+        verifyMemEquals(0xF000, 0xD8, "kernel BIOS is resident at $F000 (CLD)");
+
+        // $F000 is ROM: writes are discarded.
+        mem->write(0xF000, 0x5A);
+        verifyMemEquals(0xF000, 0xD8, "a write to kernel ROM is discarded");
+
+        // The 4 KB reclaimed from the kernel is window RAM now, not ROM. Bank 0 is
+        // selected at the DOS prompt, so the whole window reads and writes as RAM.
+        verifyMemEquals(kModuleBank, 0x00, "window is bank 0 at the DOS prompt");
+        mem->write(0xE000, 0x3C);
+        verifyMemEquals(0xE000, 0x3C, "$E000 is window RAM (was kernel ROM)");
+        mem->write(0xEFFF, 0xC3);
+        verifyMemEquals(0xEFFF, 0xC3, "$EFFF is the top of the window");
     }
 
     // Host interop after the GUEST has written. fat16_image_clean checks a freshly

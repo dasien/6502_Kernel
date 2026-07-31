@@ -154,7 +154,7 @@ FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 MODULE_BANK        = $FE23         ; bank-select register for the $B000-$DFFF window
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
-MODULE_WINDOW_END  = $DFFF         ; last byte of the bankable module window
+MODULE_WINDOW_END  = $EFFF         ; last byte of the bankable module window (16 KB)
 
 ; Monitor module (bank 4). The monitor lives in the bankable window rather than in
 ; kernel ROM: as a disk program it would load at $0800 and so overwrite the very

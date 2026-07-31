@@ -14,7 +14,7 @@
 ; ================================================================
 ; MEMORY USAGE SUMMARY
 ; ================================================================
-; ROM (Reserved):  $E000-$FFFF (8192 bytes)
+; ROM (Reserved):  $F000-$FFFF (4096 bytes)
 ; ROM (Used):      ~4273 bytes
 ;   CODE segment:  $E000-$EF6E (3951 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
@@ -35,7 +35,7 @@
 ; Stack:        $0100-$01FF (256 bytes)
 ; Screen RAM:   $0400-$07E7 (1000 bytes, 40x25 text)
 ; I/O page:     $FE00-$FE23 (PIA: keyboard, file I/O, timer; $FE23 MODULE_BANK).
-;               Moved here from the old $DC00 so $B000-$DFFF is a clean, bankable
+;               Moved here from the old $DC00 so $B000-$EFFF is a clean, bankable
 ;               module window (see docs/ARCHITECTURE.md, Part 4).
 ;
 ; ================================================================
@@ -48,7 +48,7 @@
 ; - Screen scrolling with paging
 ; - Built-in help system
 ; - Bankable module slot: B: is a menu that maps a ROM module (BASIC = bank 1)
-;   into the $B000-$DFFF window and runs it; modules return via $FF12
+;   into the $B000-$EFFF window and runs it; modules return via $FF12
 ; - Kernel API at $FF00 for user programs (the module ABI)
 ;
 ; Commands:     R:(read) W:(write) F:(fill) M:(move/copy) X:(search)
@@ -59,7 +59,7 @@
 ; ================================================================
 ; BUILD INFORMATION
 ; ================================================================
-; ROM base:     $E000 (RESET label); reset vector at $FFFC
+; ROM base:     $F000 (RESET label); reset vector at $FFFC
 ; Vectors:      NMI ($FFFA), RESET ($FFFC), IRQ ($FFFE)
 ; API entry:    $FF00 (jump table)
 ; CPU:          65C02 (.PC02)
@@ -108,7 +108,7 @@
 ;                   stale MON_MODE / jump-table / FILL+MOVE comments; inlined the
 ;                   READ_MEMORY_RANGE / SHOW_READ_ADDRESS pass-through wrappers.
 ; 2026-06-08  v2.2.7 Relocated memory-mapped I/O from $DC00 to a reserved page at
-;                   $FE00-$FEFF (inside the kernel region) so $B000-$DFFF is a
+;                   $FE00-$FEFF (inside the kernel region) so $B000-$EFFF is a
 ;                   clean, I/O-free window. Phase 1 of the bankable module-slot
 ;                   plan (docs/ARCHITECTURE.md, Part 4). Behavior-preserving.
 ; 2026-06-08  v2.2.8 SCROLL_SCREEN page copies made strictly sequential (P0..P3):
@@ -120,7 +120,7 @@
 ;                   the now-dead PARSE_FILENAME routine.
 ; 2026-06-08  v2.2.9 Phase 2 of the module slot: bank-switching infrastructure.
 ;                   Added the MODULE_BANK register ($FE23) - write n to map bank n
-;                   into the $B000-$DFFF window (0=RAM, 1..255=ROM modules), read to
+;                   into the $B000-$EFFF window (0=RAM, 1..255=ROM modules), read to
 ;                   query. RESET maps the window to RAM (slot starts empty). Emulator
 ;                   Memory routes the window per the selected bank and provides a host
 ;                   bank table (loadBank). No behavior change yet: BASIC still loads
@@ -130,7 +130,7 @@
 ;                   module bank menu - it lists MODULE_DIR (kernel-side catalog of
 ;                   bank#/entry/name), and a selection maps the bank and JMPs in.
 ;                   RETURN_FROM_BASIC -> RETURN_FROM_MODULE ($FF12) now unmaps the
-;                   bank (window back to RAM) on exit. RESET zeroes the $B000-$DFFF
+;                   bank (window back to RAM) on exit. RESET zeroes the $B000-$EFFF
 ;                   window so bank 0 boots clean. Factored FILL_RANGE_CORE out of the
 ;                   F: command and reused it for the window clear. Folded the three
 ;                   duplicate command-buffer clears (ESC-cancel, '.' recall, module
@@ -309,7 +309,7 @@
 
 .PC02                               ; ca65 directive to enable 65C02 instructions.
 
-.org $E000                          ; ROM start address.
+.org $F000                          ; ROM start address (4 KB BIOS window).
 
 ; Shared addresses (zero page, page 2, I/O registers, hardware constants).
 .include "kernel_vars.inc"
@@ -325,7 +325,7 @@ RESET:
     LDX #STACK_TOP              ; Initialize stack pointer to top of stack page
     TXS                         ; Transfer X to stack pointer
 
-    ; Map the module window ($B000-$DFFF) to RAM at boot. The slot starts empty
+    ; Map the module window ($B000-$EFFF) to RAM at boot. The slot starts empty
     ; (no module auto-loaded); modules are mapped in later via the bank register.
     STZ MODULE_BANK
 
@@ -347,7 +347,7 @@ ZP_CLEAR_LOOP:
 
     JSR CLEAR_SCREEN            ; Clear screen memory ($0400-$07FF)
 
-    ; Clear the module window ($B000-$DFFF) so bank 0 boots as clean scratch RAM.
+    ; Clear the module window ($B000-$EFFF) so bank 0 boots as clean scratch RAM.
     ; MODULE_BANK was set to 0 above, so these writes land in the window RAM (not
     ; any module ROM); modules live in separate banks. The monitor variables used
     ; here are scratch at this point - they get cleared in the monitor-init step
@@ -1090,7 +1090,7 @@ BANK_LAUNCH:
     TAX                         ; X = byte offset into MODULE_DIR
 
     LDA MODULE_DIR,X            ; bank number
-    STA MODULE_BANK             ; map the module into $B000-$DFFF
+    STA MODULE_BANK             ; map the module into $B000-$EFFF
     LDA MODULE_DIR+1,X          ; entry address low
     STA JUMP_VECTOR
     LDA MODULE_DIR+2,X          ; entry address high
@@ -1174,7 +1174,7 @@ LBN_STRCMP:
 ; RETURN_FROM_MODULE
 ; Return handler a module jumps to when it exits (e.g. BASIC's BYE).
 ; Entry point: $FF12 (kernel API jump table). Reachable from any bank because
-; the kernel ROM ($E000-$FFFF) is always mapped regardless of MODULE_BANK.
+; the kernel ROM ($F000-$FFFF) is always mapped regardless of MODULE_BANK.
 ; Input: None (called via JMP from the module)
 ; Output: Returns to monitor prompt with the window unmapped (bank 0 = RAM)
 ; Modifies: A, X, Y
@@ -1564,7 +1564,7 @@ NMI_HANDLER_BREAK:
     ; unmapping whatever was there. That is also what makes STOP reliable: a program
     ; that scribbles on MODULE_BANK can no longer lock you out of the monitor,
     ; because the NMI handler lives in always-mapped kernel ROM and re-maps on the
-    ; way in. The cost is that the monitor can never show $B000-$DFFF as RAM -- it
+    ; way in. The cost is that the monitor can never show $B000-$EFFF as RAM -- it
     ; is standing in that window. Sibling banks are invisible for the same reason.
     LDA #MON_BANK
     STA MODULE_BANK
@@ -1720,7 +1720,7 @@ NAME_MON:            .BYTE "MON", 0
 ; a missing monitor.rom reports itself instead of executing the empty window.
 MON_LAUNCH:
     LDA #MON_BANK
-    STA MODULE_BANK             ; map the monitor into $B000-$DFFF
+    STA MODULE_BANK             ; map the monitor into $B000-$EFFF
     LDA MON_ENTRY_COLD          ; first opcode of the entry table
     BEQ MON_LAUNCH_MISSING      ; $00 = bank not installed
     JMP MON_ENTRY_COLD

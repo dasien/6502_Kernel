@@ -15,15 +15,18 @@ if(NOT EXISTS ${ROM_FILE})
     message(FATAL_ERROR "ROM file not found: ${ROM_FILE}")
 endif()
 
-# Get ROM file size
+# Get ROM file size. Note this is always the full window: ld65 pads the image to
+# the region size, so the file tells you nothing about how much is used. The
+# utilization figure below is computed from the segment totals instead -- it used
+# to divide the padded file by the capacity and so always read 100%, which meant
+# the "over 90%" warning fired on every build and told you nothing.
 file(SIZE ${ROM_FILE} ROM_SIZE)
 
 # Convert to hex for display
 math(EXPR ROM_SIZE_HEX "${ROM_SIZE}" OUTPUT_FORMAT HEXADECIMAL)
 
-# Calculate ROM utilization (assuming 8KB ROM space from $E000-$FFFF)
-set(ROM_CAPACITY 8192)
-math(EXPR ROM_USAGE_PERCENT "${ROM_SIZE} * 100 / ${ROM_CAPACITY}")
+# 4KB BIOS window, $F000-$FFFF
+set(ROM_CAPACITY 4096)
 
 # Parse map file if it exists to get detailed segment information
 set(CODE_SIZE "Unknown")
@@ -57,8 +60,7 @@ endif()
 # Output size analysis
 message("ROM FILE: kernel.rom")
 message("TOTAL SIZE: ${ROM_SIZE} bytes (${ROM_SIZE_HEX})")
-message("ROM CAPACITY: ${ROM_CAPACITY} bytes (8KB)")
-message("UTILIZATION: ${ROM_USAGE_PERCENT}% of available ROM space")
+message("ROM CAPACITY: ${ROM_CAPACITY} bytes (4KB window, padded to fill)")
 
 if(NOT CODE_SIZE STREQUAL "Unknown")
     message("SEGMENT BREAKDOWN:")
@@ -67,11 +69,13 @@ if(NOT CODE_SIZE STREQUAL "Unknown")
     message("  VECS segment:   ${VECS_SIZE} bytes")
     math(EXPR TOTAL_SEGMENTS "${CODE_SIZE} + ${JUMPS_SIZE} + ${VECS_SIZE}")
     message("  Total segments: ${TOTAL_SEGMENTS} bytes")
+    math(EXPR ROM_USAGE_PERCENT "${TOTAL_SEGMENTS} * 100 / ${ROM_CAPACITY}")
+    math(EXPR REMAINING "${ROM_CAPACITY} - ${TOTAL_SEGMENTS}")
+    message("UTILIZATION: ${ROM_USAGE_PERCENT}% of the window")
+    message("REMAINING SPACE: ${REMAINING} bytes")
+else()
+    set(ROM_USAGE_PERCENT 0)
 endif()
-
-# Calculate remaining space
-math(EXPR REMAINING "${ROM_CAPACITY} - ${ROM_SIZE}")
-message("REMAINING SPACE: ${REMAINING} bytes")
 
 # Show warnings if ROM is getting full
 if(ROM_USAGE_PERCENT GREATER 90)

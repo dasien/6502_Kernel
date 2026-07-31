@@ -4,11 +4,21 @@
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
+#include <cstdio>
+#include <string>
 
 #ifdef QT_GUI
 #include <QMessageBox>
 #include <QApplication>
 #endif
+
+// Four-digit hex for the ROM-layout diagnostics below.
+static std::string toHex4(size_t v)
+{
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%04X", static_cast<unsigned>(v));
+    return buf;
+}
 
 namespace Computer
 {
@@ -130,12 +140,39 @@ namespace Computer
             showFatalError(missingSegments);
         }
 
-        // Load segments using correct ROM file offsets
-        // The ROM file is laid out with segments at their actual memory addresses
-        // ROM is 8KB (0x2000) starting at $E000, so ROM offset = memory_address - 0xE000
-        size_t codeOffset = codeSegment->start - 0xE000;
-        size_t jumpsOffset = jumpsSegment->start - 0xE000;
-        size_t vecsOffset = vecsSegment->start - 0xE000;
+        // The ROM image is the window contents laid out at their real addresses, so a
+        // segment's file offset is its address minus the window base. That base comes
+        // from the constant rather than a literal: it moved from $E000 (8 KB) to
+        // $F000 (4 KB) when the monitor left the kernel, and the literal that used to
+        // be here computed an offset past the end of the file. The out-of-range
+        // iterators loaded nothing, the reset vector read $0000, and the machine sat
+        // at $0000 with no diagnostic at all -- so the size is checked up front now.
+        const size_t romBase = Memory::kKernelRomStart;
+        const size_t romExpected = 0x10000u - romBase;
+        if (kernel_rom.size() != romExpected)
+        {
+            showFatalError("kernel.rom is " + std::to_string(kernel_rom.size()) +
+                           " bytes but the ROM window at $" + toHex4(romBase) +
+                           "-$FFFF is " + std::to_string(romExpected) +
+                           " bytes. The linker config and Memory::kKernelRomStart "
+                           "disagree about where the kernel lives.");
+        }
+
+        size_t codeOffset = codeSegment->start - romBase;
+        size_t jumpsOffset = jumpsSegment->start - romBase;
+        size_t vecsOffset = vecsSegment->start - romBase;
+
+        for (const auto &seg : {codeSegment, jumpsSegment, vecsSegment})
+        {
+            if (seg->start < romBase ||
+                seg->start - romBase + seg->size > kernel_rom.size())
+            {
+                showFatalError("kernel.map places segment '" + seg->name + "' at $" +
+                               toHex4(seg->start) + " (" + std::to_string(seg->size) +
+                               " bytes), outside the ROM window at $" +
+                               toHex4(romBase) + "-$FFFF.");
+            }
+        }
 
         // Load CODE segment.
         memory.loadProgram(

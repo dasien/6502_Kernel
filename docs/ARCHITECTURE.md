@@ -74,7 +74,7 @@ memory/zero-page/I-O addresses, `Part 2 (Memory and zero-page map)` is authorita
                                                           │ 16-bit bus
         ┌─────────────────────────────────────────────────┴──────────────┐
         │                          Memory (64K)                           │
-        │  RAM  •  ROM overlay ($E000-$FFFF)  •  bank window ($B000-$DFFF) │
+        │  RAM  •  ROM overlay ($F000-$FFFF)  •  bank window ($B000-$EFFF) │
         │  •  I/O page routed to peripherals ($FE00-$FE5E)                 │
         └───┬──────┬───────┬───────┬───────┬───────┬───────────────────────┘
             ▼      ▼       ▼       ▼       ▼       ▼
@@ -98,8 +98,8 @@ the `Computer6502` class wires them together.
   `RMB`/`SMB`/`BBR`/`BBS`, `WAI`, `STP`, and correct decimal-mode flags. Validated
   against the Klaus2m5/amb5l functional, decimal, and 65C02-extended suites.
 - **Memory** — 64K store plus the address decoder: it overlays the kernel ROM at
-  `$E000-$FFFF`, routes the I/O page (`$FE00-$FE5E`) to the peripherals, and drives
-  the bank-switched module window at `$B000-$DFFF` (BASIC / DEV TOOLS / FORTH,
+  `$F000-$FFFF`, routes the I/O page (`$FE00-$FE5E`) to the peripherals, and drives
+  the bank-switched module window at `$B000-$EFFF` (BASIC / DEV TOOLS / FORTH,
   selected via `MODULE_BANK` at `$FE23`).
 - **VIC** — text video. The 80×25 screen and its per-cell color/attribute plane
   live **inside the chip**, reached through a small register port (`$FE2D-$FE37`):
@@ -132,8 +132,8 @@ $0000-$00FF  Zero page (kernel/monitor/DOS workspace)
 $0100-$01FF  Stack
 $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
-$B000-$DFFF  Bank-switched module window (BASIC, DEV TOOLS, FORTH)
-$E000-$FFFF  Kernel ROM (monitor + MFC/OS DOS); jump table at $FF00, vectors at $FFFA
+$B000-$EFFF  Bank-switched module window (BASIC, DEV TOOLS, FORTH)
+$F000-$FFFF  Kernel ROM (monitor + MFC/OS DOS); jump table at $FF00, vectors at $FFFA
 $FE00-$FE5E  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC (carved out of the ROM window)
 ```
 
@@ -182,15 +182,15 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0400-$07FF` | 1 KB | **Free RAM** — formerly the 40×25 screen; the screen now lives behind the VIC register port (see below), so this is unused RAM |
 | `$0800-$87FF` | 32 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$7800-$87FF` (source) and `$7600-$77FF` (symbols) while building |
 | `$8800-$AFFF` | 10 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem + DOS shell) |
-| `$B000-$DFFF` | 12 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
-| `$E000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
+| `$B000-$EFFF` | 16 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
+| `$F000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
 | `$FE00-$FE28` | — | **PIA** I/O + `MODULE_BANK` ($FE23) + block-device registers ($FE24-$FE28) — within the kernel region |
 
 There is no SID / CIA. The **VIC** is an 80×25 color text chip whose character
 and color planes live *inside the chip* (not in the 64K map) and are reached
 through a VDC-style register port at `$FE2D-$FE37` (see the I/O section). The
 keyboard and file I/O are exposed through a small PIA-style register block at
-`$FE00`. The `$B000-$DFFF` window is
+`$FE00`. The `$B000-$EFFF` window is
 a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
 RAM (bank 0) or one of up to 255 pre-loaded ROM modules. See
 `Part 4 (Bank-switched modules)`. The `$8800-$AFFF` **DOS ROM** is an always-mapped (never
@@ -363,7 +363,7 @@ the bit-packing itself. DOS `CATALOG` unpacks these fields to show each file's
 
 The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region (the kernel just
 avoids placing code there). It was moved here from the old `$DC00` so the
-`$B000-$DFFF` region is a clean, I/O-free, bank-switched module slot (see
+`$B000-$EFFF` region is a clean, I/O-free, bank-switched module slot (see
 `Part 4 (Bank-switched modules)`).
 
 A single PIA-style device provides keyboard input and host file I/O. There are
@@ -383,7 +383,7 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 | `$FE14-$FE1F` | `FILE_NAME_BUF` | Filename buffer (12 bytes) |
 | `$FE20-$FE21` | `FILE_END_ADDR_LO/HI` | Block save end address |
 | `$FE22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
-| `$FE23` | `MODULE_BANK` | Module bank select: 0 = RAM, 1..255 = ROM module mapped at `$B000-$DFFF` |
+| `$FE23` | `MODULE_BANK` | Module bank select: 0 = RAM, 1..255 = ROM module mapped at `$B000-$EFFF` |
 | `$FE24-$FE25` | `BLK_LBA` | Block device: 16-bit sector number (little-endian) |
 | `$FE26` | `BLK_CMD` | Block device: 1 = read sector, 2 = write sector |
 | `$FE27` | `BLK_STATUS` | Block device: 0 = ready, $FF = error |
@@ -391,7 +391,7 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 
 ### ROM Layout
 
-#### Kernel ROM (`$E000-$FFFF`, 8 KB)
+#### Kernel ROM (`$F000-$FFFF`, 8 KB)
 
 | Segment | Range | Purpose |
 |---------|-------|---------|
@@ -432,7 +432,7 @@ routines live. The `$FF15`/`$FF18` services share the monitor's command buffer
 (`MON_CMDBUF`) and `MON_CURRADDR` as scratch — safe because the monitor is
 suspended while a module runs and that state is saved/restored across the launch.
 
-#### Module window (`$B000-$DFFF`, 12 KB)
+#### Module window (`$B000-$EFFF`, 16 KB)
 
 A bank-switched slot selected by `MODULE_BANK` (`$FE23`). Bank 0 is RAM (the
 boot/default state, zeroed by `RESET`); banks 1..255 are read-only ROM modules
@@ -652,7 +652,7 @@ run by name** all happen at the `]` prompt without host involvement.
 ### Goal
 
 Stop growing (or shrinking) the kernel ROM to add big features. Instead, make the
-12 KB region currently occupied by EhBASIC a **bank-switched module window**: a slot
+16 KB region currently occupied by EhBASIC a **bank-switched module window**: a slot
 into which the kernel maps one ROM "module" at a time (BASIC, an assembler/
 disassembler package, a Z-machine to play Zork, a text editor, …). BASIC becomes
 just *one* module rather than a permanent resident.
@@ -674,7 +674,7 @@ The kernel stays at `$E000–$FFFF` (8 KB), unchanged in start address.
 ```
 $0000–$07FF   Zero page / stack / system vars / screen      (unchanged)
 $0800–$AFFF   User RAM (~42 KB)                              (module working RAM)
-$B000–$DFFF   MODULE WINDOW (12 KB) — backed by selected bank; clean, no I/O hole
+$B000–$DFFF   MODULE WINDOW (16 KB) — backed by selected bank; clean, no I/O hole
 $E000–$EF6E   Kernel CODE (~3.9 KB at v3.27)                 (start unchanged)
 $EF6F–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
 $FE00–$FEFF   I/O page (relocated here from $DC00)
@@ -683,7 +683,7 @@ $FFFA–$FFFF   NMI / RESET / IRQ vectors
 ```
 
 Key property: **the module window contains no I/O** — any ROM assembled at `$B000`
-runs in a clean, contiguous 12 KB with no addresses to avoid.
+runs in a clean, contiguous 16 KB with no addresses to avoid.
 
 ### Prerequisite: relocate I/O out of the module window (`$DC00` → `$FE00`)
 
@@ -732,7 +732,7 @@ Phase 1 (this relocation) is self-contained and worth doing on its own.
 - **Reset:** forced to `0`. **BASIC is not auto-loaded**; the slot starts empty.
 - Lives in the always-mapped I/O page, so it's reachable regardless of what's mapped.
 
-Bank capacity is bounded only by the register width: one byte → 256 banks × 12 KB
+Bank capacity is bounded only by the register width: one byte → 256 banks × 16 KB
 (~3 MB). We define a handful and leave the rest open.
 
 ### Emulator changes (`Memory`)

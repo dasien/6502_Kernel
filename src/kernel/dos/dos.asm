@@ -5,7 +5,7 @@
 ; (later) the DOS command shell. See docs/SYSTEM_INTERNALS.md.
 ;
 ; This region is always mapped by the emulator (it is NOT in the bankable
-; $B000-$DFFF module window), so its routines are reachable at all times. The
+; $B000-$EFFF module window), so its routines are reachable at all times. The
 ; stable entry points live in a jump table at $AF00 (the "DOS ABI"), mirroring
 ; the kernel's own $FF00 table - callers bind to those fixed addresses, never to
 ; the moving internals below.
@@ -2034,8 +2034,8 @@ MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
                  .BYTE "$0400-$07FF FREE RAM   (1K)", $0D, $0A
                  .BYTE "$0800-$87FF USER RAM   (32K)", $0D, $0A
                  .BYTE "$8800-$AFFF DOS ROM   (10K)", $0D, $0A
-                 .BYTE "$B000-$DFFF MODULES    (12K)", $0D, $0A
-                 .BYTE "$E000-$FFFF KERNEL BIOS (8K)", $0D, $0A
+                 .BYTE "$B000-$EFFF MODULES   (16K)", $0D, $0A
+                 .BYTE "$F000-$FFFF KERNEL BIOS (4K)", $0D, $0A
                  .BYTE "$FE2D-$FE36 VIDEO PORT (VIC)", $0D, $0A, 0
 MSG_DOS_CATHDR:  .BYTE "NAME            BYTES  MODIFIED", $0D, $0A, 0
 MSG_DOS_NODATE:  .BYTE "(no date)", 0

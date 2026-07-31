@@ -296,8 +296,8 @@ The kernel code follows these patterns:
 Refer to `docs/ARCHITECTURE.md` for complete details, but key locations include:
 - **$00/$01**: Processor port for memory banking
 - **$01FF**: Initial stack pointer location
-- **$B000-$DFFF**: Bank-switched module window (BASIC, DEV TOOLS)
+- **$B000-$EFFF**: Bank-switched module window, 16 KB (BASIC, DEV TOOLS, FORTH, MONITOR)
 - **$FE00-$FE5E**: Memory-mapped I/O — PIA, VIC register port, ACIA, SID, RTC
   (the 80×25 screen and its colors live behind the VIC port, not in the 64K map)
-- **$E000-$FFFF**: Kernel ROM
+- **$F000-$FFFF**: Kernel BIOS ROM (the monitor is module bank 4, not here)
 - **$FFFA-$FFFF**: Interrupt vectors (NMI, RESET, IRQ)

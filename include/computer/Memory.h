@@ -32,8 +32,8 @@ namespace Computer
      * - $0400-$07FF: Screen memory (1KB) - Character display data
      * - $0800-$87FF: User RAM (32KB) - Available for programs / module working RAM
      * - $8800-$AFFF: DOS ROM (10KB) - always-mapped FAT16 filesystem / DOS shell
-     * - $B000-$DFFF: Module window (12KB) - bank 0 = RAM, banks 1..255 = ROM modules
-     * - $E000-$FFFF: ROM area (8KB) - Kernel ROM (I/O page at $FE00, bank reg $FE23,
+     * - $B000-$EFFF: Module window (16KB) - bank 0 = RAM, banks 1..255 = ROM modules
+     * - $F000-$FFFF: ROM area (4KB) - Kernel BIOS (I/O page at $FE00, bank reg $FE23,
      *                block-device registers $FE24-$FE28)
      *
      * @see VIC, PIA, CPU6502
@@ -54,17 +54,17 @@ namespace Computer
         static constexpr uint16_t kDosRomEnd = 0xAFFF;
         static constexpr size_t kDosRomSize = 0x2800; // 10 KB
 
-        /// Bankable module window ($B000-$DFFF, 12KB). Backed by RAM when the
+        /// Bankable module window ($B000-$EFFF, 16KB). Backed by RAM when the
         /// selected bank is 0, or by a read-only module ROM for banks 1..255.
         static constexpr uint16_t kModuleWindowStart = 0xB000;
-        static constexpr uint16_t kModuleWindowEnd = 0xDFFF;
-        static constexpr size_t kModuleWindowSize = 0x3000; // 12 KB
+        static constexpr uint16_t kModuleWindowEnd = 0xEFFF;
+        static constexpr size_t kModuleWindowSize = 0x4000; // 16 KB
 
-        /// Kernel ROM ($E000-$FFFF, 8KB): the BIOS -- screen, keyboard, hex and
+        /// Kernel ROM ($F000-$FFFF, 4KB): the BIOS -- screen, keyboard, hex and
         /// decimal conversion, the pager, IRQ/NMI, sound, bank launching -- plus the
         /// $FF00 ABI jump table and the $FFFA vectors. The I/O page is carved out of
         /// it at $FE00-$FE5E. The monitor is no longer here; it is module bank 4.
-        static constexpr uint16_t kKernelRomStart = 0xE000;
+        static constexpr uint16_t kKernelRomStart = 0xF000;
 
         /// MODULE_BANK select register. Write n to map bank n into the window;
         /// read returns the current bank. Lives in the always-mapped I/O page.
