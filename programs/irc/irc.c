@@ -311,9 +311,35 @@ static void input_repaint(void)
 
 /* ---- incoming IRC line --------------------------------------------------- */
 /* Append a null-terminated string to line[] at *j, capped at COLS. */
-static void ln_puts(char *line, int *j, const char *s)
+/* Shared scratch for building one display line. There were three private
+   static char[MSGMAX] copies of this (in emit_server_text, handle_line and
+   echo_self) costing 768 bytes of BSS for a buffer none of them held for longer
+   than a single chat_add() call.
+   INVARIANT: `line` is valid only until the next chat_add(). No builder may hold
+   it across a call to another builder. handle_line -> emit_server_text is the
+   only such path and handle_line does not touch `line` after that call. */
+static char line[MSGMAX];
+
+/* Append to `line` at *j, stopping at MSGMAX-1. The buffer used to be passed in,
+   but with one shared buffer that third argument was a push at every call site. */
+static void ln_puts(int *j, const char *s)
 {
     while (*s && *j < MSGMAX - 1) line[(*j)++] = *s++;
+}
+
+/* Build "<pre><nick><mid><arg>" and push it to the chat pane; arg may be NULL.
+   Nearly every server event has this shape, and spelling each one out cost four
+   three-argument ln_puts() calls that cc65 turns into four full push sequences. */
+static void chat_event(const char *pre, const char *nk, const char *mid,
+                       const char *arg)
+{
+    int j = 0;
+    ln_puts(&j, pre);
+    ln_puts(&j, nk);
+    ln_puts(&j, mid);
+    if (arg) ln_puts(&j, arg);
+    line[j] = 0;
+    chat_add(line);
 }
 /* Null-terminate the first whitespace-delimited word of p in place; return p. */
 static char *word(char *p)
@@ -331,7 +357,6 @@ static char *word(char *p)
    instead of being replaced by the boilerplate trailing alone. */
 static void emit_server_text(const char *body)
 {
-    static char line[MSGMAX];
     int j = 0, tokstart = 1, trailing = 0;
     while (*body && j < MSGMAX - 1) {
         char ch = *body++;
@@ -347,7 +372,7 @@ static void handle_line(char *s)
 {
     int i = 0, ns = 0, ne = 0, j, m;
     char *cmd, *t, *args;
-    char nk[24]; static char line[MSGMAX];
+    char nk[24];
 
     if (!s[0]) return;
 
@@ -385,9 +410,7 @@ static void handle_line(char *s)
             char *body = t + 1, *end = strchr(body, CTCP);
             if (end) *end = 0;
             if (strncmp(body, "ACTION", 6) == 0) {
-                j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
-                ln_puts(line, &j, " "); ln_puts(line, &j, body[6] ? body + 7 : "");
-                line[j] = 0; chat_add(line);
+                chat_event("* ", nk, " ", body[6] ? body + 7 : "");
             } else if (strncmp(body, "VERSION", 7) == 0) {
                 aputs("NOTICE "); aputs(nk); aputs(" :\001VERSION MFC IRC 1.4\001"); acrlf();
             } else if (strncmp(body, "PING", 4) == 0) {
@@ -397,42 +420,30 @@ static void handle_line(char *s)
             return;
         }
         if (!t) return;
-        j = 0; ln_puts(line, &j, "<"); ln_puts(line, &j, nk);
-        ln_puts(line, &j, "> "); ln_puts(line, &j, t);
-        line[j] = 0; chat_add(line);
+        chat_event("<", nk, "> ", t);
         return;
     }
     if (strncmp(cmd, "NOTICE", 6) == 0) {
-        j = 0;
-        if (nk[0]) { ln_puts(line, &j, "-"); ln_puts(line, &j, nk); ln_puts(line, &j, "- "); }
-        else       { ln_puts(line, &j, "* "); }   /* unprefixed AUTH/server notice */
-        ln_puts(line, &j, t ? t : "");
-        line[j] = 0; chat_add(line);
+        if (nk[0]) chat_event("-", nk, "- ", t ? t : "");
+        else       chat_event("* ", "", "", t ? t : "");  /* unprefixed AUTH/server notice */
         return;
     }
     if (strncmp(cmd, "JOIN", 4) == 0) {
-        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
-        ln_puts(line, &j, " joined "); ln_puts(line, &j, word(t ? t : args));
-        line[j] = 0; chat_add(line);
+        chat_event("* ", nk, " joined ", word(t ? t : args));
         return;
     }
     if (strncmp(cmd, "PART", 4) == 0) {
-        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
-        ln_puts(line, &j, " left "); ln_puts(line, &j, word(args));
-        line[j] = 0; chat_add(line);
+        chat_event("* ", nk, " left ", word(args));
         return;
     }
     if (strncmp(cmd, "QUIT", 4) == 0) {
-        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
-        ln_puts(line, &j, " quit");
-        if (t) { ln_puts(line, &j, " ("); ln_puts(line, &j, t); ln_puts(line, &j, ")"); }
+        j = 0; ln_puts(&j, "* "); ln_puts(&j, nk); ln_puts(&j, " quit");
+        if (t) { ln_puts(&j, " ("); ln_puts(&j, t); ln_puts(&j, ")"); }
         line[j] = 0; chat_add(line);
         return;
     }
     if (strncmp(cmd, "NICK", 4) == 0) {
-        j = 0; ln_puts(line, &j, "* "); ln_puts(line, &j, nk);
-        ln_puts(line, &j, " is now "); ln_puts(line, &j, word(t ? t : args));
-        line[j] = 0; chat_add(line);
+        chat_event("* ", nk, " is now ", word(t ? t : args));
         return;
     }
     if (cmd[0] >= '0' && cmd[0] <= '9') {        /* server numeric reply */
@@ -443,8 +454,7 @@ static void handle_line(char *s)
             if (nl < (int)sizeof(nick) - 2) { nick[nl] = '_'; nick[nl + 1] = 0; }
             aputs("NICK "); aputs(nick); acrlf();
             status_repaint();
-            j = 0; ln_puts(line, &j, "* nick in use, trying "); ln_puts(line, &j, nick);
-            line[j] = 0; chat_add(line);
+            chat_event("* nick in use, trying ", nick, "", 0);
             return;
         }
         p = args;                                /* args -> target; skip it to the body */
@@ -466,7 +476,6 @@ static void copy_word(char *dst, const char *src, int max)
 
 static void echo_self(const char *text)
 {
-    static char line[MSGMAX];
     int j = 0, m = 0;
     line[j++] = '<';
     while (nick[m] && j < MSGMAX - 1) line[j++] = nick[m++];
