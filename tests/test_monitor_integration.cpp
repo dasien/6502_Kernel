@@ -16,13 +16,25 @@
 #include <filesystem>
 #include <fstream>
 #include <ctime>
+#include <cstdio>
 #include <cstdlib>
+#include <sys/wait.h>   // WIFEXITED/WEXITSTATUS for the fsck.fat subprocess
 #include "computer/Computer6502.h"
 #include "support/fat16_image.h"
+
+// Path to the host's FAT checker, found by CMake. Empty when dosfstools is not
+// installed, in which case the host-interop check reports SKIP instead of failing.
+#ifndef MFC_FSCK_FAT
+#define MFC_FSCK_FAT ""
+#endif
 
 // BASIC's page-2 output vector (PG2_TABS: ccflag $0200, ccbyte, ccnull, VEC_CC,
 // VEC_IN, then VEC_OUT). Only valid while BASIC is the running module.
 static constexpr uint16_t kBasicVecOut = 0x0207;
+
+// DOS_MOUNTED (dos.asm): 0 = not mounted. Cleared by the harness whenever it swaps
+// the backing image, so the DOS re-reads the BPB instead of reusing cached geometry.
+static constexpr uint16_t kDosMounted = 0x0300;
 
 class MonitorIntegrationTester {
 public:
@@ -57,6 +69,7 @@ public:
         testFileTimestamp();
         testDosDrawers();
         testDosCrossDrawer();
+        testDiskStaysHostCleanAfterGuestWrites();
         testRunDiskProgram();
         testRunOverride();
         testRunNotFound();
@@ -123,17 +136,33 @@ public:
 
     // Build a FAT16 image with the given files and point the block device at it,
     // so the '@' DOS preview command has a disk to read.
-    void mountDisk(const std::vector<mfcdos_test::Fat16File>& files) {
+    //
+    // The default geometry is small so the suite can rebuild an image per test
+    // cheaply. Pass kHostFat16Clusters (and numFats 2) for a volume real host
+    // tools would recognise -- see testDiskStaysHostCleanAfterGuestWrites.
+    void mountDisk(const std::vector<mfcdos_test::Fat16File>& files,
+                   uint32_t dataClusters = mfcdos_test::Fat16ImageBuilder::kDefaultDataClusters,
+                   uint8_t numFats = mfcdos_test::Fat16ImageBuilder::kNumFats) {
         if (disk_path_.empty()) {
             disk_path_ = (std::filesystem::temp_directory_path() /
                           "mfcdos_monitor_disk.img").string();
         }
-        const std::vector<uint8_t> img = mfcdos_test::Fat16ImageBuilder::build(files);
+        const std::vector<uint8_t> img = mfcdos_test::Fat16ImageBuilder::build(
+            files, dataClusters, numFats);
         std::ofstream f(disk_path_, std::ios::binary | std::ios::trunc);
         f.write(reinterpret_cast<const char*>(img.data()),
                 static_cast<std::streamsize>(img.size()));
         f.close();
         computer.getBlockDevice()->setImagePath(disk_path_);
+
+        // Swapping the image out from under a mounted filesystem is a media change,
+        // and the DOS has no way to notice one: _FS_MOUNT caches the BPB geometry
+        // and _FS_ENSURE_MOUNT short-circuits on DOS_MOUNTED forever after. Clearing
+        // the flag is the host standing in for a media-change signal, forcing the
+        // next FS call to re-read the boot sector. Without it a mount whose geometry
+        // differs from the previous image writes through the old layout -- root
+        // directory sectors land on top of the FAT.
+        computer.getMemory()->write(kDosMounted, 0x00);
     }
 
     // The MFC/OS DOS shell: boots to its banner, CATALOG/TYPE work, and MON
@@ -564,6 +593,60 @@ public:
         verifyResponse("FILE NOT FOUND", "two-level path is rejected");
     }
 
+    // Host interop after the GUEST has written. fat16_image_clean checks a freshly
+    // built, host-authored image; nothing checked an image the machine itself wrote
+    // to, which is the dangerous direction. Orphaned cluster chains, a second FAT
+    // that disagrees with the first, and clobbered drawer entries are all produced
+    // by the DOS write path, and a host "repairing" any of them discards data. Our
+    // own assertions can only confirm the driver agrees with itself; fsck is an
+    // independent reader of the same bytes. So: run every write verb over the
+    // image, then hand it to the host's checker.
+    void testDiskStaysHostCleanAfterGuestWrites() {
+        // Two FATs at the host cluster count: the geometry mkfs.fat and
+        // newfs_msdos actually produce, and the only one fsck can read. FAT type
+        // is derived from the cluster count, not declared -- under 4085 clusters
+        // the standard says FAT12, so the suite's small default volume is parsed
+        // as 12-bit by any host tool and every reading off it is noise. The second
+        // FAT is what makes the driver's mirroring live: the two copies drifting
+        // apart is the corruption a host "repair" turns into data loss.
+        mountDisk({{"SEED.TXT", std::vector<uint8_t>(600, 'S')}},   // spans 2 clusters
+                  mfcdos_test::Fat16ImageBuilder::kHostFat16Clusters, /*numFats=*/2);
+
+        // Grow a file past one cluster through the write path, then free it again:
+        // allocating and releasing a multi-cluster chain is where orphans appear.
+        for (uint16_t i = 0; i < 600; ++i)
+            computer.getMemory()->write(0x0900 + i, static_cast<uint8_t>('A' + (i % 26)));
+        sendCommand("SAVE LONG.BIN,0900-0B57", 900000);
+        verifyResponse("SAVED", "multi-cluster SAVE succeeds");
+
+        // A drawer, a file inside it, and the cross-directory verbs.
+        sendCommand("NEWDRAWER ARCHIVE", 400000);
+        sendCommand("COPY LONG.BIN,ARCHIVE/KEPT.BIN", 900000);
+        sendCommand("MOVE SEED.TXT,ARCHIVE/SEED.TXT", 900000);
+        sendCommand("RENAME LONG.BIN,RENAMED.BIN", 400000);
+
+        // Free a multi-cluster chain, and empty + drop a drawer so its directory
+        // cluster is returned to the FAT too.
+        sendCommand("ERASE RENAMED.BIN", 400000);
+        sendCommand("OPEN ARCHIVE");
+        sendCommand("ERASE KEPT.BIN", 400000);
+        sendCommand("ERASE SEED.TXT", 400000);
+        sendCommand("CLOSE");
+        sendCommand("DROPDRAWER ARCHIVE", 400000);
+        verifyResponse("DRAWER DROPPED", "drawer dropped after emptying it");
+
+        // Reuse the freed space: a fresh file must land in reclaimed clusters
+        // without inheriting anything from the chains just released.
+        computer.getMemory()->write(0x0900, 'R');
+        sendCommand("SAVE REUSE.BIN,0900-0900", 400000);
+        verifyResponse("SAVED", "space freed by the workload is reusable");
+
+        verifyImageHostClean("guest-written image is clean FAT16");
+
+        // The scratch area is shared with later tests that expect it clear.
+        for (uint16_t i = 0; i < 600; ++i) computer.getMemory()->write(0x0900 + i, 0x00);
+    }
+
     // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).
     void testMonitorLSRetired() {
         clearScreen();
@@ -724,6 +807,58 @@ private:
                       << "] = $" << std::setw(2) << std::setfill('0')
                       << static_cast<int>(actual) << ", expected $"
                       << static_cast<int>(expected) << std::dec << std::setfill(' ') << ")";
+            tests_failed++;
+        } else {
+            tests_passed++;
+        }
+        std::cout << std::endl;
+        return ok;
+    }
+
+    // Hand the current disk image to the host's own FAT checker.
+    //
+    // -n never writes; it reports only. A non-zero exit means fsck would have
+    // changed something, but the text matters too: some findings are reported and
+    // auto-handled without affecting the status, so a clean exit alone is not
+    // enough. Mirrors tests/scripts/validate_fat16_image.cmake, which applies the
+    // same two checks to host-built images.
+    bool verifyImageHostClean(const std::string& test_name) {
+        const std::string fsck = MFC_FSCK_FAT;
+        if (fsck.empty()) {
+            std::cout << std::left << std::setw(30) << test_name
+                      << ": SKIP (fsck.fat not found - install dosfstools)"
+                      << std::endl;
+            return true;
+        }
+
+        const std::string cmd = fsck + " -n \"" + disk_path_ + "\" 2>&1";
+        std::string report;
+        int rc = -1;
+        if (FILE* pipe = popen(cmd.c_str(), "r")) {
+            char buf[256];
+            while (std::fgets(buf, sizeof(buf), pipe) != nullptr) report += buf;
+            const int status = pclose(pipe);
+            rc = (status >= 0 && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
+        }
+
+        // Findings fsck reports without necessarily failing: the FAT copies
+        // disagreeing is the one that silently destroys data when "repaired".
+        static const char* kProblems[] = {"clearing", "Auto-removing", "auto-removing",
+                                          "differ", "Corrupt", "corrupt", "Invalid",
+                                          "invalid", "Unexpected"};
+        std::string complaint;
+        for (const char* p : kProblems) {
+            if (report.find(p) != std::string::npos) { complaint = p; break; }
+        }
+
+        const bool ok = (rc == 0) && complaint.empty();
+        std::cout << std::left << std::setw(30) << test_name << ": "
+                  << (ok ? "PASS" : "FAIL");
+        if (!ok) {
+            if (rc != 0) std::cout << " (fsck exit " << rc << ")";
+            else std::cout << " (fsck reported '" << complaint << "')";
+            std::cout << "\n--- fsck.fat report ---\n" << report
+                      << "-----------------------";
             tests_failed++;
         } else {
             tests_passed++;

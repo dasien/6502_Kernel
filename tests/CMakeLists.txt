@@ -578,3 +578,13 @@ else()
     message(STATUS "fsck.fat not found - skipping fat16_image_clean "
                    "(install dosfstools to check host FAT16 interop)")
 endif()
+
+# The same checker, applied to an image the GUEST wrote. fat16_image_clean only
+# covers host-authored images; the corruption that actually costs data (orphaned
+# chains, the two FATs disagreeing, damaged drawer entries) comes out of the DOS
+# write path, so the integration suite fscks its own disk after a write workload.
+# Without dosfstools the check reports SKIP rather than failing the suite.
+if(FSCK_FAT_EXECUTABLE)
+    target_compile_definitions(monitor_integration_tests PRIVATE
+        MFC_FSCK_FAT="${FSCK_FAT_EXECUTABLE}")
+endif()
