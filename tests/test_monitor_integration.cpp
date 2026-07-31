@@ -88,25 +88,13 @@ public:
 
         // Launch-by-name: the assembler module runs via "ASM" and returns to the
         // DOS prompt on exit. (BANK_LAUNCH clears the screen, so no clear needed.)
-        testDevtoolsModule();
         testForthModule();
-        testDisassembler();
-        testDisassemblerBackspace();
-        testDisassemblerEscMidline();
-        testAssembler();
-        testTwoPassAssembler();
-        testTwoPassDirectives();
-        testAssemblerListing();
-        testAssemblerCaseInsensitive();
-        testAssemblerForwardEquate();
-        testAssemblerRangeDiagnostics();
-        testAssemblerLongLineDiagnosed();
-        testAssemblerOriginGuards();
 
         // Monitor tests run inside MON.
         sendCommand("MON");
         testMonitorIsBankModule();
         testMonitorLSRetired();
+
         testClearScreen();
         testHelpCommand();
         testScrollIntegrity();
@@ -127,6 +115,21 @@ public:
         testMoveDestEqualsEnd();
         testMoveOverlapClearKeepsData();
         testEscAtPromptNoError();
+        // The assembler is part of the monitor now (it was bank 2, "DEV TOOLS"),
+        // so these run at the monitor prompt using its colon grammar.
+        testDisassembler();
+        testDisassemblerBackspace();
+        testDisassemblerEscMidline();
+        testAssembler();
+        testTwoPassAssembler();
+        testTwoPassDirectives();
+        testAssemblerListing();
+        testAssemblerCaseInsensitive();
+        testAssemblerForwardEquate();
+        testAssemblerRangeDiagnostics();
+        testAssemblerLongLineDiagnosed();
+        testAssemblerOriginGuards();
+
 
         // Must run last: it launches BASIC, which keeps running and would
         // otherwise consume the keystrokes of any following test.
@@ -410,12 +413,13 @@ public:
 
     // The '&' override runs a disk program even when a ROM module shares its name.
     void testRunOverride() {
-        // Disk file named "ASM" (same as the assembler module). Body: LDA #$37 /
-        // STA $0950 / RTS at header $0930.
+        // Disk file named "MON" (same as the monitor module -- this used to be
+        // "ASM" until the assembler was folded into the monitor and that module
+        // name retired). Body: LDA #$37 / STA $0950 / RTS at header $0930.
         std::vector<uint8_t> prg = {0x30, 0x09, 0xA9, 0x37, 0x8D, 0x50, 0x09, 0x60};
-        mountDisk({{"ASM", prg}});
+        mountDisk({{"MON", prg}});
         computer.getMemory()->write(0x0950, 0x00);
-        sendCommand("&ASM", 300000);  // force the disk version
+        sendCommand("&MON", 300000);  // force the disk version
         verifyMemEquals(0x0950, 0x37, "& override ran the disk program over the module");
     }
 
@@ -753,13 +757,16 @@ public:
     }
 
     // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).
+    // S: is retired (host save dialog; use the DOS SAVE/EXPORT verbs). L: is NOT
+    // retired any more -- it was reclaimed for "load assembler source" when the
+    // assembler was folded in, which is what the letter always meant.
     void testMonitorLSRetired() {
-        clearScreen();
-        sendCommand("L:0800");
-        verifyResponse("ERROR?", "Monitor L: is retired");
         clearScreen();
         sendCommand("S:0800-0810");
         verifyResponse("ERROR?", "Monitor S: is retired");
+        clearScreen();
+        sendCommand("H:1234");
+        verifyResponse("ERROR?", "H: is retired (hex conversion moved to $:)");
     }
 
 private:
@@ -840,9 +847,11 @@ private:
     // Launch the assembler module by name from the DOS prompt (replaces the old
     // B:-menu path). BANK_LAUNCH clears the screen, so callers needn't. The module
     // returns to the DOS prompt on ESC.
-    void launchAsm() {
-        sendCommand("ASM", 200000);
-    }
+    // Was: launch the bank-2 assembler by name. The assembler is part of the
+    // monitor now, so its commands are typed straight at the monitor prompt and
+    // there is nothing to launch. Kept as a no-op so the call sites still read as
+    // "make sure the assembler is available here".
+    void launchAsm() {}
 
     // Regression: after a program leaves the VIC attribute latch on a non-default
     // colour (as TERM does when a BBS ends on white), the DOS prompt must reclaim
@@ -1018,13 +1027,18 @@ private:
     }
 
     void testHelpCommand() {
-        // Help is now triggered by '?' (no colon); 'H:' is the hex-to-decimal
-        // command. The help listing (~18 lines) fits on one page, no paging.
+        // Help is '?' (no colon). The listing grew to 19 commands when the
+        // assembler was folded in, which pushed it past a screen, so it pauses at
+        // --MORE-- part way down and the tail only appears after a continue.
         clearScreen();
         sendCommand("?");
         verifyResponse("MONITOR COMMANDS", "Help Command Display");
-        // The '?' and '.' meta-commands are now listed too (v2.2.6).
+        verifyResponse("A:XXXX", "Help lists the line assembler");
+        verifyResponse("D:XXXX", "Help lists the disassembler");
+        drainPaging();
+        // The '?' and '.' meta-commands are listed too, at the end.
         verifyResponse("RECALL LAST COMMAND", "Help lists the . recall command");
+        verifyResponse("#:NNNNN", "Help lists the relettered decimal conversion");
     }
 
     // Regression: SCROLL_SCREEN once interleaved its four page-copies, which
@@ -1063,17 +1077,6 @@ private:
         computer.run(cycles);
     }
 
-    // Launch-by-name: typing "ASM" at the DOS prompt maps bank 2 and jumps into
-    // the module (banner prints); ESC makes it JMP $FF12, which unmaps the bank
-    // (window back to RAM) and returns to the DOS prompt.
-    void testDevtoolsModule() {
-        launchAsm();
-        verifyMemEquals(0xFE23, 0x02, "ASM maps bank 2 (MODULE_BANK)");
-        verifyResponse("MFC ASM", "Assembler module launches via ASM");
-
-        sendKey(0x1B, 200000);   // ESC -> module returns via $FF12 to the DOS
-        verifyMemEquals(0xFE23, 0x00, "Module return unmaps bank (window = RAM)");
-    }
 
     // FIG-Forth (bank 3). Launch via "FORTH", confirm the sign-on, define a word
     // (proving new definitions compile into the RAM dictionary - the ROMable
@@ -1113,7 +1116,7 @@ private:
 
         launchAsm();
 
-        for (char c : std::string("D0800"))
+        for (char c : std::string("D:0800"))
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress('\r');
         computer.run(500000);
@@ -1123,8 +1126,8 @@ private:
         verifyResponse("LDA ($FB)", "Disasm: zero-page indirect (65C02)");
         verifyResponse("BRA $0800", "Disasm: relative branch target");
 
-        sendKey(0x1B, 200000);           // ESC -> return to monitor
-        verifyMemEquals(0xFE23, 0x00, "Disasm: module returned (bank unmapped)");
+        sendKey(0x1B, 200000);           // ESC at the prompt: clean no-op
+        verifyMemEquals(kModuleBank, kMonBank, "Disasm: still in the monitor bank");
     }
 
     // Backspace in the address entry: type a wrong digit, erase it, finish, and
@@ -1137,7 +1140,7 @@ private:
         launchAsm();
 
         // "D085" then backspace (drops the 5 -> $0008) then "00" -> $0800.
-        for (char c : std::string("D085"))
+        for (char c : std::string("D:085"))
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress(0x08);   // backspace
         for (char c : std::string("00"))
@@ -1158,7 +1161,7 @@ private:
 
         launchAsm();
 
-        for (char c : std::string("D08"))            // partial address...
+        for (char c : std::string("D:08"))            // partial address...
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress(0x1B);        // ...ESC cancels the line
         computer.run(200000);
@@ -1167,7 +1170,7 @@ private:
         verifyAbsent("D08", "Disasm: ESC erases the typed line in place");
 
         // Module must accept a fresh command afterward.
-        for (char c : std::string("D0800"))
+        for (char c : std::string("D:0800"))
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress('\r');
         computer.run(500000);
@@ -1218,7 +1221,7 @@ private:
     void testAssembler() {
         launchAsm();
 
-        sendCommand("A0800");            // assemble mode at $0800
+        sendCommand("A:0800");           // assemble mode at $0800
         sendCommand("LDA #$05");         // A9 05      immediate
         sendCommand("STA $0400");        // 8D 00 04   absolute
         sendCommand("NOP");              // EA         implied
@@ -1253,8 +1256,8 @@ private:
         verifyMemEquals(0x0815, 0x34, "ASM: JMP abs lo");
         verifyMemEquals(0x0816, 0x12, "ASM: JMP abs hi");
 
-        sendKey(0x1B, 200000);           // exit the module back to the monitor
-        verifyMemEquals(0xFE23, 0x00, "ASM: module returned (bank unmapped)");
+        sendKey(0x1B, 200000);           // ESC at the prompt: clean no-op
+        verifyMemEquals(kModuleBank, kMonBank, "ASM: still in the monitor bank");
     }
 
     // The two-pass assembler (B = build the source buffer at $A000). Pokes a
@@ -1278,7 +1281,7 @@ private:
         mem->write(a, 0x00);             // source terminator
 
         launchAsm();
-        sendCommand("B", 300000);        // build
+        sendCommand("B:", 300000);        // build
 
         verifyMemEquals(0x0800, 0xA9, "2pass: LDA #imm");
         verifyMemEquals(0x0801, 0x00, "2pass: imm operand");
@@ -1316,7 +1319,7 @@ private:
         mem->write(a, 0x00);
 
         launchAsm();
-        sendCommand("B", 300000);
+        sendCommand("B:", 300000);
 
         verifyMemEquals(0x0900, 0x48, "dir: .ASCII 'H'");
         verifyMemEquals(0x0901, 0x49, "dir: .ASCII 'I'");
@@ -1349,7 +1352,7 @@ private:
         mem->write(a, 0x00);
 
         launchAsm();
-        sendCommand("B", 300000);
+        sendCommand("B:", 300000);
 
         verifyResponse("0800: LDA #$2A", "listing: address + source line");
         verifyResponse("0802: RTS", "listing: second line address");
@@ -1379,7 +1382,7 @@ private:
         mem->write(a, 0x00);
 
         launchAsm();
-        sendCommand("B", 300000);
+        sendCommand("B:", 300000);
 
         verifyMemEquals(0x0800, 0xA9, "ci: lowercase lda #imm");
         verifyMemEquals(0x0801, 0x2A, "ci: underscore equate my_val (=$2a)");
@@ -1402,7 +1405,7 @@ private:
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
         launchAsm();
-        sendCommand("B", 400000);
+        sendCommand("B:", 400000);
     }
 
     // Regression: "NAME = expr" must be re-evaluated on pass 2. Pass 1 evaluated it
@@ -1771,34 +1774,34 @@ private:
     // mode) conversion across boundary, carry-propagation, and max cases.
     void testHexToDecimal() {
         clearScreen();
-        sendCommand("H:0000");
+        sendCommand("$:0000");
         verifyResponse("#0", "Hex->Dec zero");
 
         clearScreen();
-        sendCommand("H:000A");
+        sendCommand("$:000A");
         verifyResponse("#10", "Hex->Dec small (10)");
 
         clearScreen();
-        sendCommand("H:0064");          // carry from tens into hundreds
+        sendCommand("$:0064");          // carry from tens into hundreds
         verifyResponse("#100", "Hex->Dec 100");
 
         clearScreen();
-        sendCommand("H:0102");
+        sendCommand("$:0102");
         verifyResponse("#258", "Hex->Dec 258");
 
         clearScreen();
-        sendCommand("H:FFFF");          // 16-bit maximum, all 5 digits
+        sendCommand("$:FFFF");          // 16-bit maximum, all 5 digits
         verifyResponse("#65535", "Hex->Dec max (65535)");
     }
 
     // D: decimal->hex (unchanged, but guards the round trip with H:).
     void testDecimalToHex() {
         clearScreen();
-        sendCommand("D:65535");
+        sendCommand("#:65535");
         verifyResponse("$FFFF", "Dec->Hex max (65535)");
 
         clearScreen();
-        sendCommand("D:258");
+        sendCommand("#:258");
         verifyResponse("$0102", "Dec->Hex 258");
     }
 
@@ -1808,10 +1811,10 @@ private:
     // command still produces its expected output.
     void testDecimalOverflowNoCorruption() {
         clearScreen();
-        sendCommand("D:65536");          // overflow -> RANGE? but must NOT crash
+        sendCommand("#:65536");          // overflow -> RANGE? but must NOT crash
         clearScreen();
-        sendCommand("H:00FF");           // if the stack was corrupted, this never runs
-        verifyResponse("#255", "D: overflow does not corrupt stack");
+        sendCommand("$:00FF");           // if the stack was corrupted, this never runs
+        verifyResponse("#255", "#: overflow does not corrupt stack");
     }
 
     // Regression: M: with dest == source-end must use the backward copy. Forward

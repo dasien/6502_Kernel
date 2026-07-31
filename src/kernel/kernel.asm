@@ -1710,9 +1710,6 @@ MODULE_DIR:
     .BYTE 1                     ; bank 1
     .WORD $B000                 ; entry (BASIC LAB_COLD at the window base)
     .WORD NAME_BASIC
-    .BYTE 2                     ; bank 2
-    .WORD $B000                 ; entry (DEVT_MAIN at the window base)
-    .WORD NAME_ASM
     .BYTE 3                     ; bank 3
     .WORD $B000                 ; entry (FIG-Forth ENTER at the window base)
     .WORD NAME_FORTH
@@ -1722,7 +1719,6 @@ MODULE_DIR:
 MODULE_DIR_COUNT = (* - MODULE_DIR) / MODULE_DIR_RECSIZE
 
 NAME_BASIC:          .BYTE "BASIC", 0
-NAME_ASM:            .BYTE "ASM", 0
 NAME_FORTH:          .BYTE "FORTH", 0
 NAME_MON:            .BYTE "MON", 0
 

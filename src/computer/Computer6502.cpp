@@ -225,7 +225,7 @@ namespace Computer
         };
 
         installBank(1, "../kernel/basic.rom", "BASIC");
-        installBank(2, "../kernel/assembler.rom", "ASSEMBLER");
+        // Bank 2 was the DEV TOOLS assembler; it is part of the monitor (bank 4) now.
         installBank(3, "../kernel/forth.rom", "FORTH");
         // Bank 4 is the monitor. It moved out of kernel ROM: as a disk program it
         // would load at $0800 and overwrite the very memory it exists to inspect,

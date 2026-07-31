@@ -30,7 +30,7 @@
 ;   D xxxx   disassemble from hex address xxxx (one screen of instructions)
 ; ================================================================
 
-.PC02                               ; enable 65C02 instructions (BRA, STZ, ...)
+; (.PC02 and the $B000 origin come from monitor.asm, which includes this file.)
 
 ; ---- Kernel API jump table (the module ABI) --------------------
 K_PRINT_CHAR     = $FF00            ; print A as a character (preserves X, Y)
@@ -44,20 +44,12 @@ K_PARSE_HEX      = $FF18            ; X=offset in MON_CMDBUF -> MON_CURRADDR, C=
 K_PRINT_HEX_BYTE = $FF1B            ; print A as two hex digits
 
 ; ---- Shared kernel state used as module scratch (per the ABI) --
-MON_CURRADDR_LO  = $14
-MON_CURRADDR_HI  = $15
-MON_MSG_PTR_LO   = $16
-MON_MSG_PTR_HI   = $17
-MON_CMDBUF       = $0200            ; command input buffer (filled by K_READ_LINE)
-MON_CMDBUF_LEN   = 80               ; kernel command-buffer capacity
-MON_CMDLEN       = $026A            ; length of the line in MON_CMDBUF
 
 ; Set by ASM2_NEXTLINE when a source line did not fit in MON_CMDBUF. Lives in the
 ; free system RAM above the kernel's page-2/3 allocation (which ends at $02E2), not
 ; in the module's zero page -- $C0-$DF is fully assigned.
 ASM2_TRUNC       = $02E3            ; non-zero: the current source line was cut short
 
-ASCII_ESC        = $1B
 DISASM_COUNT     = 16               ; instructions disassembled per D command
 
 ; Byte-stream file I/O (host), same registers/protocol BASIC's LOAD uses.
@@ -146,56 +138,33 @@ CL_INDY          = 8                ; ($h),Y    (-> IZY)
 .segment "CODE"
 
 ; ----------------------------------------------------------------
-; DEVT_MAIN - module entry point (MUST be first byte of CODE = $B000)
+; Assembler commands, dispatched from the monitor's command table
 ; ----------------------------------------------------------------
-DEVT_MAIN:
-    JSR K_CLEAR_SCREEN
-    LDA #<MSG_BANNER
-    LDY #>MSG_BANNER
-    JSR PUTS
-    LDA #<MSG_PROMPT
-    LDY #>MSG_PROMPT
-    JSR PUTS
-
-; ----------------------------------------------------------------
-; Command loop: prompt, read a line (kernel handles editing/backspace/ESC),
-; dispatch on the first character.
-; ----------------------------------------------------------------
+; This was a module of its own once (bank 2, "DEV TOOLS") with a banner, a '>'
+; prompt and a single-letter command loop. It is part of the monitor now, because
+; the split was never real: the monitor carried a memory examiner and a byte
+; writer, this carried a disassembler and a line assembler, and that is one tool
+; cut down the middle. Every monitor of the period kept them together -- Supermon,
+; HESMON, the Apple II ROM monitor and its mini-assembler.
+;
+; So there is no command loop here any more. These handlers are reached from the
+; monitor's dispatch table and return to its prompt, and their arguments start at
+; index 2 of MON_CMDBUF -- past the letter and the colon -- because they speak the
+; monitor's "X:arg" grammar now.
 DEVT_LOOP:
-    LDA #'>'
-    JSR K_PRINT_CHAR
-    JSR K_READ_LINE                 ; -> MON_CMDBUF, MON_CMDLEN
-    LDA MON_CMDLEN
-    BEQ DEVT_LOOP                   ; empty line -> reprompt
-    LDA MON_CMDBUF
-    CMP #ASCII_ESC                  ; bare ESC (length 1) -> exit
-    BEQ DEVT_EXIT
-    CMP #'D'
-    BEQ CMD_DISASM
-    CMP #'A'
-    BEQ CMD_ASM
-    CMP #'B'
-    BEQ CMD_BUILD_T
-    CMP #'L'
-    BEQ CMD_LOAD_T
-    BRA DEVT_ERROR                  ; unknown command
-DEVT_EXIT:
-    JMP K_RETURN_MODULE             ; unmaps bank 2, returns to the monitor
-CMD_BUILD_T:                        ; trampolines (handlers are out of branch range)
-    JMP CMD_BUILD
-CMD_LOAD_T:
-    JMP CMD_LOAD
+    JMP MONITOR_LOOP                ; command finished -> back to the monitor prompt
+
 DEVT_ERROR:
-    LDA #'?'
+    LDA #'?'                        ; bad argument; the build reports "? LINE nnnn"
     JSR K_PRINT_CHAR
     JSR K_PRINT_NEWLINE
-    BRA DEVT_LOOP
+    JMP MONITOR_LOOP
 
 ; ----------------------------------------------------------------
 ; CMD_DISASM - "D xxxx": disassemble DISASM_COUNT instructions from xxxx
 ; ----------------------------------------------------------------
 CMD_DISASM:
-    LDX #$01                        ; skip the command letter
+    LDX #$02                        ; skip the command letter and the ':'
 CD_SKIP:
     CPX MON_CMDLEN
     BCS DEVT_ERROR                  ; nothing but spaces after D
@@ -226,7 +195,7 @@ CD_LOOP:
 ; line or ESC exits assemble mode.
 ; ----------------------------------------------------------------
 CMD_ASM:
-    LDX #$01                        ; skip the command letter
+    LDX #$02                        ; skip the command letter and the ':'
 CA_SKIP:
     CPX MON_CMDLEN
     BCS CA_ERR

@@ -196,15 +196,24 @@ PARSE_CMD_START:
     CMP #ASCII_ESC
     BEQ PARSE_CMD_EXIT_DIRECT
 
-    ; Quick range check - is it between 'B' and 'Z'?
-    CMP #$42                    ; 'B'
-    BCC PARSE_CMD_ERROR_JMP     ; Less than 'B' - jump to local error handler
+    ; Base conversion moved onto symbols when 'D' was given to the disassembler,
+    ; which is the letter every period monitor uses for it. '#' reads "this is a
+    ; decimal number, show me hex"; '$' reads the other way.
+    CMP #'#'
+    BEQ PARSE_CMD_DEC_DIRECT
+    CMP #'$'
+    BEQ PARSE_CMD_HEX_DIRECT
+
+    ; Quick range check - is it between 'A' and 'Z'? ('A' since the line assembler
+    ; joined; it was 'B' when the monitor stood alone.)
+    CMP #$41                    ; 'A'
+    BCC PARSE_CMD_ERROR_JMP     ; Less than 'A' - jump to local error handler
     CMP #$5B                    ; 'Z'+1
     BCS PARSE_CMD_ERROR_JMP     ; Greater than 'Z' - jump to local error handler
 
     ; Get index from mapping table
     SEC
-    SBC #$42                    ; Subtract 'B' to get offset
+    SBC #$41                    ; Subtract 'A' to get offset
     TAX
     LDA CMD_INDEX_MAP,X         ; Get command index
     CMP #$FF                    ; Is it invalid?
@@ -217,6 +226,14 @@ PARSE_CMD_START:
     LDA CMD_JUMP_COMPACT_HI,X
     STA JUMP_VECTOR+1
     JMP (JUMP_VECTOR)
+
+PARSE_CMD_DEC_DIRECT:
+    ; '#:nnnnn' -> hex
+    JMP PARSE_CMD_DECIMAL_CHECK
+
+PARSE_CMD_HEX_DIRECT:
+    ; '$:xxxx' -> decimal
+    JMP PARSE_CMD_HEX_TO_DEC
 
 PARSE_CMD_HELP_DIRECT:
     ; Direct jump to help for '?' character
@@ -239,6 +256,20 @@ PARSE_CMD_ERROR_JMP:
 ; ================================================================
 ; MONITOR COMMAND PARSING ROUTINES
 ; ================================================================
+
+; Assembler commands. The handlers live in assembler.inc and read their argument
+; from MON_CMDBUF at index 2, past the letter and the colon.
+PARSE_CMD_DISASM:
+    JMP CMD_DISASM
+
+PARSE_CMD_LINEASM:
+    JMP CMD_ASM
+
+PARSE_CMD_BUILD:
+    JMP CMD_BUILD
+
+PARSE_CMD_LOADSRC:
+    JMP CMD_LOAD
 
 PARSE_CMD_CLEAR:
     JSR PARSE_COLON_COMMAND     ; Parse C: format
@@ -1809,12 +1840,12 @@ MONITOR_SKIP_SAVE:
 ; produced by CMD_INDEX_MAP (the '?' help and ESC commands are handled before
 ; this table is consulted), so those two entries are unused.
 CMD_JUMP_COMPACT_LO:
-    .BYTE <PARSE_CMD_DONE       ; 0 - unused ('B' bank menu retired)
+    .BYTE <PARSE_CMD_BUILD      ; 0 - 'B' (build the loaded source)
     .BYTE <PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE <PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE <PARSE_CMD_GO_CHECK   ; 3 - 'G'
     .BYTE <PARSE_CMD_HELP       ; 4 - unused (help is the '?' command, handled earlier)
-    .BYTE <PARSE_CMD_DONE       ; 5 - unused ('L' retired; host load is DOS IMPORT)
+    .BYTE <PARSE_CMD_LOADSRC    ; 5 - 'L' (load source for B:)
     .BYTE <PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE <PARSE_CMD_READ_CHECK ; 7 - 'R'
     .BYTE <PARSE_CMD_DONE       ; 8 - unused ('S' retired; host save is DOS EXPORT)
@@ -1824,15 +1855,17 @@ CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_ZERO       ; 12 - 'Z'
     .BYTE <PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
     .BYTE <PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
-    .BYTE <PARSE_CMD_HEX_TO_DEC ; 15 - 'H' (hex to decimal)
+    .BYTE <PARSE_CMD_HEX_TO_DEC ; 15 - '$:' (hex to decimal)
+    .BYTE <PARSE_CMD_DISASM     ; 16 - 'D' (disassemble)
+    .BYTE <PARSE_CMD_LINEASM    ; 17 - 'A' (line assembler)
 
 CMD_JUMP_COMPACT_HI:
-    .BYTE >PARSE_CMD_DONE       ; 0 - unused ('B' bank menu retired)
+    .BYTE >PARSE_CMD_BUILD      ; 0 - 'B' (build the loaded source)
     .BYTE >PARSE_CMD_CLEAR      ; 1 - 'C'
     .BYTE >PARSE_CMD_FILL_CHECK ; 2 - 'F'
     .BYTE >PARSE_CMD_GO_CHECK   ; 3 - 'G'
     .BYTE >PARSE_CMD_HELP       ; 4 - unused (help is the '?' command, handled earlier)
-    .BYTE >PARSE_CMD_DONE       ; 5 - unused ('L' retired; host load is DOS IMPORT)
+    .BYTE >PARSE_CMD_LOADSRC    ; 5 - 'L' (load source for B:)
     .BYTE >PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE >PARSE_CMD_READ_CHECK ; 7 - 'R'
     .BYTE >PARSE_CMD_DONE       ; 8 - unused ('S' retired; host save is DOS EXPORT)
@@ -1842,23 +1875,26 @@ CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_ZERO       ; 12 - 'Z'
     .BYTE >PARSE_CMD_SEARCH_CHECK; 13 - 'X' (search)
     .BYTE >PARSE_CMD_DECIMAL_CHECK; 14 - 'D' (decimal to hex)
-    .BYTE >PARSE_CMD_HEX_TO_DEC ; 15 - 'H' (hex to decimal)
+    .BYTE >PARSE_CMD_HEX_TO_DEC ; 15 - '$:' (hex to decimal)
+    .BYTE >PARSE_CMD_DISASM     ; 16 - 'D' (disassemble)
+    .BYTE >PARSE_CMD_LINEASM    ; 17 - 'A' (line assembler)
 
 ; Index mapping table - maps command character to table index
 ; For characters B-Z, subtract 'B' ($42) to get offset into this table
 ; Note: '?' character is handled as special case before table lookup (maps to help)
 CMD_INDEX_MAP:
-    .BYTE $FF   ; B -> invalid (bank menu retired; launch BASIC/ASM by name at DOS)
+    .BYTE 17    ; A -> 17 (line assembler)
+    .BYTE 0     ; B -> 0 (Build the loaded source)
     .BYTE 1     ; C -> 1 (Clear)
-    .BYTE 14    ; D -> 14 (Decimal to Hex)
+    .BYTE 16    ; D -> 16 (Disassemble; decimal conversion moved to '#:')
     .BYTE $FF   ; E -> invalid
     .BYTE 2     ; F -> 2 (Fill)
     .BYTE 3     ; G -> 3 (Run)
-    .BYTE 15    ; H -> 15 (Hex to Decimal) - Help is now via '?' character
+    .BYTE $FF   ; H -> invalid (hex conversion moved to '$:'; help is '?')
     .BYTE $FF   ; I -> invalid
     .BYTE $FF   ; J -> invalid
     .BYTE $FF   ; K -> invalid
-    .BYTE $FF   ; L -> invalid (host load retired; use DOS LOAD / IMPORT)
+    .BYTE 5     ; L -> 5 (Load source text for B:)
     .BYTE 6     ; M -> 6 (Move/Copy)
     .BYTE $FF   ; N -> invalid
     .BYTE $FF   ; O -> invalid
@@ -1887,11 +1923,13 @@ MODE_PREFIX_TABLE:
 ; Commands listed alphabetically by command letter; ESC (a navigation key,
 ; not a colon command) is kept last.
 HELP_MSG_TABLE:
+    .WORD MSG_HELP_LINEASM      ; A
+    .WORD MSG_HELP_BUILD        ; B
     .WORD MSG_HELP_CLEAR        ; C
-    .WORD MSG_HELP_DECIMAL      ; D
+    .WORD MSG_HELP_DISASM       ; D
     .WORD MSG_HELP_FILL         ; F
     .WORD MSG_HELP_GO           ; G
-    .WORD MSG_HELP_HEX_TO_DEC   ; H
+    .WORD MSG_HELP_LOADSRC      ; L
     .WORD MSG_HELP_MOVE         ; M
     .WORD MSG_HELP_READ         ; R
     .WORD MSG_HELP_STACK        ; T
@@ -1901,20 +1939,26 @@ HELP_MSG_TABLE:
     .WORD MSG_HELP_EXIT         ; ESC
     .WORD MSG_HELP_HELP         ; ?
     .WORD MSG_HELP_RECALL       ; .
+    .WORD MSG_HELP_DECIMAL      ; #
+    .WORD MSG_HELP_HEX_TO_DEC   ; $
     .WORD MSG_HELP_QUIT         ; Q
 
-HELP_MSG_COUNT = 15              ; Number of help messages
+HELP_MSG_COUNT = 19              ; Number of help messages
 
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
-MSG_MON_BANNER:      .BYTE "MFC MONITOR v1.0   ?=HELP  Q=QUIT", $0D, 0
+MSG_MON_BANNER:      .BYTE "MFC MONITOR v2.0   A:/B:/D:/L: ASSEMBLE  ?=HELP  Q=QUIT", $0D, 0
 MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
 ; Each help line is "<syntax>", $09 (TAB -> pad to HELP_DESC_COL), "<description>".
 MSG_HELP_CLEAR:      .BYTE "C:", $09, "CLEAR SCREEN", 0
-MSG_HELP_DECIMAL:    .BYTE "D:NNNNN", $09, "DECIMAL TO HEX", 0
+MSG_HELP_DECIMAL:    .BYTE "#:NNNNN", $09, "DECIMAL TO HEX", 0
 MSG_HELP_GO:         .BYTE "G:XXXX", $09, "RUN PROGRAM", 0
-MSG_HELP_HEX_TO_DEC: .BYTE "H:XXXX", $09, "HEX TO DECIMAL", 0
+MSG_HELP_HEX_TO_DEC: .BYTE "$:XXXX", $09, "HEX TO DECIMAL", 0
+MSG_HELP_LINEASM:    .BYTE "A:XXXX", $09, "LINE ASSEMBLER", 0
+MSG_HELP_BUILD:      .BYTE "B:", $09, "BUILD LOADED SOURCE", 0
+MSG_HELP_DISASM:     .BYTE "D:XXXX", $09, "DISASSEMBLE", 0
+MSG_HELP_LOADSRC:    .BYTE "L:", $09, "LOAD SOURCE FILE", 0
 MSG_HELP_READ:       .BYTE "R:XXXX(-YYYY)", $09, "READ MEMORY", 0
 MSG_HELP_STACK:      .BYTE "T:", $09, "PRINT STACK", 0
 MSG_HELP_WRITE:      .BYTE "W:XXXX", $09, "WRITE MEMORY", 0
@@ -1930,3 +1974,10 @@ MSG_SYNTAX_ERROR:    .BYTE "ERROR?", $0D, $0A, 0
 MSG_RANGE_ERROR:     .BYTE "RANGE?", $0D, $0A, 0
 MSG_VALUE_ERROR:     .BYTE "VALUE?", $0D, $0A, 0
 MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
+
+; ================================================================
+; ASSEMBLER / DISASSEMBLER
+; ================================================================
+; Formerly bank 2 ("DEV TOOLS"), now part of this module -- see the header of
+; assembler.inc for why. Provides the A: D: B: L: commands dispatched above.
+.include "assembler.inc"

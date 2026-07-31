@@ -72,17 +72,7 @@ if(CA65_FOUND AND LD65_FOUND)
     )
 
     # ================================================================
-    # ASSEMBLER Module ROM Build Target (module bank 2)
     # ================================================================
-
-    set(ASSEMBLER_DIR ${CMAKE_SOURCE_DIR}/src/kernel/assembler)
-    set(ASSEMBLER_ASM_SOURCE ${ASSEMBLER_DIR}/assembler.asm)
-    set(ASSEMBLER_CONFIG ${ASSEMBLER_DIR}/assembler_memory.cfg)
-    set(ASSEMBLER_INC ${ASSEMBLER_DIR}/opcodes_65c02.inc)
-
-    set(ASSEMBLER_OBJECT ${CMAKE_BINARY_DIR}/kernel/assembler.o)
-    set(ASSEMBLER_ROM ${CMAKE_BINARY_DIR}/kernel/assembler.rom)
-    set(ASSEMBLER_MAP ${CMAKE_BINARY_DIR}/kernel/assembler.map)
 
     # Monitor module ROM (bank 4). The monitor moved out of kernel ROM: as a disk
     # program it would load at $0800 and overwrite the code it exists to debug.
@@ -94,32 +84,16 @@ if(CA65_FOUND AND LD65_FOUND)
     set(MONITOR_MAP ${CMAKE_BINARY_DIR}/kernel/monitor.map)
 
     add_custom_target(monitor_rom ALL
-        COMMAND ca65 ${MONITOR_ASM_SOURCE} -I ${CMAKE_SOURCE_DIR}/src/kernel -o ${MONITOR_OBJECT}
+        COMMAND ca65 ${MONITOR_ASM_SOURCE} -I ${CMAKE_SOURCE_DIR}/src/kernel -I ${CMAKE_SOURCE_DIR}/src/kernel/assembler -o ${MONITOR_OBJECT}
         COMMAND ld65 -C ${MONITOR_CONFIG} ${MONITOR_OBJECT} -o ${MONITOR_ROM} -m ${MONITOR_MAP}
         COMMENT "Building monitor module ROM (bank 4)"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${MONITOR_ASM_SOURCE} ${MONITOR_CONFIG}
                 ${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc
+                ${CMAKE_SOURCE_DIR}/src/kernel/assembler/assembler.inc
+                ${CMAKE_SOURCE_DIR}/src/kernel/assembler/opcodes_65c02.inc
         VERBATIM
     )
-
-    # -I ASSEMBLER_DIR so .include "opcodes_65c02.inc" resolves.
-    add_custom_target(assembler_rom ALL
-        COMMAND ca65 ${ASSEMBLER_ASM_SOURCE} -I ${ASSEMBLER_DIR} -o ${ASSEMBLER_OBJECT}
-        COMMAND ld65 -C ${ASSEMBLER_CONFIG} ${ASSEMBLER_OBJECT} -o ${ASSEMBLER_ROM} -m ${ASSEMBLER_MAP}
-        COMMAND ${CMAKE_COMMAND} -E echo "ASSEMBLER module ROM built (bank 2)"
-        COMMENT "Building ASSEMBLER module ROM"
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
-        DEPENDS ${ASSEMBLER_ASM_SOURCE} ${ASSEMBLER_CONFIG} ${ASSEMBLER_INC}
-        VERBATIM
-    )
-
-    # ================================================================
-    # FORTH Module ROM Build Target (module bank 3)
-    # ================================================================
-    # FIG-Forth 6502 (Ragsdale Rel 1.1). forth.s is generated from the
-    # byte-verified vendor/fig-forth/figforth.s by make_module.py; see that
-    # directory for provenance and the $0200 byte-identical check.
 
     set(FORTH_DIR ${CMAKE_SOURCE_DIR}/src/kernel/forth)
     set(FORTH_ASM_SOURCE ${FORTH_DIR}/forth.s)
