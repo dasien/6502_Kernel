@@ -191,7 +191,7 @@ namespace Computer
         installBank(2, "../kernel/assembler.rom", "ASSEMBLER");
         installBank(3, "../kernel/forth.rom", "FORTH");
 
-        // Always-mapped DOS ROM at $9000-$AFFF (resident FAT16 filesystem / DOS
+        // Always-mapped DOS ROM at $8800-$AFFF (resident FAT16 filesystem / DOS
         // shell). If absent, the region stays RAM and the machine boots as before.
         {
             std::ifstream dos_file("../kernel/dos.rom", std::ios::binary | std::ios::ate);
@@ -203,14 +203,14 @@ namespace Computer
                 if (dos_file.read(reinterpret_cast<char *>(dos_image.data()), dos_size))
                 {
                     memory.loadDosRom(dos_image);
-                    std::cout << "DOS ROM installed at $9000-$AFFF (" << dos_size
+                    std::cout << "DOS ROM installed at $8800-$AFFF (" << dos_size
                               << " bytes)\n";
                 }
             }
             else
             {
                 std::cout << "Warning: DOS ROM not found at ../kernel/dos.rom - "
-                             "$9000-$AFFF will be RAM\n";
+                             "$8800-$AFFF will be RAM\n";
             }
         }
 

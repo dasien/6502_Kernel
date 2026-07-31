@@ -2,7 +2,7 @@
  * @file test_dos_blockio.cpp
  * @brief Exercises the MFC-DOS block-device primitives (phase 2, step 2.2).
  *
- * The DOS ROM ($9000-$AFFF) exposes 6502 routines that move whole 512-byte
+ * The DOS ROM ($8800-$AFFF) exposes 6502 routines that move whole 512-byte
  * sectors between a host disk.img and a RAM buffer, driving the $FE24-$FE28
  * registers. They are reached through the DOS ABI jump table at $AF00:
  *
@@ -70,10 +70,11 @@ protected:
         cpu_ = computer.getCpu();
         computer.getBlockDevice()->setImagePath(image_path_);
 
-        // Sanity: the DOS ROM is actually mapped (signature at $9000).
-        ASSERT_EQ(mem_->read(0x9000), 'M');
-        ASSERT_EQ(mem_->read(0x9001), 'F');
-        ASSERT_EQ(mem_->read(0x9002), 'C');
+        // Sanity: the DOS ROM is actually mapped (signature at its base). Taken
+        // from the constant, not a literal, so the boundary can move again.
+        ASSERT_EQ(mem_->read(Memory::kDosRomStart + 0), 'M');
+        ASSERT_EQ(mem_->read(Memory::kDosRomStart + 1), 'F');
+        ASSERT_EQ(mem_->read(Memory::kDosRomStart + 2), 'C');
     }
 
     void TearDown() override {

@@ -154,7 +154,7 @@
 ;                   ROM is unchanged from v3.1.1; v3.2 is the system version for the
 ;                   release that includes the module.
 ; 2026-06-14  v3.3  MFC-DOS phase 2: a temporary '@' monitor command previews the
-;                   resident FAT16 filesystem in the always-mapped DOS ROM ($9000-
+;                   resident FAT16 filesystem in the always-mapped DOS ROM ($8800-
 ;                   $AFFF) - '@' catalogs the disk.img, '@NAME' types a file. The
 ;                   monitor calls the DOS ABI ($AF.. : FS_DIR_FIRST/NEXT, FS_OPEN/
 ;                   GETB/CLOSE) directly. Phase 4 replaces '@' with the real DOS shell.
@@ -425,7 +425,7 @@ ASCII_DELETE       = $7F           ; Delete character
 ASCII_ESC          = $1B           ; Escape character
 ASCII_DOT          = $2E           ; Dot '.' character
 ; ----------------------------------------------------------------
-; MFC-DOS ABI - fixed entry points in the always-mapped DOS ROM ($9000-$AFFF).
+; MFC-DOS ABI - fixed entry points in the always-mapped DOS ROM ($8800-$AFFF).
 ; The kernel reaches the resident DOS shell here (the DOS ROM is always mapped).
 ; See src/kernel/dos/dos.asm. The DOS owns the filesystem and file commands; the
 ; monitor is a pure debugger launched by the DOS 'MON' command.
@@ -1926,7 +1926,7 @@ RANGE_INVALID:
 ;   F:0000-00FF,00  zeroed MON_CURRADDR mid-loop -> pointer reset -> ran forever,
 ;                   dead until reset
 ;   F:0200-02FF,AA  wrote $AA into MON_ENDADDR -> bound became $AAAA -> wiped all
-;                   of user RAM ($0800-$8FFF) and then printed OK
+;                   of user RAM ($0800-$87FF) and then printed OK
 ;   M:0800-08FF,0000,0  destination walked over MON_CURRADDR/JUMP_VECTOR and the
 ;                   copy ran away
 ; Rather than validate each variable, refuse any range overlapping the whole

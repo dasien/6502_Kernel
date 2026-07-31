@@ -30,8 +30,8 @@ namespace Computer
      * Memory Layout:
      * - $0000-$03FF: System RAM (1KB) - Zero page, stack, and system variables
      * - $0400-$07FF: Screen memory (1KB) - Character display data
-     * - $0800-$8FFF: User RAM (~34KB) - Available for programs / module working RAM
-     * - $9000-$AFFF: DOS ROM (8KB) - always-mapped FAT16 filesystem / DOS shell
+     * - $0800-$87FF: User RAM (32KB) - Available for programs / module working RAM
+     * - $8800-$AFFF: DOS ROM (10KB) - always-mapped FAT16 filesystem / DOS shell
      * - $B000-$DFFF: Module window (12KB) - bank 0 = RAM, banks 1..255 = ROM modules
      * - $E000-$FFFF: ROM area (8KB) - Kernel ROM (I/O page at $FE00, bank reg $FE23,
      *                block-device registers $FE24-$FE28)
@@ -41,13 +41,18 @@ namespace Computer
     class Memory
     {
     public:
-        /// DOS ROM ($9000-$AFFF, 8KB). Always-mapped, read-only ROM holding the
-        /// resident FAT16 filesystem (and later the DOS shell). Unlike the module
-        /// window it is never banked. When no image is installed the region falls
-        /// through to RAM, preserving the pre-DOS memory map.
-        static constexpr uint16_t kDosRomStart = 0x9000;
+        /// DOS ROM ($8800-$AFFF, 10KB). Always-mapped, read-only ROM holding the
+        /// resident FAT16 filesystem and the DOS shell. Unlike the module window it
+        /// is never banked. When no image is installed the region falls through to
+        /// RAM, preserving the pre-DOS memory map.
+        ///
+        /// The base moved down from $9000 to $8800 to give the DOS 2 KB of room --
+        /// it had 145 bytes left below the $AF00 ABI table while the kernel sat on
+        /// 3.7 KB spare. User RAM pays for it, dropping to $0800-$87FF (32 KB). The
+        /// $AF00 ABI table did NOT move, so no caller of the DOS changed.
+        static constexpr uint16_t kDosRomStart = 0x8800;
         static constexpr uint16_t kDosRomEnd = 0xAFFF;
-        static constexpr size_t kDosRomSize = 0x2000; // 8 KB
+        static constexpr size_t kDosRomSize = 0x2800; // 10 KB
 
         /// Bankable module window ($B000-$DFFF, 12KB). Backed by RAM when the
         /// selected bank is 0, or by a read-only module ROM for banks 1..255.
@@ -161,8 +166,8 @@ namespace Computer
         void setRtc(Rtc *rtc);
 
         /**
-         * @brief Install the always-mapped DOS ROM image ($9000-$AFFF)
-         * @param image DOS ROM image; truncated/zero-padded to 8KB
+         * @brief Install the always-mapped DOS ROM image ($8800-$AFFF)
+         * @param image DOS ROM image; truncated/zero-padded to kDosRomSize (10KB)
          * @note Once installed the region is read-only (writes ignored). Passing
          *       an empty image leaves the region as RAM (the pre-DOS default).
          */

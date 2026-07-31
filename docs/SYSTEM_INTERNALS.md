@@ -1173,7 +1173,7 @@ closed.** Identity: OS = **MFC/OS**, `]` prompt.
 
 **Utility commands added** (post-phase-4): `COPY SRC,DST` (via a RAM buffer — the
 filesystem is single-open, so COPY reads the source fully into `$0800` then writes it
-out; files > ~34 KB report `FILE TOO BIG`), `DISKFREE` (free space in decimal bytes +
+out; files > ~32 KB report `FILE TOO BIG`), `DISKFREE` (free space in decimal bytes +
 KB; scans each FAT sector once), `MEMMAP` (the full memory map with region sizes),
 `VERSION`, `MORE NAME`, and **wildcards** in `CATALOG`/`CAT` (`*` and `?`, 8.3).
 `CATALOG` now prints a `NAME / BYTES` header with decimal sizes in aligned columns.
@@ -1384,6 +1384,12 @@ create space"):
   banked). Boot: BIOS init → `JMP` DOS entry; FS ABI entries in `$FF00` jump into it.
 - **User RAM becomes `$0800-$8FFF` (~34 KB)** — still ample; the assembler's source
   buffer / symbol table relocate below `$9000`.
+
+> **Later change (2026-07):** the DOS base moved down again, to `$8800-$AFFF` (10 KB),
+> because the DOS had 145 bytes left below its `$AF00` ABI table while the kernel sat
+> on 3.7 KB spare. User RAM is now `$0800-$87FF` (32 KB) and the assembler's buffers
+> moved with it (`$7800` source, `$7600` symbols). The addresses in this section and in
+> the phase log below record the state at the time and are left as written.
 
 This keeps the **kernel ROM = BIOS + monitor** untouched, and gives FS+DOS a roomy
 home. (An alternative is the bigger coordinated memory-map overhaul; the second-ROM

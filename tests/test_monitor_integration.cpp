@@ -36,6 +36,11 @@ static constexpr uint16_t kBasicVecOut = 0x0207;
 // the backing image, so the DOS re-reads the BPB instead of reusing cached geometry.
 static constexpr uint16_t kDosMounted = 0x0300;
 
+// The assembler module's source-text buffer (SRC_BUF in assembler.asm). Nothing
+// shares that symbol with the host build, so this tracks it by hand -- it moved
+// down with the DOS ROM base when user RAM shrank to $0800-$87FF.
+static constexpr uint16_t kAsmSrcBuf = 0x7800;
+
 class MonitorIntegrationTester {
 public:
     MonitorIntegrationTester() : tests_passed(0), tests_failed(0) {
@@ -57,6 +62,7 @@ public:
         // ROM modules (launched from the DOS by name, returning to the DOS), then
         // drop into the monitor (MON) for the pure-monitor command tests.
         testDosShell();
+        testUserRamTopBoundary();
         testPromptColorReset();
         testPagerLongType();
         testDosRemainingVerbs();
@@ -163,6 +169,38 @@ public:
         // differs from the previous image writes through the old layout -- root
         // directory sectors land on top of the FAT.
         computer.getMemory()->write(kDosMounted, 0x00);
+    }
+
+    // The user RAM / DOS ROM boundary, checked on the running machine rather than
+    // against a synthetic image. The unit tests in test_memory_banking.cpp drive
+    // this off Memory::kDosRomStart, so they follow the constant wherever it goes
+    // and cannot catch the constant disagreeing with dos_memory.cfg. These pin the
+    // real thing: the top byte of user RAM takes a write, the first byte of the DOS
+    // ROM does not, and the figure the DOS reports to the user matches.
+    void testUserRamTopBoundary() {
+        // $87FF is the last byte of user RAM: writable through the monitor's own
+        // fill, and readable back.
+        sendCommand("MON");
+        clearScreen();
+        sendCommand("F:87FF-87FF,3C");
+        verifyMemEquals(0x87FF, 0x3C, "top of user RAM ($87FF) is writable");
+
+        // $8800 is the DOS ROM base -- the store is discarded. Its real content is
+        // the DOS signature 'M', which also proves dos.rom linked where the host
+        // expects it.
+        verifyMemEquals(0x8800, 'M', "DOS ROM base ($8800) holds the signature");
+        clearScreen();
+        sendCommand("F:8800-8800,3C");
+        verifyMemEquals(0x8800, 'M', "a write to the DOS ROM base is discarded");
+        sendCommand("Q");
+
+        // And the number the DOS puts in front of the user agrees with the map.
+        clearScreen();
+        sendCommand("MEMMAP", 400000);
+        verifyResponse("$0800-$87FF USER RAM   (32K)",
+                       "MEMMAP reports the shifted user RAM range");
+        verifyResponse("$8800-$AFFF DOS ROM   (10K)",
+                       "MEMMAP reports the shifted DOS ROM range");
     }
 
     // The MFC/OS DOS shell: boots to its banner, CATALOG/TYPE work, and MON
@@ -1167,7 +1205,7 @@ private:
             "NOP\n"
             "DONE: JMP START\n"
             ".END\n";
-        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
+        uint16_t a = kAsmSrcBuf; // assembler source buffer
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);             // source terminator
@@ -1205,7 +1243,7 @@ private:
             "LDA #>MSG\n"
             "LDX #COUNT+1\n"
             ".END\n";
-        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
+        uint16_t a = kAsmSrcBuf; // assembler source buffer
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
@@ -1238,7 +1276,7 @@ private:
             "LDA #$2A\n"
             "RTS\n"
             ".END\n";
-        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
+        uint16_t a = kAsmSrcBuf; // assembler source buffer
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
@@ -1268,7 +1306,7 @@ private:
             "sta $10,x\n"
             "jmp start\n"
             ".end\n";
-        uint16_t a = 0x8000; // SRC_BUF (assembler source buffer)
+        uint16_t a = kAsmSrcBuf; // assembler source buffer
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
@@ -1292,7 +1330,7 @@ private:
     // Feed a source into SRC_BUF and build it. Shared by the diagnostics tests.
     void assembleSource(const char *src) {
         Computer::Memory *mem = computer.getMemory();
-        uint16_t a = 0x8000;                     // SRC_BUF
+        uint16_t a = kAsmSrcBuf;                 // assembler source buffer
         for (const char *p = src; *p; ++p)
             mem->write(a++, static_cast<uint8_t>(*p));
         mem->write(a, 0x00);
@@ -1372,7 +1410,7 @@ private:
 
     // Pass 2 emits with plain stores, so the origin has to be writable RAM. An
     // origin below $0200 wrote over the monitor's zero page and the 6502 stack
-    // (killing the machine mid-build); $9000+ landed in the DOS ROM, this module's
+    // (killing the machine mid-build); $8800+ landed in the DOS ROM, this module's
     // own bank window or the kernel ROM, where writes are discarded -- so the build
     // printed OK having emitted nothing. Also: with no .ORG at all the default is
     // now $0800 (where a .PRG loads), not $0000.
@@ -1392,32 +1430,33 @@ private:
         verifyResponse("? LINE", "asm: origin in the kernel ROM is refused");
         sendKey(0x1B, 200000);
 
-        // $7E00-$8FFF is the assembler's own workspace: symbol table then source
-        // buffer. An origin in either looks legal and is not -- emitting into
-        // SRC_BUF rewrites the text pass 2 is walking, and emitting into SYM_TBL
-        // corrupts the labels pass 2 resolves from, which reports success while
-        // producing garbage. Refused at the workspace base, not the top of RAM.
+        // $7600-$87FF is the assembler's own workspace: symbol table ($7600-$77FF)
+        // then source buffer ($7800-$87FF). An origin in either looks legal and is
+        // not -- emitting into SRC_BUF rewrites the text pass 2 is walking, and
+        // emitting into SYM_TBL corrupts the labels pass 2 resolves from, which
+        // reports success while producing garbage. Refused at the workspace base,
+        // not the top of RAM.
         clearScreen();
-        assembleSource(".ORG $7E00\nLDA #$01\n.END\n");
+        assembleSource(".ORG $7600\nLDA #$01\n.END\n");
         verifyResponse("? LINE", "asm: origin at the symbol table is refused");
         sendKey(0x1B, 200000);
 
         clearScreen();
-        assembleSource(".ORG $8000\nLDA #$01\n.END\n");
+        assembleSource(".ORG $7800\nLDA #$01\n.END\n");
         verifyResponse("? LINE", "asm: origin at the source buffer is refused");
         sendKey(0x1B, 200000);
 
         clearScreen();
-        assembleSource(".ORG $8800\nLDA #$01\n.END\n");
+        assembleSource(".ORG $8000\nLDA #$01\n.END\n");
         verifyResponse("? LINE", "asm: origin inside the source buffer is refused");
         sendKey(0x1B, 200000);
 
         // Just below the workspace is still legal -- the cap must not overshoot.
-        computer.getMemory()->write(0x7DFD, 0x00);
+        computer.getMemory()->write(0x75FD, 0x00);
         clearScreen();
-        assembleSource(".ORG $7DFD\nLDA #$5A\nRTS\n.END\n");
-        verifyMemEquals(0x7DFD, 0xA9, "asm: origin just below the workspace is allowed");
-        verifyMemEquals(0x7DFE, 0x5A, "asm: operand emitted below the workspace");
+        assembleSource(".ORG $75FD\nLDA #$5A\nRTS\n.END\n");
+        verifyMemEquals(0x75FD, 0xA9, "asm: origin just below the workspace is allowed");
+        verifyMemEquals(0x75FE, 0x5A, "asm: operand emitted below the workspace");
         sendKey(0x1B, 200000);
 
         // No .ORG: assembles at the $0800 default and really emits there.

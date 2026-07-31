@@ -131,7 +131,7 @@ On the GUI build, `src/ui/` adds **MainWindow** (menus, Control/View, zoom) and
 $0000-$00FF  Zero page (kernel/monitor/DOS workspace)
 $0100-$01FF  Stack
 $0200-$03FF  System variables (command buffer, DOS/monitor state)
-$0800-$8FFF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
+$0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
 $B000-$DFFF  Bank-switched module window (BASIC, DEV TOOLS, FORTH)
 $E000-$FFFF  Kernel ROM (monitor + MFC/OS DOS); jump table at $FF00, vectors at $FFFA
 $FE00-$FE5E  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC (carved out of the ROM window)
@@ -180,8 +180,8 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0100-$01FF` | 256 B | **Stack** — grows down from `$01FF` |
 | `$0200-$03FF` | 512 B | **System variables** — BASIC page-2 vars + monitor variables/buffers |
 | `$0400-$07FF` | 1 KB | **Free RAM** — formerly the 40×25 screen; the screen now lives behind the VIC register port (see below), so this is unused RAM |
-| `$0800-$8FFF` | ~34 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$8000-$8FFF` (source) and `$7E00-$7FFF` (symbols) while building |
-| `$9000-$AFFF` | 8 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem; DOS shell later) |
+| `$0800-$87FF` | 32 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$7800-$87FF` (source) and `$7600-$77FF` (symbols) while building |
+| `$8800-$AFFF` | 10 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem + DOS shell) |
 | `$B000-$DFFF` | 12 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
 | `$E000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
 | `$FE00-$FE28` | — | **PIA** I/O + `MODULE_BANK` ($FE23) + block-device registers ($FE24-$FE28) — within the kernel region |
@@ -193,7 +193,7 @@ keyboard and file I/O are exposed through a small PIA-style register block at
 `$FE00`. The `$B000-$DFFF` window is
 a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
 RAM (bank 0) or one of up to 255 pre-loaded ROM modules. See
-`Part 4 (Bank-switched modules)`. The `$9000-$AFFF` **DOS ROM** is an always-mapped (never
+`Part 4 (Bank-switched modules)`. The `$8800-$AFFF` **DOS ROM** is an always-mapped (never
 banked) read-only region holding the resident filesystem; see `SYSTEM_INTERNALS.md`.
 
 ### Zero Page
@@ -458,10 +458,10 @@ file-stream LOAD/SAVE routines).
 
 - `$3A-$5A` — small free zero-page gap (fast addressing) when BASIC is not in use.
 - `$02DE-$03FF` — leftover system-variable space.
-- `$0800-$8FFF` — main user RAM (~34 KB). Avoid `$0400-$07E7` (screen) and
-  `$9000-$AFFF` (DOS ROM). When BASIC is active this is its program/variable/string
-  space (`Ram_base=$0800`, `Ram_top=$9000`). The assembler reserves the top of this
-  region while building (`$8000-$8FFF` source, `$7E00-$7FFF` symbols).
+- `$0800-$87FF` — main user RAM (32 KB). Avoid `$0400-$07E7` (screen) and
+  `$8800-$AFFF` (DOS ROM). When BASIC is active this is its program/variable/string
+  space (`Ram_base=$0800`, `Ram_top=$8800`). The assembler reserves the top of this
+  region while building (`$7800-$87FF` source, `$7600-$77FF` symbols).
 
 ### Key Constants (from `kernel.asm`)
 
@@ -889,7 +889,7 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
    instead of duplicating input/parsing/printing.
 
 5. **[DONE]** **In-machine authoring**: the resident FAT16 filesystem (MFC-DOS,
-   `$9000-$AFFF`) and the full-screen `EDIT` program mean source is written and
+   `$8800-$AFFF`) and the full-screen `EDIT` program mean source is written and
    saved on the machine rather than host-loaded. Self-hosting is complete.
 
 Still open: a richer assembler (macros, more directives); single-step and

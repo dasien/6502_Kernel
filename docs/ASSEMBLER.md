@@ -230,15 +230,15 @@ If a file has no `.ORG` (or `*=`), assembly starts at **$0800** — the address 
 DOS loads and runs a `.PRG` at, so a source with no origin still lands somewhere
 useful and runnable.
 
-**The origin must be writable RAM below the assembler's workspace, `$0200-$7DFF`.**
+**The origin must be writable RAM below the assembler's workspace, `$0200-$75FF`.**
 Pass 2 emits with ordinary stores, so anything else destroys the machine, does
 nothing at all, or destroys the build itself:
 
 | Origin | Why it is refused |
 |--------|-------------------|
 | below `$0200` | zero page, the 6502 stack and the monitor's own workspace |
-| `$7E00-$8FFF` | **the assembler's own workspace** — see below |
-| `$9000-$AFFF` | the always-mapped DOS ROM — writes are discarded |
+| `$7600-$87FF` | **the assembler's own workspace** — see below |
+| `$8800-$AFFF` | the always-mapped DOS ROM — writes are discarded |
 | `$B000-$DFFF` | the module window, where the assembler itself is running |
 | `$E000-$FFFF` | the kernel ROM |
 
@@ -247,15 +247,15 @@ letting the build appear to succeed while emitting nothing.
 
 #### Why the cap is the workspace, not the top of RAM
 
-`$7E00-$8FFF` is the assembler's own working storage — the symbol table, then the
+`$7600-$87FF` is the assembler's own working storage — the symbol table, then the
 source buffer, contiguous (see [Memory used](#memory-used)). An origin in either is
 the one case that *looks* legal and is not, and the two fail differently:
 
-- **Into the source buffer (`$8000-$8FFF`):** pass 2 emits over the very text it is
+- **Into the source buffer (`$7800-$87FF`):** pass 2 emits over the very text it is
   walking, so the generated code and the line numbers in any diagnostic are both
   wrong from the first emitted byte — and the further the build gets, the less of
   the source survives to report against.
-- **Into the symbol table (`$7E00-$7FFF`):** worse, because it fails *quietly*.
+- **Into the symbol table (`$7600-$77FF`):** worse, because it fails *quietly*.
   Pass 2 resolves labels out of that table while overwriting it, so expressions
   evaluate to garbage and the build still reports success.
 
@@ -324,13 +324,13 @@ End your program with `RTS` to return cleanly to the monitor, and use `JSR $FF00
 
 The Dev Tools share the machine with everything else, so mind what they touch:
 
-- **Source buffer:** `$8000–$8FFF` (the text loaded by `L`).
-- **Symbol table:** `$7E00–$7FFF` (labels and constants; up to 51 symbols).
-- **Working RAM:** `$0800–$8FFF` is the module's scratch space.
+- **Source buffer:** `$7800–$87FF` (the text loaded by `L`).
+- **Symbol table:** `$7600–$77FF` (labels and constants; up to 51 symbols).
+- **Working RAM:** `$0800–$87FF` is the module's scratch space.
 
-Assemble your programs into free user RAM below `$7E00` (for example `$0800`),
+Assemble your programs into free user RAM below `$7600` (for example `$0800`),
 clear of the source buffer and symbol table — `.ORG` enforces this, refusing any
-origin at `$7E00` or above (see [Directives](#directives)). Only one module is
+origin at `$7600` or above (see [Directives](#directives)). Only one module is
 mapped at a time —
 save your work on the host before switching banks, since the buffers are not
 preserved across module loads.

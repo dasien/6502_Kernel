@@ -1,5 +1,5 @@
 ; ================================================================
-; dos.asm - MFC-DOS resident ROM ($9000-$AFFF, always mapped)
+; dos.asm - MFC-DOS resident ROM ($8800-$AFFF, always mapped)
 ; ================================================================
 ; The resident operating system for MFC-DOS: the FAT16 filesystem driver and
 ; (later) the DOS command shell. See docs/SYSTEM_INTERNALS.md.
@@ -203,10 +203,10 @@ DIRENT_DELETED   = $E5                  ; name[0]: deleted entry
 .segment "CODE"
 
 ; ----------------------------------------------------------------
-; DOS_SIGNATURE - first bytes of the ROM (at $9000)
+; DOS_SIGNATURE - first bytes of the ROM (at $8800)
 ; ----------------------------------------------------------------
 ; A recognizable marker so the emulator/tests can confirm the DOS ROM is
-; mapped at $9000, and so a future loader can sanity-check the image.
+; mapped at $8800, and so a future loader can sanity-check the image.
 DOS_SIGNATURE:
     .BYTE "MFC-DOS", $00
 ; DOS version (major, minor). History:
@@ -398,7 +398,7 @@ _BOX_VERFREE:
     JSR K_PRINT_CHAR
     LDA DOS_VERSION+1
     JSR _DOS_PRINT_BYTE_DEC
-    LDA #<MSG_BOX_FREE                  ; "   34816 BYTES FREE"
+    LDA #<MSG_BOX_FREE                  ; "   32768 BYTES FREE"
     LDX #>MSG_BOX_FREE
     JSR _DOS_PMSG
     JMP _BOX_PADCLOSE
@@ -1648,7 +1648,7 @@ _DOS_PMSG:
 ; ----------------------------------------------------------------
 ; The filesystem allows only one open file at a time (reads and writes both
 ; stream through the block device's single sector buffer), so COPY reads SRC
-; fully into user RAM ($0800..$8FFF), then writes it to DST. Files larger than
+; fully into user RAM ($0800..$87FF), then writes it to DST. Files larger than
 ; the ~34KB buffer report "FILE TOO BIG". On entry Y = delimiter after the verb.
 _DOS_DO_COPY:
     STZ DOS_SH_HASADDR                  ; 0 = copy (source kept)
@@ -1705,7 +1705,7 @@ _DOS_COPY_COMMON:
     BCS @rdone
     PHA                                 ; save the byte
     LDA MON_CURRADDR_HI
-    CMP #$90                            ; reached $9000 -> buffer full
+    CMP #$88                            ; reached $8800 -> buffer full
     BCS @toobig
     PLA
     LDY #$00
@@ -1975,7 +1975,7 @@ _DOS_RUN_FILE:
 ; DOS shell strings
 ; ----------------------------------------------------------------
 MSG_BOX_OPER:    .BYTE "MFC 6502  OPERATIONAL", 0   ; 21 chars, centred in the box
-MSG_BOX_FREE:    .BYTE "   34816 BYTES FREE", 0      ; user RAM $0800-$8FFF
+MSG_BOX_FREE:    .BYTE "   32768 BYTES FREE", 0      ; user RAM $0800-$87FF
 MSG_DOS_HELP_HDR: .BYTE "MFC/OS COMMANDS", $0D, $0A, 0
 
 ; Two-column HELP entries: "syntax"<TAB>"description", 0. K_PRINT_HELP_LINE
@@ -2032,8 +2032,8 @@ MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
                  .BYTE "$0100-$01FF STACK", $0D, $0A
                  .BYTE "$0200-$03FF SYSTEM VARS", $0D, $0A
                  .BYTE "$0400-$07FF FREE RAM   (1K)", $0D, $0A
-                 .BYTE "$0800-$8FFF USER RAM   (34K)", $0D, $0A
-                 .BYTE "$9000-$AFFF DOS ROM    (8K)", $0D, $0A
+                 .BYTE "$0800-$87FF USER RAM   (32K)", $0D, $0A
+                 .BYTE "$8800-$AFFF DOS ROM   (10K)", $0D, $0A
                  .BYTE "$B000-$DFFF MODULES    (12K)", $0D, $0A
                  .BYTE "$E000-$FFFF KERNEL ROM (8K)", $0D, $0A
                  .BYTE "$FE2D-$FE36 VIDEO PORT (VIC)", $0D, $0A, 0

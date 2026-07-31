@@ -148,13 +148,13 @@ TEST_F(MemoryBankingTest, LoadBankZeroIsIgnored) {
     EXPECT_EQ(mem.read(kWinStart), 0x77);
 }
 
-// --- Always-mapped DOS ROM ($9000-$AFFF) ----------------------------------
+// --- Always-mapped DOS ROM ($8800-$AFFF) ----------------------------------
 
-constexpr uint16_t kDosStart = Memory::kDosRomStart; // $9000
+constexpr uint16_t kDosStart = Memory::kDosRomStart; // $8800
 constexpr uint16_t kDosEnd = Memory::kDosRomEnd;     // $AFFF
-constexpr size_t kDosSize = Memory::kDosRomSize;     // 8 KB
+constexpr size_t kDosSize = Memory::kDosRomSize;     // 10 KB
 
-// An 8KB DOS image: byte i = (i & 0xFF) ^ tag, so it differs from RAM patterns.
+// A DOS-sized image: byte i = (i & 0xFF) ^ tag, so it differs from RAM patterns.
 static std::vector<uint8_t> makeDosImage(uint8_t tag) {
     std::vector<uint8_t> img(kDosSize);
     for (size_t i = 0; i < kDosSize; ++i) {
@@ -164,7 +164,7 @@ static std::vector<uint8_t> makeDosImage(uint8_t tag) {
 }
 
 TEST_F(MemoryBankingTest, DosRomNotLoadedRegionIsRam) {
-    // The default (pre-DOS) state: $9000-$AFFF is ordinary read/write RAM.
+    // The default (pre-DOS) state: $8800-$AFFF is ordinary read/write RAM.
     EXPECT_FALSE(mem.isDosRomLoaded());
     mem.write(kDosStart, 0xAA);
     mem.write(0xA000, 0xBB);
@@ -194,7 +194,7 @@ TEST_F(MemoryBankingTest, DosRomBoundariesExact) {
     mem.loadDosRom(makeDosImage(0x11));
 
     // Just below the DOS ROM is plain RAM; the window above (bank 0) is RAM too.
-    mem.write(kDosStart - 1, 0x5C); // $8FFF
+    mem.write(kDosStart - 1, 0x5C); // $87FF
     EXPECT_EQ(mem.read(kDosStart - 1), 0x5C);
     mem.write(kDosEnd + 1, 0x6D);   // $B000 (module window, bank 0 = RAM)
     EXPECT_EQ(mem.read(kDosEnd + 1), 0x6D);

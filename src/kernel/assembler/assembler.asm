@@ -17,7 +17,7 @@
 ; kernel's line input, hex parsing, and hex printing rather than duplicating
 ; them; per the ABI those share the monitor's command buffer (MON_CMDBUF) and
 ; MON_CURRADDR as scratch (the monitor is suspended and that state is saved and
-; restored across the launch). Working RAM is $0800-$8FFF.
+; restored across the launch). Working RAM is $0800-$87FF.
 ;
 ; Commands (ENTER to run; ESC on an empty line returns to the monitor):
 ;   D xxxx   disassemble from hex address xxxx (one screen of instructions)
@@ -114,10 +114,12 @@ ASM_LBL_BUF      = $C0              ; parsed identifier, 8 bytes space-padded ($
 ASM_NAME_BUF     = $C8              ; saved assignment name across EVAL ($C8-$CF)
 
 ; Two-pass memory layout (in user RAM; reserved while assembling). Lives just
-; below the always-mapped DOS ROM at $9000 (user RAM tops out at $8FFF).
-SRC_BUF          = $8000            ; source text buffer ($8000-$8FFF, $00-terminated)
-SRC_BUF_END      = $8FFF            ; last buffer byte (reserved for the terminator)
-SYM_TBL          = $7E00            ; symbol table ($7E00-$7FFF)
+; below the always-mapped DOS ROM at $8800 (user RAM tops out at $87FF). Kept
+; flush against the top of RAM: the workspace moved down with the DOS base so the
+; source buffer keeps its full 4 KB instead of being halved.
+SRC_BUF          = $7800            ; source text buffer ($7800-$87FF, $00-terminated)
+SRC_BUF_END      = $87FF            ; last buffer byte (reserved for the terminator)
+SYM_TBL          = $7600            ; symbol table ($7600-$77FF)
 SYM_NAME_LEN     = 8                ; characters stored per symbol name
 SYM_ENTRY_LEN    = 10               ; 8-byte name + 2-byte value
 SYM_MAX          = 51               ; 512 bytes / 10
@@ -260,7 +262,7 @@ CA_ERR:
     JMP DEVT_ERROR
 
 ; ----------------------------------------------------------------
-; CMD_BUILD - "B": two-pass assemble the source buffer at $8000
+; CMD_BUILD - "B": two-pass assemble the source buffer at $7800
 ; ----------------------------------------------------------------
 CMD_BUILD:
     JSR ASM2_RUN                    ; carry set on error (message already printed)
@@ -272,7 +274,7 @@ CB_DONE:
     JMP DEVT_LOOP
 
 ; ----------------------------------------------------------------
-; CMD_LOAD - "L": load a host source file into the source buffer ($8000) via the
+; CMD_LOAD - "L": load a host source file into the source buffer ($7800) via the
 ; byte-stream file interface (the host shows an open dialog). Then "B" builds it.
 ; ----------------------------------------------------------------
 CMD_LOAD:
@@ -292,7 +294,7 @@ CL_READ:
     LDA FIO_STATUS
     CMP #FIO_EOF
     BEQ CL_EOF
-    ; bounds: keep one byte for the terminator (stop at SRC_BUF_END = $8FFF)
+    ; bounds: keep one byte for the terminator (stop at SRC_BUF_END = $87FF)
     LDA ASM2_SRC+1
     CMP #>SRC_BUF_END
     BCC CL_STORE
@@ -1043,7 +1045,7 @@ AE_REL_RANGE:
     RTS
 
 ; ================================================================
-; TWO-PASS ASSEMBLER (labels, .ORG/*=, .END; source pre-loaded at $8000)
+; TWO-PASS ASSEMBLER (labels, .ORG/*=, .END; source pre-loaded at $7800)
 ; ================================================================
 
 ; ----------------------------------------------------------------
@@ -1681,11 +1683,11 @@ AP_DO_ORG:
     ; Reject an origin outside writable user RAM below the source buffer. Pass 2
     ; emits with plain stores, so an origin below $0200 wrote over the monitor's
     ; zero page and the 6502 stack (killing the machine mid-build), and one at
-    ; $9000+ landed in the DOS ROM, this module's own bank window, or the kernel
+    ; $8800+ landed in the DOS ROM, this module's own bank window, or the kernel
     ; ROM -- where writes are discarded, so the listing scrolled by and printed OK
     ; having emitted nothing at all.
     ;
-    ; The upper bound is SYM_TBL, not the top of RAM, because $7E00-$8FFF is this
+    ; The upper bound is SYM_TBL, not the top of RAM, because $7600-$87FF is this
     ; module's own workspace: the symbol table then the source buffer, contiguous.
     ; An origin in either is the case that looks legal and is not. Emitting into
     ; SRC_BUF rewrites the text being assembled as pass 2 walks it, so the output
@@ -1698,7 +1700,7 @@ AP_DO_ORG:
     CMP #$02
     BCC AP_ERR                      ; < $0200: zero page / stack / system vars
     CMP #>SYM_TBL
-    BCS AP_ERR                      ; >= $7E00: symbol table, source buffer, ROM
+    BCS AP_ERR                      ; >= $7600: symbol table, source buffer, ROM
     LDA ASM_VAL
     STA ASM_PC
     LDA ASM_VAL+1

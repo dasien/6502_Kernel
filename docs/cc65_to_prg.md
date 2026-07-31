@@ -54,14 +54,19 @@ A program is entered with `JMP`, runs at `$0800`, and returns to DOS via
 
 ### Memory map (`.cfg`)
 
-User RAM is `$0800–$8FFF` (~34 KB). The standard layout:
+User RAM is `$0800–$87FF` (32 KB). The standard layout:
 
 ```
 $0800 ..   code + rodata + data + bss   (the loaded image, writable)
-$8F00      C stack top (2 KB, grows down)   __STACKSTART__ / __STACKSIZE__
+$8700      C stack top (2 KB, grows down)   __STACKSTART__ / __STACKSIZE__
 $0080      cc65 zero-page runtime          __ZPSTART__ (free in a .PRG:
                                             BASIC/monitor aren't resident)
 ```
+
+`__STACKSTART__` must stay at or below `$8700`: the DOS ROM begins at `$8800`, and
+a stack placed above that writes into ROM where the stores are silently discarded.
+The whole image plus the stack has to fit the 32 KB, and it is tighter than it
+looks — IRC uses about 29.5 KB of it.
 
 Heap only if the program calls `malloc`. Neither current port does — chess uses
 fixed arrays; Scott Adams links its data in (see below) — so no heap is

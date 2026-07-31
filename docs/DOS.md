@@ -41,7 +41,7 @@ At power-up the machine prints a sign-on box and drops you at the prompt:
 ```
 ╔══════════════════════════════════════╗
 ║        MFC 6502  OPERATIONAL         ║
-║  MFC/OS 1.16      34816 BYTES FREE   ║
+║  MFC/OS 1.16      32768 BYTES FREE   ║
 ╚══════════════════════════════════════╝
 
 ]
@@ -123,7 +123,7 @@ RENAME old,new    rename a file in place
 ERASE name        delete a file
 ```
 
-`COPY` reads the whole file through RAM, so a file larger than about 34 KB
+`COPY` reads the whole file through RAM, so a file larger than about 32 KB
 reports `FILE TOO BIG`.
 
 ### Loading and saving memory
