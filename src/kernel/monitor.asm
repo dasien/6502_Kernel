@@ -1,6 +1,16 @@
 ; ================================================================
 ; monitor.asm - the MFC monitor, as module bank 4
 ; ================================================================
+; Version:      1.0
+; Bank:         4 (MODULE_BANK), entry table at $B000/$B003
+;
+; Revision history
+;   1.0  2026-07-31  Extracted from kernel.asm v3.27, where the monitor had been
+;        since the machine was a bare CPU and a prompt. Same commands, same
+;        behaviour; what changed is that it is now a separate link unit reaching
+;        the BIOS through the $FF00 table instead of by direct label reference,
+;        which is what let the kernel drop from 3951 to 1562 bytes.
+; ================================================================
 ; The interactive monitor: command loop, parser, and the R:/W:/G:/F:/M:/X:/T:/Z:/
 ; D:/H: commands. It used to live in kernel ROM; the kernel is now just the BIOS
 ; (screen, keyboard, conversion, pager, IRQ/NMI, sound, bank launching, $FF00).
@@ -1898,7 +1908,7 @@ HELP_MSG_COUNT = 15              ; Number of help messages
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
-MSG_MON_BANNER:      .BYTE "MFC MONITOR   ?=HELP  Q=QUIT", $0D, 0
+MSG_MON_BANNER:      .BYTE "MFC MONITOR v1.0   ?=HELP  Q=QUIT", $0D, 0
 MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
 ; Each help line is "<syntax>", $09 (TAB -> pad to HELP_DESC_COL), "<description>".
 MSG_HELP_CLEAR:      .BYTE "C:", $09, "CLEAR SCREEN", 0

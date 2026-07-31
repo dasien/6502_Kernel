@@ -245,6 +245,13 @@ DOS_SIGNATURE:
 ;   1.15 files are timestamped from the RTC on write; CATALOG shows the date/time
 ;   1.16 kernel RNG reworked: RTC-seeded 16-bit LFSR (kernel v3.22)
 ;   1.17 kernel K_GET_JIFFIES ($FF39): 60 Hz monotonic tick counter (kernel v3.23)
+;   1.20 the DOS ROM moved down to $8800-$AFFF (10 KB, was $9000-$AFFF/8 KB),
+;        taking 2 KB from user RAM, which drops to $0800-$87FF (32 KB). The DOS had
+;        145 bytes left below its $AF00 ABI table while the kernel sat on 3.7 KB
+;        spare, so all the pressure was on one side of a boundary that could simply
+;        move; there are 2,193 bytes free now. DOSJUMP stayed at $AF00, so nothing
+;        that calls into the DOS changed. The sign-on free-RAM figure and the MEMMAP
+;        text follow the new map.
 ;   1.19 FS_GETB preserves X. It was destroyed only when the read crossed a
 ;        512-byte sector boundary, so a loop indexing with X passed every
 ;        small-file test and corrupted itself on the 513th byte. The rest of the
@@ -256,7 +263,7 @@ DOS_SIGNATURE:
 ;        instead of trusting it -- a FAT12/FAT32 or non-512-byte-sector image is
 ;        refused rather than driven as FAT16 and destroyed on the first write
 DOS_VERSION:
-    .BYTE $01, $13                      ; version 1.19 (major, minor)
+    .BYTE $01, $14                      ; version 1.20 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door

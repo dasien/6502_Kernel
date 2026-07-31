@@ -4,6 +4,25 @@ The **monitor** is MFC's low-level machine-language console: examine and change
 memory, run code, transfer files, and convert numbers. It's where the system
 began, and it's still the fastest way to poke at the machine directly.
 
+## Where the monitor lives
+
+The monitor is **module bank 4**, not part of the kernel ROM. Type `MON` at the `]`
+prompt and the kernel maps the bank and jumps into it; `Q` unmaps it and returns
+you to the DOS. Pressing the **STOP** key (NMI) breaks in from anywhere — the
+handler lives in always-mapped kernel ROM, so even a program that has scribbled on
+the bank register cannot lock you out.
+
+It is a bank rather than a disk program for a specific reason: a `.PRG` loads at
+`$0800`, which is exactly the memory you would be trying to inspect, so the monitor
+would overwrite the program under test. A bank costs no user RAM and needs no disk.
+
+**The one blind spot:** the monitor occupies the module window, so it cannot show
+you that window. `R:B000-EFFF` displays the monitor's own ROM rather than bank-0
+RAM, and the other banks (BASIC, DEV TOOLS, FORTH) are invisible for the same
+reason. Everything else reads normally — zero page, the stack, all of user RAM,
+the DOS ROM and the kernel BIOS. To examine bank-0 RAM in that range, copy it
+somewhere below `$8800` first from a program running outside the window.
+
 ## Quick reference
 
 | Command | Action |
@@ -14,7 +33,6 @@ began, and it's still the fastest way to poke at the machine directly.
 | `M:start-end,dest,mode` | Move (1) or copy (0) a block |
 | `X:start-end,pat` | Search for a byte pattern |
 | `G:xxxx` | Run code at xxxx |
-| `L:xxxx` / `S:start-end` | Load / save a file (host dialog) |
 | `D:nnnnn` / `H:xxxx` | Decimal↔hex conversion |
 | `C:` `T:` `Z:` | Clear / stack dump / zero-page dump |
 | `?` `.` `ESC` `Q` | Help / recall / exit-abort / quit to DOS |
@@ -74,11 +92,10 @@ interactive hex entry — type bytes, ESC to leave. You can also write inline:
 **`G:` — Go / run.** `G:xxxx` executes code at `xxxx`. A program returns to the
 monitor with `RTS`.
 
-**`L:` — Load a file.** `L:xxxx` loads a binary into memory at `xxxx`; the host
-shows a file-picker dialog to choose the file.
-
-**`S:` — Save a range.** `S:start-end` saves that memory range to a file via the
-host save dialog.
+> **`L:` and `S:` are retired.** They opened a host file dialog, which predates the
+> filesystem; both now report `ERROR?`. Use the DOS instead — `LOAD name,addr` and
+> `SAVE name,start-end` at the `]` prompt work against the disk, and unlike the old
+> host dialog they can be scripted and tested.
 
 ## Number conversion
 
@@ -126,6 +143,6 @@ the module catalog. See `BASIC.md`, `ASSEMBLER.md`, `FORTH.md`.
 ## Tips
 
 - `R:` to verify memory before and after a `W:`.
-- `S:` a working range before experimenting, so you can `L:` it back.
+- `SAVE` a working range from the DOS before experimenting, so you can `LOAD` it back.
 - `T:`/`Z:` are quick windows into stack and zero-page state while debugging.
 - `.` saves retyping when iterating on the same command.

@@ -239,8 +239,8 @@ nothing at all, or destroys the build itself:
 | below `$0200` | zero page, the 6502 stack and the monitor's own workspace |
 | `$7600-$87FF` | **the assembler's own workspace** — see below |
 | `$8800-$AFFF` | the always-mapped DOS ROM — writes are discarded |
-| `$B000-$DFFF` | the module window, where the assembler itself is running |
-| `$E000-$FFFF` | the kernel ROM |
+| `$B000-$EFFF` | the module window, where the assembler itself is running |
+| `$F000-$FFFF` | the kernel BIOS ROM |
 
 An out-of-range origin reports `? LINE nnnn` at the offending `.ORG` rather than
 letting the build appear to succeed while emitting nothing.

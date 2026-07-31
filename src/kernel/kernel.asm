@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-06-08
-; Version:      3.27
+; Version:      4.0
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -258,6 +258,23 @@
 ;                   monotonic tick counter (JIFFY_LO/HI at $31/$32) that programs
 ;                   read for frame pacing. The read is SEI-guarded so the two
 ;                   bytes can't tear. First consumer: real-time games.
+; 2026-07-31  v4.0  The monitor left the kernel. kernel.asm is now the BIOS and
+;                   nothing else -- screen, keyboard, hex/decimal conversion, the
+;                   pager, IRQ/NMI, sound, bank launching, the $FF00 ABI and the
+;                   vectors -- and the monitor is module bank 4 (src/kernel/
+;                   monitor.asm). CODE 3951 -> 1562 bytes. A bank rather than a disk
+;                   program because a .PRG loads at $0800, exactly the memory a
+;                   monitor exists to inspect. K_MON_ENTRY ($FF1E) now maps the bank
+;                   and jumps; NMI STOP maps it too, so a program that clobbers
+;                   MODULE_BANK can no longer lock you out. RECALL_LAST_COMMAND came
+;                   down into the BIOS (READ_COMMAND_LINE calls it, and it is line
+;                   editing over shared page-2 buffers), and boot got a private page
+;                   loop instead of borrowing the monitor's F: fill engine. Two ABI
+;                   entries added: K_HEX_PAIR ($FF3C), K_PARSE_DEC_VAL ($FF3F).
+;                   With the BIOS at 1562 bytes the kernel moved to a 4 KB window at
+;                   $F000-$FFFF and the reclaimed $E000-$EFFF went to the module
+;                   window, now $B000-$EFFF (16 KB). Nothing needed rebasing: the
+;                   modules keep their $B000 origin and simply have more room.
 ; 2026-07-29  v3.27 T: and Z: snapshot the page before dumping it. The dump walks
 ;                   MON_CURRADDR ($14/$15) as its cursor and PRINT_CHAR rewrites its
 ;                   own scratch ($16/$17, $1A-$1D) between bytes, so a live Z: showed

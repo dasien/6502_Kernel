@@ -99,7 +99,7 @@ the `Computer6502` class wires them together.
   against the Klaus2m5/amb5l functional, decimal, and 65C02-extended suites.
 - **Memory** — 64K store plus the address decoder: it overlays the kernel ROM at
   `$F000-$FFFF`, routes the I/O page (`$FE00-$FE5E`) to the peripherals, and drives
-  the bank-switched module window at `$B000-$EFFF` (BASIC / DEV TOOLS / FORTH,
+  the bank-switched module window at `$B000-$EFFF` (BASIC / DEV TOOLS / FORTH / MONITOR,
   selected via `MODULE_BANK` at `$FE23`).
 - **VIC** — text video. The 80×25 screen and its per-cell color/attribute plane
   live **inside the chip**, reached through a small register port (`$FE2D-$FE37`):
@@ -132,8 +132,8 @@ $0000-$00FF  Zero page (kernel/monitor/DOS workspace)
 $0100-$01FF  Stack
 $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
-$B000-$EFFF  Bank-switched module window (BASIC, DEV TOOLS, FORTH)
-$F000-$FFFF  Kernel ROM (monitor + MFC/OS DOS); jump table at $FF00, vectors at $FFFA
+$B000-$EFFF  Bank-switched module window (BASIC, DEV TOOLS, FORTH, MONITOR)
+$F000-$FFFF  Kernel BIOS; jump table at $FF00, vectors at $FFFA
 $FE00-$FE5E  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC (carved out of the ROM window)
 ```
 
@@ -183,7 +183,7 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0800-$87FF` | 32 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$7800-$87FF` (source) and `$7600-$77FF` (symbols) while building |
 | `$8800-$AFFF` | 10 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem + DOS shell) |
 | `$B000-$EFFF` | 16 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
-| `$F000-$FFFF` | 8 KB | **Kernel ROM** (monitor) |
+| `$F000-$FFFF` | 4 KB | **Kernel BIOS** — the monitor is module bank 4, not here |
 | `$FE00-$FE28` | — | **PIA** I/O + `MODULE_BANK` ($FE23) + block-device registers ($FE24-$FE28) — within the kernel region |
 
 There is no SID / CIA. The **VIC** is an 80×25 color text chip whose character
@@ -391,13 +391,13 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 
 ### ROM Layout
 
-#### Kernel ROM (`$F000-$FFFF`, 8 KB)
+#### Kernel BIOS (`$F000-$FFFF`, 4 KB)
 
 | Segment | Range | Purpose |
 |---------|-------|---------|
-| `CODE` | `$E000-$EF44` (3909 B) | Monitor code and data |
+| `CODE` | `$F000-$F619` (1562 B) | BIOS code and data |
 | `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK` + VIC + SID) |
-| `JUMPS` | `$FF00-$FF3B` (60 B) | Kernel API jump table (20 entries) |
+| `JUMPS` | `$FF00-$FF41` (66 B) | Kernel API jump table (22 entries) |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
 | (free) | ~`$EF45-$FDFF` | ~3.6 KB unused |
 
@@ -485,6 +485,46 @@ register port at `$FE2D-$FE37` and tracks the logical cursor in `CURSOR_X/Y`.)
 The MFC kernel exposes a stable jump table at `$FF00`. User programs and bank
 modules call these routines with `JSR` to the fixed addresses below; the entries
 never move, so a program built today keeps working as the kernel evolves.
+
+### What is in the BIOS, and what is not
+
+The kernel ROM holds the **machine**; everything that is merely *software shipped
+with the machine* lives in a bank module or on disk. Concretely:
+
+| In the BIOS (`$F000-$FFFF`) | Elsewhere |
+|---|---|
+| Screen output, cursor, scrolling, the pager | The monitor — **module bank 4** |
+| Keyboard input and line editing (`K_READ_LINE`, `.` recall) | BASIC — bank 1 |
+| Hex and decimal conversion (`K_PARSE_HEX`, `K_PRINT_DEC`, …) | DEV TOOLS (assembler/disassembler) — bank 2 |
+| IRQ/NMI handlers, the 60 Hz tick, NMI break-in | FORTH — bank 3 |
+| Sound (`K_SOUND_TONE`) and the RNG | EDIT / TERM / IRC — disk `.PRG` files |
+| Bank launching (`K_LAUNCH_BY_NAME`, `RETURN_FROM_MODULE`) | The filesystem and shell — MFC-DOS at `$8800` |
+| The `$FF00` table and the `$FFFA` vectors | |
+
+The monitor used to be two thirds of the kernel. It is a bank module because a
+disk program would load at `$0800` — precisely the memory a monitor exists to
+inspect — so it would overwrite the program under test. A bank costs no user RAM,
+maps instantly, and works with no disk present. The trade is that the monitor
+cannot show its own window: `R:B000-EFFF` displays the monitor's ROM rather than
+bank-0 RAM, and sibling banks are invisible for the same reason.
+
+**The boundary is enforced, not aspirational.** Because the BIOS and the monitor
+are separate link units, neither can name the other's labels — the assembler
+rejects it. What the assembler cannot see is that `monitor.asm` reaches the BIOS
+through hand-written equates to `$FF00` addresses; insert an entry in the middle
+of the table and every equate below it still assembles while pointing one slot
+off. The `kernel_bios_monitor_split` test
+(`tests/scripts/check_kernel_split.py`) checks every equate against the table
+below, and the bank's entry addresses against the constants the kernel jumps to.
+
+Two consequences worth knowing when adding to the kernel:
+
+- **Append to the jump table, never insert.** Existing entries are an ABI that
+  disk programs and every module bind to by address.
+- **The BIOS may not call into a module.** The window may not be mapped, and if it
+  is, it may hold a different bank. Anything the BIOS needs must live in the BIOS —
+  which is why `.`-recall and the boot-time window clear were moved down out of the
+  monitor rather than published.
 
 ### Calling convention
 
@@ -625,6 +665,8 @@ See `examples/` for runnable programs that use these calls, and
 
 ## Part 4 — Bank-switched modules
 
+> **Historical.** This part records the design of the module slot as it was argued at the time, including the addresses and sizes then in play (`$B000-$DFFF`, 12 KB, an 8 KB kernel at `$E000`). The window is now `$B000-$EFFF` (16 KB) under a 4 KB BIOS at `$F000`, and the monitor is bank 4. Part 2 is the authoritative current map; the reasoning below is left as written.
+
 
 **Status:** Phases 1–5 implemented (kernel v3.27). I/O is at `$FE00`, the module
 window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
@@ -652,7 +694,7 @@ run by name** all happen at the `]` prompt without host involvement.
 ### Goal
 
 Stop growing (or shrinking) the kernel ROM to add big features. Instead, make the
-16 KB region currently occupied by EhBASIC a **bank-switched module window**: a slot
+12 KB region currently occupied by EhBASIC a **bank-switched module window**: a slot
 into which the kernel maps one ROM "module" at a time (BASIC, an assembler/
 disassembler package, a Z-machine to play Zork, a text editor, …). BASIC becomes
 just *one* module rather than a permanent resident.
@@ -674,7 +716,7 @@ The kernel stays at `$E000–$FFFF` (8 KB), unchanged in start address.
 ```
 $0000–$07FF   Zero page / stack / system vars / screen      (unchanged)
 $0800–$AFFF   User RAM (~42 KB)                              (module working RAM)
-$B000–$DFFF   MODULE WINDOW (16 KB) — backed by selected bank; clean, no I/O hole
+$B000–$DFFF   MODULE WINDOW (12 KB) — backed by selected bank; clean, no I/O hole
 $E000–$EF6E   Kernel CODE (~3.9 KB at v3.27)                 (start unchanged)
 $EF6F–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
 $FE00–$FEFF   I/O page (relocated here from $DC00)
@@ -683,7 +725,7 @@ $FFFA–$FFFF   NMI / RESET / IRQ vectors
 ```
 
 Key property: **the module window contains no I/O** — any ROM assembled at `$B000`
-runs in a clean, contiguous 16 KB with no addresses to avoid.
+runs in a clean, contiguous 12 KB with no addresses to avoid.
 
 ### Prerequisite: relocate I/O out of the module window (`$DC00` → `$FE00`)
 
@@ -732,7 +774,7 @@ Phase 1 (this relocation) is self-contained and worth doing on its own.
 - **Reset:** forced to `0`. **BASIC is not auto-loaded**; the slot starts empty.
 - Lives in the always-mapped I/O page, so it's reachable regardless of what's mapped.
 
-Bank capacity is bounded only by the register width: one byte → 256 banks × 16 KB
+Bank capacity is bounded only by the register width: one byte → 256 banks × 12 KB
 (~3 MB). We define a handful and leave the rest open.
 
 ### Emulator changes (`Memory`)

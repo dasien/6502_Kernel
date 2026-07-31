@@ -103,8 +103,8 @@ The monitor provides clear, consistent error messages:
 - **$0200-$03FF**: Monitor variables and command buffers
 - **$0400-$07FF**: Free RAM (formerly the screen; the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE37`, not in the address map)
 - **$0800-$AFFF**: User RAM (module working RAM; EhBASIC program/variable space)
-- **$B000-$DFFF**: Module window (12 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC is bank 1)
-- **$E000-$FFFF**: Kernel ROM (8 KB; CODE ~3,900 bytes, rest free for growth)
+- **$B000-$EFFF**: Module window (16 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC 1, DEV TOOLS 2, FORTH 3, MONITOR 4)
+- **$F000-$FFFF**: Kernel BIOS (4 KB; CODE ~1,560 bytes, rest free for growth). The monitor is bank 4, not here.
 - **$FE00-$FE22**: PIA registers (keyboard, file I/O, timer) — an I/O page reserved within the kernel region
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full memory map and zero-page allocation.
@@ -208,7 +208,7 @@ cd cmake-build-debug/bin && ./6502-kernel
 
 ```
               MFC 6502  OPERATIONAL
-           MFC/OS 1.16   34816 BYTES FREE
+           MFC/OS 1.20   32768 BYTES FREE
 ]
 ```
 

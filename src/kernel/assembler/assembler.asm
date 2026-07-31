@@ -3,7 +3,14 @@
 ; ================================================================
 ; Filename:     assembler.asm
 ; Author:       Brian Gentry
-; Version:      0.7 (diagnose what used to assemble silently wrong: forward
+; Version:      0.8 (.ORG refuses an origin inside the assembler's own workspace,
+;               and that workspace moved down with the DOS ROM base: SRC_BUF
+;               $7800-$87FF, SYM_TBL $7600-$77FF, so the source buffer keeps its
+;               full 4 KB. An origin in either used to look legal and was not --
+;               emitting into SRC_BUF rewrites the text pass 2 is walking, and
+;               emitting into SYM_TBL corrupts the labels it resolves from, which
+;               reports success while producing garbage.)
+; Previously:   0.7 (diagnose what used to assemble silently wrong: forward
 ;                    references in "NAME = expr", over-range operands, over-length
 ;                    source lines, and an origin outside writable RAM)
 ; Assembler:    ca65  (-I src/kernel/assembler for opcodes_65c02.inc)
@@ -2217,7 +2224,7 @@ PUTS:
 .segment "DATA"
 
 MSG_BANNER:
-    .byte "MFC ASM v0.7", $0D, $0A
+    .byte "MFC ASM v0.8", $0D, $0A
     .byte "ASSEMBLER / DISASSEMBLER", $0D, $0A, $0A, $00
 MSG_PROMPT:
     .byte "A XXXX=ASM  D XXXX=DISASM  L=LOAD  B=BUILD  ESC=EXIT", $0D, $0A, $00

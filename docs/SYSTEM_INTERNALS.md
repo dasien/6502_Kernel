@@ -1238,7 +1238,7 @@ Part 7 — External references (below).
 
 ```
 Apps        ── BASIC, monitor, assembler/disassembler, editor, games
-              (ROM banks in the $B000-$DFFF window, or program files on disk)
+              (ROM banks in the $B000-$EFFF window, or program files on disk)
 ─────────────────────────────────────────────────────────────────────────
 Resident OS ── DOS shell  (prompt, commands, launch-by-name)        [DOS ROM]
             ── Filesystem (FAT16 over the block device)             [DOS ROM]

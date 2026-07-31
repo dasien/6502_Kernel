@@ -41,7 +41,7 @@ At power-up the machine prints a sign-on box and drops you at the prompt:
 ```
 ╔══════════════════════════════════════╗
 ║        MFC 6502  OPERATIONAL         ║
-║  MFC/OS 1.16      32768 BYTES FREE   ║
+║  MFC/OS 1.20      32768 BYTES FREE   ║
 ╚══════════════════════════════════════╝
 
 ]

@@ -2,7 +2,7 @@
 
 **MFC BASIC** is the built-in BASIC interpreter, derived from **EhBASIC**
 (Enhanced 6502 BASIC by the late Lee Davison). It runs as a bank-switched ROM
-module in the `$B000-$DFFF` window, so it loads instantly with no disk access.
+module in the `$B000-$EFFF` window, so it loads instantly with no disk access.
 It has full **floating point**, string handling, arrays, and the usual BASIC
 statements and functions — anything an EhBASIC reference documents works here.
 
