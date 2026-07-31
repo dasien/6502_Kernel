@@ -57,7 +57,7 @@ Part 3 Kernel API · Part 4 Bank-switched modules
 
 MFC is a software-defined computer built around a cycle-stepped **WDC 65C02** CPU.
 The C++/Qt host emulates the CPU and a set of memory-mapped peripherals; a 6502
-kernel ROM (monitor + MFC/OS DOS) and bank-switched ROM modules (BASIC, an
+kernel ROM (BIOS + MFC/OS DOS) and bank-switched ROM modules (BASIC, the monitor, an
 assembler/DEV-TOOLS module, FORTH) run on top. It is **not** a Commodore 64 and
 does not use PETSCII — the display is 80×25 CP437 text with 16 colors.
 

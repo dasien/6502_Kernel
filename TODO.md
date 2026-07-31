@@ -50,21 +50,22 @@ or a sibling bank.
   shared kernel_vars.inc split out of kernel.asm; still one assembly unit, CODE
   unchanged at 3951 bytes. `kernel_bios_monitor_split` (tests/scripts/check_kernel_split.py)
   makes the boundary an enforced invariant instead of a comment.
-- [ ] **Step 2 — make it a bank.** Four BIOS -> monitor wires to cut, all found by
-  step 1 and listed in the checker:
-  - `MONITOR_COLD` / `MONITOR_MAIN` — become "map the bank, jump to $B000"; the NMI
-    break path needs the same treatment so a program that clobbers $FE23 cannot lock
-    you out of the monitor.
-  - `RECALL_LAST_COMMAND` — READ_COMMAND_LINE (BIOS, ABI $FF15) implements '.' recall
-    by calling the monitor. Line editing is arguably BIOS; move it down rather than
-    publish it.
-  - `FILL_RANGE_CORE` — boot zeroes the $B000-$DFFF window using the F: fill engine.
-    Needs a small private fill loop in the BIOS.
-  Plus four monitor -> BIOS calls that are not published and need an ABI slot or a
-  private copy: `CLEAR_CMD_BUFFER`, `HEX_PAIR_TO_BYTE`, `PARSE_DECIMAL_VALUE`,
-  `PRINT_MSG_AY`. Everything else the monitor needs is already in the $FF00 table, and
-  DOS/BASIC/the assembler only ever reach the kernel through it, so no external caller
-  can be affected.
+- [x] **Step 2 — make it a bank.** monitor.asm is its own link unit at $B000,
+  installed by the host as bank 4. Kernel CODE 3951 -> **1562 bytes**; the monitor is
+  2438 bytes of a 12 KB window. All four BIOS -> monitor wires cut: MONITOR_COLD and
+  MONITOR_MAIN became MON_LAUNCH (map the bank, check the entry is not $00, jump) and
+  an NMI break that maps bank 4 instead of unmapping -- so a program that scribbles on
+  MODULE_BANK can no longer lock you out of the monitor. RECALL_LAST_COMMAND moved to
+  the BIOS where it belonged (it is line editing over shared page-2 buffers), which
+  also removed the monitor's last need for CLEAR_CMD_BUFFER. Boot got a private
+  20-byte page loop instead of borrowing the F: fill engine. Two ABI entries added
+  (K_HEX_PAIR $FF3C, K_PARSE_DEC_VAL $FF3F) and PRINT_MSG_AY became a 4-byte private
+  copy. Q exits via RETURN_FROM_MODULE so the window returns to RAM.
+  - Accepted blind spot, asserted in the tests so it reads as a decision: the monitor
+    cannot show $B000-$DFFF as RAM (it is standing there) or inspect a sibling bank.
+  - `kernel_bios_monitor_split` now checks the thing the assembler cannot see -- that
+    monitor.asm's $FF00 equates still match the kernel's jump table. Renumber the
+    table and every equate below the insertion point silently points one slot off.
 - [ ] Kernel after the move: ~1,400 bytes (BIOS ~1,300 + a bank-entry stub), which fits
   a 4 KB window comfortably (3,584 usable below the I/O page). A 2 KB window leaves only
   1,536 and is too tight to aim for.

@@ -156,6 +156,15 @@ MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
 MODULE_WINDOW_END  = $DFFF         ; last byte of the bankable module window
 
+; Monitor module (bank 4). The monitor lives in the bankable window rather than in
+; kernel ROM: as a disk program it would load at $0800 and so overwrite the very
+; code it exists to debug, while a bank costs no user RAM and is present even with
+; no disk. The accepted blind spot is that it cannot inspect its own window
+; ($B000-$DFFF) or a sibling bank -- everything else in the map is visible.
+MON_BANK           = $04           ; MODULE_BANK value that maps the monitor
+MON_ENTRY_COLD     = $B000         ; cold entry: banner + fresh prompt (DOS 'MON')
+MON_ENTRY_BREAK    = $B003         ; break-in entry: fresh prompt, no banner (NMI STOP)
+
 ; VDC-style video register port ($FE2D-$FE36). The 80x25 character and color
 ; planes live inside the VIC, NOT in the 64K map. Set a cell index via
 ; VREG_ADDR_LO/HI, then read/write the auto-incrementing VREG_CHAR/VREG_COLOR

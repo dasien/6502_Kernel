@@ -1,65 +1,82 @@
 ; ================================================================
-; monitor.inc - the MFC monitor: command loop, parser and commands
+; monitor.asm - the MFC monitor, as module bank 4
 ; ================================================================
-; Split out of kernel.asm to separate the machine (BIOS: screen, keyboard, hex
-; and decimal conversion, the pager, IRQ/NMI, sound, bank launching and the $FF00
-; ABI) from the interactive debugger that happens to ship with it.
+; The interactive monitor: command loop, parser, and the R:/W:/G:/F:/M:/X:/T:/Z:/
+; D:/H: commands. It used to live in kernel ROM; the kernel is now just the BIOS
+; (screen, keyboard, conversion, pager, IRQ/NMI, sound, bank launching, $FF00).
 ;
-; This is step 1 of moving the monitor into a bank module: the code still links
-; into kernel.rom as part of the same assembly unit, so nothing moved in memory
-; and the ROM is unchanged apart from the order routines appear in. Step 2 turns
-; this file into its own link unit at $B000 and reaches the BIOS through $FF00
-; instead of by direct label reference.
+; Why a bank and not a disk program: a .PRG loads at $0800, which is exactly the
+; memory a monitor exists to inspect -- it would overwrite the program under test.
+; A bank costs no user RAM, loads instantly, and is present with no disk at all.
+; The price is that the monitor cannot see its own window: R:B000-DFFF shows this
+; ROM, not bank-0 RAM, and sibling banks (BASIC, ASM, FORTH) are invisible for the
+; same reason. Everything else in the map -- zero page, stack, page 2, all of user
+; RAM, the DOS ROM and the kernel ROM -- reads normally.
 ;
-; What is deliberately NOT here, and why:
-;   PRINT_CHAR/PRINT_MESSAGE/PRINT_NEWLINE/CLEAR_SCREEN/GET_KEYSTROKE ... BIOS,
-;     published at $FF00-$FF0C, used by the DOS and every module.
-;   READ_COMMAND_LINE ......... BIOS ($FF15). The monitor is one caller of many.
-;   HEX_* / PRINT_HEX_BYTE .... BIOS ($FF18/$FF1B), used by the DOS and assembler.
-;   PARSE_DEC*/PRINT_DEC ...... BIOS ($FF27/$FF2A). The DOS needs these for
-;     CATALOG sizes and DISKFREE, so only the D:/H: command shells live here.
-;   PRINT_HELP_LINE ........... BIOS ($FF30); the DOS formats its own help with it.
-;   CLEAR_CMD_BUFFER .......... BIOS: READ_COMMAND_LINE's ESC-cancel path calls it.
-;   BANK_LAUNCH/LAUNCH_BY_NAME/RETURN_FROM_MODULE/LIST_MODULES/MODULE_DIR ... BIOS.
-;   MSG_PAGE_PROMPT/MSG_MODULE_FAIL ... BIOS: the pager and the bank loader own them.
-; ================================================================
-; ================================================================
-; DOT COMMAND (LAST COMMAND RECALL) IMPLEMENTATION
+; Reaching the BIOS: this is a separate link unit, so the only kernel addresses it
+; can bind to are the published $FF00 jump table. The equates below give the BIOS
+; routines their old names at their ABI addresses, which is what lets the command
+; code below stay exactly as it was written when it lived in kernel.asm.
+;
+; Shared addresses come from kernel_vars.inc, the same file the kernel includes, so
+; the two halves cannot disagree about where MON_CMDBUF and friends live -- which
+; matters because the DOS shell parses its own arguments out of that same buffer.
 ; ================================================================
 
-; Recall last command and display it in the current command buffer
-; Called when '.' is entered as first character in command line
-; Modifies: A, X, Y
-RECALL_LAST_COMMAND:
-    ; Check if we have a last command to recall
-    LDA MON_LAST_CMD_LEN        ; Load last command length
-    BEQ RECALL_NOTHING          ; If zero, nothing to recall
+.PC02                               ; 65C02 instruction set
 
-    ; Clear current command buffer first
-    JSR CLEAR_CMD_BUFFER
+.include "kernel_vars.inc"
 
-    ; Copy last command to current command buffer
-    LDX #$00                    ; Initialize copy index
+; ----------------------------------------------------------------
+; Kernel BIOS entry points (the $FF00 ABI)
+; ----------------------------------------------------------------
+PRINT_CHAR          = $FF00
+PRINT_MESSAGE       = $FF03
+PRINT_NEWLINE       = $FF06
+PRINT_NEWLINE_PAGED = $FF06         ; the kernel pages every newline; same entry
+GET_KEYSTROKE       = $FF09
+CLEAR_SCREEN        = $FF0C
+GET_RANDOM_NUMBER   = $FF0F
+RETURN_FROM_MODULE  = $FF12         ; unmaps this bank, then re-enters the DOS
+READ_COMMAND_LINE   = $FF15
+HEX_QUAD_TO_ADDR    = $FF18
+PRINT_HEX_BYTE      = $FF1B
+LAUNCH_BY_NAME      = $FF21
+LIST_MODULES        = $FF24
+PRINT_DEC           = $FF27
+PARSE_DEC_ABI       = $FF2A
+SET_ATTR            = $FF2D
+PRINT_HELP_LINE     = $FF30
+SOUND_TONE          = $FF33
+SOUND_OFF           = $FF36
+GET_JIFFIES         = $FF39
+HEX_PAIR_TO_BYTE    = $FF3C
+PARSE_DECIMAL_VALUE = $FF3F
 
-RECALL_COPY_LOOP:
-    CPX MON_LAST_CMD_LEN        ; Have we copied all characters?
-    BCS RECALL_COPY_DONE        ; If so, we're done copying
+; (DOS_WARM and the rest of the MFC-DOS ABI come from kernel_vars.inc.)
 
-    LDA MON_LAST_CMD_BUF,X      ; Load character from last command buffer
-    STA MON_CMDBUF,X            ; Store in current command buffer
-    JSR PRINT_CHAR              ; Echo character to screen
-    INX                         ; Move to next character
-    BRA RECALL_COPY_LOOP        ; Continue copying
+.org $B000
 
-RECALL_COPY_DONE:
-    ; Update current command length
-    STX MON_CMDLEN              ; Set current command length
-    ; X now contains the number of characters copied
-    RTS
+; ----------------------------------------------------------------
+; Entry table - the first bytes of the bank, at fixed addresses
+; ----------------------------------------------------------------
+; MON_ENTRY_COLD/BREAK in kernel_vars.inc name these. The kernel checks that the
+; first byte is not $00 before jumping, which is how an uninstalled bank is
+; detected, so these must stay real instructions at the very base of the window.
+    JMP MONITOR_COLD                ; $B000 - DOS 'MON' via K_MON_ENTRY
+    JMP MONITOR_MAIN                ; $B003 - NMI STOP break-in, no banner
 
-RECALL_NOTHING:
-    ; No previous command to recall - just continue input normally
-    RTS
+; ----------------------------------------------------------------
+; PRINT_MSG_AY - set the message pointer from A/Y and print
+; ----------------------------------------------------------------
+; A private 4-byte copy rather than a 21st ABI slot: it is pure sugar over
+; PRINT_MESSAGE ($FF03) and the monitor is its only remaining caller.
+PRINT_MSG_AY:
+    STA MON_MSG_PTR_LO
+    STY MON_MSG_PTR_HI
+    JMP PRINT_MESSAGE               ; tail call
+
+
 
 ; Save current command to last command buffer
 ; Should be called after successful command parsing (not during data entry)
@@ -196,8 +213,10 @@ PARSE_CMD_HELP_DIRECT:
     JMP PARSE_CMD_HELP
 
 PARSE_CMD_QUIT_DIRECT:
-    ; Quit the monitor: return to the MFC/OS DOS shell (no return).
-    JMP DOS_WARM
+    ; Quit the monitor: unmap this bank and return to the MFC/OS DOS shell. Must go
+    ; through RETURN_FROM_MODULE ($FF12), not straight to DOS_WARM -- leaving the
+    ; monitor mapped would hide 12 KB of the DOS's scratch RAM behind this ROM.
+    JMP RETURN_FROM_MODULE
 
 PARSE_CMD_EXIT_DIRECT:
     ; Direct jump to the clean-exit handler for a bare ESC

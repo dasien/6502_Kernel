@@ -347,23 +347,33 @@ ZP_CLEAR_LOOP:
 
     JSR CLEAR_SCREEN            ; Clear screen memory ($0400-$07FF)
 
-    ; Clear the module window ($B000-$DFFF) so bank 0 boots as clean scratch RAM,
-    ; reusing the F: fill engine. MODULE_BANK was set to 0 above, so these writes
-    ; land in the window RAM (not any module ROM); modules live in separate banks.
-    ; The monitor variables used here are scratch at this point - they get cleared
-    ; in the monitor-init step just below.
-    LDA #<MODULE_WINDOW_START
-    STA MON_CURRADDR_LO
+    ; Clear the module window ($B000-$DFFF) so bank 0 boots as clean scratch RAM.
+    ; MODULE_BANK was set to 0 above, so these writes land in the window RAM (not
+    ; any module ROM); modules live in separate banks. The monitor variables used
+    ; here are scratch at this point - they get cleared in the monitor-init step
+    ; just below.
+    ;
+    ; This used to call the monitor's F: fill engine (FILL_RANGE_CORE). The monitor
+    ; is a bank module now and the BIOS cannot call into the window -- at this point
+    ; in boot it holds whatever the host installed, and mapping bank 4 to borrow a
+    ; fill loop would mean clearing the window from inside it. So: a private page
+    ; loop, 48 pages of $B0..$DF.
+    STZ MON_CURRADDR_LO
     LDA #>MODULE_WINDOW_START
     STA MON_CURRADDR_HI
-    LDA #<MODULE_WINDOW_END
-    STA MON_ENDADDR_LO
-    LDA #>MODULE_WINDOW_END
-    STA MON_ENDADDR_HI
-    STZ MON_FILL_VALUE          ; fill with $00
-    JSR FILL_RANGE_CORE
-    ; FILL_RANGE_CORE left MON_CURRADDR at the window end; the ZP clear already
-    ; ran, so reset it here to $0000 for the initial prompt address.
+    LDA #$00                    ; fill value
+@win_page:
+    LDY #$00
+@win_byte:
+    STA (MON_CURRADDR_LO),Y
+    INY
+    BNE @win_byte
+    INC MON_CURRADDR_HI
+    LDY MON_CURRADDR_HI
+    CPY #(>MODULE_WINDOW_END)+1 ; past $DF -> done
+    BNE @win_page
+    ; The loop left MON_CURRADDR past the window end; the ZP clear already ran, so
+    ; reset it here to $0000 for the initial prompt address.
     STZ MON_CURRADDR_LO
     STZ MON_CURRADDR_HI
 
@@ -1185,6 +1195,49 @@ RETURN_FROM_MODULE:
     JSR CLEAR_SCREEN
     JMP DOS_WARM
 
+
+; ----------------------------------------------------------------
+; RECALL_LAST_COMMAND - '.' at the prompt: replay the previous command line
+; ----------------------------------------------------------------
+; BIOS, not monitor. READ_COMMAND_LINE ($FF15) calls this directly, and the BIOS
+; cannot reach into the monitor's bank -- so it lives here. It also belongs here on
+; the merits: it is line editing, and it touches nothing but the shared page-2
+; buffers (MON_LAST_CMD_BUF/MON_CMDBUF, declared once in kernel_vars.inc) plus
+; PRINT_CHAR. Its counterpart SAVE_COMMAND stays in the monitor, which is the side
+; that decides what counts as a command worth remembering.
+; Recall last command and display it in the current command buffer
+; Called when '.' is entered as first character in command line
+; Modifies: A, X, Y
+RECALL_LAST_COMMAND:
+    ; Check if we have a last command to recall
+    LDA MON_LAST_CMD_LEN        ; Load last command length
+    BEQ RECALL_NOTHING          ; If zero, nothing to recall
+
+    ; Clear current command buffer first
+    JSR CLEAR_CMD_BUFFER
+
+    ; Copy last command to current command buffer
+    LDX #$00                    ; Initialize copy index
+
+RECALL_COPY_LOOP:
+    CPX MON_LAST_CMD_LEN        ; Have we copied all characters?
+    BCS RECALL_COPY_DONE        ; If so, we're done copying
+
+    LDA MON_LAST_CMD_BUF,X      ; Load character from last command buffer
+    STA MON_CMDBUF,X            ; Store in current command buffer
+    JSR PRINT_CHAR              ; Echo character to screen
+    INX                         ; Move to next character
+    BRA RECALL_COPY_LOOP        ; Continue copying
+
+RECALL_COPY_DONE:
+    ; Update current command length
+    STX MON_CMDLEN              ; Set current command length
+    ; X now contains the number of characters copied
+    RTS
+
+RECALL_NOTHING:
+    ; No previous command to recall - just continue input normally
+    RTS
 ; ================================================================
 ; PARSE_DEC_ABI - decimal string -> 16-bit value (ABI $FF2A)
 ; ================================================================
@@ -1507,12 +1560,16 @@ NMI_HANDLER_BREAK:
     STZ PAGE_IN_BREAK           ; STOP pressed AT a --MORE-- prompt skipped the
                                 ;   clear after HANDLE_PAGE_BREAK, which left the
                                 ;   pager permanently disabled system-wide
-    STZ MODULE_BANK             ; STOP inside a module left its ROM mapped at
-                                ;   $B000-$DFFF, so the monitor showed ROM while
-                                ;   reporting RAM and F:/W: there silently did
-                                ;   nothing (writes to a mapped bank are dropped)
+    ; The monitor itself is bank MON_BANK now, so break-in maps it rather than
+    ; unmapping whatever was there. That is also what makes STOP reliable: a program
+    ; that scribbles on MODULE_BANK can no longer lock you out of the monitor,
+    ; because the NMI handler lives in always-mapped kernel ROM and re-maps on the
+    ; way in. The cost is that the monitor can never show $B000-$DFFF as RAM -- it
+    ; is standing in that window. Sibling banks are invisible for the same reason.
+    LDA #MON_BANK
+    STA MODULE_BANK
     CLI                         ; monitor runs with interrupts enabled
-    JMP MONITOR_MAIN           ; back to a fresh monitor prompt
+    JMP MON_ENTRY_BREAK         ; fresh prompt in the monitor bank, no banner
 
 ; ================================================================
 ; SOUND ROUTINES (SID voice 1)
@@ -1642,19 +1699,38 @@ MODULE_DIR:
     .BYTE 3                     ; bank 3
     .WORD $B000                 ; entry (FIG-Forth ENTER at the window base)
     .WORD NAME_FORTH
+    .BYTE MON_BANK              ; bank 4 - the monitor
+    .WORD MON_ENTRY_COLD        ; cold entry at the window base
+    .WORD NAME_MON
 MODULE_DIR_COUNT = (* - MODULE_DIR) / MODULE_DIR_RECSIZE
 
 NAME_BASIC:          .BYTE "BASIC", 0
 NAME_ASM:            .BYTE "ASM", 0
 NAME_FORTH:          .BYTE "FORTH", 0
+NAME_MON:            .BYTE "MON", 0
 
-; ================================================================
-; MONITOR
-; ================================================================
-; The interactive monitor -- command loop, parser, and the R:/W:/G:/F:/M:/X:/
-; T:/Z:/D:/H: commands. Separated from the BIOS above; see monitor.inc for the
-; BIOS/monitor boundary and why each shared routine stayed behind.
-.include "monitor.inc"
+
+; ----------------------------------------------------------------
+; MON_LAUNCH - map the monitor bank and enter it (ABI K_MON_ENTRY, $FF1E)
+; ----------------------------------------------------------------
+; The monitor is module bank MON_BANK. The DOS 'MON' verb and anything else that
+; wants the monitor comes through $FF1E, so this is the only place that knows
+; where it lives. Guarded the same way BANK_LAUNCH guards a module: an
+; uninstalled bank reads as $00 (BRK) and a real entry never starts with one, so
+; a missing monitor.rom reports itself instead of executing the empty window.
+MON_LAUNCH:
+    LDA #MON_BANK
+    STA MODULE_BANK             ; map the monitor into $B000-$DFFF
+    LDA MON_ENTRY_COLD          ; first opcode of the entry table
+    BEQ MON_LAUNCH_MISSING      ; $00 = bank not installed
+    JMP MON_ENTRY_COLD
+
+MON_LAUNCH_MISSING:
+    STZ MODULE_BANK             ; unmap -> window back to RAM
+    LDA #<MSG_MODULE_FAIL
+    LDY #>MSG_MODULE_FAIL
+    JSR PRINT_MSG_AY
+    JMP DOS_WARM
 
 ; ================================================================
 ; RESERVED I/O PAGE ($FE00-$FEFF)
@@ -1681,7 +1757,7 @@ K_RETURN_MODULE: JMP RETURN_FROM_MODULE ; $FF12 - module exit point (BASIC BYE, 
 K_READ_LINE:     JMP READ_COMMAND_LINE  ; $FF15
 K_PARSE_HEX:     JMP HEX_QUAD_TO_ADDR   ; $FF18
 K_PRINT_HEX_BYTE:JMP PRINT_HEX_BYTE     ; $FF1B
-K_MON_ENTRY:     JMP MONITOR_COLD       ; $FF1E - DOS launches the monitor here
+K_MON_ENTRY:     JMP MON_LAUNCH         ; $FF1E - DOS launches the monitor here
 K_LAUNCH_BY_NAME:JMP LAUNCH_BY_NAME     ; $FF21 - DOS launches a module by name
 K_LIST_MODULES:  JMP LIST_MODULES       ; $FF24 - print the module catalog (BANKS)
 K_PRINT_DEC:     JMP PRINT_DEC          ; $FF27 - print a 32-bit value in decimal
@@ -1691,6 +1767,8 @@ K_PRINT_HELP_LINE: JMP PRINT_HELP_LINE  ; $FF30 - print "syntax"<TAB>"desc" (TAB
 K_SOUND_TONE:    JMP SOUND_TONE         ; $FF33 - play a tone on voice 1 (A=freq lo, X=freq hi)
 K_SOUND_OFF:     JMP SOUND_OFF          ; $FF36 - stop voice 1 (gate off)
 K_GET_JIFFIES:   JMP GET_JIFFIES        ; $FF39 - read the 60 Hz tick counter (A=lo, X=hi)
+K_HEX_PAIR:      JMP HEX_PAIR_TO_BYTE   ; $FF3C - 2 hex digits -> byte (K_PARSE_HEX does 4)
+K_PARSE_DEC_VAL: JMP PARSE_DECIMAL_VALUE; $FF3F - decimal digits -> DEC_RESULT, no side effects
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

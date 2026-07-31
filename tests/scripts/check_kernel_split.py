@@ -1,73 +1,45 @@
 #!/usr/bin/env python3
-"""Enforce the BIOS / monitor boundary inside the kernel ROM sources.
+"""Check the kernel BIOS / monitor-module contract.
 
-kernel.asm is the machine: screen, keyboard, hex and decimal conversion, the
-pager, IRQ/NMI, sound, bank launching and the $FF00 ABI. monitor.inc is the
-interactive debugger that ships with it. They assemble into one ROM today, so the
-assembler cannot tell you when a routine drifts to the wrong side -- a JSR across
-the boundary just links. This does.
+The monitor is module bank 4 (src/kernel/monitor.asm), linked separately from the
+kernel BIOS (src/kernel/kernel.asm). Being separate link units, the assembler now
+enforces the hard part for free: kernel.asm cannot name a monitor label and vice
+versa, so neither side can accidentally call into the other.
 
-The direction that matters is BIOS -> monitor. Every such reference is a wire that
-has to be cut when the monitor becomes a bank module, because the BIOS cannot call
-into an unmapped window. Keeping that list short and explicit is the whole point;
-each entry below is a known debt with a stated resolution.
+What the assembler CANNOT see is that monitor.asm reaches the BIOS through a list of
+hand-written equates to $FF00 addresses:
 
-monitor -> BIOS is fine in bulk, but only if it goes through the published $FF00
-table, since that is all a separate link unit can reach. Anything else has to be
-published or copied into the monitor first, so those are listed too.
+    PRINT_CHAR = $FF00
+    CLEAR_SCREEN = $FF0C
+    ...
 
-Exits non-zero with an explanation on any new crossing.
+Nothing ties those numbers to the kernel's actual jump table. Insert an entry in the
+middle of the table, or reorder it, and every equate below the insertion point still
+assembles perfectly while pointing one slot off -- the monitor would call
+GET_KEYSTROKE where it meant PRINT_NEWLINE. That fails at runtime, far from the
+edit, with no diagnostic. So: verify every equate against the table it claims to
+name, and verify the bank's entry addresses against the constants the kernel jumps
+to.
+
+Exits non-zero with an explanation on any mismatch.
 """
 
 import re
 import sys
 from pathlib import Path
 
-# BIOS routines the monitor may call. Published $FF00 entries are read out of the
-# jump table itself, so this is only the not-yet-published remainder: each one
-# needs an ABI slot or a private copy in the monitor before step 2.
-UNPUBLISHED_BIOS_CALLS = {
-    "CLEAR_CMD_BUFFER":    "8 bytes; READ_COMMAND_LINE's ESC-cancel path shares it",
-    "HEX_PAIR_TO_BYTE":    "2-digit hex parse; K_PARSE_HEX only covers 4 digits",
-    "PARSE_DECIMAL_VALUE": "decimal core under K_PARSE_DEC; D: needs it directly",
-    "PRINT_MSG_AY":        "4-byte wrapper: STA/STY the pointer then PRINT_MESSAGE",
-}
-
-# The wires to cut. Anything here is expected; anything new is a regression.
-ALLOWED_BIOS_TO_MONITOR = {
-    "MONITOR_COLD":        "the entry point, published at K_MON_ENTRY ($FF1E)",
-    "MONITOR_MAIN":        "NMI break-to-monitor lands here; becomes a bank map + jump",
-    "RECALL_LAST_COMMAND": "READ_COMMAND_LINE implements '.' recall by calling the "
-                           "monitor. Line editing is arguably BIOS -- move it down "
-                           "rather than publishing it",
-    "FILL_RANGE_CORE":     "boot zeroes the $B000-$DFFF module window with the F: "
-                           "fill engine. Needs a small private fill loop in the BIOS",
-}
-
-LABEL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
-EQUATE_RE = re.compile(r"^[A-Za-z_]\w*\s*=")
-IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
-ABI_RE = re.compile(r"^(K_\w+):\s*JMP\s+(\w+)")
+# K_NAME: JMP TARGET  ; $FFxx
+ABI_RE = re.compile(r"^(K_\w+):\s*JMP\s+(\w+)\s*;\s*\$(FF[0-9A-F]{2})", re.I)
+# NAME = $FFxx   (an ABI equate in the module)
+EQU_RE = re.compile(r"^([A-Za-z_]\w*)\s*=\s*\$(FF[0-9A-F]{2})\b", re.I)
+# NAME = $xxxx   (any equate, for kernel_vars lookups)
+ANY_EQU_RE = re.compile(r"^([A-Za-z_]\w*)\s*=\s*\$([0-9A-F]{1,4})\b", re.I)
+ORG_RE = re.compile(r"^\s*\.org\s+\$([0-9A-F]{4})", re.I)
+JMP_RE = re.compile(r"^\s*JMP\s+(\w+)")
 
 
-def labels(path):
-    out = set()
-    for line in path.read_text().splitlines():
-        m = LABEL_RE.match(line)
-        if m:
-            out.add(m.group(1))
-    return out
-
-
-def references(path):
-    """Identifiers used in code position (comments and equate LHS excluded)."""
-    out = set()
-    for line in path.read_text().splitlines():
-        code = line.split(";")[0]
-        if EQUATE_RE.match(code):
-            continue
-        out.update(IDENT_RE.findall(code))
-    return out
+def read(p):
+    return p.read_text().splitlines()
 
 
 def main():
@@ -75,58 +47,91 @@ def main():
         print("usage: check_kernel_split.py <src/kernel dir>", file=sys.stderr)
         return 2
     d = Path(sys.argv[1])
-    kernel, monitor = d / "kernel.asm", d / "monitor.inc"
-    for f in (kernel, monitor):
+    kernel, monitor, varsinc = d / "kernel.asm", d / "monitor.asm", d / "kernel_vars.inc"
+    for f in (kernel, monitor, varsinc):
         if not f.is_file():
             print(f"FAIL: {f} not found", file=sys.stderr)
             return 1
 
-    bios_labels, mon_labels = labels(kernel), labels(monitor)
-    published = {m.group(2) for line in kernel.read_text().splitlines()
-                 if (m := ABI_RE.match(line))}
-
+    klines, mlines, vlines = read(kernel), read(monitor), read(varsinc)
     errors = []
 
-    both = bios_labels & mon_labels
-    if both:
-        errors.append("defined in BOTH kernel.asm and monitor.inc: "
-                      + ", ".join(sorted(both)))
+    # --- the published table: target name -> address -------------------------
+    table = {}
+    for line in klines:
+        m = ABI_RE.match(line)
+        if m:
+            table[m.group(2).upper()] = "$" + m.group(3).upper()
+    if not table:
+        errors.append("no $FF00 jump table entries found in kernel.asm -- the "
+                      "K_NAME: JMP TARGET ; $FFxx format must have changed")
 
-    # BIOS must not reach into the monitor beyond the known wires.
-    leaks = (references(kernel) & mon_labels) - set(ALLOWED_BIOS_TO_MONITOR)
-    if leaks:
-        errors.append(
-            "kernel.asm (BIOS) references monitor.inc labels that are not known "
-            "boundary crossings: " + ", ".join(sorted(leaks)) + ".\n"
-            "    The BIOS cannot call into the monitor once it is a bank module -- "
-            "the window will not be mapped.\n"
-            "    Either keep the routine in the BIOS, or add it to "
-            "ALLOWED_BIOS_TO_MONITOR with the resolution you intend.")
+    # --- every ABI equate in the module must match that table ---------------
+    equates, checked = {}, 0
+    for i, line in enumerate(mlines, 1):
+        m = EQU_RE.match(line)
+        if not m:
+            continue
+        name, addr = m.group(1).upper(), "$" + m.group(2).upper()
+        equates[name] = addr
+        # Aliases (two names for one entry) are fine as long as the address is real.
+        if name in table:
+            checked += 1
+            if table[name] != addr:
+                errors.append(
+                    f"monitor.asm:{i}: {name} = {addr}, but kernel.asm publishes it "
+                    f"at {table[name]}.\n    The monitor would call whatever now "
+                    f"lives at {addr}.")
+        elif addr not in table.values():
+            errors.append(
+                f"monitor.asm:{i}: {name} = {addr}, which is not any entry in the "
+                f"kernel's $FF00 table.\n    Either the routine is not published or "
+                f"the address is stale; a separate link unit can only reach the "
+                f"kernel through that table.")
 
-    # Monitor may only reach BIOS via $FF00, plus the listed not-yet-published set.
-    reachable = published | set(UNPUBLISHED_BIOS_CALLS)
-    stray = (references(monitor) & bios_labels) - reachable
-    if stray:
-        errors.append(
-            "monitor.inc calls BIOS routines that are neither published in the "
-            "$FF00 table nor listed as unpublished debt: " + ", ".join(sorted(stray))
-            + ".\n    A separate link unit can only reach the kernel through $FF00, "
-            "so publish it, copy it into the monitor, or record it in "
-            "UNPUBLISHED_BIOS_CALLS.")
+    # --- bank entry addresses must agree with what the kernel jumps to ------
+    consts = {}
+    for line in vlines:
+        m = ANY_EQU_RE.match(line)
+        if m:
+            consts[m.group(1).upper()] = int(m.group(2), 16)
+    for want in ("MON_BANK", "MON_ENTRY_COLD", "MON_ENTRY_BREAK"):
+        if want not in consts:
+            errors.append(f"kernel_vars.inc does not define {want}")
+    if "MON_ENTRY_COLD" in consts:
+        org = next((int(m.group(1), 16) for line in mlines
+                    if (m := ORG_RE.match(line))), None)
+        if org is None:
+            errors.append("monitor.asm has no .org directive")
+        elif org != consts["MON_ENTRY_COLD"]:
+            errors.append(
+                f"monitor.asm .org is ${org:04X} but MON_ENTRY_COLD is "
+                f"${consts['MON_ENTRY_COLD']:04X}. The kernel jumps to the constant, "
+                f"so the bank would be entered at the wrong address.")
+        # The entry table is the first two instructions: JMP cold, JMP break.
+        jmps = [m.group(1) for line in mlines[mlines.index(next(
+            l for l in mlines if ORG_RE.match(l))):] if (m := JMP_RE.match(line))]
+        if len(jmps) < 2:
+            errors.append("monitor.asm: expected two JMPs (cold, break) at the base "
+                          "of the bank")
+        elif "MON_ENTRY_BREAK" in consts:
+            gap = consts["MON_ENTRY_BREAK"] - consts["MON_ENTRY_COLD"]
+            if gap != 3:
+                errors.append(
+                    f"MON_ENTRY_BREAK is {gap} bytes past MON_ENTRY_COLD; the entry "
+                    f"table is two 3-byte JMPs, so it must be 3.")
 
     if errors:
-        print("kernel BIOS/monitor split check FAILED\n", file=sys.stderr)
+        print("kernel BIOS/monitor contract check FAILED\n", file=sys.stderr)
         for e in errors:
             print("  - " + e + "\n", file=sys.stderr)
         return 1
 
-    unpublished = sorted(references(monitor) & bios_labels & set(UNPUBLISHED_BIOS_CALLS))
-    print(f"kernel split OK: BIOS {len(bios_labels)} labels, "
-          f"monitor {len(mon_labels)} labels")
-    print(f"  BIOS -> monitor crossings to cut for step 2: "
-          f"{len(ALLOWED_BIOS_TO_MONITOR)}")
-    print(f"  monitor -> BIOS calls still needing an ABI slot: "
-          f"{len(unpublished)} ({', '.join(unpublished)})")
+    print(f"kernel/monitor contract OK: {len(table)} published ABI entries, "
+          f"{checked} verified against monitor.asm equates")
+    print(f"  monitor bank {consts.get('MON_BANK')} entered at "
+          f"${consts.get('MON_ENTRY_COLD', 0):04X} (cold) / "
+          f"${consts.get('MON_ENTRY_BREAK', 0):04X} (NMI break)")
     return 0
 
 

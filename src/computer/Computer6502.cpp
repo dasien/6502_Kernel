@@ -190,6 +190,11 @@ namespace Computer
         installBank(1, "../kernel/basic.rom", "BASIC");
         installBank(2, "../kernel/assembler.rom", "ASSEMBLER");
         installBank(3, "../kernel/forth.rom", "FORTH");
+        // Bank 4 is the monitor. It moved out of kernel ROM: as a disk program it
+        // would load at $0800 and overwrite the very memory it exists to inspect,
+        // whereas a bank costs no user RAM and is present even with no disk. The
+        // kernel maps it on demand from K_MON_ENTRY ($FF1E) and on an NMI STOP.
+        installBank(4, "../kernel/monitor.rom", "MONITOR");
 
         // Always-mapped DOS ROM at $8800-$AFFF (resident FAT16 filesystem / DOS
         // shell). If absent, the region stays RAM and the machine boots as before.

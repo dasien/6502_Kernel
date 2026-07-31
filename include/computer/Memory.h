@@ -60,8 +60,10 @@ namespace Computer
         static constexpr uint16_t kModuleWindowEnd = 0xDFFF;
         static constexpr size_t kModuleWindowSize = 0x3000; // 12 KB
 
-        /// Kernel ROM ($E000-$FFFF, 8KB): monitor + BIOS, the $FF00 ABI jump table
-        /// and the $FFFA vectors. The I/O page is carved out of it at $FE00-$FE5E.
+        /// Kernel ROM ($E000-$FFFF, 8KB): the BIOS -- screen, keyboard, hex and
+        /// decimal conversion, the pager, IRQ/NMI, sound, bank launching -- plus the
+        /// $FF00 ABI jump table and the $FFFA vectors. The I/O page is carved out of
+        /// it at $FE00-$FE5E. The monitor is no longer here; it is module bank 4.
         static constexpr uint16_t kKernelRomStart = 0xE000;
 
         /// MODULE_BANK select register. Write n to map bank n into the window;

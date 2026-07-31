@@ -2035,7 +2035,7 @@ MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
                  .BYTE "$0800-$87FF USER RAM   (32K)", $0D, $0A
                  .BYTE "$8800-$AFFF DOS ROM   (10K)", $0D, $0A
                  .BYTE "$B000-$DFFF MODULES    (12K)", $0D, $0A
-                 .BYTE "$E000-$FFFF KERNEL ROM (8K)", $0D, $0A
+                 .BYTE "$E000-$FFFF KERNEL BIOS (8K)", $0D, $0A
                  .BYTE "$FE2D-$FE36 VIDEO PORT (VIC)", $0D, $0A, 0
 MSG_DOS_CATHDR:  .BYTE "NAME            BYTES  MODIFIED", $0D, $0A, 0
 MSG_DOS_NODATE:  .BYTE "(no date)", 0

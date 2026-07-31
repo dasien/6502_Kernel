@@ -36,6 +36,11 @@ static constexpr uint16_t kBasicVecOut = 0x0207;
 // the backing image, so the DOS re-reads the BPB instead of reusing cached geometry.
 static constexpr uint16_t kDosMounted = 0x0300;
 
+// MODULE_BANK ($FE23): which bank is mapped into $B000-$DFFF. 0 = window is RAM.
+// The monitor is bank 4, so this is how the harness sees it come and go.
+static constexpr uint16_t kModuleBank = 0xFE23;
+static constexpr uint8_t  kMonBank    = 4;
+
 // The assembler module's source-text buffer (SRC_BUF in assembler.asm). Nothing
 // shares that symbol with the host build, so this tracks it by hand -- it moved
 // down with the DOS ROM base when user RAM shrank to $0800-$87FF.
@@ -99,6 +104,7 @@ public:
 
         // Monitor tests run inside MON.
         sendCommand("MON");
+        testMonitorIsBankModule();
         testMonitorLSRetired();
         testClearScreen();
         testHelpCommand();
@@ -683,6 +689,34 @@ public:
 
         // The scratch area is shared with later tests that expect it clear.
         for (uint16_t i = 0; i < 600; ++i) computer.getMemory()->write(0x0900 + i, 0x00);
+    }
+
+    // The monitor is module bank 4, not kernel ROM. Everything else in this suite
+    // exercises the commands; these check the banking itself, which is the part
+    // that has no other symptom until something is badly wrong.
+    void testMonitorIsBankModule() {
+        // We are inside the monitor here (the suite entered it with MON).
+        verifyMemEquals(kModuleBank, kMonBank, "monitor runs with its bank mapped");
+
+        // The documented blind spot, asserted so it reads as a decision rather than
+        // a bug: the monitor sits in the window it would otherwise show. $B000 is
+        // the entry table's JMP ($4C), not bank-0 RAM.
+        clearScreen();
+        sendCommand("R:B000-B000");
+        verifyResponse("4C", "R: in the window shows the monitor's own ROM");
+
+        // Q must unmap on the way out (RETURN_FROM_MODULE), or 12 KB of the DOS's
+        // scratch RAM would stay hidden behind this ROM for the rest of the session.
+        sendCommand("Q");
+        verifyMemEquals(kModuleBank, 0x00, "Q unmaps the monitor bank");
+        computer.getMemory()->write(0xB000, 0x5A);
+        verifyMemEquals(0xB000, 0x5A, "window is writable RAM again after Q");
+
+        // BANKS lists it alongside the other modules.
+        clearScreen();
+        sendCommand("BANKS", 400000);
+        verifyResponse("MON", "BANKS lists the monitor module");
+        sendCommand("MON");   // back in for the remaining monitor tests
     }
 
     // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).

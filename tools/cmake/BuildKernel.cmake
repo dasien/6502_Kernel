@@ -37,7 +37,6 @@ if(CA65_FOUND AND LD65_FOUND)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${KERNEL_ASM_SOURCE} ${KERNEL_CONFIG}
                 ${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc
-                ${CMAKE_SOURCE_DIR}/src/kernel/monitor.inc
         VERBATIM
     )
     
@@ -84,6 +83,25 @@ if(CA65_FOUND AND LD65_FOUND)
     set(ASSEMBLER_OBJECT ${CMAKE_BINARY_DIR}/kernel/assembler.o)
     set(ASSEMBLER_ROM ${CMAKE_BINARY_DIR}/kernel/assembler.rom)
     set(ASSEMBLER_MAP ${CMAKE_BINARY_DIR}/kernel/assembler.map)
+
+    # Monitor module ROM (bank 4). The monitor moved out of kernel ROM: as a disk
+    # program it would load at $0800 and overwrite the code it exists to debug.
+    # -I src/kernel so .include "kernel_vars.inc" resolves.
+    set(MONITOR_ASM_SOURCE ${CMAKE_SOURCE_DIR}/src/kernel/monitor.asm)
+    set(MONITOR_CONFIG ${CMAKE_SOURCE_DIR}/src/kernel/monitor_memory.cfg)
+    set(MONITOR_OBJECT ${CMAKE_BINARY_DIR}/kernel/monitor.o)
+    set(MONITOR_ROM ${CMAKE_BINARY_DIR}/kernel/monitor.rom)
+    set(MONITOR_MAP ${CMAKE_BINARY_DIR}/kernel/monitor.map)
+
+    add_custom_target(monitor_rom ALL
+        COMMAND ca65 ${MONITOR_ASM_SOURCE} -I ${CMAKE_SOURCE_DIR}/src/kernel -o ${MONITOR_OBJECT}
+        COMMAND ld65 -C ${MONITOR_CONFIG} ${MONITOR_OBJECT} -o ${MONITOR_ROM} -m ${MONITOR_MAP}
+        COMMENT "Building monitor module ROM (bank 4)"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+        DEPENDS ${MONITOR_ASM_SOURCE} ${MONITOR_CONFIG}
+                ${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc
+        VERBATIM
+    )
 
     # -I ASSEMBLER_DIR so .include "opcodes_65c02.inc" resolves.
     add_custom_target(assembler_rom ALL
