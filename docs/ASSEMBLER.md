@@ -230,18 +230,43 @@ If a file has no `.ORG` (or `*=`), assembly starts at **$0800** — the address 
 DOS loads and runs a `.PRG` at, so a source with no origin still lands somewhere
 useful and runnable.
 
-**The origin must be writable RAM, `$0200-$8FFF`.** Pass 2 emits with ordinary
-stores, so anything else either destroys the machine or does nothing at all:
+**The origin must be writable RAM below the assembler's workspace, `$0200-$7DFF`.**
+Pass 2 emits with ordinary stores, so anything else destroys the machine, does
+nothing at all, or destroys the build itself:
 
 | Origin | Why it is refused |
 |--------|-------------------|
 | below `$0200` | zero page, the 6502 stack and the monitor's own workspace |
+| `$7E00-$8FFF` | **the assembler's own workspace** — see below |
 | `$9000-$AFFF` | the always-mapped DOS ROM — writes are discarded |
 | `$B000-$DFFF` | the module window, where the assembler itself is running |
 | `$E000-$FFFF` | the kernel ROM |
 
 An out-of-range origin reports `? LINE nnnn` at the offending `.ORG` rather than
 letting the build appear to succeed while emitting nothing.
+
+#### Why the cap is the workspace, not the top of RAM
+
+`$7E00-$8FFF` is the assembler's own working storage — the symbol table, then the
+source buffer, contiguous (see [Memory used](#memory-used)). An origin in either is
+the one case that *looks* legal and is not, and the two fail differently:
+
+- **Into the source buffer (`$8000-$8FFF`):** pass 2 emits over the very text it is
+  walking, so the generated code and the line numbers in any diagnostic are both
+  wrong from the first emitted byte — and the further the build gets, the less of
+  the source survives to report against.
+- **Into the symbol table (`$7E00-$7FFF`):** worse, because it fails *quietly*.
+  Pass 2 resolves labels out of that table while overwriting it, so expressions
+  evaluate to garbage and the build still reports success.
+
+In neither case does anything point at the origin as the cause, which is why this
+is enforced rather than left to the programmer. The cap is derived from the
+workspace base in the source rather than written as a literal, so it tracks the
+buffers automatically if the memory map moves them.
+
+This does mean the top ~4.5 KB of user RAM is not a legal origin even though it is
+writable. To assemble code intended to *run* up there, assemble it lower and use the
+monitor's `M:` to move it, or `SAVE` it and `LOAD` it to the target address.
 
 ### Diagnostics
 
@@ -304,7 +329,9 @@ The Dev Tools share the machine with everything else, so mind what they touch:
 - **Working RAM:** `$0800–$8FFF` is the module's scratch space.
 
 Assemble your programs into free user RAM below `$7E00` (for example `$0800`),
-clear of the source buffer and symbol table. Only one module is mapped at a time —
+clear of the source buffer and symbol table — `.ORG` enforces this, refusing any
+origin at `$7E00` or above (see [Directives](#directives)). Only one module is
+mapped at a time —
 save your work on the host before switching banks, since the buffers are not
 preserved across module loads.
 

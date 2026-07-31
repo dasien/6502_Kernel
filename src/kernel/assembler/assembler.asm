@@ -1678,17 +1678,27 @@ AP_DO_ORG:
     JSR ASM2_SKIPSPC
     JSR EVAL_EXPR
     BCS AP_ERR
-    ; Reject an origin outside writable user RAM ($0200-$8FFF). Pass 2 emits with
-    ; plain stores, so an origin below $0200 wrote over the monitor's zero page and
-    ; the 6502 stack (killing the machine mid-build), and one at $9000+ landed in
-    ; the DOS ROM, this module's own bank window, or the kernel ROM -- where writes
-    ; are discarded, so the listing scrolled by and printed OK having emitted
-    ; nothing at all.
+    ; Reject an origin outside writable user RAM below the source buffer. Pass 2
+    ; emits with plain stores, so an origin below $0200 wrote over the monitor's
+    ; zero page and the 6502 stack (killing the machine mid-build), and one at
+    ; $9000+ landed in the DOS ROM, this module's own bank window, or the kernel
+    ; ROM -- where writes are discarded, so the listing scrolled by and printed OK
+    ; having emitted nothing at all.
+    ;
+    ; The upper bound is SYM_TBL, not the top of RAM, because $7E00-$8FFF is this
+    ; module's own workspace: the symbol table then the source buffer, contiguous.
+    ; An origin in either is the case that looks legal and is not. Emitting into
+    ; SRC_BUF rewrites the text being assembled as pass 2 walks it, so the output
+    ; and the line numbers in any diagnostic are both wrong from the first byte.
+    ; Emitting into SYM_TBL is worse: pass 2 resolves labels out of that table
+    ; while overwriting it, so expressions quietly evaluate to garbage and the
+    ; build reports success. Derived from SYM_TBL (page-aligned, so a high-byte
+    ; compare is exact) so the cap follows the workspace if the map moves it.
     LDA ASM_VAL+1
     CMP #$02
     BCC AP_ERR                      ; < $0200: zero page / stack / system vars
-    CMP #$90
-    BCS AP_ERR                      ; >= $9000: DOS ROM, module window, kernel ROM
+    CMP #>SYM_TBL
+    BCS AP_ERR                      ; >= $7E00: symbol table, source buffer, ROM
     LDA ASM_VAL
     STA ASM_PC
     LDA ASM_VAL+1

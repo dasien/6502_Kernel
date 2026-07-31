@@ -1392,6 +1392,34 @@ private:
         verifyResponse("? LINE", "asm: origin in the kernel ROM is refused");
         sendKey(0x1B, 200000);
 
+        // $7E00-$8FFF is the assembler's own workspace: symbol table then source
+        // buffer. An origin in either looks legal and is not -- emitting into
+        // SRC_BUF rewrites the text pass 2 is walking, and emitting into SYM_TBL
+        // corrupts the labels pass 2 resolves from, which reports success while
+        // producing garbage. Refused at the workspace base, not the top of RAM.
+        clearScreen();
+        assembleSource(".ORG $7E00\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin at the symbol table is refused");
+        sendKey(0x1B, 200000);
+
+        clearScreen();
+        assembleSource(".ORG $8000\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin at the source buffer is refused");
+        sendKey(0x1B, 200000);
+
+        clearScreen();
+        assembleSource(".ORG $8800\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin inside the source buffer is refused");
+        sendKey(0x1B, 200000);
+
+        // Just below the workspace is still legal -- the cap must not overshoot.
+        computer.getMemory()->write(0x7DFD, 0x00);
+        clearScreen();
+        assembleSource(".ORG $7DFD\nLDA #$5A\nRTS\n.END\n");
+        verifyMemEquals(0x7DFD, 0xA9, "asm: origin just below the workspace is allowed");
+        verifyMemEquals(0x7DFE, 0x5A, "asm: operand emitted below the workspace");
+        sendKey(0x1B, 200000);
+
         // No .ORG: assembles at the $0800 default and really emits there.
         computer.getMemory()->write(0x0800, 0x00);
         clearScreen();
