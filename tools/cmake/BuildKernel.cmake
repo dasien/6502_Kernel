@@ -26,7 +26,7 @@ if(CA65_FOUND AND LD65_FOUND)
     
     # Create a target that builds the kernel ROM in build directory
     add_custom_target(kernel_rom ALL
-        COMMAND ca65 ${KERNEL_ASM_SOURCE} -o ${KERNEL_OBJECT}
+        COMMAND ca65 ${KERNEL_ASM_SOURCE} -I ${CMAKE_SOURCE_DIR}/src/kernel -o ${KERNEL_OBJECT}
         COMMAND ld65 -C ${KERNEL_CONFIG} ${KERNEL_OBJECT} -o ${KERNEL_ROM} -m ${KERNEL_MAP}
         COMMAND ${CMAKE_COMMAND} -E echo "================================================================"
         COMMAND ${CMAKE_COMMAND} -E echo "ROM BUILD COMPLETE - SIZE ANALYSIS"
@@ -36,6 +36,8 @@ if(CA65_FOUND AND LD65_FOUND)
         COMMENT "Building kernel ROM in build directory"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${KERNEL_ASM_SOURCE} ${KERNEL_CONFIG}
+                ${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc
+                ${CMAKE_SOURCE_DIR}/src/kernel/monitor.inc
         VERBATIM
     )
     

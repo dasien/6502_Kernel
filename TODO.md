@@ -39,6 +39,36 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
   - [x] In-machine generic text editor + resident filesystem: both shipped. MFC-DOS ($9000-$AFFF) is the resident FAT16 filesystem, and EDIT (programs/edit, docs/EDIT.md) is the full-screen editor. Self-hosting is complete — edit -> assemble -> SAVE -> run by name, all at the `]` prompt.
   - [ ] Remaining from post-Phase-4: assembler macros + more directives; single-step/breakpoints in the monitor.
 
+### Monitor out of the kernel (in progress)
+Splitting the kernel ROM into a true BIOS (the machine) and the monitor (an interactive
+debugger that happens to ship with it). The monitor ends up a bank module, not a disk
+program: a program loads at $0800 and so collides with the very code it is meant to
+debug, whereas a bank costs no user RAM and is reachable with a dead disk. The blind
+spot it accepts is that a banked monitor cannot inspect its own window ($B000-$DFFF)
+or a sibling bank.
+- [x] **Step 1 — separate the source, one ROM.** monitor.inc (1,878 lines) and the
+  shared kernel_vars.inc split out of kernel.asm; still one assembly unit, CODE
+  unchanged at 3951 bytes. `kernel_bios_monitor_split` (tests/scripts/check_kernel_split.py)
+  makes the boundary an enforced invariant instead of a comment.
+- [ ] **Step 2 — make it a bank.** Four BIOS -> monitor wires to cut, all found by
+  step 1 and listed in the checker:
+  - `MONITOR_COLD` / `MONITOR_MAIN` — become "map the bank, jump to $B000"; the NMI
+    break path needs the same treatment so a program that clobbers $FE23 cannot lock
+    you out of the monitor.
+  - `RECALL_LAST_COMMAND` — READ_COMMAND_LINE (BIOS, ABI $FF15) implements '.' recall
+    by calling the monitor. Line editing is arguably BIOS; move it down rather than
+    publish it.
+  - `FILL_RANGE_CORE` — boot zeroes the $B000-$DFFF window using the F: fill engine.
+    Needs a small private fill loop in the BIOS.
+  Plus four monitor -> BIOS calls that are not published and need an ABI slot or a
+  private copy: `CLEAR_CMD_BUFFER`, `HEX_PAIR_TO_BYTE`, `PARSE_DECIMAL_VALUE`,
+  `PRINT_MSG_AY`. Everything else the monitor needs is already in the $FF00 table, and
+  DOS/BASIC/the assembler only ever reach the kernel through it, so no external caller
+  can be affected.
+- [ ] Kernel after the move: ~1,400 bytes (BIOS ~1,300 + a bank-entry stub), which fits
+  a 4 KB window comfortably (3,584 usable below the I/O page). A 2 KB window leaves only
+  1,536 and is too tight to aim for.
+
 ## Deferred correctness work (2026-07)
 
 Surfaced while adding the host-interop and interrupt coverage. None of it blocks

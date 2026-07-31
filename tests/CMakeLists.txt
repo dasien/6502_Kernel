@@ -559,6 +559,18 @@ else()
     message(WARNING "python3 not found - skipping opcode_table_current test")
 endif()
 
+# Architectural guard: kernel.asm is the BIOS, monitor.inc is the interactive
+# monitor. They assemble into one ROM, so a JSR across the boundary just links and
+# nothing complains -- but every BIOS -> monitor call is a wire that must be cut
+# before the monitor can become a bank module, because the BIOS cannot call into an
+# unmapped window. This keeps that list short, explicit and honest.
+if(PYTHON3_EXECUTABLE)
+    add_test(NAME kernel_bios_monitor_split
+        COMMAND ${PYTHON3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/scripts/check_kernel_split.py
+        ${CMAKE_SOURCE_DIR}/src/kernel)
+endif()
+
 # Host-interop guard: a mkdisk-built image must be a FAT16 volume the host's own
 # checker accepts. Images are meant to be mountable on macOS/Linux/Windows, and that
 # was previously verified once by hand -- which went stale the moment drawers were
