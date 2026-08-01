@@ -85,9 +85,10 @@ public:
         testRunDiskProgram();
         testRunOverride();
         testRunNotFound();
+        testAsmModuleRetired();
 
-        // Launch-by-name: the assembler module runs via "ASM" and returns to the
-        // DOS prompt on exit. (BANK_LAUNCH clears the screen, so no clear needed.)
+        // Launch-by-name for a ROM module: FORTH runs via its MODULE_DIR name and
+        // returns to the DOS prompt on exit. (BANK_LAUNCH clears the screen.)
         testForthModule();
 
         // Monitor tests run inside MON.
@@ -129,6 +130,7 @@ public:
         testAssemblerRangeDiagnostics();
         testAssemblerLongLineDiagnosed();
         testAssemblerOriginGuards();
+        testSourceSurvivesRunAndRebuild();
 
 
         // Must run last: it launches BASIC, which keeps running and would
@@ -265,6 +267,11 @@ public:
         sendCommand("BANKS", 300000);
         verifyResponse("BASIC", "BANKS lists the BASIC module");
         verifyResponse("FORTH", "BANKS lists the FORTH module");
+        verifyResponse("MON", "BANKS lists the monitor module");
+        // ASM was bank 2 until the assembler was folded into the monitor. The
+        // catalog must not offer a module that is not installed -- launching it
+        // would map an empty bank. (Screen was cleared by CLEAR just above.)
+        verifyAbsent("ASM", "BANKS no longer lists the retired ASM module");
     }
 
     // A verb that needs an argument and is given none must print USAGE and leave the
@@ -428,6 +435,20 @@ public:
         mountDisk({{"REAL.PRG", std::vector<uint8_t>{0x00, 0x08, 0x60}}});
         sendCommand("GHOST.PRG");
         verifyResponse("COMMAND NOT FOUND", "Unknown program reports not found");
+    }
+
+    // ASM is retired: the assembler is part of the monitor now. The name must fall
+    // through to "not found" like any other, rather than resolving to a bank that
+    // is no longer installed -- BANK_LAUNCH would map an empty window and read $00
+    // (BRK) at the entry.
+    void testAsmModuleRetired() {
+        clearScreen();
+        sendCommand("ASM", 300000);
+        verifyResponse("COMMAND NOT FOUND", "ASM is retired and does not resolve");
+        // ...and the machine is still usable afterwards.
+        sendCommand("CLS");
+        sendCommand("VERSION", 200000);
+        verifyResponse("MFC/OS", "shell still responsive after the retired name");
     }
 
     // IMPORT/EXPORT (host <-> filesystem). In a console build there is no file
@@ -754,6 +775,55 @@ public:
         sendCommand("BANKS", 400000);
         verifyResponse("MON", "BANKS lists the monitor module");
         sendCommand("MON");   // back in for the remaining monitor tests
+    }
+
+    // The reason the assembler was folded into the monitor, asserted rather than
+    // claimed. Before, running what you had just built meant ESC out of the ASM
+    // module to the DOS and MON back in -- two bank swaps, and SRC_BUF and the
+    // symbol table gone with them, so every iteration started with a reload. Now
+    // build, run, inspect, patch and rebuild all happen at one prompt, and the
+    // source is still there at the end of it.
+    void testSourceSurvivesRunAndRebuild() {
+        assembleSource(".ORG $0900\n"
+                       "VAL = $5A\n"
+                       "START:  LDA #VAL\n"
+                       "        STA $0940\n"
+                       "        RTS\n"
+                       ".END\n");
+
+        // Built and runnable, without leaving the monitor.
+        computer.getMemory()->write(0x0940, 0x00);
+        clearScreen();
+        sendCommand("G:0900", 300000);
+        verifyMemEquals(0x0940, 0x5A, "G: ran the code B: just built");
+
+        // Patch the immediate operand in place and re-run -- still no bank swap.
+        sendCommand("W:0901");
+        for (char c : std::string("3C")) computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress('\r');
+        computer.run(5000);
+        computer.getPia()->addKeypress(27);          // ESC out of write mode
+        computer.run(3000);
+        computer.getMemory()->write(0x0940, 0x00);
+        sendCommand("G:0900", 300000);
+        verifyMemEquals(0x0940, 0x3C, "W: patch takes effect on the next G:");
+
+        // The point: rebuild with NO reload. If the run had cost us the module,
+        // SRC_BUF would be gone and B: would emit nothing; instead it reassembles
+        // and puts the original operand back over the patch.
+        computer.getMemory()->write(0x0900, 0x00);
+        computer.getMemory()->write(0x0901, 0x00);
+        clearScreen();
+        sendCommand("B:", 400000);
+        verifyResponse("OK", "B: rebuilds after a G: without reloading source");
+        verifyMemEquals(0x0900, 0xA9, "rebuild re-emitted the opcode");
+        verifyMemEquals(0x0901, 0x5A, "rebuild restored the pre-patch operand");
+
+        // The symbol table survived too: VAL and START still resolve.
+        computer.getMemory()->write(0x0940, 0x00);
+        sendCommand("G:0900", 300000);
+        verifyMemEquals(0x0940, 0x5A, "rebuilt code runs with its symbols intact");
+        sendKey(0x1B, 200000);
     }
 
     // The monitor's L:/S: host commands are retired (now invalid -> ERROR?).
