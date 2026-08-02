@@ -179,7 +179,7 @@ small set of memory-mapped devices. This document reflects the actual kernel
 | `$0000-$00FF` | 256 B | **Zero page** — shared between EhBASIC and the monitor (see split below) |
 | `$0100-$01FF` | 256 B | **Stack** — grows down from `$01FF` |
 | `$0200-$03FF` | 512 B | **System variables** — BASIC page-2 vars + monitor variables/buffers |
-| `$0400-$07FF` | 1 KB | **Free RAM** — formerly the 40×25 screen; the screen now lives behind the VIC register port (see below), so this is unused RAM |
+| `$0400-$07FF` | 1 KB | Formerly the 40×25 screen; the screen now lives behind the VIC register port (see below). **Not free**: `$0400` is the `T:`/`Z:` page snapshot and `$0500-$07FF` is the assembler's identifier buffers and symbol table. Usable as scratch by a program that uses neither |
 | `$0800-$87FF` | 32 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$7800-$87FF` (source) and `$7600-$77FF` (symbols) while building |
 | `$8800-$AFFF` | 10 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem + DOS shell) |
 | `$B000-$EFFF` | 16 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |

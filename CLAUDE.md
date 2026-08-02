@@ -77,18 +77,20 @@ ctest --verbose
    - Zero page allocation ($0000-$00FF)
    - Stack organization ($0100-$01FF)
    - System variables ($0200-$03FF)
-   - Screen memory ($0400-$07FF)
-   - Hardware I/O mapping ($D000-$DFFF)
-   - ROM areas and banking control
+   - Low RAM ($0400-$07FF): T:/Z: snapshot + the assembler's symbol table
+   - Hardware I/O mapping ($FE00-$FE5E)
+   - ROM areas and bank switching
 
 ### Memory Architecture
 
-The kernel follows standard Commodore 64 memory organization:
+The memory map is MFC's own; it is not a Commodore 64 layout:
 - **Zero Page ($00-$FF)**: Critical for kernel workspace and fast addressing
 - **Stack ($0100-$01FF)**: System stack growing downward from $01FF
 - **System Variables ($0200-$03FF)**: Kernel data structures and I/O buffers
-- **Screen Memory ($0400-$07FF)**: 40x25 character display
-- **Hardware I/O ($D000-$DFFF)**: VIC-II, SID, CIA, and expansion slots
+- **$0400-$07FF**: the T:/Z: page snapshot ($0400) and the assembler's identifier
+  buffers and symbol table ($0500-$07FF). The screen is NOT here -- the 80x25
+  display lives behind the VIC register port
+- **Hardware I/O ($FE00-$FE5E)**: PIA, VIC register port, ACIA, SID, RTC
 
 ## 6502 Monitor Program
 

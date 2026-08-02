@@ -101,7 +101,7 @@ The monitor provides clear, consistent error messages:
 - **$0000-$00FF**: Zero Page (system workspace; monitor uses $14-$39, EhBASIC uses the rest)
 - **$0100-$01FF**: Stack memory
 - **$0200-$03FF**: Monitor variables and command buffers
-- **$0400-$07FF**: Free RAM (formerly the screen; the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE37`, not in the address map)
+- **$0400-$07FF**: Formerly the screen (the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE37`, not in the address map). Claimed by the monitor: `$0400` is the `T:`/`Z:` snapshot, `$0500-$07FF` the assembler's symbol table
 - **$0800-$AFFF**: User RAM (module working RAM; EhBASIC program/variable space)
 - **$B000-$EFFF**: Module window (16 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC 1, FORTH 3, MONITOR 4; bank 2 free since the assembler joined the monitor)
 - **$F000-$FFFF**: Kernel BIOS (4 KB; CODE ~1,560 bytes, rest free for growth). The monitor is bank 4, not here.
