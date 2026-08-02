@@ -81,6 +81,7 @@ public:
         testDosMissingArgUsage();
         testDosFileVerbs();
         testDosSaveDiskFullReclaims();
+        testSaveLoadAtTopOfUserRam();
         testDosTransfer();
         testDosUtils();
         testDate();
@@ -389,6 +390,45 @@ public:
         clearScreen();
         sendCommand("TYPE A.TXT", 300000);
         verifyResponse("hi", "Pre-existing file survives a failed SAVE + ERASE");
+    }
+
+    // SAVE/LOAD sitting exactly on the top of user RAM. The DOS walks an address
+    // range to a boundary that moved (twice this cycle -- $8FFF, then $87FF), and
+    // off-by-one mistakes in that kind of loop only show up on the edge: a SAVE
+    // that reads one byte too many takes it out of DOS ROM and writes it to the
+    // file, and a LOAD that writes one too many loses it silently, because ROM
+    // discards stores. Every other SAVE test here uses a small range near $0900,
+    // where either bug is invisible.
+    void testSaveLoadAtTopOfUserRam() {
+        mountDisk({});
+        Computer::Memory *mem = computer.getMemory();
+
+        // 128 bytes whose last byte is the last byte of user RAM.
+        for (uint16_t a = 0x8780; a <= 0x87FF; ++a)
+            mem->write(a, static_cast<uint8_t>(0xC0 | (a & 0x0F)));
+        const uint8_t dosFirst = mem->read(Computer::Memory::kDosRomStart);
+
+        sendCommand("SAVE TOP.BIN,8780-87FF", 900000);
+        verifyResponse("SAVED", "SAVE accepts a range ending at the last RAM byte");
+
+        // 128 data bytes + the 2-byte .PRG load-address header. A SAVE that ran one
+        // past the end would store 131 and quietly include a byte of DOS ROM.
+        clearScreen();
+        sendCommand("CATALOG", 600000);
+        verifyResponse("130", "SAVE wrote exactly the range, not one byte more");
+
+        // Wipe the range and the byte below it, then restore from the header.
+        for (uint16_t a = 0x877F; a <= 0x87FF; ++a) mem->write(a, 0x00);
+        clearScreen();
+        sendCommand("LOAD TOP.BIN", 900000);
+        verifyResponse("LOADED", "LOAD restores a file that ends at the boundary");
+
+        verifyMemEquals(0x8780, 0xC0, "first byte of the range round-tripped");
+        verifyMemEquals(0x87FE, 0xCE, "penultimate byte round-tripped");
+        verifyMemEquals(0x87FF, 0xCF, "LAST byte of user RAM round-tripped");
+        verifyMemEquals(0x877F, 0x00, "LOAD wrote nothing below the range");
+        verifyMemEquals(Computer::Memory::kDosRomStart, dosFirst,
+                        "DOS ROM is untouched across the boundary");
     }
 
     // Launch-by-name for a disk program (.PRG). Save a tiny program (header +
