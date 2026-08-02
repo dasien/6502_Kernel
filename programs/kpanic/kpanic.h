@@ -89,10 +89,35 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define FIRE_COOLDOWN    3      /* ticks between shots */
 #define FIRE_COOLDOWN_OC 1      /* ... while overclocked */
 
+/* ---- corruption (enemies) ----
+ * Unlike nodes, these do not ride the terrain ring: they move independently of
+ * the world, so they need their own pools and explicit erase/redraw. */
+#define MAX_ENEMIES     8
+#define MAX_PELLETS     6
+
+#define E_NONE          0
+#define E_DAEMON        1       /* closes on you faster than the world scrolls */
+#define E_WORM          2       /* rides the world, weaving across the channel */
+#define E_SENTINEL      3       /* rides the world, fires aimed pellets */
+
+#define SPAWN_MIN       18      /* ticks between spawns: MIN + rnd(VAR) */
+#define SPAWN_VAR       22
+#define SENTINEL_FIRE   14      /* ticks between a sentinel's shots */
+
+#define HP_DAEMON       1
+#define HP_WORM         2
+#define HP_SENTINEL     3
+
+#define ENERGY_HIT      120     /* flying into corruption */
+#define ENERGY_PELLET   60      /* taking a pellet */
+
 /* ---- scoring ----
- * unsigned int caps at 65535 (2621 nodes); step 7 widens this to two words when
- * enemies and bosses start contributing. */
+ * unsigned int caps at 65535; step 7 widens this to two words if bosses and long
+ * runs start pushing it. */
 #define SCORE_NODE      25
+#define SCORE_DAEMON    15
+#define SCORE_WORM      25
+#define SCORE_SENTINEL  40
 
 /* ---- attributes: [R][BR][bg:3][fg:3]; 0x40 = bright ---- */
 #define A_WALL      0x46        /* bright cyan -- conduit wall (the lethal edge) */
@@ -102,6 +127,7 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
                                  * channel: same routing as outside, just recessed */
 #define A_CRAFT     0x43        /* bright yellow -- your trace process */
 #define A_FOE       0x41        /* bright red -- corruption */
+#define A_FOE2      0x45        /* bright magenta -- the weaving variety */
 #define A_NODE      0x42        /* bright green -- data node (matches the energy bar,
                                  * and stays clear of craft yellow / wall cyan) */
 #define A_SHOT      0x47        /* bright white -- reserved for the fastest thing on
@@ -123,6 +149,10 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define G_PAD       9           /* board: solder pad */
 #define G_NODE      8           /* data node -- fly over to refill, or shoot for score */
 #define G_SHOT      24          /* your projectile (up arrow: unambiguous direction) */
+#define G_DAEMON    31          /* solid down triangle -- coming at you */
+#define G_WORM      215         /* weaving corruption */
+#define G_SENTINEL  4           /* diamond -- emplaced, shoots */
+#define G_PELLET    7           /* enemy shot */
 #define G_BAR_FULL  219         /* energy bar: filled cell */
 #define G_BAR_EMPTY 176         /* energy bar: empty cell */
 #define G_CRAFT     30          /* solid up triangle */

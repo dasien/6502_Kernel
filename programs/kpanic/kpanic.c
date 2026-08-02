@@ -1,5 +1,5 @@
 /* ============================================================================
- * kpanic.c -- KERNEL PANIC: engine (build step 3).
+ * kpanic.c -- KERNEL PANIC: engine (build step 4).
  *
  * Working: the fixed-tick simulation loop paced off the kernel's 60 Hz jiffy
  * counter; the bounded scroll region with a pinned HUD; procedurally generated
@@ -18,8 +18,13 @@
  * node can be TAKEN for energy or SHOT for score -- never both -- so every node
  * is a bet on how long you intend to live.
  *
- * Deliberately NOT here yet: enemies (step 4), power-ups (5), bosses (6),
- * juice/scoring polish (7). The game-over screen is a placeholder.
+ * Corruption (step 4) is the first thing that does not ride the terrain ring:
+ * daemons close on you, worms weave, sentinels hold station and shoot. They move
+ * relative to the world rather than with it, so they carry their own pools and
+ * explicit erase/redraw.
+ *
+ * Deliberately NOT here yet: power-ups (step 5), bosses (6), juice/scoring
+ * polish (7). The game-over screen is a placeholder.
  * ==========================================================================*/
 #include "kpanic.h"
 
@@ -385,8 +390,22 @@ static void fire(void) {
 /* Resolve a shot arriving at one cell. Returns 1 if the shot is consumed.
  * Checked per single-cell substep rather than at the destination, so a fast shot
  * can't tunnel through a node or a wall. */
+/* Defined with the corruption pool below; declared here because shot collision
+ * has to resolve against enemies and the weapon code comes first. */
+static unsigned char enemy_at(unsigned char r, unsigned char x);
+static void          enemy_damage(unsigned char idx);
+
 static unsigned char shot_hits(unsigned char r, unsigned char x) {
-    unsigned char i = slot(r), nx, k;
+    unsigned char i = slot(r), nx, k, e;
+
+    /* Corruption first: an enemy sitting in front of a wall must absorb the shot
+     * rather than the wall eating it. */
+    e = enemy_at(r, x);
+    if (e) {
+        enemy_damage(e - 1);
+        return 1;
+    }
+
     if (on_node(i, x)) {                /* score, but you forfeit the refill */
         nx = r_nx[i];
         r_nx[i] = 0;                    /* clear first, so the restore paints lane */
@@ -395,6 +414,128 @@ static unsigned char shot_hits(unsigned char r, unsigned char x) {
         return 1;
     }
     return blocked(r, x);
+}
+
+/* ============================================================================
+ * Corruption
+ *
+ * These are the first objects that do NOT ride the terrain ring. A node scrolls
+ * for free because it lives in a row; an enemy has to be moved, erased and
+ * redrawn by hand, because it moves relative to the world rather than with it.
+ *
+ * All screen-row motion is expressed as `scrolled + drift`, where `scrolled` is
+ * how far the world moved this tick (2 while overclocked). Drift 0 therefore
+ * means "stays put in the conduit" and drift 1 means "closes on the player".
+ * ==========================================================================*/
+static unsigned char e_type[MAX_ENEMIES];   /* E_NONE = free slot */
+static unsigned char e_x[MAX_ENEMIES], e_y[MAX_ENEMIES];
+static unsigned char e_hp[MAX_ENEMIES];
+static unsigned char e_t[MAX_ENEMIES];      /* fire timer / weave phase */
+
+static unsigned char p_live[MAX_PELLETS];
+static unsigned char p_x[MAX_PELLETS], p_y[MAX_PELLETS];
+
+static unsigned char spawn_timer = SPAWN_MIN;
+
+static unsigned char enemy_glyph(unsigned char t) {
+    if (t == E_DAEMON)   return G_DAEMON;
+    if (t == E_WORM)     return G_WORM;
+    return G_SENTINEL;
+}
+static unsigned char enemy_attr(unsigned char t) {
+    return (t == E_WORM) ? A_FOE2 : A_FOE;
+}
+
+/* Index+1 of a live enemy occupying (r,x), or 0. */
+static unsigned char enemy_at(unsigned char r, unsigned char x) {
+    unsigned char i;
+    for (i = 0; i < MAX_ENEMIES; i++)
+        if (e_type[i] && e_y[i] == r && e_x[i] == x) return i + 1;
+    return 0;
+}
+
+static void enemy_kill(unsigned char i) {
+    if (e_type[i] == E_DAEMON)        score += SCORE_DAEMON;
+    else if (e_type[i] == E_WORM)     score += SCORE_WORM;
+    else                              score += SCORE_SENTINEL;
+    e_type[i] = E_NONE;
+    restore_cell(e_y[i], e_x[i]);
+}
+
+static void enemy_damage(unsigned char idx) {
+    if (--e_hp[idx] == 0) enemy_kill(idx);
+}
+
+/* Spawn one enemy at the top of the channel. Placed inside the walls with a
+ * clear column either side, so it never appears already embedded in terrain. */
+static void spawn_enemy(void) {
+    unsigned char i, lx, rx, span, t;
+
+    for (i = 0; i < MAX_ENEMIES; i++) if (!e_type[i]) break;
+    if (i == MAX_ENEMIES) return;               /* pool full: skip this spawn */
+
+    lx = r_lx[head];
+    rx = r_rx[head];
+    span = rx - lx - 3;
+    if (span == 0) return;                      /* channel too tight to place one */
+
+    t = 1 + rndn(3);
+    e_type[i] = t;
+    e_x[i] = lx + 2 + rndn(span);
+    e_y[i] = 0;
+    e_hp[i] = (t == E_DAEMON) ? HP_DAEMON : (t == E_WORM ? HP_WORM : HP_SENTINEL);
+    e_t[i] = (t == E_SENTINEL) ? SENTINEL_FIRE : (rnd16() & 1);
+}
+
+static void pellet_spawn(unsigned char x, unsigned char y) {
+    unsigned char i;
+    for (i = 0; i < MAX_PELLETS; i++) {
+        if (!p_live[i]) {
+            p_live[i] = 1;
+            p_x[i] = x;
+            p_y[i] = y;
+            return;
+        }
+    }
+}
+
+static void enemies_advance(unsigned char scrolled) {
+    unsigned char i, ny, nx;
+
+    for (i = 0; i < MAX_ENEMIES; i++) {
+        if (!e_type[i]) continue;
+
+        ny = e_y[i] + scrolled;
+        if (e_type[i] == E_DAEMON) ny++;        /* closes faster than the world */
+
+        if (ny > PLAY_BOT) { e_type[i] = E_NONE; continue; }   /* off the bottom */
+        e_y[i] = ny;
+
+        if (e_type[i] == E_WORM) {
+            /* Weave one column at a time, reversing at the walls rather than
+             * grinding along them. */
+            nx = e_t[i] ? e_x[i] + 1 : e_x[i] - 1;
+            if (blocked(e_y[i], nx)) e_t[i] ^= 1;
+            else                     e_x[i] = nx;
+        } else if (e_type[i] == E_SENTINEL) {
+            if (e_t[i]) e_t[i]--;
+            else { pellet_spawn(e_x[i], e_y[i] + 1); e_t[i] = SENTINEL_FIRE; }
+        }
+
+        /* Crushed by a narrowing channel. Corruption is not privileged over the
+         * conduit -- if the walls close on it, it dies like anything else. */
+        if (blocked(e_y[i], e_x[i])) e_type[i] = E_NONE;
+    }
+}
+
+static void pellets_advance(unsigned char scrolled) {
+    unsigned char i, ny;
+    for (i = 0; i < MAX_PELLETS; i++) {
+        if (!p_live[i]) continue;
+        ny = p_y[i] + scrolled + 1;
+        if (ny > PLAY_BOT || blocked(ny, p_x[i])) { p_live[i] = 0; continue; }
+        p_y[i] = ny;
+    }
 }
 
 static void shots_advance(void) {
@@ -426,13 +567,17 @@ static void scroll_world(void) {
 /* One fixed simulation step: the single place anything moves, so world speed is
  * purely the tick divisor -- no per-object fractional speeds. */
 static void step_world(void) {
-    unsigned char i, ks;
+    unsigned char i, ks, scrolled;
 
     /* Erase every moving object BEFORE the scroll, or the hardware shift drags
      * their glyphs down the screen as a trail of ghosts. */
     restore_cell(CRAFT_ROW, craft_x);
     for (i = 0; i < MAX_SHOTS; i++)
         if (s_live[i]) restore_cell(s_y[i], s_x[i]);
+    for (i = 0; i < MAX_ENEMIES; i++)
+        if (e_type[i]) restore_cell(e_y[i], e_x[i]);
+    for (i = 0; i < MAX_PELLETS; i++)
+        if (p_live[i]) restore_cell(p_y[i], p_x[i]);
 
     /* Sample the live control port ONCE per tick and act on every bit that is
      * set. Movement is therefore exactly as smooth as the tick rate, and steering
@@ -442,7 +587,8 @@ static void step_world(void) {
     overclock = (ks & KS_BOOST) ? 1 : 0;    /* hold to overclock, release to stop */
 
     scroll_world();
-    if (overclock) scroll_world();      /* overclock literally runs the world faster */
+    scrolled = 1;
+    if (overclock) { scroll_world(); scrolled = 2; }  /* overclock runs the world faster */
 
     if (flash) flash--;
     if (cooldown) cooldown--;
@@ -452,6 +598,31 @@ static void step_world(void) {
     if (ks & KS_FIRE)  fire();          /* cooldown paces it; holding is fine */
 
     shots_advance();
+    enemies_advance(scrolled);
+    pellets_advance(scrolled);
+
+    if (--spawn_timer == 0) {
+        spawn_enemy();
+        spawn_timer = SPAWN_MIN + rndn(SPAWN_VAR);
+    }
+
+    /* Corruption you fly into: costs energy and dies with you passing through --
+     * there is no bouncing off, so a missed dodge is always paid for. */
+    i = enemy_at(CRAFT_ROW, craft_x);
+    if (i) {
+        e_type[i - 1] = E_NONE;
+        restore_cell(e_y[i - 1], e_x[i - 1]);
+        flash = 3;
+        energy_spend(ENERGY_HIT);
+    }
+    for (i = 0; i < MAX_PELLETS; i++) {
+        if (p_live[i] && p_y[i] == CRAFT_ROW && p_x[i] == craft_x) {
+            p_live[i] = 0;
+            restore_cell(p_y[i], p_x[i]);
+            flash = 3;
+            energy_spend(ENERGY_PELLET);
+        }
+    }
 
     /* Take a node by flying over it: refill, and forfeit the score you'd have
      * got for shooting it. This is the bet the whole game is built around. */
@@ -467,6 +638,21 @@ static void step_world(void) {
 
     energy_spend(overclock ? (ENERGY_DRAIN + ENERGY_OC_DRAIN) : ENERGY_DRAIN);
 
+    /* Redraw order is deliberate: corruption, then pellets, then your shots, then
+     * the craft. Later writes win, so the things you most need to see never end
+     * up hidden under something else sharing a cell. */
+    for (i = 0; i < MAX_ENEMIES; i++)
+        if (e_type[i]) {
+            vaddr((unsigned int)e_y[i] * SCR_W + e_x[i]);
+            last_attr = 0xFF;
+            put_cell(enemy_glyph(e_type[i]), enemy_attr(e_type[i]));
+        }
+    for (i = 0; i < MAX_PELLETS; i++)
+        if (p_live[i]) {
+            vaddr((unsigned int)p_y[i] * SCR_W + p_x[i]);
+            last_attr = 0xFF;
+            put_cell(G_PELLET, A_FOE);
+        }
     for (i = 0; i < MAX_SHOTS; i++)
         if (s_live[i]) {
             vaddr((unsigned int)s_y[i] * SCR_W + s_x[i]);
@@ -483,7 +669,7 @@ static void draw_hud_static(void) {
     vaddr((unsigned int)HUD_ROW * SCR_W);
     last_attr = 0xFF;
     for (i = 0; i < SCR_W; i++) put_cell(G_HBAR, A_HUD);
-    put_str(2, HUD_ROW, " KERNEL PANIC  v0.9  control ", A_CRAFT);
+    put_str(2, HUD_ROW, " KERNEL PANIC  v1.0  corruption ", A_CRAFT);
 
     put_str(2,  HUD_ROW + 1, "PWR", A_HUD);
     put_str(34, HUD_ROW + 1, "SCORE:", A_HUD);
