@@ -1,15 +1,27 @@
 #ifdef QT_GUI
 #include <QApplication>
+#include <QIcon>
+#include <QPixmap>
 #include "MainWindow.h"
+#include "AppIcon.h"
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
     // Set application properties
-    app.setApplicationName("6502 Computer Emulator");
+    app.setApplicationName("MFC 6502");
     app.setApplicationVersion("1.0");
-    app.setOrganizationName("6502 Development");
+    app.setOrganizationName("MFC");
+
+    // The icon is compiled in (include/ui/AppIcon.h) rather than loaded from disk.
+    // Setting it on the application rather than the window means dialogs and the
+    // task switcher pick it up too.
+    QPixmap icon_pixmap;
+    if (icon_pixmap.loadFromData(Ui::kAppIconPng, Ui::kAppIconPngLen, "PNG"))
+    {
+        app.setWindowIcon(QIcon(icon_pixmap));
+    }
 
     // Create and show main window
     MainWindow window;

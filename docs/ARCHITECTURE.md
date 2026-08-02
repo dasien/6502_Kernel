@@ -55,7 +55,8 @@ Part 3 Kernel API · Part 4 Bank-switched modules
 
 ### Overview
 
-MFC is a software-defined computer built around a cycle-stepped **WDC 65C02** CPU.
+MFC -- **My First Computer** -- is a software-defined computer built around a
+cycle-stepped **WDC 65C02** CPU.
 The C++/Qt host emulates the CPU and a set of memory-mapped peripherals; a 6502
 kernel ROM (BIOS + MFC/OS DOS) and bank-switched ROM modules (BASIC, the monitor, an
 the monitor with its built-in assembler, FORTH) run on top. It is **not** a Commodore 64 and

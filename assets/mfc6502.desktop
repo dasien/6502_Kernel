@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=MFC 6502
+GenericName=6502 Computer
+Comment=My First Computer -- a software-defined WDC 65C02 machine
+Exec=6502-kernel
+Icon=mfc6502
+Terminal=false
+Categories=Development;Emulator;Education;
+Keywords=6502;65C02;assembly;retro;emulator;BASIC;FORTH;

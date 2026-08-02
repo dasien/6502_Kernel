@@ -85,3 +85,4 @@ test_results.xml
 # Agent logs
 .claude/logs/*.log
 enhancements/*/logs/
+__pycache__/

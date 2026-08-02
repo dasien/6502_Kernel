@@ -109,6 +109,25 @@ install(FILES ${CMAKE_BINARY_DIR}/kernel/kernel.rom
     OPTIONAL
 )
 
+# Desktop integration (Linux). The icon goes into the hicolor theme at each size
+# the generator produces, which is what desktops and task switchers look up by the
+# .desktop file's "Icon=mfc6502" name. Harmless elsewhere: the files simply are not
+# consulted. The icon is also compiled into the binary (include/ui/AppIcon.h), so
+# the running window has one whether or not these are installed.
+if(UNIX AND NOT APPLE)
+    foreach(icon_size 16 32 48 64 128 256 512)
+        install(FILES ${CMAKE_SOURCE_DIR}/assets/mfc6502-${icon_size}.png
+            DESTINATION share/icons/hicolor/${icon_size}x${icon_size}/apps
+            RENAME mfc6502.png
+            OPTIONAL
+        )
+    endforeach()
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/mfc6502.desktop
+        DESTINATION share/applications
+        OPTIONAL
+    )
+endif()
+
 # ----------------------------------------------------------------
 # Configuration summary
 #

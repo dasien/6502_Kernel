@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a 6502 kernel development project that implements low-level system initialization and hardware control for a 6502-based computer system (specifically targeting Commodore 64 architecture). The project combines assembly language kernel code with C++ development tools.
+This is the MFC 6502 ("My First Computer") project: a 6502 kernel development project that implements low-level system initialization and hardware control for a 6502-based computer system (specifically targeting Commodore 64 architecture). The project combines assembly language kernel code with C++ development tools.
 
 This is not a c64 emulator and does not use PETSCII.
 

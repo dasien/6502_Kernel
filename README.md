@@ -1,6 +1,15 @@
-# MFC 6502 Kernel
+# MFC 6502
 
-A comprehensive 6502 microprocessor kernel implementation with an interactive monitor program for debugging, programming, and system control.
+<img src="assets/mfc6502-128.png" align="right" width="128" alt="MFC 6502 icon">
+
+**MFC** is **My First Computer**: a software-defined WDC 65C02 machine with an
+interactive monitor, a resident FAT16 filesystem, BASIC, FORTH, and a built-in
+assembler — comprehensive enough to program itself, small enough to read.
+
+The icon is the machine's own boot prompt, `]` and its cursor, set in the CP437
+character ROM the VIC renders text with (`tools/make_icon.py` reads the glyphs
+straight out of `include/computer/Cp437Font.h`, so the mark cannot drift from the
+typeface it is drawn in).
 
 This project started as a continuation of a CPU/assembler/disassembler I wrote in Python.  I wanted to create an actual
 running environment to enter code directly or load from a file and run.

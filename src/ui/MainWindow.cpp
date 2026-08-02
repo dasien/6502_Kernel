@@ -223,7 +223,7 @@ void MainWindow::setupUI()
     main_layout_->addSpacing(40);
     
     // Set window properties
-    setWindowTitle("6502 Computer Emulator");
+    setWindowTitle("MFC 6502");
 
     // The register panel is a debug view now -- hidden by default (toggle from the
     // View menu). Hide it BEFORE sizing so the default window doesn't reserve its
