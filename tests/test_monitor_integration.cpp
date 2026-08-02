@@ -22,6 +22,12 @@
 #include "computer/Computer6502.h"
 #include "support/fat16_image.h"
 
+// Repository examples/ directory, passed in by CMake so the suite can build the
+// shipped sources the way examples/README.md tells users to.
+#ifndef MFC_EXAMPLES_DIR
+#define MFC_EXAMPLES_DIR ""
+#endif
+
 // Path to the host's FAT checker, found by CMake. Empty when dosfstools is not
 // installed, in which case the host-interop check reports SKIP instead of failing.
 #ifndef MFC_FSCK_FAT
@@ -131,6 +137,8 @@ public:
         testAssemblerLongLineDiagnosed();
         testAssemblerOriginGuards();
         testSourceSurvivesRunAndRebuild();
+        testLineNumbersCountBlankLines();
+        testShippedExamplesAssemble();
 
 
         // Must run last: it launches BASIC, which keeps running and would
@@ -775,6 +783,83 @@ public:
         sendCommand("BANKS", 400000);
         verifyResponse("MON", "BANKS lists the monitor module");
         sendCommand("MON");   // back in for the remaining monitor tests
+    }
+
+    // "? LINE nnnn" has to name the right line or it is worse than no diagnostic.
+    // The reader used to consume a terminator and then swallow the next byte if it
+    // was also CR or LF -- meant for CRLF pairs, but it cannot tell $0A$0A (a blank
+    // line) from $0D$0A (one ending). A blank line after a content line vanished
+    // from the count, so every error after the first blank pointed one line high.
+    // That is what made a bad identifier on line 17 of colors.asm report LINE 0010.
+    void testLineNumbersCountBlankLines() {
+        struct { const char *src; const char *want; const char *name; } cases[] = {
+            {".ORG $0800\nBADNAMEISWAYTOOLONG = 1\n.END\n", "0002",
+             "line number with no blank lines"},
+            {".ORG $0800\n\nBADNAMEISWAYTOOLONG = 1\n.END\n", "0003",
+             "blank line before the error is counted"},
+            {".ORG $0800\n\n\nBADNAMEISWAYTOOLONG = 1\n.END\n", "0004",
+             "two blank lines are both counted"},
+            {".ORG $0800\r\n\r\nBADNAMEISWAYTOOLONG = 1\r\n.END\r\n", "0003",
+             "CRLF pair still counts as one ending"},
+        };
+        for (auto &c : cases) {
+            uint16_t addr = kAsmSrcBuf;
+            for (const char *p = c.src; *p; ++p)
+                computer.getMemory()->write(addr++, static_cast<uint8_t>(*p));
+            computer.getMemory()->write(addr, 0);
+            clearScreen();
+            sendCommand("B:", 1000000);
+            verifyResponse(std::string("? LINE ") + c.want, c.name);
+            sendKey(0x1B, 200000);
+        }
+    }
+
+    // examples/README.md tells users they can assemble these in the built-in
+    // assembler. For a long time most of them could not: nine of the twelve use
+    // identifiers longer than the old 8-character limit and five use .byte with a
+    // string, and the only feedback was "? LINE nnnn" pointing at the wrong line.
+    // Documentation that does not work is worse than none, so this builds all of
+    // them every run.
+    void testShippedExamplesAssemble() {
+        const std::string dir = MFC_EXAMPLES_DIR;
+        if (dir.empty()) {
+            std::cout << std::left << std::setw(30) << "shipped examples assemble"
+                      << ": SKIP (examples dir not configured)" << std::endl;
+            return;
+        }
+        int built = 0, failed = 0;
+        std::string firstFailure;
+        for (const auto &e : std::filesystem::directory_iterator(dir)) {
+            if (e.path().extension() != ".asm") continue;
+            std::ifstream f(e.path());
+            std::string src((std::istreambuf_iterator<char>(f)),
+                            std::istreambuf_iterator<char>());
+            uint16_t addr = kAsmSrcBuf;
+            for (char c : src) computer.getMemory()->write(addr++, static_cast<uint8_t>(c));
+            computer.getMemory()->write(addr, 0);
+            clearScreen();
+            sendCommand("B:", 4000000);
+            const std::string scr = getScreenText();
+            const size_t k = scr.find("? LINE");
+            if (k == std::string::npos) { ++built; }
+            else {
+                ++failed;
+                if (firstFailure.empty())
+                    firstFailure = e.path().filename().string() + " " + scr.substr(k, 11);
+            }
+            sendKey(0x1B, 200000);
+        }
+        std::cout << std::left << std::setw(30) << "shipped examples assemble" << ": "
+                  << (failed == 0 ? "PASS" : "FAIL");
+        if (failed) {
+            std::cout << " (" << failed << " of " << (built + failed)
+                      << " failed; first: " << firstFailure << ")";
+            tests_failed++;
+        } else {
+            std::cout << " (" << built << " files)";
+            tests_passed++;
+        }
+        std::cout << std::endl;
     }
 
     // The reason the assembler was folded into the monitor, asserted rather than
@@ -1570,15 +1655,20 @@ private:
         verifyResponse("? LINE", "asm: origin in the kernel ROM is refused");
         sendKey(0x1B, 200000);
 
-        // $7600-$87FF is the assembler's own workspace: symbol table ($7600-$77FF)
-        // then source buffer ($7800-$87FF). An origin in either looks legal and is
-        // not -- emitting into SRC_BUF rewrites the text pass 2 is walking, and
-        // emitting into SYM_TBL corrupts the labels pass 2 resolves from, which
-        // reports success while producing garbage. Refused at the workspace base,
-        // not the top of RAM.
+// Legal origins are $0800-$77FF. Below $0800 is the assembler's own
+        // workspace -- identifier buffers and symbol table at $0500-$07FF, the
+        // T:/Z: snapshot at $0400 -- and then system RAM. At or above SRC_BUF
+        // ($7800) is the source text being assembled, then ROM. Both look legal
+        // and are not: emitting into SYM_TBL corrupts the labels pass 2 resolves
+        // from, which reports success while producing garbage.
         clearScreen();
-        assembleSource(".ORG $7600\nLDA #$01\n.END\n");
-        verifyResponse("? LINE", "asm: origin at the symbol table is refused");
+        assembleSource(".ORG $0500\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin at the identifier buffers is refused");
+        sendKey(0x1B, 200000);
+
+        clearScreen();
+        assembleSource(".ORG $0700\nLDA #$01\n.END\n");
+        verifyResponse("? LINE", "asm: origin inside the symbol table is refused");
         sendKey(0x1B, 200000);
 
         clearScreen();
@@ -1591,12 +1681,13 @@ private:
         verifyResponse("? LINE", "asm: origin inside the source buffer is refused");
         sendKey(0x1B, 200000);
 
-        // Just below the workspace is still legal -- the cap must not overshoot.
-        computer.getMemory()->write(0x75FD, 0x00);
+        // Just below the source buffer is legal -- 512 bytes the assembler handed
+        // back to user programs when the symbol table left $7600 for low RAM.
+        computer.getMemory()->write(0x77FD, 0x00);
         clearScreen();
-        assembleSource(".ORG $75FD\nLDA #$5A\nRTS\n.END\n");
-        verifyMemEquals(0x75FD, 0xA9, "asm: origin just below the workspace is allowed");
-        verifyMemEquals(0x75FE, 0x5A, "asm: operand emitted below the workspace");
+        assembleSource(".ORG $77FD\nLDA #$5A\nRTS\n.END\n");
+        verifyMemEquals(0x77FD, 0xA9, "asm: origin just below the source buffer is allowed");
+        verifyMemEquals(0x77FE, 0x5A, "asm: operand emitted below the source buffer");
         sendKey(0x1B, 200000);
 
         // No .ORG: assembles at the $0800 default and really emits there.

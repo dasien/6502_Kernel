@@ -97,6 +97,29 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     address definitions deleted in favour of kernel_vars.inc.
   - ASSEMBLER.md folded into MONITOR.md and left as a pointer (existing links).
 
+### Assembler v0.9: the shipped examples actually assemble (2026-08-02)
+- [x] Three bugs, found because `L:`+`B:` on examples/colors.asm reported `? LINE 0010`.
+  - **Identifiers were capped at 8 characters**, so nine of the twelve examples would
+    not build (`K_PRINT_CHAR` is 12, `K_PRINT_MESSAGE` is 15). Raised to 16.
+  - **`.BYTE` rejected strings** — five examples use `.byte "TEXT", 0`, which every
+    other 6502 assembler takes. It now accepts a quoted string anywhere a value goes.
+  - **`? LINE nnnn` was off by one after the first blank line.** The reader consumed a
+    terminator then swallowed the next byte if it was also CR or LF (meant for CRLF
+    pairs), which cannot tell `$0A$0A` from `$0D$0A` — so a blank line vanished from
+    the count and the diagnostic pointed at the wrong source line. That is what made
+    a bad identifier on line 17 report line 16, and it defeated the whole purpose of
+    the v0.7 diagnostics work.
+  - Room for 16-character names came from moving the symbol table and identifier
+    buffers OUT of user RAM into the free page at $0500 (the old 40x25 screen, unused
+    since the display moved behind the VIC port). That is below Ram_base, so it costs
+    user programs nothing and actually **returned 512 bytes** to them: the `.ORG`
+    ceiling rose from $7600 to $77FF. The bank's free space could not be used --
+    that window is ROM while a module is mapped, and a symbol table must be written.
+    Cost: 40 symbols instead of 51, since entries grew from 10 to 18 bytes.
+- [x] `testShippedExamplesAssemble` builds all twelve every run, so the promise in
+  examples/README.md ("assemble the source in the built-in assembler") cannot rot
+  again. `testLineNumbersCountBlankLines` pins the line numbering.
+
 ### Memory map
 - [x] **Kernel to a 4 KB window; banks grow to 16 KB.** With the monitor gone the BIOS
   is 1,562 bytes, so the kernel moved from $E000-$FFFF (8 KB) to $F000-$FFFF (4 KB) and

@@ -5,6 +5,10 @@
 ; Bank:         4 (MODULE_BANK), entry table at $B000/$B003
 ;
 ; Revision history
+;   2.1  2026-08-02  Assembler fixes (see assembler.inc v0.9): 16-character
+;        identifiers, .BYTE takes strings, blank lines counted in "? LINE nnnn",
+;        symbol table moved to the free page at $0500.
+;   2.0  2026-07-31  Absorbed the assembler/disassembler (was bank 2, "DEV TOOLS").
 ;   1.0  2026-07-31  Extracted from kernel.asm v3.27, where the monitor had been
 ;        since the machine was a bare CPU and a prompt. Same commands, same
 ;        behaviour; what changed is that it is now a separate link unit reaching
@@ -1948,7 +1952,7 @@ HELP_MSG_COUNT = 19              ; Number of help messages
 ; ================================================================
 ; MESSAGE DATA SECTION - Null-terminated strings for monitor
 ; ================================================================
-MSG_MON_BANNER:      .BYTE "MFC MONITOR v2.0   A:/B:/D:/L: ASSEMBLE  ?=HELP  Q=QUIT", $0D, 0
+MSG_MON_BANNER:      .BYTE "MFC MONITOR v2.1   A:/B:/D:/L: ASSEMBLE  ?=HELP  Q=QUIT", $0D, 0
 MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
 ; Each help line is "<syntax>", $09 (TAB -> pad to HELP_DESC_COL), "<description>".
 MSG_HELP_CLEAR:      .BYTE "C:", $09, "CLEAR SCREEN", 0

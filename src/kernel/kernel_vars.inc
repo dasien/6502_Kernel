@@ -92,6 +92,11 @@ MON_DEST_ADDR_HI   = $027B         ; Move/Copy destination address high byte (wa
 MON_COPY_MODE      = $027C         ; Move/Copy mode (0=copy, 1=move) (was $0263)
 MON_DUMP_SNAP      = $02DF         ; non-zero: DUMP_MEMORY_RANGE reads MON_SNAP_BUF
 MON_SNAP_BUF       = $0400         ; 256-byte page snapshot for T:/Z: (free RAM)
+; $0500-$07FF is the assembler's workspace (identifier buffers + symbol table; see
+; assembler.inc). It lives here rather than in user RAM because this page -- the old
+; 40x25 screen, unused since the display moved behind the VIC port -- is below
+; Ram_base and so costs user programs nothing. It cannot live in the module bank:
+; that window is ROM while a module is mapped, and a symbol table must be written.
 MON_SEARCH_PATTERN = $027D         ; Search pattern buffer (16 bytes: $027D-$028C) (was $0264-$0273)
 MON_PATTERN_LEN    = $028D         ; Search pattern length (1-16 bytes) (was $0274)
 MON_LAST_CMD_BUF   = $028E         ; Last command buffer (80 bytes: $028E-$02DD) (was $0275-$02C4)

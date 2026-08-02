@@ -600,3 +600,8 @@ if(FSCK_FAT_EXECUTABLE)
     target_compile_definitions(monitor_integration_tests PRIVATE
         MFC_FSCK_FAT="${FSCK_FAT_EXECUTABLE}")
 endif()
+
+# examples/README.md tells users the shipped sources assemble in the built-in
+# assembler. The suite builds every one of them so that promise cannot rot.
+target_compile_definitions(monitor_integration_tests PRIVATE
+    MFC_EXAMPLES_DIR="${CMAKE_SOURCE_DIR}/examples")

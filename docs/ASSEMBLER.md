@@ -17,6 +17,10 @@ building and testing meant crossing the DOS twice per iteration and losing the
 source buffer each time. Period monitors — Supermon, HESMON, the Apple II ROM
 monitor and its mini-assembler — kept them together, and so does this.
 
+Identifiers may be up to **16 characters**, and `.BYTE` accepts quoted strings as
+well as numbers — both raised in v0.9, because the shipped examples used longer
+names and `.byte "TEXT", 0` and so would not assemble.
+
 Note the commands take the monitor's colon grammar now (`D:0800`, not `D 0800`),
 and `D:` is the disassembler, so base conversion moved to `#:nnnnn` (decimal to
 hex) and `$:xxxx` (hex to decimal).

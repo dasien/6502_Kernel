@@ -232,7 +232,7 @@ COUNT   = 10
 ```
 
 Identifiers (labels and constant names) are **case-insensitive**, may contain
-letters, digits, and underscores, and are up to 8 characters long.
+letters, digits, and underscores, and are up to 16 characters long.
 
 ### Expressions
 
@@ -257,7 +257,7 @@ Operands and directive values can be simple expressions:
 |-----------|---------|---------|
 | `.ORG expr` | `*= expr` | Set the assembly address (origin) |
 | `.END` | | Stop assembling |
-| `.BYTE v[,v…]` | `.DB` | Emit one or more bytes |
+| `.BYTE v[,v…]` | `.DB` | Emit bytes; a value may be a `"quoted string"` |
 | `.WORD v[,v…]` | `.DW` | Emit 16-bit words (low byte first) |
 | `.ASCII "text"` | `.TX` | Emit the bytes of a quoted string |
 
@@ -268,43 +268,40 @@ If a file has no `.ORG` (or `*=`), assembly starts at **$0800** — the address 
 DOS loads and runs a `.PRG` at, so a source with no origin still lands somewhere
 useful and runnable.
 
-**The origin must be writable RAM below the assembler's workspace, `$0200-$75FF`.**
+**The origin must be ordinary user RAM, `$0800-$77FF`.**
 Pass 2 emits with ordinary stores, so anything else destroys the machine, does
 nothing at all, or destroys the build itself:
 
 | Origin | Why it is refused |
 |--------|-------------------|
-| below `$0200` | zero page, the 6502 stack and the monitor's own workspace |
-| `$7600-$87FF` | **the assembler's own workspace** — see below |
+| below `$0800` | zero page, stack, system variables, the `T:`/`Z:` snapshot buffer, and the assembler's own identifier buffers and symbol table at `$0500-$07FF` |
+| `$7800-$87FF` | **the source buffer** — the text being assembled |
 | `$8800-$AFFF` | the always-mapped DOS ROM — writes are discarded |
-| `$B000-$EFFF` | the module window, where the assembler itself is running |
+| `$B000-$EFFF` | the module window, where the monitor itself is running |
 | `$F000-$FFFF` | the kernel BIOS ROM |
 
 An out-of-range origin reports `? LINE nnnn` at the offending `.ORG` rather than
 letting the build appear to succeed while emitting nothing.
 
-#### Why the cap is the workspace, not the top of RAM
+#### Why the assembler's own storage is off limits
 
-`$7600-$87FF` is the assembler's own working storage — the symbol table, then the
-source buffer, contiguous (see [Memory used](#memory-used)). An origin in either is
-the one case that *looks* legal and is not, and the two fail differently:
+Two of those regions are the assembler's, and they are the cases that *look* legal
+and are not:
 
-- **Into the source buffer (`$7800-$87FF`):** pass 2 emits over the very text it is
+- **The source buffer (`$7800-$87FF`):** pass 2 would emit over the very text it is
   walking, so the generated code and the line numbers in any diagnostic are both
   wrong from the first emitted byte — and the further the build gets, the less of
   the source survives to report against.
-- **Into the symbol table (`$7600-$77FF`):** worse, because it fails *quietly*.
-  Pass 2 resolves labels out of that table while overwriting it, so expressions
-  evaluate to garbage and the build still reports success.
+- **The symbol table (`$0520-$07FF`):** worse, because it fails *quietly*. Pass 2
+  resolves labels out of that table while overwriting it, so expressions evaluate to
+  garbage and the build still reports success.
 
-In neither case does anything point at the origin as the cause, which is why this
-is enforced rather than left to the programmer. The cap is derived from the
-workspace base in the source rather than written as a literal, so it tracks the
-buffers automatically if the memory map moves them.
+Neither failure points at the origin as its cause, which is why this is enforced
+rather than left to the programmer.
 
-This does mean the top ~4.5 KB of user RAM is not a legal origin even though it is
-writable. To assemble code intended to *run* up there, assemble it lower and use the
-monitor's `M:` to move it, or `SAVE` it and `LOAD` it to the target address.
+`$0800` is the floor because everything below it belongs to the system or the
+assembler, and `$0800` is where the DOS loads and runs a `.PRG` anyway — so the
+default origin and the lowest legal one are the same address.
 
 ### Diagnostics
 
@@ -352,8 +349,12 @@ Build it with `B:`, then exit (ESC), enter the monitor with `MON`, and run it wi
 The Dev Tools share the machine with everything else, so mind what they touch:
 
 - **Source buffer:** `$7800–$87FF` (the text loaded by `L:`).
-- **Symbol table:** `$7600–$77FF` (labels and constants; up to 51 symbols).
-- **Working RAM:** `$0800–$87FF` is the module's scratch space.
+- **Symbol table:** `$0520–$07FF` (labels and constants; up to 40 symbols), with the
+  identifier buffers just below it at `$0500–$051F`. This sits in the free page
+  below `Ram_base`, so it costs user programs nothing — it used to take 512 bytes
+  out of user RAM at `$7600`.
+- **Working RAM:** `$0800–$77FF` is yours; the assembler only reserves the source
+  buffer above it.
 
 Assemble your programs into free user RAM below `$7600` (for example `$0800`),
 clear of the source buffer and symbol table — `.ORG` enforces this, refusing any

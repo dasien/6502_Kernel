@@ -3,7 +3,15 @@
 ; ================================================================
 ; Filename:     assembler.asm
 ; Author:       Brian Gentry
-; Version:      0.8 (.ORG refuses an origin inside the assembler's own workspace,
+; Version:      0.9 (identifiers up to 16 characters, .BYTE accepts strings, and
+;               "? LINE nnnn" counts blank lines. The 8-character limit and the
+;               .BYTE/.ASCII split meant nine of the twelve shipped examples would
+;               not assemble, and the line number pointed one line high after the
+;               first blank line, so the diagnostic sent you to the wrong place.
+;               The symbol table moved out of user RAM to the free page at $0500,
+;               which returned 512 bytes to user programs and raised the .ORG
+;               ceiling from $7600 to $77FF.)
+; Previously:   0.8 (.ORG refuses an origin inside the assembler's own workspace,
 ;               and that workspace moved down with the DOS ROM base: SRC_BUF
 ;               $7800-$87FF, SYM_TBL $7600-$77FF, so the source buffer keeps its
 ;               full 4 KB. An origin in either used to look legal and was not --
@@ -107,10 +115,14 @@ ASM_HAS_SYM      = $D9              ; EVAL set this if the expr referenced a sym
 ASM2_TMP         = $DA              ; two-pass scratch
 ASM2_HANDLED     = $DB              ; ASM2_TRYASSIGN: non-zero if it handled the line
 ASM2_END         = $DC              ; set when .END seen (stop the pass)
+ASM2_EOL1        = $DD              ; ANL_EOL: which terminator ended the last line
 EVAL_ACC         = $DD              ; expression accumulator ($DD-$DE)
 ASM_BYTESEL      = $DF              ; 0=none, 1=low byte (<), 2=high byte (>)
-ASM_LBL_BUF      = $C0              ; parsed identifier, 8 bytes space-padded ($C0-$C7)
-ASM_NAME_BUF     = $C8              ; saved assignment name across EVAL ($C8-$CF)
+; Identifier buffers live in the free RAM at $0500, not zero page: 16-character
+; names need 32 bytes for the pair and zero page has no such gap. Nothing indexes
+; them indirectly, so absolute,X costs only a byte per access.
+ASM_LBL_BUF      = $0500            ; parsed identifier, space-padded ($0500-$050F)
+ASM_NAME_BUF     = $0510            ; saved assignment name across EVAL ($0510-$051F)
 
 ; Two-pass memory layout (in user RAM; reserved while assembling). Lives just
 ; below the always-mapped DOS ROM at $8800 (user RAM tops out at $87FF). Kept
@@ -118,10 +130,17 @@ ASM_NAME_BUF     = $C8              ; saved assignment name across EVAL ($C8-$CF
 ; source buffer keeps its full 4 KB instead of being halved.
 SRC_BUF          = $7800            ; source text buffer ($7800-$87FF, $00-terminated)
 SRC_BUF_END      = $87FF            ; last buffer byte (reserved for the terminator)
-SYM_TBL          = $7600            ; symbol table ($7600-$77FF)
-SYM_NAME_LEN     = 8                ; characters stored per symbol name
-SYM_ENTRY_LEN    = 10               ; 8-byte name + 2-byte value
-SYM_MAX          = 51               ; 512 bytes / 10
+
+; The symbol table moved OUT of user RAM into the free page at $0500. That block --
+; the old 40x25 screen, unused since the display moved behind the VIC port -- is
+; below Ram_base, so it costs user programs nothing; the 512 bytes the table used to
+; occupy at $7600 went back to them, and the .ORG ceiling rose with it.
+; (It cannot live in the module bank: that is ROM while the monitor is mapped, and
+; a symbol table has to be written to.)
+SYM_TBL          = $0520            ; symbol table ($0520-$07FF, 736 bytes)
+SYM_NAME_LEN     = 16               ; characters stored per symbol name
+SYM_ENTRY_LEN    = 18               ; 16-byte name + 2-byte value
+SYM_MAX          = 40               ; 736 bytes / 18
 ASM_PTR          = MNE_PTR          ; mnemonic-table search pointer (shared)
 
 ; Operand syntax classes (from PARSE_OPERAND; resolved to a mode by ASM_RESOLVE)
@@ -1145,14 +1164,23 @@ ANL_NOSTORE:
     INY
     BRA ANL_LOOP
 ANL_EOL:
-    INY                             ; consume this terminator
-    LDA (ASM2_SRC),Y                ; consume a paired CR/LF
-    CMP #$0A
-    BEQ ANL_EOL2
+    STA ASM2_EOL1                   ; remember WHICH terminator stopped us
+    INY                             ; consume it
+    LDA (ASM2_SRC),Y
     CMP #$0D
+    BEQ ANL_EOL_TWO
+    CMP #$0A
     BNE ANL_FINISH
-ANL_EOL2:
-    INY
+ANL_EOL_TWO:
+    ; A second terminator follows. Swallow it only if it is the OTHER kind, i.e. a
+    ; genuine CRLF (or LFCR) pair. Two of the SAME kind are two line endings with a
+    ; blank line between them, and swallowing that loses the blank from the count --
+    ; which silently shifted every "? LINE nnnn" after the first blank line by one,
+    ; so the diagnostic pointed at the wrong source line. It used to test only "is
+    ; the next byte a terminator", which cannot tell $0A$0A from $0D$0A.
+    CMP ASM2_EOL1
+    BEQ ANL_FINISH                  ; same kind -> blank line, leave it for next read
+    INY                             ; different kind -> one ending, consume both
 ANL_FINISH:
     STX MON_CMDLEN
     TYA                             ; ASM2_SRC += Y
@@ -1663,20 +1691,24 @@ AP_DO_ORG:
     ; ROM -- where writes are discarded, so the listing scrolled by and printed OK
     ; having emitted nothing at all.
     ;
-    ; The upper bound is SYM_TBL, not the top of RAM, because $7600-$87FF is this
-    ; module's own workspace: the symbol table then the source buffer, contiguous.
-    ; An origin in either is the case that looks legal and is not. Emitting into
-    ; SRC_BUF rewrites the text being assembled as pass 2 walks it, so the output
-    ; and the line numbers in any diagnostic are both wrong from the first byte.
-    ; Emitting into SYM_TBL is worse: pass 2 resolves labels out of that table
-    ; while overwriting it, so expressions quietly evaluate to garbage and the
-    ; build reports success. Derived from SYM_TBL (page-aligned, so a high-byte
-    ; compare is exact) so the cap follows the workspace if the map moves it.
+    ; Legal origins are $0800-$77FF -- ordinary user RAM, and nothing else.
+    ;
+    ; Below $0800 is off limits because the assembler's own workspace lives there
+    ; now: the identifier buffers and the symbol table at $0500-$07FF, the T:/Z:
+    ; page snapshot at $0400, and below that the system variables, the 6502 stack
+    ; and zero page. Emitting into the symbol table is the nastiest of these --
+    ; pass 2 resolves labels out of it while overwriting it, so expressions quietly
+    ; evaluate to garbage and the build still reports OK.
+    ;
+    ; At or above SRC_BUF is off limits because that is the source text being
+    ; assembled: pass 2 would rewrite its own input as it walks it, making both the
+    ; output and the line numbers in any diagnostic wrong from the first byte. Above
+    ; the buffer is ROM, where the stores vanish entirely.
     LDA ASM_VAL+1
-    CMP #$02
-    BCC AP_ERR                      ; < $0200: zero page / stack / system vars
-    CMP #>SYM_TBL
-    BCS AP_ERR                      ; >= $7600: symbol table, source buffer, ROM
+    CMP #$08
+    BCC AP_ERR                      ; < $0800: assembler workspace, then system RAM
+    CMP #>SRC_BUF
+    BCS AP_ERR                      ; >= $7800: source text, then ROM
     LDA ASM_VAL
     STA ASM_PC
     LDA ASM_VAL+1
@@ -1690,6 +1722,43 @@ AP_ERR:
 ; .BYTE/.DB - emit a comma-separated list of bytes
 AP_DO_BYTE:
     JSR ASM2_SKIPSPC
+    ; A quoted string is accepted here as well as in .ASCII. Every other 6502
+    ; assembler takes ".byte \"HI\", 0", it is what the examples in examples/ are
+    ; written with, and rejecting it produced a bare "? LINE" that said nothing
+    ; about the cause. Emit the characters, then fall into the comma loop so a
+    ; trailing terminator ("...\", 0") still works.
+    LDX ASM_IDX
+    CPX MON_CMDLEN
+    BCS ADB_EXPR
+    LDA MON_CMDBUF,X
+    CMP #'"'
+    BNE ADB_EXPR
+    INX                             ; skip the opening quote
+ADB_STR:
+    CPX MON_CMDLEN
+    BCS ADB_ERR                     ; unterminated string
+    LDA MON_CMDBUF,X
+    CMP #'"'
+    BEQ ADB_STREND
+    STA ASM2_TMP
+    LDA ASM2_PASS
+    CMP #$02
+    BNE ADB_STRADV
+    LDA ASM2_TMP
+    LDY #$00
+    STA (ASM_PC),Y
+ADB_STRADV:
+    INC ASM_PC
+    BNE ADB_STRNEXT
+    INC ASM_PC+1
+ADB_STRNEXT:
+    INX
+    BRA ADB_STR
+ADB_STREND:
+    INX                             ; skip the closing quote
+    STX ASM_IDX
+    BRA ADB_COMMA
+ADB_EXPR:
     JSR EVAL_EXPR
     BCS ADB_ERR
     LDA ASM_VAL+1                   ; ".BYTE 300" stored $2C with no complaint
@@ -2205,14 +2274,14 @@ MSG_LOADED:
     .byte "LOADED", $0D, $0A, $00
 
 ; Directive names, 8 bytes space-padded (compared against ASM_LBL_BUF).
-D_ORG:   .byte "ORG     "
-D_END:   .byte "END     "
-D_BYTE:  .byte "BYTE    "
-D_DB:    .byte "DB      "
-D_WORD:  .byte "WORD    "
-D_DW:    .byte "DW      "
-D_ASCII: .byte "ASCII   "
-D_TX:    .byte "TX      "
+D_ORG:   .byte "ORG             "
+D_END:   .byte "END             "
+D_BYTE:  .byte "BYTE            "
+D_DB:    .byte "DB              "
+D_WORD:  .byte "WORD            "
+D_DW:    .byte "DW              "
+D_ASCII: .byte "ASCII           "
+D_TX:    .byte "TX              "
 
 ; Operand-rendering tables, indexed by addressing-mode id (must match the
 ; MODE_* order in opcodes_65c02.inc: IMP,ACC,IMM,ZP,ZPX,ZPY,ZPI,IZX,IZY,REL,
