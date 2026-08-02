@@ -12,7 +12,7 @@
 ;                   the playfield and leave the HUD rows below it pinned.
 ; ============================================================================
 
-.export _INCH_NB, _QUITDOS
+.export _INCH_NB, _QUITDOS, _keystate
 .export _vaddr, _vputc, _vattr
 .export _vfill, _vcmd, _vscrollbot, _vhidecur
 .export _rng_seed, _rtc_sec, _jiffies
@@ -21,6 +21,12 @@ K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (also resets the kernel cursor)
 K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
 DOS_WARM        = $AF1E
+
+; PIA live key-state port: which control keys are held RIGHT NOW. Distinct from
+; the keystroke buffer at $FE00, which records what was typed and carries no
+; key-up -- polling that can't tell held from released, and the host OS only
+; auto-repeats the most recent key, so "move while firing" is impossible there.
+KEY_STATE       = $FE0F
 
 ; VIC video register port (chars/colors live behind these, not in the map).
 VREG_ADDR_LO    = $FE2D         ; cell index low (0..1999)
@@ -94,6 +100,16 @@ RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
 .proc _vhidecur
         lda     #$80
         sta     VREG_CURSOR_HI
+        rts
+.endproc
+
+; unsigned char keystate(void) -- bitmask of the control keys currently held.
+; bit0 up, bit1 down, bit2 left, bit3 right, bit4 fire (space), bit5 button2
+; (left shift). Non-destructive: poll it every frame for as long as the key is
+; down. Reads 0 when the host has no GUI (console build, headless tests).
+.proc _keystate
+        lda     KEY_STATE
+        ldx     #$00
         rts
 .endproc
 

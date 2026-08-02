@@ -18,6 +18,16 @@ extern void          vhidecur(void);
 extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy */
 extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for change */
 extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick counter */
+extern unsigned char keystate(void);                  /* live held-key bitmask ($FE0F) */
+
+/* keystate() bits, active-high. Independent bits are the whole point: holding a
+ * direction and firing are simultaneous by construction. */
+#define KS_UP       0x01
+#define KS_DOWN     0x02
+#define KS_LEFT     0x04
+#define KS_RIGHT    0x08
+#define KS_FIRE     0x10        /* Space */
+#define KS_BOOST    0x20        /* Left Shift -- hold to OVERCLOCK */
 
 /* ---- VIC command codes ---- */
 #define VCMD_CLEAR      0x01
@@ -52,14 +62,37 @@ extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick co
 #define TICK_MAX     15         /* 4 steps/sec */
 #define MAX_CATCHUP  4          /* sim steps per pass before we resync to now */
 
-/* Steering: a press always moves EXACTLY one column, so taps stay precise. The
- * host's key auto-repeat only begins after ~500ms; once it does, repeats arrive
- * every few ticks, and each is granted a short glide so the motion between them
- * reads as continuous instead of stuttering. A deliberate single tap gets no
- * glide at all -- that's the difference from a flat glide-on-every-press, which
- * made one tap slide half a dozen columns. */
-#define REPEAT_WINDOW 10        /* a press this soon after the last = auto-repeat */
-#define REPEAT_GLIDE  3         /* ticks of drift granted to a repeat press */
+/* Steering reads the PIA's live key-state port once per tick, so movement is
+ * exactly as smooth as the tick rate and firing is independent of it. This
+ * replaces a pile of heuristics that tried to infer "key still held" from the
+ * keystroke stream -- impossible, because that stream has no key-up and the host
+ * only auto-repeats the most recent key, which is why you could never move and
+ * fire at the same time. */
+#define MOVE_PER_TICK 1         /* columns per tick while a direction is held */
+
+/* ---- the shared ENERGY pool (the signature mechanic; see DESIGN.md) ----
+ * One number is simultaneously your fuel, your clock, and your ammo budget: it
+ * drains on its own so idling is never safe, refills only from data nodes, and
+ * OVERCLOCK spends it hard. Every aggressive choice is bought with lifespan. */
+#define ENERGY_MAX      1000
+#define ENERGY_DRAIN    2       /* per tick, unconditionally */
+#define ENERGY_OC_DRAIN 8       /* additional per tick while overclocked */
+#define ENERGY_NODE     350     /* refill for taking a node instead of shooting it */
+#define ENERGY_CRASH    150     /* cost of hitting the conduit */
+#define ENERGY_LOW      250     /* below this the bar goes red and the HUD warns */
+#define NODE_W          2       /* node width in cells -- one cell was too fine a
+                                 * target to line up on while dodging */
+
+/* ---- weapon ---- */
+#define MAX_SHOTS        6
+#define SHOT_SPEED       2      /* screen rows per tick, substepped so it can't tunnel */
+#define FIRE_COOLDOWN    3      /* ticks between shots */
+#define FIRE_COOLDOWN_OC 1      /* ... while overclocked */
+
+/* ---- scoring ----
+ * unsigned int caps at 65535 (2621 nodes); step 7 widens this to two words when
+ * enemies and bosses start contributing. */
+#define SCORE_NODE      25
 
 /* ---- attributes: [R][BR][bg:3][fg:3]; 0x40 = bright ---- */
 #define A_WALL      0x46        /* bright cyan -- conduit wall (the lethal edge) */
@@ -69,6 +102,12 @@ extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick co
                                  * channel: same routing as outside, just recessed */
 #define A_CRAFT     0x43        /* bright yellow -- your trace process */
 #define A_FOE       0x41        /* bright red -- corruption */
+#define A_NODE      0x42        /* bright green -- data node (matches the energy bar,
+                                 * and stays clear of craft yellow / wall cyan) */
+#define A_SHOT      0x47        /* bright white -- reserved for the fastest thing on
+                                 * screen, so the eye tracks projectiles first */
+#define A_OK        0x42        /* energy bar: healthy */
+#define A_MID       0x43        /* energy bar: getting thin */
 #define A_HUD       0x46        /* bright cyan -- HUD frame/labels */
 #define A_TEXT      0x07        /* white -- HUD values */
 #define A_WARN      0x41        /* bright red -- alerts */
@@ -82,6 +121,10 @@ extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick co
 #define G_TRACE_V   179         /* board: vertical trace */
 #define G_VIA       197         /* board: trace crossing */
 #define G_PAD       9           /* board: solder pad */
+#define G_NODE      8           /* data node -- fly over to refill, or shoot for score */
+#define G_SHOT      24          /* your projectile (up arrow: unambiguous direction) */
+#define G_BAR_FULL  219         /* energy bar: filled cell */
+#define G_BAR_EMPTY 176         /* energy bar: empty cell */
 #define G_CRAFT     30          /* solid up triangle */
 #define G_BOOM      15          /* sun -- placeholder impact pop (real juice: step 7) */
 #define G_HBAR      196         /* single horizontal -- HUD rule */

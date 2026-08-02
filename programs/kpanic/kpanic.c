@@ -1,17 +1,25 @@
 /* ============================================================================
- * kpanic.c -- KERNEL PANIC: engine (build step 2).
+ * kpanic.c -- KERNEL PANIC: engine (build step 3).
  *
  * Working: the fixed-tick simulation loop paced off the kernel's 60 Hz jiffy
- * counter, the bounded scroll region with a pinned HUD, procedurally generated
- * meandering conduit terrain (with gauntlets and islands) held in a per-row ring
- * buffer, wall/island collision against the craft, a scrolling circuit-board
- * backdrop outside the conduit, and glide steering that survives the host's key
- * auto-repeat delay.
+ * counter; the bounded scroll region with a pinned HUD; procedurally generated
+ * meandering conduit terrain (gauntlets, islands, data nodes) in a per-row ring
+ * buffer; a scrolling circuit-board backdrop; and the shared ENERGY pool with
+ * firing and OVERCLOCK.
  *
- * Deliberately NOT here yet (see DESIGN.md build path): energy + OVERCLOCK and
- * firing (step 3), enemies (4), power-ups (5), bosses (6), juice/scoring (7).
- * A collision just counts a CRASH, pops the craft cell, and re-centers you --
- * there are no lives or energy to lose until step 3.
+ * Controls come from the PIA's live key-state port ($FE0F), sampled once per
+ * tick, NOT from the keystroke buffer. That stream carries no key-up, so it
+ * cannot express "held": movement could only be inferred from OS auto-repeat
+ * (~500ms stall) and firing cancelled steering outright, because the host only
+ * repeats the most recently pressed key. Polling independent bits fixes both.
+ *
+ * The ENERGY pool is the game's whole point (see DESIGN.md): it drains on its
+ * own, refills only by flying over a data node, and OVERCLOCK burns it fast. A
+ * node can be TAKEN for energy or SHOT for score -- never both -- so every node
+ * is a bet on how long you intend to live.
+ *
+ * Deliberately NOT here yet: enemies (step 4), power-ups (5), bosses (6),
+ * juice/scoring polish (7). The game-over screen is a placeholder.
  * ==========================================================================*/
 #include "kpanic.h"
 
@@ -68,13 +76,17 @@ static void put_num(unsigned char x, unsigned char y, unsigned int v,
  * plus offset adds for every field of a struct array, so parallel arrays are
  * materially faster). Ring-buffered: `head` is the slot holding screen row 0
  * (the newest row) and decrements on each scroll, so the slot for screen row r
- * is head+r wrapped -- no shifting 88 bytes every step, and no modulo either
- * since r < PLAY_H means head+r < 2*PLAY_H.
+ * is head+r wrapped -- no shifting bytes every step, and no modulo either since
+ * r < PLAY_H means head+r < 2*PLAY_H.
+ *
+ * Data nodes live in this ring too, so they ride the hardware scroll for free
+ * exactly like the walls do -- no separate moving-object bookkeeping.
  * ==========================================================================*/
 static unsigned char r_lx[PLAY_H];      /* left wall column */
 static unsigned char r_rx[PLAY_H];      /* right wall column */
 static unsigned char r_ix[PLAY_H];      /* island start column */
 static unsigned char r_iw[PLAY_H];      /* island width; 0 = no island */
+static unsigned char r_nx[PLAY_H];      /* data node column; 0 = none */
 static unsigned char head;
 
 static unsigned char slot(unsigned char r) {
@@ -92,7 +104,7 @@ static unsigned char isl_left, isl_x, isl_w;
 
 /* Generate one new row into the slot `head` currently points at. */
 static void gen_row(void) {
-    unsigned char lx, rx, span;
+    unsigned char lx, rx, span, nx;
 
     /* --- width: drift one step toward the target, re-picking the target now and
      * then. A "gauntlet" is just a hard, sustained low target. --- */
@@ -134,7 +146,10 @@ static void gen_row(void) {
         isl_w = 2 + rndn(3);
         span = (rx - lx - 1) - 6 - isl_w;       /* leave >=3 open each side */
         isl_x = lx + 4 + rndn(span);
-        isl_left = 4 + rndn(8);
+        /* Short: 2-4 rows. Longer pillars read as a second wall rather than an
+         * obstacle to weave around, and they block the channel for so long that
+         * dodging becomes committing rather than reacting. */
+        isl_left = 1 + rndn(3);
     }
     /* Re-validate every row: the channel may have narrowed or shifted out from
      * under a still-running island, which would fuse it to a wall. */
@@ -145,9 +160,30 @@ static void gen_row(void) {
         r_ix[head] = 0;
         r_iw[head] = 0;
     }
+
+    /* --- data nodes: the only way to refill energy. Rare enough that you can't
+     * take every one for granted, common enough to survive on. NODE_W cells wide,
+     * placed at least one clear column inside each wall. --- */
+    r_nx[head] = 0;
+    if (rndn(90) == 0) {
+        span = rx - lx - NODE_W - 2;            /* valid start columns */
+        if (span > 0) {
+            nx = lx + 2 + rndn(span);
+            /* reject if any of its cells would sit inside the island */
+            if (!(r_iw[head] &&
+                  nx < (unsigned char)(r_ix[head] + r_iw[head]) &&
+                  (unsigned char)(nx + NODE_W) > r_ix[head]))
+                r_nx[head] = nx;
+        }
+    }
 }
 
-/* Is column x blocked at screen row r (wall or island)? */
+/* Does column x fall on the node in ring slot i? */
+static unsigned char on_node(unsigned char i, unsigned char x) {
+    return r_nx[i] && x >= r_nx[i] && x < (unsigned char)(r_nx[i] + NODE_W);
+}
+
+/* Is column x blocked at screen row r (wall or island)? Nodes are not solid. */
 static unsigned char blocked(unsigned char r, unsigned char x) {
     unsigned char i = slot(r);
     if (x <= r_lx[i] || x >= r_rx[i]) return 1;
@@ -172,8 +208,8 @@ static void board_init(void) {
     }
 }
 
-/* Appearance of one circuit-board cell outside the conduit. Everything keys off
- * the WORLD row so the board scrolls with the conduit rather than standing still. */
+/* Appearance of one circuit-board cell. Everything keys off the WORLD row so the
+ * board scrolls with the conduit rather than standing still. */
 static void board_cell(unsigned char x, unsigned int wy,
                        unsigned char *g, unsigned char *a) {
     *a = A_BOARD;
@@ -186,9 +222,9 @@ static void board_cell(unsigned char x, unsigned int wy,
     }
 }
 
-/* Appearance of one cell inside the conduit: the very same board routing, just
- * recessed into shadow -- so the channel reads as a trench cut into one
- * continuous board, with the traces lining up across the wall.
+/* Inside the conduit it's the very same board routing, just recessed into
+ * shadow -- so the channel reads as a trench cut into one continuous board, with
+ * the traces lining up across the wall.
  *
  * Two earlier attempts here were both wrong for instructive reasons: a solid
  * dithered fill read unmistakably as water, and sparse dots on black read just as
@@ -200,41 +236,89 @@ static void lane_cell(unsigned char x, unsigned int wy,
     *a = A_RECESS;
 }
 
-/* Draw screen row r from its ring slot, as one contiguous 80-cell stream:
+/* THE single source of truth for what any playfield cell looks like, ignoring
+ * moving objects. draw_row() paints with it and every erase restores with it, so
+ * the two can never disagree -- which is what stops erased craft/shots from
+ * leaving holes or smears in the terrain. */
+static void terrain_cell(unsigned char r, unsigned char x,
+                         unsigned char *g, unsigned char *a) {
+    unsigned char i = slot(r);
+    unsigned int  wy = rows - r;
+
+    if (x == r_lx[i] || x == r_rx[i]) {
+        *g = G_WALL; *a = A_WALL;
+    } else if (x == (unsigned char)(r_lx[i] - 1) ||
+               x == (unsigned char)(r_rx[i] + 1)) {
+        *g = G_BEVEL; *a = A_BEVEL;
+    } else if (x > r_lx[i] && x < r_rx[i]) {
+        if (r_iw[i] && x >= r_ix[i] && x < (unsigned char)(r_ix[i] + r_iw[i])) {
+            *g = G_WALL; *a = A_WALL;
+        } else if (on_node(i, x)) {
+            *g = G_NODE; *a = A_NODE;
+        } else {
+            lane_cell(x, wy, g, a);
+        }
+    } else {
+        board_cell(x, wy, g, a);
+    }
+}
+
+/* Paint one cell of terrain (used to erase a moving object). */
+static void restore_cell(unsigned char r, unsigned char x) {
+    unsigned char g, a;
+    terrain_cell(r, x, &g, &a);
+    vaddr((unsigned int)r * SCR_W + x);
+    last_attr = 0xFF;
+    put_cell(g, a);
+}
+
+/* Draw screen row r as one contiguous 80-cell stream:
+ *   [board] [bevel] [WALL] [ ... channel ... ] [WALL] [bevel] [board]
+ * Each row is painted once when it enters and then just rides the hardware
+ * scroll down, so terrain costs one row of writes per step, never a repaint.
  *
- *   [circuit board] [bevel] [WALL] [ ... data stream ... ] [WALL] [bevel] [board]
+ * This deliberately inlines what terrain_cell() does rather than calling it 80
+ * times. Every per-cell function call costs real cycles under cc65, and the
+ * `wy % 24` pad test is a 16-bit modulo -- a subroutine call -- so hoisting it
+ * out of the loop matters more than all the rest combined. Written the tidy way
+ * (one terrain_cell() call per cell) this row cost several times as much and
+ * dragged the whole frame rate down with it.
  *
- * The board fills what used to be dead blank space, which is what made the walls
- * read as floating blocks. Its grid phase keys off the WORLD row, not the screen
- * row, so the board scrolls with the conduit instead of standing still while
- * everything else moves.
- *
- * Each row is painted once when it enters and then just rides the hardware scroll
- * down, so terrain costs one row of writes per step, never a full repaint. */
+ * MUST stay in agreement with terrain_cell() below, which serves the same
+ * pixels for single-cell restores. */
 static void draw_row(unsigned char r) {
     unsigned char i = slot(r);
-    unsigned char lx = r_lx[i], rx = r_rx[i], iw = r_iw[i], ix = r_ix[i];
+    unsigned char lx = r_lx[i], rx = r_rx[i], ix = r_ix[i], iw = r_iw[i], nx = r_nx[i];
+    unsigned int  wy = rows - r;
+    unsigned char trace_row = ((wy & 15) == 3);     /* hoisted: cheap mask */
+    unsigned char pad_row   = ((wy % 24) == 0);     /* hoisted: expensive modulo */
     unsigned char x, g, a;
-    unsigned int  wy = rows - r;                /* world row of this screen row */
 
     vaddr((unsigned int)r * SCR_W);
     last_attr = 0xFF;
     for (x = 0; x < SCR_W; x++) {
         if (x == lx || x == rx) {
-            put_cell(G_WALL, A_WALL);
+            g = G_WALL; a = A_WALL;
         } else if (x == (unsigned char)(lx - 1) || x == (unsigned char)(rx + 1)) {
-            put_cell(G_BEVEL, A_BEVEL);
+            g = G_BEVEL; a = A_BEVEL;
         } else if (x > lx && x < rx) {
             if (iw && x >= ix && x < (unsigned char)(ix + iw)) {
-                put_cell(G_WALL, A_WALL);
-            } else {
-                lane_cell(x, wy, &g, &a);
-                put_cell(g, a);
+                g = G_WALL; a = A_WALL;
+            } else if (nx && x >= nx && x < (unsigned char)(nx + NODE_W)) {
+                g = G_NODE; a = A_NODE;
+            } else {                                /* recessed board in the channel */
+                a = A_RECESS;
+                if (trace_row)         g = board_col[x] ? G_VIA : G_TRACE_H;
+                else if (board_col[x]) g = pad_row ? G_PAD : G_TRACE_V;
+                else                   g = ' ';
             }
-        } else {
-            board_cell(x, wy, &g, &a);
-            put_cell(g, a);
+        } else {                                    /* board outside the conduit */
+            a = A_BOARD;
+            if (trace_row)         g = board_col[x] ? G_VIA : G_TRACE_H;
+            else if (board_col[x]) g = pad_row ? G_PAD : G_TRACE_V;
+            else                   g = ' ';
         }
+        put_cell(g, a);
     }
 }
 
@@ -242,11 +326,17 @@ static void draw_row(unsigned char r) {
 static unsigned char craft_x = 39;
 static unsigned char tickrate = TICK_DEFAULT;
 static unsigned char paused;
-static unsigned int  crashes;
 static unsigned char flash;             /* frames left showing the impact pop */
-static signed char   glide_dx;          /* -1 / +1: direction of the current drift */
-static unsigned char glide_left;        /* ticks of drift remaining */
-static unsigned char since_steer = 255; /* ticks since the last steer key */
+
+static unsigned int  energy = ENERGY_MAX;
+static unsigned int  score;
+static unsigned int  crashes;
+static unsigned char overclock;
+static unsigned char cooldown;          /* ticks until the gun can fire again */
+static unsigned char dead;
+
+/* shots: structure-of-arrays, fixed pool, no allocation */
+static unsigned char s_x[MAX_SHOTS], s_y[MAX_SHOTS], s_live[MAX_SHOTS];
 
 #define CRAFT_ROW  (PLAY_BOT - 1)
 
@@ -256,40 +346,74 @@ static void draw_craft(void) {
     if (flash) put_cell(G_BOOM, (unsigned char)(A_WARN | 0x80));  /* reverse video */
     else       put_cell(G_CRAFT, A_CRAFT);
 }
-/* Restore the terrain under the craft. Must run BEFORE the scroll, or the craft
- * glyph gets shifted down with the world and smears a trail of ghosts. */
-static void erase_craft(void) {
-    unsigned char i = slot(CRAFT_ROW);
-    unsigned char g, a;
 
-    if (r_iw[i] && craft_x >= r_ix[i] && craft_x < (unsigned char)(r_ix[i] + r_iw[i])) {
-        g = G_WALL; a = A_WALL;
-    } else if (craft_x <= r_lx[i] || craft_x >= r_rx[i]) {
-        g = G_WALL; a = A_WALL;
-    } else {
-        lane_cell(craft_x, rows - CRAFT_ROW, &g, &a);   /* same helper draw_row uses,
-                                                         * so they can't drift apart */
-    }
-    vaddr((unsigned int)CRAFT_ROW * SCR_W + craft_x);
-    last_attr = 0xFF;
-    put_cell(g, a);
+/* ---- energy ---- */
+static void energy_spend(unsigned int amount) {
+    if (energy <= amount) { energy = 0; dead = 1; }
+    else                  energy -= amount;
+}
+static void energy_gain(unsigned int amount) {
+    energy += amount;
+    if (energy > ENERGY_MAX) energy = ENERGY_MAX;
 }
 
-/* Impact: count it, pop the cell, and re-center in the channel. Step 3 turns
- * this into real damage against the shared ENERGY pool. */
+/* Impact: costs energy rather than just counting. Hitting the conduit is now a
+ * real bite out of your lifespan, which is what makes the gauntlets matter. */
 static void crash(void) {
     unsigned char i = slot(CRAFT_ROW);
     crashes++;
     flash = 3;
-    glide_left = 0;                     /* don't drift straight back into the wall */
     craft_x = (unsigned char)((r_lx[i] + r_rx[i]) >> 1);
+    energy_spend(ENERGY_CRASH);
 }
 
-/* Advance the world one row, then re-test collision: the terrain can close on a
- * stationary craft, which has to be just as lethal as steering into a wall. */
+/* ---- weapon ---- */
+static void fire(void) {
+    unsigned char i;
+    if (cooldown) return;
+    for (i = 0; i < MAX_SHOTS; i++) {
+        if (!s_live[i]) {
+            s_live[i] = 1;
+            s_x[i] = craft_x;
+            s_y[i] = CRAFT_ROW - 1;
+            cooldown = overclock ? FIRE_COOLDOWN_OC : FIRE_COOLDOWN;
+            return;
+        }
+    }
+}
+
+/* Resolve a shot arriving at one cell. Returns 1 if the shot is consumed.
+ * Checked per single-cell substep rather than at the destination, so a fast shot
+ * can't tunnel through a node or a wall. */
+static unsigned char shot_hits(unsigned char r, unsigned char x) {
+    unsigned char i = slot(r), nx, k;
+    if (on_node(i, x)) {                /* score, but you forfeit the refill */
+        nx = r_nx[i];
+        r_nx[i] = 0;                    /* clear first, so the restore paints lane */
+        score += SCORE_NODE;
+        for (k = 0; k < NODE_W; k++) restore_cell(r, nx + k);
+        return 1;
+    }
+    return blocked(r, x);
+}
+
+static void shots_advance(void) {
+    unsigned char i, step;
+    for (i = 0; i < MAX_SHOTS; i++) {
+        if (!s_live[i]) continue;
+        for (step = 0; step < SHOT_SPEED; step++) {
+            if (s_y[i] == 0) { s_live[i] = 0; break; }   /* off the top */
+            s_y[i]--;
+            if (shot_hits(s_y[i], s_x[i])) { s_live[i] = 0; break; }
+        }
+    }
+}
+
+/* Advance the world one row: chip-side scroll, then paint the freshly opened
+ * top row. Terrain rides the scroll; moving objects are handled by the caller. */
 static void scroll_world(void) {
-    vattr(A_DARK);
-    last_attr = A_DARK;
+    vattr(A_BOARD);
+    last_attr = A_BOARD;
     vfill(' ');
     vcmd(VCMD_SCROLLDOWN);
 
@@ -302,17 +426,53 @@ static void scroll_world(void) {
 /* One fixed simulation step: the single place anything moves, so world speed is
  * purely the tick divisor -- no per-object fractional speeds. */
 static void step_world(void) {
-    erase_craft();                      /* before the scroll, or it smears a ghost */
+    unsigned char i, ks;
+
+    /* Erase every moving object BEFORE the scroll, or the hardware shift drags
+     * their glyphs down the screen as a trail of ghosts. */
+    restore_cell(CRAFT_ROW, craft_x);
+    for (i = 0; i < MAX_SHOTS; i++)
+        if (s_live[i]) restore_cell(s_y[i], s_x[i]);
+
+    /* Sample the live control port ONCE per tick and act on every bit that is
+     * set. Movement is therefore exactly as smooth as the tick rate, and steering
+     * while firing costs nothing: the bits are independent, so there is no
+     * "most recent key wins" behaviour to fight. */
+    ks = keystate();
+    overclock = (ks & KS_BOOST) ? 1 : 0;    /* hold to overclock, release to stop */
+
     scroll_world();
+    if (overclock) scroll_world();      /* overclock literally runs the world faster */
+
     if (flash) flash--;
-    if (since_steer < 255) since_steer++;   /* how stale the last steer key is */
-    /* Continue the steering drift -- only ever armed by an auto-repeat press, so
-     * this smooths between repeats without making taps slide. */
-    if (glide_left) {
-        glide_left--;
-        craft_x = (unsigned char)(craft_x + glide_dx);
+    if (cooldown) cooldown--;
+
+    if (ks & KS_LEFT)  craft_x -= MOVE_PER_TICK;
+    if (ks & KS_RIGHT) craft_x += MOVE_PER_TICK;
+    if (ks & KS_FIRE)  fire();          /* cooldown paces it; holding is fine */
+
+    shots_advance();
+
+    /* Take a node by flying over it: refill, and forfeit the score you'd have
+     * got for shooting it. This is the bet the whole game is built around. */
+    i = slot(CRAFT_ROW);
+    if (on_node(i, craft_x)) {
+        unsigned char nx = r_nx[i], k;
+        r_nx[i] = 0;                    /* clear first, so the restore paints lane */
+        for (k = 0; k < NODE_W; k++) restore_cell(CRAFT_ROW, nx + k);
+        energy_gain(ENERGY_NODE);
     }
+
     if (blocked(CRAFT_ROW, craft_x)) crash();
+
+    energy_spend(overclock ? (ENERGY_DRAIN + ENERGY_OC_DRAIN) : ENERGY_DRAIN);
+
+    for (i = 0; i < MAX_SHOTS; i++)
+        if (s_live[i]) {
+            vaddr((unsigned int)s_y[i] * SCR_W + s_x[i]);
+            last_attr = 0xFF;
+            put_cell(G_SHOT, A_SHOT);
+        }
     draw_craft();
 }
 
@@ -323,34 +483,64 @@ static void draw_hud_static(void) {
     vaddr((unsigned int)HUD_ROW * SCR_W);
     last_attr = 0xFF;
     for (i = 0; i < SCR_W; i++) put_cell(G_HBAR, A_HUD);
-    put_str(2, HUD_ROW, " KERNEL PANIC  v0.5  circuit ", A_CRAFT);
+    put_str(2, HUD_ROW, " KERNEL PANIC  v0.9  control ", A_CRAFT);
 
-    put_str(2,  HUD_ROW + 1, "TICK:", A_HUD);
-    put_str(10, HUD_ROW + 1, "TGT:",  A_HUD);
-    put_str(16, HUD_ROW + 1, "/s",    A_HUD);   /* static units: never redrawn */
-    put_str(20, HUD_ROW + 1, "ACT:",  A_HUD);
-    put_str(26, HUD_ROW + 1, "/s",    A_HUD);
-    put_str(30, HUD_ROW + 1, "ROWS:", A_HUD);
-    put_str(42, HUD_ROW + 1, "WIDTH:", A_HUD);
-    put_str(52, HUD_ROW + 1, "CRASH:", A_HUD);
+    put_str(2,  HUD_ROW + 1, "PWR", A_HUD);
+    put_str(34, HUD_ROW + 1, "SCORE:", A_HUD);
+    put_str(48, HUD_ROW + 1, "ROWS:", A_HUD);
+    put_str(61, HUD_ROW + 1, "ACT:", A_HUD);
+    put_str(67, HUD_ROW + 1, "/s", A_HUD);
 
     put_str(2, HUD_ROW + 2,
-            "Q quit   P pause   SPACE step   +/- speed   arrows or h/l steer",
+            "arrows steer   SPACE fire   SHIFT overclock   P pause   . step   +/- speed   Q quit",
             A_TEXT);
 }
-/* Numeric fields only, and only when something changed (see hud_dirty): a full
- * HUD repaint every pass of the loop costs more than the simulation does. */
+
+/* Last-drawn HUD values. Every field is diffed before it is repainted: the bar
+ * alone is 24 cells, and repainting the whole HUD each tick costs more than the
+ * simulation step it is reporting on. The bar in particular only changes once
+ * per 50 energy, i.e. roughly every 25 ticks. */
+static unsigned int  hud_score = 0xFFFF, hud_rows = 0xFFFF, hud_energy = 0xFFFF;
+static unsigned char hud_filled = 0xFF, hud_meas = 0xFF;
+static unsigned char hud_oc = 0xFF, hud_pause = 0xFF;
+
+/* A 20-cell bar plus the raw number: the bar for glanceable state mid-dodge, the
+ * number for judging whether a node is worth passing up. */
+static void draw_energy_bar(void) {
+    unsigned char i, filled, a;
+
+    filled = (unsigned char)(((unsigned long)energy * 20u) / ENERGY_MAX);
+    a = (energy <= ENERGY_LOW) ? A_WARN : (energy <= (ENERGY_MAX / 2) ? A_MID : A_OK);
+
+    if (filled != hud_filled) {
+        hud_filled = filled;
+        vaddr((unsigned int)(HUD_ROW + 1) * SCR_W + 6);
+        last_attr = 0xFF;
+        for (i = 0; i < 20; i++) put_cell(i < filled ? G_BAR_FULL : G_BAR_EMPTY, a);
+    }
+    if (energy != hud_energy) {
+        hud_energy = energy;
+        put_num(27, HUD_ROW + 1, energy, 4, a);
+    }
+}
+
 static void draw_hud_live(unsigned char measured) {
-    unsigned char i = slot(CRAFT_ROW);
-    put_num(7,  HUD_ROW + 1, tickrate, 2, A_TEXT);
-    put_num(14, HUD_ROW + 1, 60u / tickrate, 2, A_TEXT);
-    put_num(24, HUD_ROW + 1, measured, 2,
-            (measured + 1u >= 60u / tickrate) ? A_TEXT : A_WARN);
-    put_num(35, HUD_ROW + 1, rows, 5, A_TEXT);
-    put_num(48, HUD_ROW + 1, (unsigned int)(r_rx[i] - r_lx[i] - 1), 2,
-            (r_rx[i] - r_lx[i] - 1 <= 9) ? A_WARN : A_TEXT);
-    put_num(58, HUD_ROW + 1, crashes, 3, crashes ? A_WARN : A_TEXT);
-    put_str(64, HUD_ROW + 1, paused ? "[PAUSED]" : "        ", A_WARN);
+    draw_energy_bar();
+    if (score != hud_score) { hud_score = score; put_num(40, HUD_ROW + 1, score, 5, A_TEXT); }
+    if (rows  != hud_rows)  { hud_rows  = rows;  put_num(53, HUD_ROW + 1, rows,  5, A_TEXT); }
+    if (measured != hud_meas) {
+        hud_meas = measured;
+        put_num(65, HUD_ROW + 1, measured, 2,
+                (measured + 1u >= 60u / tickrate) ? A_TEXT : A_WARN);
+    }
+    if (overclock != hud_oc) {
+        hud_oc = overclock;
+        put_str(70, HUD_ROW + 1, overclock ? "[OC]" : "    ", A_WARN);
+    }
+    if (paused != hud_pause) {
+        hud_pause = paused;
+        put_str(75, HUD_ROW + 1, paused ? "PAUSE" : "     ", A_WARN);
+    }
 }
 
 /* ---- input ----
@@ -360,44 +550,45 @@ static void draw_hud_live(unsigned char measured) {
  * every arrow starts with one, so it's ambiguous by construction. */
 static unsigned char esc_state;
 
+/* Consume bytes until a complete key is decoded or the buffer runs dry, so an
+ * arrow's three bytes resolve within a SINGLE call. Returning -1 after each
+ * partial byte (the earlier shape) meant an arrow needed three passes of the
+ * main loop; once a frame got slow the keyboard buffer overflowed mid-sequence,
+ * the state machine desynced, and arrows stopped decoding entirely.
+ *
+ * esc_state still persists across calls, because the bytes genuinely can arrive
+ * split if the host delivers them late. */
 static int getkey(void) {
-    int c = INCH_NB();
-    if (c < 0) return -1;
-    switch (esc_state) {
-        case 0:
-            if (c == 0x1B) { esc_state = 1; return -1; }
-            return c;
-        case 1:
-            esc_state = (c == '[') ? 2 : 0;
-            return -1;
-        default:
-            esc_state = 0;
-            switch (c) {
-                case 'A': return 'k';
-                case 'B': return 'j';
-                case 'C': return 'l';
-                case 'D': return 'h';
-            }
-            return -1;
+    int c;
+    for (;;) {
+        c = INCH_NB();
+        if (c < 0) return -1;                   /* buffer empty */
+        switch (esc_state) {
+            case 0:
+                if (c == 0x1B) { esc_state = 1; break; }
+                return c;
+            case 1:
+                esc_state = (c == '[') ? 2 : 0;
+                break;
+            default:
+                esc_state = 0;
+                switch (c) {
+                    case 'A': return 'k';
+                    case 'B': return 'j';
+                    case 'C': return 'l';
+                    case 'D': return 'h';
+                }
+                break;                          /* unknown sequence: drop it */
+        }
     }
 }
 
-/* Steer exactly one column. A glide is granted ONLY when this press looks like
- * auto-repeat -- a recent press the same way -- so holding a key reads as smooth
- * continuous motion while a deliberate tap stays a single precise column.
- * Moving into a wall crashes rather than being clamped: the conduit edge is
- * lethal, so bumping it has to cost you. */
-static void steer(signed char dx) {
-    erase_craft();
-    craft_x = (unsigned char)(craft_x + dx);
-    glide_left = (dx == glide_dx && since_steer <= REPEAT_WINDOW) ? REPEAT_GLIDE : 0;
-    glide_dx = dx;
-    since_steer = 0;
-    if (blocked(CRAFT_ROW, craft_x)) crash();
-    draw_craft();
-}
-
-/* Returns 0 to quit. */
+/* Returns 0 to quit.
+ *
+ * Only non-gameplay keys come through here now. Steering, firing and overclock
+ * are sampled from the control port inside step_world() instead -- a keystroke
+ * stream fundamentally cannot express "held", which is why they used to stutter
+ * and why firing used to cancel movement. */
 static unsigned char handle_key(int k) {
     switch (k) {
         case 'Q': case 'q':
@@ -405,7 +596,7 @@ static unsigned char handle_key(int k) {
         case 'P': case 'p':
             paused ^= 1;
             break;
-        case ' ':                       /* single-step while paused: frame debugging */
+        case '.':                       /* single-step while paused: frame debugging */
             if (paused) step_world();
             break;
         case '+': case '=':             /* smaller divisor = faster world */
@@ -414,17 +605,33 @@ static unsigned char handle_key(int k) {
         case '-': case '_':
             if (tickrate < TICK_MAX) tickrate++;
             break;
-        case 'h': steer(-1); break;
-        case 'l': steer(1);  break;
         default:
             break;
     }
     return 1;
 }
 
+/* Placeholder end screen; the real outcome tally is step 7. */
+static void game_over(void) {
+    unsigned char r, c;
+    for (r = 8; r <= 16; r++) {
+        vaddr((unsigned int)r * SCR_W + 24);
+        last_attr = 0xFF;
+        for (c = 0; c < 32; c++) put_cell(' ', A_TEXT);
+    }
+    put_str(30, 9,  "*** KERNEL PANIC ***", A_WARN);
+    put_str(28, 11, "ENERGY DEPLETED", A_TEXT);
+    put_str(28, 12, "SCORE", A_HUD);
+    put_num(38, 12, score, 5, A_TEXT);
+    put_str(28, 13, "ROWS", A_HUD);
+    put_num(38, 13, rows, 5, A_TEXT);
+    put_str(26, 15, "press any key", A_BEVEL);
+    while (INCH_NB() < 0) ;             /* wait for acknowledgement */
+}
+
 void main(void) {
     unsigned int  last, now;
-    unsigned char catchup, sec, persec = 0, measured = 0, hud_dirty = 1, r;
+    unsigned char catchup, sec, persec = 0, measured = 0, hud_dirty = 1, r, quit;
     int k;
 
     rngv = rng_seed();
@@ -435,9 +642,7 @@ void main(void) {
     vscrollbot(PLAY_BOT);               /* AFTER the clear -- a clear resets this */
     board_init();                       /* fixed trace routing for the whole run */
 
-    /* Fill the playfield so the run opens inside a conduit rather than a void.
-     * Generating downward from the top keeps `rows` consistent with the dither
-     * phase that rows_parity() derives. */
+    /* Fill the playfield so the run opens inside a conduit rather than a void. */
     for (r = 0; r < PLAY_H; r++) {
         head = head ? (unsigned char)(head - 1) : (unsigned char)(PLAY_H - 1);
         rows++;
@@ -464,12 +669,15 @@ void main(void) {
                 last += tickrate;
                 persec++;
                 catchup++;
+                if (dead) break;
             }
             /* Still behind after the catch-up cap? Drop the backlog instead of
              * spinning forever trying to make it up. */
             if ((unsigned int)(now - last) >= tickrate) last = now;
             hud_dirty = 1;
         }
+
+        if (dead) { draw_hud_live(measured); game_over(); break; }
 
         /* Measure real steps-per-second off the RTC -- the readout that proves
          * the loop is actually pacing at the target rate. */
@@ -482,13 +690,18 @@ void main(void) {
 
         if (hud_dirty) { draw_hud_live(measured); hud_dirty = 0; }
 
-        /* Poll input every pass, not just on tick boundaries, so steering stays
-         * responsive independently of the world's scroll cadence. */
-        k = getkey();
-        if (k >= 0) {
-            if (!handle_key(k)) break;
+        /* Poll input every pass, not just on tick boundaries, so steering and
+         * firing stay responsive independently of the world's scroll cadence.
+         * Drain a few keys per pass so a burst of auto-repeat can't back up in
+         * the kernel's keyboard buffer and start dropping bytes. */
+        quit = 0;
+        for (catchup = 0; catchup < 4; catchup++) {
+            k = getkey();
+            if (k < 0) break;
+            if (!handle_key(k)) { quit = 1; break; }
             hud_dirty = 1;
         }
+        if (quit) break;
 
         if (paused) last = jiffies();   /* don't bank a backlog while paused */
     }
