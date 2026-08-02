@@ -86,7 +86,7 @@ paraphrase):
 
 | Range | Chip | Class | Registers |
 |---|---|---|---|
-| `$FE00-$FE22` | **PIA** | `PIA` | keyboard data/status (`$FE00-$FE02`), interval-timer IRQ acknowledge (`$FE0E`), host file I/O — command, status, address, 12-byte name (`$FE10-$FE21`) |
+| `$FE00-$FE22` | **PIA** | `PIA` | keyboard data/status (`$FE00-$FE02`), interval-timer IRQ acknowledge (`$FE0E`), live held-key state (`$FE0F`), host file I/O — command, status, address, 12-byte name (`$FE10-$FE21`) |
 | `$FE23` | *(decoder)* | `Memory` | `MODULE_BANK` — selects the `$B000` window. Not a chip: `Memory` answers this one itself, before any peripheral is consulted |
 | `$FE24-$FE28` | **BLK** | `BlockDevice` | LBA, command, status, 512-byte sector port |
 | `$FE29-$FE2C` | **ACIA** | `Acia` | serial data, status, command, control |
@@ -98,6 +98,12 @@ The RTC reaches `$FE60` because the FAT date registers were appended after the
 range was first written down; the other docs quoted `$FE5E` until this diagram was
 drawn against the `is*Address()` predicates and turned up the difference.
 `$FE61-$FEFF` is unclaimed — that is where the next chip goes.
+
+The PIA's range is not densely packed: `$FE03-$FE0D` (the unused port-B side) and
+originally `$FE0F` were holes inside a span the decoder already routed. `$FE0F`
+became the **key-state port**, which is why that feature needed no new chip and no
+decoder change — see `ARCHITECTURE.md` for the bit layout and why an action game
+cannot use the keystroke buffer for movement.
 
 ## Interrupts
 

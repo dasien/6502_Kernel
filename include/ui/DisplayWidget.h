@@ -37,17 +37,26 @@ public:
 
 signals:
     void keyPressed(uint8_t ascii_code);
+    /// Live control-key state changed; carries the full PIA::kKey* bitmask.
+    void keyStateChanged(uint8_t mask);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
     // Mouse text selection: drag to select cells, copy to the clipboard on release.
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+
+private:
+    /// Map a Qt key to its PIA::kKey* bit, or 0 if it isn't a control key.
+    static uint8_t controlKeyBit(int qt_key);
+    /// Set or clear `bit` in key_state_ and emit keyStateChanged if it moved.
+    void updateKeyState(uint8_t bit, bool down);
 
 private slots:
     void refreshDisplay();
@@ -65,6 +74,9 @@ private:
     int char_width_;
     int char_height_;
     int refresh_rate_hz_;
+
+    /// Live control-key bitmask mirrored into the PIA's kKeyState register.
+    uint8_t key_state_ = 0;
     
     // Cached display state
     bool needs_full_redraw_;

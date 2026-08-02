@@ -42,7 +42,7 @@ namespace Computer
             return acia_->read(address);
         }
 
-        // Check if this is a VIC video-register read ($FE2D-$FE36). The screen
+        // Check if this is a VIC video-register read ($FE2D-$FE37). The screen
         // itself is not in the 64K map -- it lives behind this register port.
         if (video_chip_ && VIC::isVideoRegAddress(address))
         {
@@ -55,7 +55,7 @@ namespace Computer
             return sid_->read(address);
         }
 
-        // Check if this is an RTC register read ($FE55-$FE5C).
+        // Check if this is an RTC register read ($FE55-$FE60).
         if (rtc_ && Rtc::isRtcAddress(address))
         {
             return rtc_->read(address);
@@ -110,7 +110,7 @@ namespace Computer
             return;
         }
 
-        // Check if this is a VIC video-register write ($FE2D-$FE36). The screen
+        // Check if this is a VIC video-register write ($FE2D-$FE37). The screen
         // itself is not in the 64K map -- it lives behind this register port.
         if (video_chip_ && VIC::isVideoRegAddress(address))
         {
@@ -125,7 +125,7 @@ namespace Computer
             return;
         }
 
-        // Check if this is an RTC register write ($FE55-$FE5C; RTC_LATCH).
+        // Check if this is an RTC register write ($FE55-$FE60; RTC_LATCH).
         if (rtc_ && Rtc::isRtcAddress(address))
         {
             rtc_->write(address, value);
@@ -145,7 +145,7 @@ namespace Computer
             return;
         }
 
-        // Kernel ROM is read-only once installed. The I/O page ($FE00-$FE5E) sits
+        // Kernel ROM is read-only once installed. The I/O page ($FE00-$FE60) sits
         // inside this range but is matched above, so it still reaches its devices.
         if (rom_write_protect_ && address >= kKernelRomStart)
         {

@@ -26,6 +26,7 @@ private slots:
     void onNmiClicked();
     void updateStatus();
     void onDisplayKeyPressed(uint8_t ascii_code);
+    void onDisplayKeyStateChanged(uint8_t mask);
 
 private:
     void setupUI();

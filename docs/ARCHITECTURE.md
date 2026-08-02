@@ -23,7 +23,7 @@ Part 3 Kernel API · Part 4 Bank-switched modules
   - [System Variables (`$0200-$03FF`)](#system-variables-0200-03ff)
   - [Video (VIC) register port (`$FE2D-$FE37`)](#video-vic-register-port-fe2d-fe37)
   - [Sound (SID) register port (`$FE38-$FE54`)](#sound-sid-register-port-fe38-fe54)
-  - [Real-time clock (RTC) register port (`$FE55-$FE5C`)](#real-time-clock-rtc-register-port-fe55-fe5c)
+  - [Real-time clock (RTC) register port (`$FE55-$FE60`)](#real-time-clock-rtc-register-port-fe55-fe60)
   - [I/O — PIA (`$FE00-$FE23`)](#io--pia-fe00-fe23)
   - [ROM Layout](#rom-layout)
   - [Interrupt Vectors (`$FFFA-$FFFF`)](#interrupt-vectors-fffa-ffff)
@@ -72,13 +72,13 @@ memory/zero-page/I-O addresses, `Part 2 (Memory and zero-page map)` is authorita
 > see **[BOARD.md](BOARD.md)**.
 
 ```
-        ┌────────────┐   ┌──────────────┐   ┌───────────────────────────┐
+        ┌────────────┐   ┌──────────────┐   ┌────────────────────────────┐
         │ Reset      │──▶│ Timing       │──▶│ CPU6502 (WDC 65C02)        │
         │ Circuit    │   │ Circuit ~1MHz│   │ A/X/Y/SP/P, full CMOS ISA  │
-        └────────────┘   └──────────────┘   └────────────┬──────────────┘
+        └────────────┘   └──────────────┘   └─────────────┬──────────────┘
                                                           │ 16-bit bus
-        ┌─────────────────────────────────────────────────┴──────────────┐
-        │                          Memory (64K)                           │
+        ┌─────────────────────────────────────────────────┴────────────────┐
+        │                          Memory (64K)                            │
         │  RAM  •  ROM overlay ($F000-$FFFF)  •  bank window ($B000-$EFFF) │
         │  •  I/O page routed to peripherals ($FE00-$FE60)                 │
         └───┬──────┬───────┬───────┬───────┬───────┬───────────────────────┘
@@ -90,7 +90,7 @@ memory/zero-page/I-O addresses, `Part 2 (Memory and zero-page map)` is authorita
         │      ││timer││      ││     ││     ││           │
         └──┬───┘└──┬──┘└──┬───┘└─────┘└─────┘└───────────┘
            ▼       ▼      ▼
-       80x25    keyboard  Modem (host TCP/telnet, GUI build)
+       80x25    keyboard  Modem 
        display
 ```
 
@@ -118,7 +118,7 @@ the `Computer6502` class wires them together.
 - **Sid** — software MOS 6581/8580 SID (three voices, ADSR, filter) at
   `$FE38-$FE54`; `SidAudio` streams its PCM to the host audio out when Qt
   Multimedia is present.
-- **Rtc** — real-time clock (`$FE55-$FE5E`); backs the DOS `DATE`/`TIME`, FAT16
+- **Rtc** — real-time clock (`$FE55-$FE60`); backs the DOS `DATE`/`TIME`, FAT16
   file timestamps, and the kernel RNG seed.
 - **BlockDevice** — a FAT16 disk image (`disk.img`); the resident DOS filesystem
   reads/writes it. Images are built by the host `mkdisk` tool from a diskmap bundle.
@@ -334,7 +334,7 @@ uses voice 1 for the system beep and the `K_SOUND_TONE`/`K_SOUND_OFF` ABI; ASCII
 BEL (`$07`) rings a short non-blocking beep (gated off by the timer IRQ). All
 kernel sound honors the `SOUND_ENABLE` zero-page flag (`$29`, default on).
 
-### Real-time clock (RTC) register port (`$FE55-$FE5C`)
+### Real-time clock (RTC) register port (`$FE55-$FE60`)
 
 A read-only real-time clock that mirrors the host's local wall-clock time (always
 correct, not settable — so no battery-backed persistence is needed). The DOS
@@ -382,6 +382,8 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 |---------|----------|---------|
 | `$FE00` | `PIA_DATA` | Keyboard data (read consumes a key) |
 | `$FE02` | `PIA_CONTROL` | Status flags (bit 0 = data available) |
+| `$FE0E` | `TIMER_IRQ_ACK` | Write to acknowledge the ~60 Hz periodic timer IRQ |
+| `$FE0F` | `KEY_STATE` | Live held-key bitmask (read-only) — see below |
 | `$FE10` | `FILE_COMMAND` | File op: load/save (block), open-read/open-write/close (stream) |
 | `$FE11` | `FILE_STATUS` | Idle / in-progress / success / stream-open / EOF / error |
 | `$FE12-$FE13` | `FILE_ADDR_LO/HI` | Block load/save target/start address |
@@ -393,6 +395,31 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 | `$FE26` | `BLK_CMD` | Block device: 1 = read sector, 2 = write sector |
 | `$FE27` | `BLK_STATUS` | Block device: 0 = ready, $FF = error |
 | `$FE28` | `BLK_DATA` | Block device: 512-byte sector data port (auto-incrementing) |
+
+#### `KEY_STATE` (`$FE0F`) — the control port
+
+`PIA_DATA` is a queue of what was *typed*; `KEY_STATE` is a snapshot of what is
+*held*. Read it as a bitmask, active-high:
+
+| Bit | Key | | Bit | Key |
+|-----|-----|-|-----|-----|
+| 0 | Up | | 3 | Right |
+| 1 | Down | | 4 | Fire (Space) |
+| 2 | Left | | 5 | Button 2 (Left Shift) |
+
+Bits 6–7 are reserved and read 0. The read is non-destructive — poll it every
+frame for as long as the key is down.
+
+An action game cannot work from the keystroke queue alone. That queue carries no
+key-up, so the only evidence a key is still held is host auto-repeat, which stalls
+for ~500 ms before starting and — on most platforms — repeats only the *most
+recently pressed* key, so pressing fire silently cancels a held direction. These
+bits are independent, so steering and firing at once is expressible at all, and
+movement is as smooth as the polling rate rather than the repeat rate.
+
+The register reads 0 when nothing sets it, which is the case for the console
+build and the headless test harness; programs that use it degrade to "no input"
+rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 
 ### ROM Layout
 

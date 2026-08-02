@@ -348,6 +348,33 @@ target_include_directories(rtc_tests PRIVATE
 
 target_compile_features(rtc_tests PRIVATE cxx_std_20)
 
+# PIA key-state unit test: the live held-key register ($FE0F) that lets an action
+# game move and fire at once. The test itself only touches PIA, but PIA calls
+# CPU6502::setIrqLine for the periodic timer and CPU6502 needs Memory, which
+# needs every device -- hence the same source list as memory_banking_tests. No
+# Qt: PIA's file-dialog code is behind QT_GUI, which is not defined here.
+add_executable(pia_keystate_tests
+    test_pia_keystate.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+)
+
+target_link_libraries(pia_keystate_tests gtest_main gtest)
+
+target_include_directories(pia_keystate_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(pia_keystate_tests PRIVATE cxx_std_20)
+
 # Headless test of the 6502 serial terminal's ANSI engine (programs/term).
 # Runs the real TERM blob; the C++ side feeds ANSI and asserts on the screen.
 add_executable(term_ansi_tests
@@ -533,6 +560,10 @@ add_test(NAME sid
 # Add the RTC unit test to CTest
 add_test(NAME rtc
     COMMAND rtc_tests)
+
+# Add the PIA key-state (held-key port) unit test to CTest
+add_test(NAME pia_keystate
+    COMMAND pia_keystate_tests)
 
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom

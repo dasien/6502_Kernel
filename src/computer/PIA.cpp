@@ -142,6 +142,12 @@ uint8_t PIA::readPia(const uint16_t address)
             PIA_LOG("PIA: 6502 reading data register: no data available\n");
             return 0x00;
             
+        case kKeyState:
+            // Live "which control keys are held" bitmask. Unlike kPortAData this is
+            // non-destructive: a game polls it every frame and must keep seeing the
+            // key until the host reports the release.
+            return key_state_;
+
         case kPortADdr:
             return port_a_ddr_;
             
@@ -223,6 +229,21 @@ void PIA::clearKeyboardBuffer()
     buffer_tail_ = 0;
     buffer_count_ = 0;
     updateControlFlags();
+}
+
+void PIA::setKeyState(const uint8_t mask)
+{
+    key_state_ = mask;
+}
+
+uint8_t PIA::keyState() const
+{
+    return key_state_;
+}
+
+void PIA::clearKeyState()
+{
+    key_state_ = 0x00;
 }
 
 bool PIA::isBufferFull() const

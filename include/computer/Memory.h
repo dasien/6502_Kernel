@@ -63,7 +63,7 @@ namespace Computer
         /// Kernel ROM ($F000-$FFFF, 4KB): the BIOS -- screen, keyboard, hex and
         /// decimal conversion, the pager, IRQ/NMI, sound, bank launching -- plus the
         /// $FF00 ABI jump table and the $FFFA vectors. The I/O page is carved out of
-        /// it at $FE00-$FE5E. The monitor is no longer here; it is module bank 4.
+        /// it at $FE00-$FE60. The monitor is no longer here; it is module bank 4.
         static constexpr uint16_t kKernelRomStart = 0xF000;
 
         /// MODULE_BANK select register. Write n to map bank n into the window;
@@ -163,7 +163,7 @@ namespace Computer
 
         /**
          * @brief Set or update the RTC for memory-mapped I/O
-         * @param rtc Pointer to Rtc instance ($FE55-$FE5C)
+         * @param rtc Pointer to Rtc instance ($FE55-$FE60)
          */
         void setRtc(Rtc *rtc);
 
@@ -213,7 +213,7 @@ namespace Computer
         BlockDevice *block_device_ = nullptr; ///< Block device ($FE24-$FE28), or null
         Acia *acia_ = nullptr;                ///< Serial ACIA ($FE29-$FE2C), or null
         Sid *sid_ = nullptr;                  ///< SID sound chip ($FE38-$FE54), or null
-        Rtc *rtc_ = nullptr;                  ///< real-time clock ($FE55-$FE5C), or null
+        Rtc *rtc_ = nullptr;                  ///< real-time clock ($FE55-$FE60), or null
 
         /// Module ROM images, indexed by bank (1..255). Each entry is either
         /// empty (no module installed) or exactly kModuleWindowSize bytes.

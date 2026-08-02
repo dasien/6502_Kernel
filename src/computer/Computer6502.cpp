@@ -41,7 +41,7 @@ namespace Computer
         // Route the SID sound-chip registers ($FE38-$FE54) through memory.
         memory.setSid(&sid);
 
-        // Route the RTC registers ($FE55-$FE5C) through memory.
+        // Route the RTC registers ($FE55-$FE60) through memory.
         memory.setRtc(&rtc);
     }
 

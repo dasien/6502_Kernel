@@ -130,6 +130,20 @@ void MainWindow::onDisplayKeyPressed(uint8_t ascii_code)
     computer_->getPia()->addKeypress(ascii_code);
 }
 
+void MainWindow::onDisplayKeyStateChanged(uint8_t mask)
+{
+    if (!computer_)
+    {
+        return;
+    }
+
+    // Mirror the live held-key bitmask into the PIA's key-state register. This is
+    // a separate path from the keystroke buffer above, not a replacement: typed
+    // input still goes through the FIFO, while games poll this for smooth,
+    // simultaneous movement and fire.
+    computer_->getPia()->setKeyState(mask);
+}
+
 void MainWindow::setupUI()
 {
     // Create central widget and main layout
@@ -156,6 +170,9 @@ void MainWindow::setupUI()
     
     // Connect display widget keyboard input to PIA
     connect(display_widget_, &DisplayWidget::keyPressed, this, &MainWindow::onDisplayKeyPressed);
+    // Live held-key state for games (PIA $FE0F), alongside the keystroke buffer.
+    connect(display_widget_, &DisplayWidget::keyStateChanged, this,
+            &MainWindow::onDisplayKeyStateChanged);
     
     // Create status sidebar
     status_sidebar_ = new QWidget(this);

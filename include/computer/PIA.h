@@ -63,6 +63,24 @@ namespace Computer
         // timer's IRQ line (the ISR writes it to clear the interrupt).
         static constexpr uint8_t kTimerIrqAck = 0x0E; // $DC0E
 
+        // Live key state ($FE0F), read-only: which control keys are held RIGHT NOW,
+        // as opposed to the keystroke FIFO's record of what was typed. An action
+        // game cannot work from the FIFO alone -- it carries no key-up, so the only
+        // evidence a key is still held is OS auto-repeat, which stalls ~500ms before
+        // starting and (on most platforms) only repeats the most recently pressed
+        // key, making "move while firing" impossible. This register is the machine's
+        // joystick port: one poll per frame, bits independent, no repeat involved.
+        static constexpr uint8_t kKeyState = 0x0F; // $FE0F
+
+        // kKeyState bits, active-high (1 = held).
+        static constexpr uint8_t kKeyUp = 0x01;
+        static constexpr uint8_t kKeyDown = 0x02;
+        static constexpr uint8_t kKeyLeft = 0x04;
+        static constexpr uint8_t kKeyRight = 0x08;
+        static constexpr uint8_t kKeyFire = 0x10;   // Space
+        static constexpr uint8_t kKeyButton2 = 0x20; // Left Shift
+        // bits 6-7 reserved, always read 0
+
         // File I/O interface (extended PIA)
         static constexpr uint8_t kFileCommand = 0x10; // $DC10 - File operation command
         static constexpr uint8_t kFileStatus = 0x11; // $DC11 - File operation status
@@ -175,6 +193,32 @@ namespace Computer
         [[nodiscard]] uint8_t getBufferCount() const;
 
         /**
+         * @brief Set the live control-key state read back at kKeyState ($FE0F)
+         * @param mask Bitmask of kKey* bits currently held
+         * @note Host-side input layer calls this on every key press/release. It is
+         *       deliberately a latched bitmask rather than FIFO traffic: pushing
+         *       press+release pairs through the 32-byte keyboard buffer would
+         *       overflow it (which silently drops input) within a second of a held
+         *       key. Defaults to 0, so the console build and the headless tests --
+         *       which never call this -- read "nothing held" and are unaffected.
+         */
+        void setKeyState(uint8_t mask);
+
+        /**
+         * @brief Get the live control-key state
+         * @return uint8_t Bitmask of kKey* bits currently held
+         */
+        [[nodiscard]] uint8_t keyState() const;
+
+        /**
+         * @brief Release every held key
+         * @note Call on focus loss: the host stops receiving key-up events once the
+         *       widget loses focus, so without this a key held while alt-tabbing
+         *       away stays down forever.
+         */
+        void clearKeyState();
+
+        /**
          * @brief Set the memory interface for file operations
          * @param memory Pointer to system memory interface
          * @note Required for L: (load) and S: (save) monitor commands
@@ -212,6 +256,11 @@ namespace Computer
         uint8_t buffer_head_;
         uint8_t buffer_tail_;
         uint8_t buffer_count_;
+
+        // Live control-key state read back at kKeyState. A plain byte needs no
+        // synchronisation here: the CPU is stepped from a QTimer on the Qt GUI
+        // thread, so key events and guest reads are already serialised.
+        uint8_t key_state_{};
 
         // PIA registers
         uint8_t port_a_data_;

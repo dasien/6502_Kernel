@@ -210,6 +210,14 @@ FILE_SAVE_CMD      = $02           ; Save file command
 FILE_IN_PROGRESS   = $01           ; Operation in progress
 FILE_SUCCESS       = $02           ; Operation completed successfully
 
+; Live control-key state ($FE0F, read-only): which of the game keys are held
+; RIGHT NOW, as a bitmask -- b0 up, b1 down, b2 left, b3 right, b4 fire (space),
+; b5 button2 (left shift), b6-7 reserved. Distinct from the keystroke buffer at
+; KEYBOARD_DATA, which records what was typed and carries no key-up. Nothing in
+; the kernel uses this; it is declared here so the address is allocated in one
+; place. Action games poll it directly (see programs/kpanic/glue.s).
+KEY_STATE          = $FE0F
+
 ; Interrupt-related addresses and bits
 TIMER_IRQ_ACK      = $FE0E         ; write to acknowledge the periodic timer IRQ
 BASIC_NMI_FLAGS    = $DC           ; EhBASIC NmiBase (zero page): b7=enabled, b5=happened
