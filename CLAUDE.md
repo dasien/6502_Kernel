@@ -78,7 +78,7 @@ ctest --verbose
    - Stack organization ($0100-$01FF)
    - System variables ($0200-$03FF)
    - Low RAM ($0400-$07FF): T:/Z: snapshot + the assembler's symbol table
-   - Hardware I/O mapping ($FE00-$FE5E)
+   - Hardware I/O mapping ($FE00-$FE60)
    - ROM areas and bank switching
 
 ### Memory Architecture
@@ -90,7 +90,7 @@ The memory map is MFC's own; it is not a Commodore 64 layout:
 - **$0400-$07FF**: the T:/Z: page snapshot ($0400) and the assembler's identifier
   buffers and symbol table ($0500-$07FF). The screen is NOT here -- the 80x25
   display lives behind the VIC register port
-- **Hardware I/O ($FE00-$FE5E)**: PIA, VIC register port, ACIA, SID, RTC
+- **Hardware I/O ($FE00-$FE60)**: PIA, VIC register port, ACIA, SID, RTC
 
 ## 6502 Monitor Program
 
@@ -299,7 +299,7 @@ Refer to `docs/ARCHITECTURE.md` for complete details, but key locations include:
 - **$00/$01**: Processor port for memory banking
 - **$01FF**: Initial stack pointer location
 - **$B000-$EFFF**: Bank-switched module window, 16 KB (BASIC 1, FORTH 3, MONITOR 4 with the assembler built in; bank 2 free)
-- **$FE00-$FE5E**: Memory-mapped I/O — PIA, VIC register port, ACIA, SID, RTC
+- **$FE00-$FE60**: Memory-mapped I/O — PIA, VIC register port, ACIA, SID, RTC
   (the 80×25 screen and its colors live behind the VIC port, not in the 64K map)
 - **$F000-$FFFF**: Kernel BIOS ROM (the monitor is module bank 4, not here)
 - **$FFFA-$FFFF**: Interrupt vectors (NMI, RESET, IRQ)
