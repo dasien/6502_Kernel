@@ -176,8 +176,23 @@ if(CA65_FOUND AND LD65_FOUND)
                     ${COMMON_DIR}/scrollback.c ${COMMON_DIR}/scrollback.h
             VERBATIM
         )
+        # VENTURE blob (programs/venture). Staged at ../kernel/venture.bin so the
+        # headless test can load it at $0800 and drive it through the control port;
+        # VENTURE.PRG for the disk is made by programs/venture/build.sh.
+        set(VENTURE_DIR ${CMAKE_SOURCE_DIR}/programs/venture)
+        set(VENTURE_BIN ${CMAKE_BINARY_DIR}/kernel/venture.bin)
+        add_custom_target(venture_bin ALL
+            COMMAND cl65 -t none --signed-chars -O -C ${VENTURE_DIR}/venture.cfg
+                    ${VENTURE_DIR}/venture.c ${VENTURE_DIR}/glue.s -o ${VENTURE_BIN}
+            COMMAND ${CMAKE_COMMAND} -E echo "VENTURE blob built ($0800)"
+            COMMENT "Building VENTURE blob"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+            DEPENDS ${VENTURE_DIR}/venture.c ${VENTURE_DIR}/glue.s
+                    ${VENTURE_DIR}/venture.cfg ${VENTURE_DIR}/venture.h
+            VERBATIM
+        )
     else()
-        message(STATUS "cl65 not found - skipping TERM/IRC blobs (term_bin/irc_bin)")
+        message(STATUS "cl65 not found - skipping TERM/IRC/VENTURE blobs")
     endif()
 
     # ================================================================

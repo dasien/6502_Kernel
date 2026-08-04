@@ -457,6 +457,35 @@ target_include_directories(irc_tests PRIVATE
 
 target_compile_features(irc_tests PRIVATE cxx_std_20)
 
+# VENTURE (programs/venture): drives the real 6502 blob through the PIA control
+# port and reads the screen back. A real-time game cannot be checked by
+# compiling it.
+add_executable(venture_tests
+    test_venture.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(venture_tests gtest_main gtest)
+
+target_include_directories(venture_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(venture_tests PRIVATE cxx_std_20)
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp
@@ -548,6 +577,9 @@ add_test(NAME term_xmodem
 # Add the IRC chat-client end-to-end test to CTest
 add_test(NAME irc
     COMMAND irc_tests)
+
+add_test(NAME venture
+    COMMAND venture_tests)
 
 # Add the VIC character-plane (8-bit CP437) unit test to CTest
 add_test(NAME vic_charplane

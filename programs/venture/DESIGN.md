@@ -93,22 +93,24 @@ timer and a pursuit step, which is nearly free.
 
 ## Rooms, monsters and treasure
 
-Six themed rooms drawn from across the three levels, each with its treasure. Glyphs
-are taken from the machine's own character ROM:
+Six themed rooms drawn from across the three levels, each with its treasure.
 
-| Room | Monster | Glyph | Treasure | Glyph |
-|---|---|---|---|---|
-| Serpent | serpents | `§` `$15` | Apples | `♣` `$05` |
-| Cyclops | cyclops | `Θ` `$E9` | Necklace | `♦` `$04` |
-| Spider | spiders | `☼` `$0F` | Key | *TBD* |
-| Goat | goats | `Ω` `$EA` | Urn | *TBD* |
-| Skeleton | skeletons | *TBD* | Chest | *TBD* |
-| Griffin | griffins | *TBD* | Crown | *TBD* |
+Glyphs came first and the names follow them. Rather than pick a codepoint that
+ought to look like a necklace, the ROM was rendered and read, and whatever a shape
+honestly resembles is what it became — so Venture's Necklace, Urn, Key, Crown and
+Griffin are a Jewel, an Ingot, a Ring, an Amulet and a Wraith here.
 
-The four locked glyphs were chosen by rendering the ROM and looking: `§` is a
-serpent's S-curve, `Θ` is a single eye, `☼` has radiating legs, `Ω` has horns. The
-rest need the same treatment — picking them from a table without looking is how you
-end up with a spider that reads as a snowflake.
+| Room | Monster | Glyph | Reads as | Treasure | Glyph |
+|---|---|---|---|---|---|
+| Serpent | serpents | `§` `$15` | an S-curve | Apples | `♣` `$05` |
+| Cyclops | cyclops | `Θ` `$E9` | one eye | Jewel | `♦` `$04` |
+| Spider | spiders | `☼` `$0F` | radiating legs | Ring | `◘` `$09` |
+| Goat | goats | `Ω` `$EA` | horns | Ingot | `■` `$FE` |
+| Skeleton | skeletons | `¥` `$9D` | spine and ribs | Chest | `◙` `$0A` |
+| Wraith | wraiths | `Φ` `$E8` | a hooded figure | Amulet | `♥` `$03` |
+
+Picking these from a table without looking at them is how you end up with a spider
+that reads as a snowflake.
 
 Colour comes from the attribute plane, so each monster type gets its own without
 costing a glyph.
@@ -155,17 +157,38 @@ Clearing all four rooms of a level descends. Clearing level 3 loops to level 1 w
 
 Comfortable. KERNEL PANIC is 8,299 bytes for a busier simulation.
 
+## Status
+
+**Steps 1-5 are done** -- one playable room (`VENTURE.PRG`, 5,628 bytes). Serpents
+hunt, one arrow flies at a time, bodies stay lethal, and the scoring rule holds.
+Driven by `tests/test_venture.cpp` (8 assertions), which runs the real blob and
+holds keys through `$FE0F` the way a player would.
+
+Two things that came out of building it:
+
+- **A missing repaint, found by the tests.** `step()` only restores cells belonging
+  to things still alive, so when an arrow died its final cell was never redrawn --
+  and that is exactly the cell a corpse gets written into. The body was in the grid,
+  lethal and killing you, while the screen still showed an arrow or a serpent there.
+  Both the wall-hit and monster-hit paths now repaint immediately.
+- **Headless play needs the host timer.** The 60 Hz interval timer is pulsed by the
+  GUI (`MainWindow`), not by `Computer6502::run()`, so a jiffy-paced program sits on
+  its title screen forever in a test. The harness drives it off the CPU cycle
+  counter (16,667 cycles per tick), which is a true 60 Hz rather than an
+  instruction-count guess. Anything else jiffy-paced -- KERNEL PANIC included -- will
+  need the same.
+
 ## Build order
 
 Each step ends somewhere runnable and testable, the way KPANIC's did:
 
-1. **Skeleton loop.** Fixed-tick accumulator, `keystate()` polling, Winky moving
+1. **Skeleton loop.** Fixed-tick accumulator, `keystate()` polling, Winky moving  **(DONE)**
    8-way in an empty bounded room, `Q` to quit. Proves pacing and input.
-2. **One room, walls and treasure.** Collision, grab, exit. No monsters.
-3. **Arrows.** One in flight, facing direction, wall collision.
-4. **Room monsters.** One type (serpents), pursuit, death on contact, killable —
+2. **One room, walls and treasure.** Collision, grab, exit. No monsters.  **(DONE)**
+3. **Arrows.** One in flight, facing direction, wall collision.  **(DONE)**
+4. **Room monsters.** One type (serpents), pursuit, death on contact, killable —  **(DONE)**
    plus lethal corpses.
-5. **Scoring.** Including the before/after-treasure rule.
+5. **Scoring.** Including the before/after-treasure rule.  **(DONE)**
 6. **Dungeon map view.** Four rooms, corridors, blind doorways, room entry/exit.
 7. **Hallmonsters.** Map patrol plus room encroachment.
 8. **All twelve rooms.** Remaining monster types and treasures.
