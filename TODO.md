@@ -120,6 +120,30 @@ anything today; all four are recorded so they are not rediscovered the hard way.
   examples/README.md ("assemble the source in the built-in assembler") cannot rot
   again. `testLineNumbersCountBlankLines` pins the line numbering.
 
+### Games
+- [ ] **VENTURE** (`programs/venture/`) — a port of Exidy's Venture (1981); design in
+  `programs/venture/DESIGN.md`. Planned as the final game. Fits the machine unusually
+  well: Winky is already CP437 glyph $01 (with $02 as a second animation frame), the
+  slow real-time pacing is a quarter of what KERNEL PANIC sustains, and 8-way movement
+  while firing is the exact case the $FE0F control port was added for. Movement model
+  adopted wholesale from KPANIC (fixed-tick accumulator off jiffies, keystate() once
+  per tick, one cell per tick), with `tickrate` doubling as the difficulty ramp.
+  Build order in the design doc is ten steps; steps 1-5 give a playable single room,
+  which is the point to stop and judge whether it feels like Venture.
+- [ ] **OPCODE** — set aside, recorded so it is not lost. A puzzle game where each
+  level is a spec plus a byte/cycle budget and you write real 65C02 to satisfy it,
+  scored on size and speed. Extremely on-brand for "My First Computer", and four
+  pieces already exist: the two-pass assembler, EDIT, a real 65C02, and (as of the
+  v0.9 cycle work) datasheet-exact cycle counts, which is what makes scoring by
+  cycles meaningful rather than approximate.
+  - **Why it is not the next game:** sandboxing 6502 from 6502 is the whole problem.
+    ROM write-protection means player code cannot hurt the kernel or DOS, but nothing
+    protects game RAM from a stray STA, an infinite loop needs a watchdog the game
+    cannot run from inside itself, and exact per-instruction cycle counting means not
+    letting the real CPU execute it at all. The honest resolution is a 65C02
+    interpreter in C -- a second emulator inside the game, ~600-1000 lines before the
+    first puzzle. That is an engine project, not a game project.
+
 ### Memory map
 - [x] **Kernel to a 4 KB window; banks grow to 16 KB.** With the monitor gone the BIOS
   is 1,562 bytes, so the kernel moved from $E000-$FFFF (8 KB) to $F000-$FFFF (4 KB) and
