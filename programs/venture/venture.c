@@ -396,6 +396,35 @@ static void step(unsigned char ks)
     if (have_treasure && wy <= 1) room_cleared = 1;
 }
 
+/* ---- keyboard FIFO ------------------------------------------------------
+ * Movement and fire come off the control port, so the only things read from the
+ * keystroke buffer are commands. But the host sends an arrow key BOTH ways: it
+ * sets the control-port bit and pushes the ANSI sequence ESC [ A. So those bytes
+ * arrive here whether we want them or not, and a bare ESC can never be treated as
+ * a command -- every arrow starts with one, which is ambiguous by construction.
+ * (Treating ESC as quit meant any arrow key exited the game instantly.)
+ *
+ * Venture does not need to decode arrows at all; it only needs their bytes not to
+ * be mistaken for commands. So swallow the whole three-byte sequence. The state
+ * persists across calls because in a real-time loop the bytes genuinely can arrive
+ * on separate passes. */
+static unsigned char esc_state;      /* 0 idle, 1 saw ESC, 2 saw ESC '[' */
+
+static unsigned char swallow_esc(int k)
+{
+    switch (esc_state) {
+        case 0:
+            if (k == 0x1B) { esc_state = 1; return 1; }
+            return 0;
+        case 1:
+            esc_state = (k == '[') ? 2 : 0;
+            return 1;
+        default:
+            esc_state = 0;           /* the final letter (A/B/C/D) */
+            return 1;
+    }
+}
+
 /* ---- shell ------------------------------------------------------------- */
 static void banner(const char *line1, const char *line2)
 {
@@ -455,7 +484,8 @@ int main(void)
             for (catchup = 0; catchup < 4; catchup++) {
                 k = INCH_NB();
                 if (k < 0) break;
-                if (k == 'q' || k == 'Q' || k == 27) { QUITDOS(); return 0; }
+                if (swallow_esc(k)) continue;   /* an arrow's ESC [ X, not a command */
+                if (k == 'q' || k == 'Q') { QUITDOS(); return 0; }
                 if (k == 'p' || k == 'P') {
                     msg("Paused. Press any key.");
                     while (INCH_NB() < 0) { }

@@ -70,10 +70,16 @@ you can back away from something while still aiming at it.
 | Space | `$10` | fire |
 | Left Shift | `$20` | *(unused — reserved)* |
 | `P` | — | pause |
-| `Q` / ESC | — | quit to DOS |
+| `Q` | — | quit to DOS |
 
 Movement and fire come from the control port; `P` and `Q` come from the keystroke
 FIFO, drained a few per pass exactly as KPANIC does it.
+
+**ESC is deliberately not a quit key.** The host sends an arrow BOTH ways -- the
+control-port bit and the ANSI sequence `ESC [ A` -- so a bare ESC arriving in the
+FIFO is ambiguous by construction: every arrow starts with one. Treating it as quit
+made any arrow key exit the game instantly. The three-byte sequence is swallowed
+instead, since movement never needs decoding from the FIFO.
 
 ## Arrows
 

@@ -108,6 +108,22 @@ protected:
 
     void pressKey(char ch) { pia->addKeypress(ch); }
 
+    /* Press an arrow the way the host actually does: set the control-port bit AND
+     * push the ANSI sequence into the keystroke FIFO. DisplayWidget does both, so a
+     * test that only sets the bit cannot see bugs caused by the escape bytes -- and
+     * the first version of this game quit instantly on any arrow because it treated
+     * the leading ESC as quit. */
+    void pressArrow(uint8_t bit, char final_byte, int ticks)
+    {
+        pia->addKeypress(0x1B);
+        pia->addKeypress('[');
+        pia->addKeypress(final_byte);
+        pia->setKeyState(bit);
+        run(ticks * 4 + 2);
+        pia->setKeyState(0);
+        run(2);
+    }
+
     // Hold control bits for `ticks` game ticks. TICK_RATE is 4 jiffies per tick.
     void hold(uint8_t mask, int ticks)
     {
@@ -246,6 +262,31 @@ TEST_F(VentureTest, WallsBlockMovement)
     EXPECT_LT(x1, kRoomW - 1);
     EXPECT_LT(y1, kRoomH - 1);
     EXPECT_NE(roomGlyph(x1, y1), kGlyphWall);
+}
+
+/* --- regression: arrows must not be read as commands ----------------------- */
+
+TEST_F(VentureTest, ArrowKeysDoNotQuitTheGame)
+{
+    // The host sends an arrow twice over: the control-port bit, and ESC [ A into
+    // the keystroke FIFO. Every arrow therefore begins with an ESC, so ESC cannot
+    // mean quit -- and when it did, pressing any direction exited to the DOS
+    // immediately. Press each of the four, sequence bytes included, and the game
+    // must still be running with Winky on screen.
+    const struct { uint8_t bit; char final_byte; } arrows[] = {
+        { kKsUp, 'A' }, { kKsDown, 'B' }, { kKsRight, 'C' }, { kKsLeft, 'D' },
+    };
+    for (const auto &a : arrows) {
+        pressArrow(a.bit, a.final_byte, 2);
+        int wx, wy;
+        ASSERT_TRUE(findWinky(&wx, &wy))
+            << "the game exited (or died) after an arrow with final byte '"
+            << a.final_byte << "'";
+    }
+
+    // ...and Q still works, so swallowing the sequence has not eaten commands.
+    const std::string hud = screenRow(1);
+    EXPECT_NE(hud.find("SCORE"), std::string::npos) << "still in the game";
 }
 
 // --- step 3: one arrow in flight -------------------------------------------
