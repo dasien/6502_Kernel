@@ -162,15 +162,28 @@ anything today; all four are recorded so they are not rediscovered the hard way.
       the spider room (two clear columns, under 40 ticks) and stopped counting ticks
       for room legs — the accumulator and the jiffy budget drift by a tick with phase,
       so a leg lands one cell short and walks past its treasure.
-  - **Two gaps, deliberate.** The Hallmonster that walks into a room you linger in
+  - A **fourth pass**, from actually playing it. Two bugs that were invisible in the
+    code and in the tests and obvious in a minute at the keyboard: the hall's entrances
+    and the rooms' doorways **did not line up** (they were matched by scan order, which
+    is arbitrary), and a shot **passed through a monster** about a third of the time.
+    The second is an ordering hazard: the arrow moves before the monsters, so inside one
+    tick the arrow can advance past a monster's cell and the monster step into the
+    arrow's, with nothing looking again. It only bit on ticks where monsters move, which
+    is why it read as bad luck. Monsters also no longer stack on each other. The
+    entrances now get cut at runtime on the sides matching whichever room a slot holds.
+    26 tests, `VENTURE.PRG` 12,152 bytes.
+  - **Three gaps, deliberate.** The Hallmonster that walks into a room you linger in
     needs Winky alive for `HALL_ROOM_TICKS` (260 ticks, ~17 s) with three serpents
     converging; standing still, lapping the room's outer circuit and clearing the
     serpents first were all tried and all die short. The between-levels tally needs
     all four rooms of a level looted, i.e. four bespoke routes through four layouts.
-    Both are noted in `test_venture.cpp` with what they leave unverified — including
-    the wall-phasing path, which rides on the same untested trigger. What the intruder
-    does otherwise is `chase()`/`hall_advance()`, which the hall-side tests drive
-    directly.
+    The third is the arrow-swap fix, which has no signature on screen: the arrow is
+    drawn over the monster it is sitting on, so provoking the one observable frame needs
+    a monster to step onto a live arrow, on a tick monsters move, with Winky alive to
+    watch — every setup tried passed on the broken build as often as the fixed one, and
+    a test that passes on the broken build is worse than none. All three are written up
+    in `test_venture.cpp` with what they leave unverified, including the wall-phasing
+    path, which rides on the same untested trigger as the room intruder.
 - [ ] **OPCODE** — set aside, recorded so it is not lost. A puzzle game where each
   level is a spec plus a byte/cycle budget and you write real 65C02 to satisfy it,
   scored on size and speed. Extremely on-brand for "My First Computer", and four

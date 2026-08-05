@@ -50,6 +50,7 @@ rooms sitting in it as blocks.
 | `☺` | **Winky** — you |
 | a hollow box | A room. **Two entrances apiece**, on different sides. |
 | `■` | An entrance. Walk onto it to go in. |
+
 | a solid box | A room you have looted: entrances sealed, filled right in. |
 | `Φ` | **Hallmonster** — see below |
 | `█` (dim) | Wall |
@@ -58,6 +59,10 @@ rooms sitting in it as blocks.
 about what is behind it until you have been inside. That is deliberate: you commit
 first and find out second. The one thing the hall does tell you is which rooms are
 *done* — and only after you have already been in them.
+
+**The doors line up.** An entrance on a room's east side opens on the room's east
+doorway, and leaving by the room's north doorway puts you back at the north of its
+block. You can navigate the dungeon by memory rather than by surprise.
 
 **You cannot fire in the hall.** The bow is for rooms.
 
@@ -97,8 +102,9 @@ every time you loot a room — so the fourth room of a level is not the easy one
 
 The bar across the top shows **SCORE**, **LIVES** and **LEVEL**.
 
-Take the treasure, then get out. Every room has two doorways on opposite sides — the
+Take the treasure, then get out. Every room has two doorways on different sides — the
 one you came in by and one to run for — and neither will let you leave empty-handed.
+Which one you leave by decides where in the hall you come out.
 
 **Watch the pip.** Facing sticks after you let go of the key, and the pip is the only
 thing that shows it. It is how you know what you are aimed at while you are backing
@@ -114,7 +120,8 @@ you exactly as dead as the monster did. Every kill makes the room smaller. Clear
 room carelessly and you can wall yourself off from the treasure, or from the door.
 
 The remains stop monsters too — but they **go round**. Killing something does not buy
-you a wall, only a hazard you both have to work around.
+you a wall, only a hazard you both have to work around. Monsters will not walk through
+each other either, so a narrow gap is worth holding.
 
 **Scoring is the trap.** The treasure is worth 200 × level. A monster is worth
 100 × level — *but only after the treasure is in your hand*. Kill anything before

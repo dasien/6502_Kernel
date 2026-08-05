@@ -92,6 +92,13 @@ cannot spray: a missed shot is a commitment, and the reload is the arrow clearin
 the screen or hitting something. This is the single biggest source of tension in a
 room, and it is also the cheapest possible projectile system — one x, y, dx, dy.
 
+Cheap, but not free of ordering hazards. The arrow moves before the monsters do, so
+the two can **swap cells** inside one tick — the arrow advances past a monster's cell,
+then the monster steps into the arrow's — and unless something looks again the shot
+passes straight through. `monsters_advance()` re-checks the arrow after every step for
+exactly this reason. It only bit on ticks where monsters move, which made it look like
+random bad luck rather than a bug.
+
 ## Hallmonsters
 
 Invincible. Unkillable. They cannot be shot, blocked, or outrun indefinitely — they
@@ -123,10 +130,21 @@ That came from the screenshots: the arcade's rooms are mostly open space, and th
 structure is there to make you commit to a route rather than to make you thread a
 corridor.
 
-Two doorways apiece, on opposite sides. Either is a way out with the treasure, and
-which one you arrive at depends on which of the hall's two entrances you used. A
-one-door room is a cul-de-sac you have to fight back out of, which is not how
-Venture plays.
+Two doorways apiece, on different sides. Either is a way out with the treasure. A
+one-door room is a cul-de-sac you have to fight back out of, which is not how Venture
+plays.
+
+**The doors line up, both ways.** Come in the hall entrance on a room's east side and
+you arrive at the room's east doorway; leave by its north doorway and you step back
+into the hall at the north of its block. Which means the hall's entrances cannot be
+part of `map_layout` — a slot holds a different room every level, so the entrances are
+cut at runtime into the middle of whichever block edges match that room's doorway
+sides. `exits_of()` reads a room's sides off its border; `cut_notches()` does the
+cutting.
+
+Getting this wrong is disorienting in a way that is hard to name and easy to feel: you
+walk in from the right and are put down at the top, and the map you have built in your
+head stops matching the building.
 
 Glyphs came first and the names follow them. Rather than pick a codepoint that
 ought to look like a necklace, the ROM was rendered and read, and whatever a shape
@@ -166,6 +184,10 @@ They have to *route round* it. Vetoing the step after choosing it leaves the mon
 standing still, which turns a room full of bodies into a room full of statues waiting
 to be shot — so a corpse is tested as part of the pathing, with a deterministic
 sidestep when both ways forward are shut.
+
+Monsters do not step onto each other either. They all chase the same target, so without
+that they converge into one cell and draw as a single glyph: you cannot see how many are
+coming, and one arrow appears to kill two.
 
 ## Scoring
 
@@ -219,10 +241,10 @@ treasure or kill something worthless. An arcade cabinet carried an instruction c
 and the machine just played; the manual is that card.
 
 **Finished.** All ten steps are in, then a fidelity pass against ten screenshots of
-arcade play, then a second pass on what the screenshots could not show — how the
-things in the rooms actually behave (`VENTURE.PRG`, 11,274 bytes). Driven by
-`tests/test_venture.cpp` (24 tests), which runs the real blob and holds keys through
-`$FE0F` the way a player would.
+arcade play, then two passes on what screenshots cannot show — how the things in the
+rooms behave, and whether the geometry holds together when you actually walk it
+(`VENTURE.PRG`, 12,152 bytes). Driven by `tests/test_venture.cpp` (26 tests), which
+runs the real blob and holds keys through `$FE0F` the way a player would.
 
 Things that came out of building it:
 
@@ -253,12 +275,15 @@ Things that came out of building it:
   flood-fills them: exact dimensions, sealed border, treasure and every monster post
   reachable from the door. Two real typos turned up that way while the rooms were
   being drawn.
-- **Two behaviours resisted testing**, and are left untested rather than tested
-  flakily. The Hallmonster that comes into a room you linger in needs Winky alive for
-  260 ticks with three serpents closing, and no scripted route survives that. The
-  between-levels tally needs all four rooms of a level looted, which is four bespoke
-  routes through four different layouts. Both are noted in `test_venture.cpp` with
-  what exactly they leave unverified.
+- **Three things resisted testing**, and are left untested rather than tested flakily.
+  The Hallmonster that comes into a room you linger in needs Winky alive for 260 ticks
+  with three serpents closing. The between-levels tally needs all four rooms of a level
+  looted. And the arrow-swap fix has no signature on screen -- the arrow is drawn over
+  the monster it is sitting on, so provoking the one observable frame needs a monster
+  to step onto a live arrow, on a tick monsters move, while Winky is alive to watch;
+  every setup tried passed on the broken build as often as the fixed one. A test that
+  passes on the broken build is worse than no test. All three are written up in
+  `test_venture.cpp` with what exactly they leave unverified.
 - **Screenshots beat descriptions.** The build was "finished" before anyone looked at
   the arcade game running. Four mechanics that a written summary does not convey were
   sitting in plain sight: a looted room seals solid, Hallmonsters accumulate, rooms
@@ -266,6 +291,11 @@ Things that came out of building it:
   and all four matter to how it plays. The pip in particular fixes a readability
   problem this port had invented for itself -- facing persists after you release the
   key, and nothing showed it.
+- **Play it, or you will not find these.** The two bugs in this pass -- doors that did
+  not line up, and shots that passed through monsters -- were both invisible from the
+  code and from the tests, and both obvious within a minute of playing. The doors were
+  matched by scan order, which is arbitrary and *looked* fine; the shots failed only on
+  the one tick in three where monsters move.
 - **A vetoed step is not a re-planned step.** Room monsters would not walk over a
   corpse, but the refusal happened *after* the greedy step had been chosen, so the
   monster simply did not move -- it stood next to its own dead until it was shot.
@@ -333,8 +363,11 @@ What is left is a genuine departure, and why:
 - **Screen switch instead of a zoom** between hall and room. The arcade draws each
   room's true shape on the hall and zooms into it; a 44×15 room cannot also be drawn
   to scale inside a 56×15 hall, so the hall carries an 11×5 box per room instead. It
-  is drawn hollow, with its entrances notched into it, and fills in solid when looted
-  — which is the part that matters.
+  is drawn hollow, with its entrances notched into it on the sides that match the
+  room's own doorways, and fills in solid when looted.
+- **An entrance sits at the middle of its block edge**, wherever the room's doorway is
+  along its wall. On an eleven-cell edge there is nowhere meaningfully different to put
+  it; the *side* is what a player reads.
 - **No moving walls.** `room-moving-walls.png` has red bars that slide; that is a
   per-room hazard system and it is not built. The pinwheel room takes its shape from
   that screenshot without its motion.

@@ -26,7 +26,7 @@
  * looks like.
  *
  * Hall: '#' wall  '.' floor  'A'-'D' room 0-3's outline  'a'-'d' inside it
- *       '1'-'4' an entrance to room 0-3, two apiece  'h' a Hallmonster post.
+ *       'h' a Hallmonster post. Entrances are NOT in the data -- see cut_notches().
  * Room: '#' wall  '.' floor  '*' the treasure  'm' a monster post
  *       '+' a doorway in the border -- two of them, and either one is a way out.
  *
@@ -37,23 +37,26 @@
  * about the source looks wrong.
  */
 
-/* The hall is an open arena with the four rooms drawn in it as hollow outlines and
- * their entrances notched into them, which is how the arcade draws its dungeon
- * floor. One hall serves every level; what changes is what is behind the doors, and
- * by the time that would matter you have learnt the hall. */
+/* The hall is an open arena with the four rooms drawn in it as hollow outlines, which
+ * is how the arcade draws its dungeon floor. One hall serves every level; what
+ * changes is what is behind the doors, and by the time that would matter you have
+ * learnt the hall.
+ *
+ * The entrances are cut in at runtime rather than being part of this picture, because
+ * where they go depends on which room the slot is holding -- see cut_notches(). */
 
 static const char *const map_layout[MAP_H] = {
     "########################################################",
     "#......................................................#",
     "#..AAAAAAAAAAA....h..................h....BBBBBBBBBBB..#",
     "#..AaaaaaaaaaA............................BbbbbbbbbbB..#",
-    "#..Aaaaaaaaaa1............................2bbbbbbbbbB..#",
     "#..AaaaaaaaaaA............................BbbbbbbbbbB..#",
-    "#..AAAAA1AAAAA............................BBBBB2BBBBB..#",
+    "#..AaaaaaaaaaA............................BbbbbbbbbbB..#",
+    "#..AAAAAAAAAAA............................BBBBBBBBBBB..#",
     "#...............h......................h...............#",
-    "#..CCCCC3CCCCC............................DDDDD4DDDDD..#",
+    "#..CCCCCCCCCCC............................DDDDDDDDDDD..#",
     "#..CcccccccccC............................DdddddddddD..#",
-    "#..Cccccccccc3............................4dddddddddD..#",
+    "#..CcccccccccC............................DdddddddddD..#",
     "#..CcccccccccC............................DdddddddddD..#",
     "#..CCCCCCCCCCC....h..................h....DDDDDDDDDDD..#",
     "#......................................................#",
@@ -199,17 +202,38 @@ static unsigned char grid[MAP_H][MAP_W];   /* the hall is the larger of the two 
 static unsigned char gw, gh;               /* the current board's dimensions */
 static unsigned char gx0, gy0;             /* and where it is drawn on screen */
 
+/* Which side of a board a border cell sits on. This is the whole of the door
+ * alignment scheme, and it runs both ways: you come INTO a room at the doorway on the
+ * same side as the hall entrance you used, and you come back OUT of the hall entrance
+ * on the same side as the doorway you left by. Enter a room from the east and leave it
+ * by its north door, and you step back into the hall at the north of its block.
+ *
+ * Which is why the entrances cannot be drawn into map_layout: a slot holds a different
+ * room each level, and the sides have to follow it. */
+#define SIDE_N 0
+#define SIDE_S 1
+#define SIDE_W 2
+#define SIDE_E 3
+
+/* The four room blocks in the hall, matching map_layout above. */
+#define BLK_W 11
+#define BLK_H 5
+static const unsigned char blk_x[ROOMS_PER_LEVEL] = { 3, 42, 3, 42 };
+static const unsigned char blk_y[ROOMS_PER_LEVEL] = { 2,  2, 8,  8 };
+
+static unsigned char sl_side[ROOMS_PER_LEVEL][2];   /* each slot's two door sides */
+static unsigned char sl_x[ROOMS_PER_LEVEL][2];      /* and where they got cut */
+static unsigned char sl_y[ROOMS_PER_LEVEL][2];
+
+static unsigned char rx_side[2], rx_x[2], rx_y[2];  /* the current room's doorways */
+static unsigned char exit_used;                     /* which one we walked out of */
+
 static unsigned char mode;                 /* MODE_MAP / MODE_ROOM */
 static unsigned char theme;                /* which of the six rooms we are in */
 static unsigned char room_of_slot[ROOMS_PER_LEVEL];
 static unsigned char slot_done[ROOMS_PER_LEVEL];
 static unsigned char slot_entered = 0xFF;  /* the room we last went into */
 static unsigned char ret_x, ret_y;         /* the hall cell we went in from */
-
-/* Which of a room's two doorways we came in by, so the hall's two entrances mean
- * something: go in the left one and you start at the room's first doorway, the
- * right one and you start at its second. */
-static unsigned char entry_side;
 
 /* ---- entities ---------------------------------------------------------- */
 static unsigned char wx, wy;             /* Winky, in board coordinates */
@@ -430,6 +454,55 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
     }
 }
 
+/* Read a room's two doorways off its border, in a fixed N-S-W-E order so the room's
+ * list and its slot's list line up index for index. The scan skips the corners, which
+ * is why a doorway may never be in one -- its side would be ambiguous, and
+ * tests/test_venture.cpp enforces it. */
+static unsigned char exits_of(unsigned char th, unsigned char *side,
+                              unsigned char *ex, unsigned char *ey)
+{
+    unsigned char i, n = 0;
+    for (i = 1; i < ROOM_W - 1; i++)
+        if (room_art[th][0][i] == '+') {
+            side[n] = SIDE_N; ex[n] = i; ey[n] = 0; n++;
+        }
+    for (i = 1; i < ROOM_W - 1; i++)
+        if (room_art[th][ROOM_H - 1][i] == '+') {
+            side[n] = SIDE_S; ex[n] = i; ey[n] = ROOM_H - 1; n++;
+        }
+    for (i = 1; i < ROOM_H - 1; i++)
+        if (room_art[th][i][0] == '+') {
+            side[n] = SIDE_W; ex[n] = 0; ey[n] = i; n++;
+        }
+    for (i = 1; i < ROOM_H - 1; i++)
+        if (room_art[th][i][ROOM_W - 1] == '+') {
+            side[n] = SIDE_E; ex[n] = ROOM_W - 1; ey[n] = i; n++;
+        }
+    return n;
+}
+
+/* Cut each slot's two entrances into the middle of the block edges that match its
+ * room's doorway sides. The middle is close enough -- the SIDE is what a player reads,
+ * and an 11-cell edge has nowhere meaningfully different to put it. */
+static void cut_notches(void)
+{
+    unsigned char s, k, x, y;
+    for (s = 0; s < ROOMS_PER_LEVEL; s++)
+        for (k = 0; k < 2; k++) {
+            x = blk_x[s];
+            y = blk_y[s];
+            switch (sl_side[s][k]) {
+                case SIDE_N: x += BLK_W / 2;                     break;
+                case SIDE_S: x += BLK_W / 2; y += BLK_H - 1;     break;
+                case SIDE_W:                 y += BLK_H / 2;     break;
+                default:     x += BLK_W - 1; y += BLK_H / 2;     break;
+            }
+            grid[y][x] = (unsigned char)(T_DOOR0 + s);
+            sl_x[s][k] = x;
+            sl_y[s][k] = y;
+        }
+}
+
 /* The cell just inside a border doorway. */
 static void step_inward(unsigned char dx, unsigned char dy)
 {
@@ -456,6 +529,7 @@ static void enter_map(void)
 {
     mode = MODE_MAP;
     load_board(map_layout, MAP_W, MAP_H, MAP_X, MAP_Y);
+    cut_notches();
     set_hall_count();
 
     /* Back beside the entrance we went in by, never on it: standing on it would
@@ -477,27 +551,17 @@ static void enter_map(void)
     draw_hud();
 }
 
-static void enter_room(unsigned char slot, unsigned char side)
+static void enter_room(unsigned char slot, unsigned char which)
 {
-    unsigned char rx, ry, seen = 0;
-
     mode = MODE_ROOM;
     slot_entered = slot;
-    entry_side = side;
     theme = room_of_slot[slot];
     load_board(room_art[theme], ROOM_W, ROOM_H, ROOM_X, ROOM_Y);
+    exits_of(theme, rx_side, rx_x, rx_y);
 
-    /* Arrive just inside the doorway matching the hall entrance we used. */
-    wx = ROOM_W / 2; wy = 1;
-    for (ry = 0; ry < ROOM_H; ry++) {
-        for (rx = 0; rx < ROOM_W; rx++) {
-            if (grid[ry][rx] != T_EXIT) continue;
-            if (seen++ != side) continue;
-            step_inward(rx, ry);
-            ry = ROOM_H; break;
-        }
-    }
-    if (!face_dx && !face_dy) face_dy = 1;
+    /* In at the doorway on the same side as the hall entrance we used, facing in. */
+    step_inward(rx_x[which], rx_y[which]);
+    exit_used = which;
 
     have_treasure = 0;
     left_room = 0;
@@ -515,17 +579,10 @@ static unsigned char door_at(unsigned char rx, unsigned char ry)
     return (t >= T_DOOR0) ? (unsigned char)(t - T_DOOR0) : 0xFF;
 }
 
-/* ...and which of that room's two entrances it is, in row-major order. */
-static unsigned char door_side(unsigned char rx, unsigned char ry, unsigned char slot)
+/* ...and which of that slot's two entrances it is. */
+static unsigned char notch_index(unsigned char rx, unsigned char ry, unsigned char slot)
 {
-    unsigned char x, y, n = 0;
-    for (y = 0; y < MAP_H; y++)
-        for (x = 0; x < MAP_W; x++) {
-            if (grid[y][x] != (unsigned char)(T_DOOR0 + slot)) continue;
-            if (x == rx && y == ry) return n;
-            n++;
-        }
-    return 0;
+    return (sl_x[slot][1] == rx && sl_y[slot][1] == ry) ? 1 : 0;
 }
 
 /* ---- collision --------------------------------------------------------- */
@@ -580,6 +637,27 @@ static void fire(void)
     a_live = 1;
 }
 
+/* The arrow and the monster it hit both come off the board, and the body goes in the
+ * cell they shared. */
+static void kill_monster(unsigned char i)
+{
+    m_live[i] = 0;
+    grid[a_y][a_x] = T_CORPSE;       /* the body stays, and stays lethal */
+    a_live = 0;
+    /* Draw it now. Nothing else will: the monster is off the live list and so is the
+     * arrow, and step() only restores cells belonging to things still alive. Without
+     * this the body sits in the grid -- lethal, and killing you -- while the screen
+     * still shows an arrow or a monster in that cell. */
+    restore(a_x, a_y);
+    /* The original's rule: monsters pay nothing until the treasure is yours. Clearing
+     * the room first is the safe play and scores you nothing for it. */
+    if (have_treasure) {
+        score += (unsigned int)SCORE_MONSTER * level;
+        cue(SND_KILL);
+        draw_hud();
+    }
+}
+
 static void arrow_advance(void)
 {
     unsigned char step, i, nx, ny;
@@ -600,28 +678,8 @@ static void arrow_advance(void)
         a_x = nx;
         a_y = ny;
 
-        for (i = 0; i < MAX_MON; i++) {
-            if (m_live[i] && m_x[i] == a_x && m_y[i] == a_y) {
-                m_live[i] = 0;
-                grid[a_y][a_x] = T_CORPSE;   /* the body stays, and stays lethal */
-                a_live = 0;
-                /* Draw it now. Nothing else will: the monster is off the live
-                 * list and so is the arrow, and step() only restores cells
-                 * belonging to things still alive. Without this the body sits in
-                 * the grid -- lethal, and killing you -- while the screen still
-                 * shows an arrow or a monster in that cell. */
-                restore(a_x, a_y);
-                /* The original's rule: monsters pay nothing until the treasure is
-                 * yours. Clearing the room first is the safe play and scores you
-                 * nothing for it. */
-                if (have_treasure) {
-                    score += (unsigned int)SCORE_MONSTER * level;
-                    cue(SND_KILL);
-                    draw_hud();
-                }
-                return;
-            }
-        }
+        for (i = 0; i < MAX_MON; i++)
+            if (m_live[i] && m_x[i] == a_x && m_y[i] == a_y) { kill_monster(i); return; }
 
         /* Hallmonsters cannot be shot. The arrow just stops on one. */
         for (i = 0; i < MAX_HALL; i++) {
@@ -640,6 +698,8 @@ static void arrow_advance(void)
  * Room monsters and Hallmonsters share it. What differs is what stops them --
  * `solid`, below -- and that is the whole difference between a monster and a clock.
  */
+static unsigned char chase_self;    /* the monster taking this step, 0xFF for none */
+
 static unsigned char chase_blocked(unsigned char rx, unsigned char ry,
                                    unsigned char through_walls,
                                    unsigned char avoid_bodies)
@@ -648,8 +708,18 @@ static unsigned char chase_blocked(unsigned char rx, unsigned char ry,
      * as on you, and a corpse it cannot cross is a corpse it has to go round. It has
      * to be tested HERE and not vetoed after the fact -- a step chosen and then
      * refused leaves the monster standing still, which is exactly what made them sit
-     * next to their own dead waiting to be shot. */
-    if (avoid_bodies && grid[ry][rx] == T_CORPSE) return 1;
+     * next to their own dead waiting to be shot.
+     *
+     * Nor will it walk onto another one. They all chase the same target, so without
+     * this they converge into the same cell and draw as a single glyph -- you cannot
+     * see how many are coming, and one arrow appears to kill two. Crowding is the
+     * honest behaviour and it makes a doorway worth holding. */
+    if (avoid_bodies) {
+        unsigned char i;
+        if (grid[ry][rx] == T_CORPSE) return 1;
+        for (i = 0; i < MAX_MON; i++)
+            if (i != chase_self && m_live[i] && m_x[i] == rx && m_y[i] == ry) return 1;
+    }
     if (through_walls) return 0;
     return pursuit_blocked(rx, ry);
 }
@@ -709,9 +779,31 @@ static void monsters_advance(void)
     unsigned char i;
     for (i = 0; i < MAX_MON; i++) {
         if (!m_live[i]) continue;
-        chase(&m_x[i], &m_y[i], 0, 1);      /* walls stop them, and so do bodies */
+        chase_self = i;
+        chase(&m_x[i], &m_y[i], 0, 1);      /* walls, bodies and each other stop them */
+
+        /* A monster that walks INTO the arrow dies on it. Without this the two swap
+         * cells and the shot goes straight through: the arrow advances past the
+         * monster's old cell earlier in this same tick, then the monster steps into
+         * the arrow's new one and nothing looks again. It only happens on the ticks
+         * monsters actually move, which is why it read as random. */
+        if (a_live && m_x[i] == a_x && m_y[i] == a_y) { kill_monster(i); continue; }
+
         if (m_x[i] == wx && m_y[i] == wy) dead = 1;
     }
+}
+
+/* Same swap, and a Hallmonster still cannot be shot -- the arrow just stops on it. */
+static void hall_arrow_check(void)
+{
+    unsigned char i;
+    if (!a_live) return;
+    for (i = 0; i < MAX_HALL; i++)
+        if (h_live[i] && h_x[i] == a_x && h_y[i] == a_y) {
+            a_live = 0;
+            restore(a_x, a_y);
+            return;
+        }
 }
 
 /* In the hall they walk it like anyone else. Inside a room they walk THROUGH THE
@@ -722,6 +814,7 @@ static void hall_advance(void)
 {
     const unsigned char phases = (mode == MODE_ROOM);
     unsigned char i;
+    chase_self = 0xFF;
     for (i = 0; i < MAX_HALL; i++) {
         if (!h_live[i]) continue;
         chase(&h_x[i], &h_y[i], phases, 0);
@@ -786,8 +879,8 @@ static void step(unsigned char ks)
          * whole board underneath us, so this step ends here. */
         slot = door_at(wx, wy);
         if (slot != 0xFF && !slot_done[slot]) {
-            ret_x = wx; ret_y = wy;
-            enter_room(slot, door_side(wx, wy, slot));
+            ret_x = wx; ret_y = wy;      /* where to put us back if we die in there */
+            enter_room(slot, notch_index(wx, wy, slot));
             return;
         }
         if (lethal(wx, wy)) { dead = 1; return; }
@@ -801,15 +894,23 @@ static void step(unsigned char ks)
             cue(SND_TREASURE);
             draw_hud();
         }
-        /* Either doorway is a way out, and only with the goods. */
-        if (have_treasure && grid[wy][wx] == T_EXIT) { left_room = 1; return; }
+        /* Either doorway is a way out, and only with the goods. Which one decides
+         * where in the hall we reappear: leave by the north door and you step out at
+         * the north of the room's block. */
+        if (have_treasure && grid[wy][wx] == T_EXIT) {
+            exit_used = (rx_x[1] == wx && rx_y[1] == wy) ? 1 : 0;
+            ret_x = sl_x[slot_entered][exit_used];
+            ret_y = sl_y[slot_entered][exit_used];
+            left_room = 1;
+            return;
+        }
         if (lethal(wx, wy)) { dead = 1; return; }
 
         if (ks & KS_FIRE) fire();
         arrow_advance();
         if (!(tick_count % MON_EVERY)) monsters_advance();
         if (++dawdle > HALL_ROOM_TICKS) hall_intrude();
-        if (!(tick_count % HALL_IN_EVERY)) hall_advance();
+        if (!(tick_count % HALL_IN_EVERY)) { hall_advance(); hall_arrow_check(); }
     }
 
     if (lethal(wx, wy)) dead = 1;   /* something may have stepped onto Winky */
@@ -929,9 +1030,14 @@ static void start_level(void)
     a_hall = lvl_hall[p];
 
     for (i = 0; i < ROOMS_PER_LEVEL; i++) {
+        unsigned char ex[2], ey[2];
         room_of_slot[i] =
             (unsigned char)(((level - 1) * ROOMS_PER_LEVEL + i) % THEMES);
         slot_done[i] = 0;
+        /* Take the sides of this room's doorways now, so the hall can cut its
+         * entrances to match. A slot holds a different room each level, so the hall's
+         * entrances move with it. */
+        exits_of(room_of_slot[i], sl_side[i], ex, ey);
     }
     level_done = 0;
     level_base = score;
