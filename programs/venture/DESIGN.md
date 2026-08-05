@@ -33,13 +33,13 @@ this project can actually reach.
 
 Two views:
 
-**The hall.** An open arena with the four rooms sitting in it as blocks, each with
-**two entrances**. Winky crosses it; Hallmonsters patrol it. **Rooms stay blind** —
+**The hall.** An open arena with the four rooms drawn in it as hollow **outlines**,
+each with **two entrances** notched into its wall. Winky crosses it; Hallmonsters patrol it. **Rooms stay blind** —
 the hall shows an entrance, never the contents. You commit before you know what is
 inside, which is where the dread lives.
 
 The one thing the hall does tell you is which rooms are **done**: a looted room
-seals both its entrances and fills in solid. That is the arcade's own signal, and it
+seals both its entrances and fills in solid, so a hollow box becomes a solid one. That is the arcade's own signal, and it
 only appears after you have already been in.
 
 **Room interior.** Fills the screen. The treasure, the room's monsters, walls, and
@@ -102,6 +102,12 @@ are lingering in; stay too long and one comes through a doorway.
 crawling by the fourth room — one screenshot has seven of them. One wakes per room
 cleared, which is what stops the last room of a level being the easiest.
 
+**The one that comes into a room walks through the walls.** It does not path round the
+layout, it cannot be cornered, and nothing you put between you and it helps — it comes
+straight at you until you leave. In the hall they walk it like anyone else; inside a
+room they ignore it entirely. That asymmetry is the whole difference between a monster
+and a deadline, and it is why the room's second doorway earns its keep.
+
 This is what stops Venture being a leisurely looting exercise. Implementation is a
 timer and a pursuit step, which is nearly free.
 
@@ -155,6 +161,12 @@ move in, and clearing a room can wall you off from the treasure or the door.
 Nearly free to implement — leave a glyph, collide, die — and it is the reason a
 room cannot be brute-forced.
 
+A body stops **monsters** too, and what they do about it matters more than it sounds.
+They have to *route round* it. Vetoing the step after choosing it leaves the monster
+standing still, which turns a room full of bodies into a room full of statues waiting
+to be shot — so a corpse is tested as part of the pathing, with a deterministic
+sidestep when both ways forward are shut.
+
 ## Scoring
 
 | Event | Points |
@@ -206,10 +218,11 @@ nothing while it runs -- no tutorial messages, no coaching when you take the
 treasure or kill something worthless. An arcade cabinet carried an instruction card
 and the machine just played; the manual is that card.
 
-**Finished.** All ten steps are in, and then a fidelity pass against ten screenshots
-of arcade play (`VENTURE.PRG`, 10,488 bytes). Driven by `tests/test_venture.cpp`
-(23 tests), which runs the real blob and holds keys through `$FE0F` the way a player
-would.
+**Finished.** All ten steps are in, then a fidelity pass against ten screenshots of
+arcade play, then a second pass on what the screenshots could not show — how the
+things in the rooms actually behave (`VENTURE.PRG`, 11,274 bytes). Driven by
+`tests/test_venture.cpp` (24 tests), which runs the real blob and holds keys through
+`$FE0F` the way a player would.
 
 Things that came out of building it:
 
@@ -253,6 +266,17 @@ Things that came out of building it:
   and all four matter to how it plays. The pip in particular fixes a readability
   problem this port had invented for itself -- facing persists after you release the
   key, and nothing showed it.
+- **A vetoed step is not a re-planned step.** Room monsters would not walk over a
+  corpse, but the refusal happened *after* the greedy step had been chosen, so the
+  monster simply did not move -- it stood next to its own dead until it was shot.
+  Obstacles have to be part of the pathing, not a filter on its output. The fix also
+  needed a deterministic sidestep for the case where both ways forward are shut, since
+  falling back to a random step there reads as dithering.
+- **Making the monsters better broke a test route.** The 160-tick loot route through
+  room 0 survived only because the serpents used to stall; once they kept coming it
+  died every time. The harness moved to the spider room, whose pillars leave two clear
+  columns and make the round trip under 40 ticks. Worth noting that the *symptom* of
+  the fix landing was a test failing.
 - **Pursuers must not step into a doorway.** A room entrance is one cell let into a
   solid block, so a chaser that walks in has nothing to step to and rattles there for
   the rest of the level. `chase()` treats entrances as wall; they are patrolling the
@@ -262,6 +286,11 @@ Things that came out of building it:
   fire together launches the arrow that tick. Turning first and firing second -- the
   obvious way -- walks Winky into whatever he is aiming at whenever it is close. The
   test harness had to learn this before it could reliably kill anything.
+- **Counting ticks is not counting cells.** The game's fixed-tick accumulator and the
+  harness's jiffy budget drift by a tick depending on phase, so a leg asked for in
+  ticks lands one cell short often enough to matter -- and a route one cell short of
+  its treasure walks the whole way back without it, looking exactly like a collision
+  bug. Room legs now hold the key until the screen says Winky has moved that far.
 - **The tests can catch a half-drawn frame.** `step()` erases every cell that can
   move and only then redraws them, and a cycle budget stops the CPU at an arbitrary
   instruction. Sampling in that window shows no Winky at all -- which looks exactly
@@ -303,11 +332,9 @@ What is left is a genuine departure, and why:
   is a real difference and the one thing no amount of engineering removes.
 - **Screen switch instead of a zoom** between hall and room. The arcade draws each
   room's true shape on the hall and zooms into it; a 44×15 room cannot also be drawn
-  to scale inside a 56×15 hall, so the hall carries a 7×3 block per room instead.
-  The block still fills in when looted, which is the part that matters.
-- **A shaded block, not an outline,** for a room still holding treasure. An outline
-  would need its interior drawn as floor you cannot walk on. Shaded-then-solid
-  carries the same information without lying about where you can go.
+  to scale inside a 56×15 hall, so the hall carries an 11×5 box per room instead. It
+  is drawn hollow, with its entrances notched into it, and fills in solid when looted
+  — which is the part that matters.
 - **No moving walls.** `room-moving-walls.png` has red bars that slide; that is a
   per-room hazard system and it is not built. The pinwheel room takes its shape from
   that screenshot without its motion.

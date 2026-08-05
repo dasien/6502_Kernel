@@ -48,9 +48,9 @@ rooms sitting in it as blocks.
 | | |
 |---|---|
 | `☺` | **Winky** — you |
-| `▒` | A room. **Two entrances apiece**, one at each end. |
+| a hollow box | A room. **Two entrances apiece**, on different sides. |
 | `■` | An entrance. Walk onto it to go in. |
-| `█` (bright) | A room you have looted: entrances sealed, filled in solid. |
+| a solid box | A room you have looted: entrances sealed, filled right in. |
 | `Φ` | **Hallmonster** — see below |
 | `█` (dim) | Wall |
 
@@ -73,8 +73,11 @@ toward you.
 
 They are slower than you are, so the hall is survivable if you keep moving. What
 they are really there for is the clock: **linger too long in a room and one comes
-through a doorway after you.** You will hear it arrive. There is nothing to be done
-about it except leave.
+through a doorway after you.** You will hear it arrive.
+
+**Inside a room it walks through the walls.** It does not go round anything, it cannot
+be cornered, and nothing you put between you and it helps. There is one answer and it
+is to leave — by whichever doorway is not on its side of the room.
 
 **There are more of them as you go.** One at the start of a level, and another wakes
 every time you loot a room — so the fourth room of a level is not the easy one.
@@ -106,9 +109,12 @@ last moved, and until it hits something or reaches a wall you are unarmed. Facin
 sticks after you let go of the key, so you can back away from a serpent while still
 aiming at it — often the only way to fight something that is chasing you.
 
-**The dead do not clear away.** A killed serpent leaves remains, and remains kill
-you exactly as dead as the serpent did. Every kill makes the room smaller. Clear a
+**The dead do not clear away.** A killed monster leaves remains, and remains kill
+you exactly as dead as the monster did. Every kill makes the room smaller. Clear a
 room carelessly and you can wall yourself off from the treasure, or from the door.
+
+The remains stop monsters too — but they **go round**. Killing something does not buy
+you a wall, only a hazard you both have to work around.
 
 **Scoring is the trap.** The treasure is worth 200 × level. A monster is worth
 100 × level — *but only after the treasure is in your hand*. Kill anything before

@@ -56,10 +56,14 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * switch screens, because a 44x15 room cannot also be drawn to scale inside a
  * 56x15 hall.
  *
- * Rooms stay BLIND from out here -- the hall shows an entrance, never what is
- * behind it. You commit before you know, which is where the dread lives. The one
- * thing it does tell you is which rooms are DONE: a looted room seals its
- * entrances and fills in solid, as the arcade's did. */
+ * Each room is drawn as a hollow OUTLINE with its entrances notched into it, which
+ * is how the arcade draws its dungeon floor. Loot it and the interior fills in and
+ * the notches seal: a hollow box becomes a solid one.
+ *
+ * Rooms stay BLIND from out here -- the outline shows the room's footprint, never
+ * what is inside it. You commit before you know, which is where the dread lives.
+ * Whether a room is DONE is the one thing the hall tells you, and only after you
+ * have already been in. */
 #define MAP_W     56
 #define MAP_H     15
 #define MAP_X     ((SCR_W - MAP_W) / 2)
@@ -71,8 +75,10 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define ROOMS_PER_LEVEL 4
 #define LEVELS    3
 
-#define G_BLOCK   0xB1       /* medium shade: a room block, still to be robbed */
-#define G_SEALED  0xDB       /* solid: looted, sealed, and just an obstacle now */
+/* A room's outline and a looted room's fill are the same solid block, as they are
+ * in the arcade -- what tells them apart is whether the inside of the box is black
+ * or filled. */
+#define G_SEALED  0xDB       /* == G_WALL; see above */
 #define G_DOOR    0xFE       /* an entrance, while there is a reason to use it */
 #define A_DOOR    0x43       /* bright yellow, so entrances read at a glance */
 
@@ -86,13 +92,18 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * and is crawling by the fourth room, which is what stops the last room of a level
  * being the easiest. The layout carries one post per possible Hallmonster;
  * HALL_BASE of them are awake at the start of a level and one more wakes per room
- * looted. */
+ * looted.
+ *
+ * The one that comes into a room WALKS THROUGH THE WALLS. It does not path round the
+ * layout, it does not get stuck on anything, and nothing you can build between you
+ * and it helps: it comes straight at you until you leave. That is the whole point of
+ * it, and it is why the room's second doorway matters. */
 #define MAX_HALL      6
 #define HALL_BASE     1
 #define G_HALLMON     0xE8   /* a hooded figure */
 #define HALL_EVERY    4      /* hall: steps every Nth tick (slower than Winky) */
 #define HALL_ROOM_TICKS 260  /* room: ticks of dawdling before one comes in */
-#define HALL_IN_EVERY 5      /* room: how often the intruder steps */
+#define HALL_IN_EVERY 3      /* room: how often the intruder steps */
 
 /* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
 #define T_FLOOR   0
@@ -100,8 +111,9 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define T_TREAS   2
 #define T_CORPSE  3   /* a killed monster; still lethal to touch */
 #define T_EXIT    4   /* room: a doorway in the border -- walk out of it */
-#define T_BLK0    5   /* hall: T_BLK0 + n is the body of room n's block */
-#define T_DOOR0   9   /* hall: T_DOOR0 + n is an entrance to room n */
+#define T_BLK0    5   /* hall: T_BLK0 + n is room n's outline */
+#define T_VOID0   9   /* hall: T_VOID0 + n is inside it -- black, or filled if done */
+#define T_DOOR0  13   /* hall: T_DOOR0 + n is an entrance to room n */
 
 /* ---- glyphs, all from the machine's CP437 ROM --------------------------- */
 /* Winky is $01/$02 -- an outline smiley and a filled one, so the protagonist

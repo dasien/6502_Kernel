@@ -25,10 +25,10 @@
  * what each cell *is* (floor, wall, corpse, doorway) separately from what it
  * looks like.
  *
- * Hall: '#' loose wall  '.' floor  'A'-'D' the body of room 0-3's block
+ * Hall: '#' wall  '.' floor  'A'-'D' room 0-3's outline  'a'-'d' inside it
  *       '1'-'4' an entrance to room 0-3, two apiece  'h' a Hallmonster post.
  * Room: '#' wall  '.' floor  '*' the treasure  'm' a monster post
- *       'd' a doorway in the border -- two of them, and either one is a way out.
+ *       '+' a doorway in the border -- two of them, and either one is a way out.
  *
  * Every layout is checked by tests/test_venture.cpp: exact dimensions, a sealed
  * border, both doorways connected to each other and to the treasure and every
@@ -37,24 +37,25 @@
  * about the source looks wrong.
  */
 
-/* The hall is an open arena with the four rooms sitting in it as blocks, which is
- * how the arcade drew it. One hall serves every level; what changes is what is
- * behind the doors, and by the time that would matter you have learnt the hall. */
+/* The hall is an open arena with the four rooms drawn in it as hollow outlines and
+ * their entrances notched into them, which is how the arcade draws its dungeon
+ * floor. One hall serves every level; what changes is what is behind the doors, and
+ * by the time that would matter you have learnt the hall. */
 
 static const char *const map_layout[MAP_H] = {
     "########################################################",
     "#......................................................#",
-    "#...AAAAAAA......h.........##.........h......BBBBBBB...#",
-    "#...1AAAAA1................##................2BBBBB2...#",
-    "#...AAAAAAA................##................BBBBBBB...#",
-    "#......................................................#",
-    "#......................................................#",
-    "#............h......################......h............#",
-    "#......................................................#",
-    "#......................................................#",
-    "#...CCCCCCC................##................DDDDDDD...#",
-    "#...3CCCCC3................##................4DDDDD4...#",
-    "#...CCCCCCC......h.........##.........h......DDDDDDD...#",
+    "#..AAAAAAAAAAA....h..................h....BBBBBBBBBBB..#",
+    "#..AaaaaaaaaaA............................BbbbbbbbbbB..#",
+    "#..Aaaaaaaaaa1............................2bbbbbbbbbB..#",
+    "#..AaaaaaaaaaA............................BbbbbbbbbbB..#",
+    "#..AAAAA1AAAAA............................BBBBB2BBBBB..#",
+    "#...............h......................h...............#",
+    "#..CCCCC3CCCCC............................DDDDD4DDDDD..#",
+    "#..CcccccccccC............................DdddddddddD..#",
+    "#..Cccccccccc3............................4dddddddddD..#",
+    "#..CcccccccccC............................DdddddddddD..#",
+    "#..CCCCCCCCCCC....h..................h....DDDDDDDDDDD..#",
     "#......................................................#",
     "########################################################",
 };
@@ -63,9 +64,8 @@ static const char *const map_layout[MAP_H] = {
  * arrays and a pointer list -- cc65 will not initialise a pointer table from
  * other arrays' names, and the table is what the code wants anyway. */
 static const char *const room_art[THEMES][ROOM_H] = {
-
     {   /* 0 SERPENT */
-        "######################d#####################",
+        "######################+#####################",
         "#.............#............................#",
         "#.............#............................#",
         "#.......m.....#............................#",
@@ -79,17 +79,17 @@ static const char *const room_art[THEMES][ROOM_H] = {
         "#..........................................#",
         "#.....*....................................#",
         "#..........................................#",
-        "##########################################d#",
+        "##########################################+#",
     },
     {   /* 1 CYCLOPS */
-        "######################d#####################",
+        "######################+#####################",
         "#..........................................#",
         "#...m......................................#",
         "#.........########################.........#",
         "#.........#......................#.........#",
         "#.........#......................#.........#",
         "#.........#......................#.........#",
-        "d...............m....*.....................#",
+        "+...............m....*.....................#",
         "#.........#......................#.........#",
         "#.........#......................#.........#",
         "#.........#......................#.........#",
@@ -99,7 +99,7 @@ static const char *const room_art[THEMES][ROOM_H] = {
         "############################################",
     },
     {   /* 2 SPIDER */
-        "##########d#################################",
+        "##########+#################################",
         "#..........................................#",
         "#...##....##....##....##....##....##.......#",
         "#......m...................................#",
@@ -113,12 +113,12 @@ static const char *const room_art[THEMES][ROOM_H] = {
         "#...##....##....##....##....##....##.......#",
         "#..........................................#",
         "#..........................................#",
-        "#################################d##########",
+        "#################################+##########",
     },
     {   /* 3 GOAT */
         "############################################",
         "#..........................................#",
-        "d..........................................#",
+        "+..........................................#",
         "#..........................................#",
         "#.....#############......#############.....#",
         "#.....#############......#############.....#",
@@ -128,12 +128,12 @@ static const char *const room_art[THEMES][ROOM_H] = {
         "#.....#############......#############.....#",
         "#.....#############......#############.....#",
         "#..........................................#",
-        "#....................m.....................d",
+        "#....................m.....................+",
         "#..........................................#",
         "############################################",
     },
     {   /* 4 SKELETON */
-        "#####d######################################",
+        "#####+######################################",
         "#..........................................#",
         "#....m.....................................#",
         "#..........................................#",
@@ -147,13 +147,13 @@ static const char *const room_art[THEMES][ROOM_H] = {
         "#..........................................#",
         "#.......m..................................#",
         "#..........................................#",
-        "######################################d#####",
+        "######################################+#####",
     },
     {   /* 5 WRAITH */
         "############################################",
         "#....................#.....................#",
         "#....................#....m................#",
-        "d....................#.....................#",
+        "+....................#.....................#",
         "#....................#..............m......#",
         "#....................#.....................#",
         "#..........................................#",
@@ -161,12 +161,13 @@ static const char *const room_art[THEMES][ROOM_H] = {
         "#..........................................#",
         "#....................#.....................#",
         "#....................#.....................#",
-        "#...............m....#.....................d",
+        "#...............m....#.....................+",
         "#....................#.....................#",
         "#....................#.....................#",
         "############################################",
     },
 };
+
 
 /* Glyph tables, indexed by theme. Chosen by rendering the character ROM and reading
  * the shapes; the names in docs/VENTURE.md follow the glyphs, not the other way
@@ -291,22 +292,26 @@ static void put_str(unsigned char col, unsigned char row, const char *s,
 
 /* Repaint a cell from the grid -- used to erase an entity that moved off it.
  *
- * A room's block in the hall carries its state, and it is the only thing the hall
- * ever tells you: shaded while there is still treasure in there, filled in solid
- * once there is not, with its entrances sealed. That is the arcade's own signal,
- * and it only appears after you have already been inside. */
+ * A room in the hall carries its state, and it is the only thing the hall ever tells
+ * you: a hollow outline while there is still treasure in there, filled in solid with
+ * its entrances sealed once there is not. That is the arcade's own signal, and it
+ * only appears after you have already been inside. */
 static void restore(unsigned char rx, unsigned char ry)
 {
     const unsigned char t = grid[ry][rx];
 
-    if (t >= T_DOOR0) {
+    if (t >= T_DOOR0) {                  /* an entrance notched into the outline */
         if (slot_done[t - T_DOOR0]) put_at(rx, ry, G_SEALED, a_room);
         else                        put_at(rx, ry, G_DOOR,   A_DOOR);
         return;
     }
-    if (t >= T_BLK0) {
-        if (slot_done[t - T_BLK0]) put_at(rx, ry, G_SEALED, a_room);
-        else                       put_at(rx, ry, G_BLOCK,  a_room);
+    if (t >= T_VOID0) {                  /* inside the outline: black, or filled */
+        if (slot_done[t - T_VOID0]) put_at(rx, ry, G_SEALED, a_room);
+        else                        put_at(rx, ry, G_FLOOR,  A_TEXT);
+        return;
+    }
+    if (t >= T_BLK0) {                   /* the outline itself, either way */
+        put_at(rx, ry, G_WALL, a_room);
         return;
     }
     switch (t) {
@@ -366,7 +371,8 @@ static unsigned char blocked(unsigned char rx, unsigned char ry)
     const unsigned char t = grid[ry][rx];
     if (t == T_WALL) return 1;
     if (t >= T_DOOR0) return slot_done[t - T_DOOR0];   /* sealed once looted */
-    if (t >= T_BLK0)  return 1;                        /* a room is never walked into */
+    if (t >= T_BLK0)  return 1;   /* outline and interior alike: a room in the hall
+                                   * is solid, and the only way in is an entrance */
     return 0;
 }
 
@@ -396,7 +402,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
             switch (c) {
                 case '#': grid[ry][rx] = T_WALL;  break;
                 case '*': grid[ry][rx] = T_TREAS; break;
-                case 'd': grid[ry][rx] = T_EXIT;  break;
+                case '+': grid[ry][rx] = T_EXIT;  break;
                 case 'm':
                     grid[ry][rx] = T_FLOOR;
                     if (nm < MAX_MON) {
@@ -414,6 +420,9 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
                     break;
                 case 'A': case 'B': case 'C': case 'D':
                     grid[ry][rx] = (unsigned char)(T_BLK0 + (c - 'A'));
+                    break;
+                case 'a': case 'b': case 'c': case 'd':
+                    grid[ry][rx] = (unsigned char)(T_VOID0 + (c - 'a'));
                     break;
                 default:  grid[ry][rx] = T_FLOOR; break;
             }
@@ -624,12 +633,29 @@ static void arrow_advance(void)
 }
 
 /* ---- pursuit ------------------------------------------------------------
- * A plain greedy step toward Winky, one axis at a time, preferring whichever
- * axis is further away. Slower than Winky and easily out-manoeuvred in the open,
- * which is the point: the danger is being cornered, not outrun. Room monsters and
- * Hallmonsters share it -- the only difference between them is that one can be
- * shot and one cannot. */
-static void chase(unsigned char *px, unsigned char *py, unsigned char over_bodies)
+ * A greedy step toward Winky, closing the larger axis first, with two fallbacks.
+ * Slower than he is and easily out-manoeuvred in the open, which is the point: the
+ * danger is being cornered, not outrun.
+ *
+ * Room monsters and Hallmonsters share it. What differs is what stops them --
+ * `solid`, below -- and that is the whole difference between a monster and a clock.
+ */
+static unsigned char chase_blocked(unsigned char rx, unsigned char ry,
+                                   unsigned char through_walls,
+                                   unsigned char avoid_bodies)
+{
+    /* A room monster will not walk over a body: the room closes in on them as much
+     * as on you, and a corpse it cannot cross is a corpse it has to go round. It has
+     * to be tested HERE and not vetoed after the fact -- a step chosen and then
+     * refused leaves the monster standing still, which is exactly what made them sit
+     * next to their own dead waiting to be shot. */
+    if (avoid_bodies && grid[ry][rx] == T_CORPSE) return 1;
+    if (through_walls) return 0;
+    return pursuit_blocked(rx, ry);
+}
+
+static void chase(unsigned char *px, unsigned char *py,
+                  unsigned char through_walls, unsigned char avoid_bodies)
 {
     const unsigned char cx = *px, cy = *py;
     unsigned char nx = cx, ny = cy, adx, ady;
@@ -639,32 +665,43 @@ static void chase(unsigned char *px, unsigned char *py, unsigned char over_bodie
     adx = (unsigned char)(wx > cx ? wx - cx : cx - wx);
     ady = (unsigned char)(wy > cy ? wy - cy : cy - wy);
 
+#define OPEN(X, Y) ((X) < gw && (Y) < gh && \
+                    !chase_blocked((X), (Y), through_walls, avoid_bodies))
+
     if (dx && (!dy || adx >= ady)) {
-        if (!pursuit_blocked((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
-        else if (dy && !pursuit_blocked(cx, (unsigned char)(cy + dy)))
-            ny = (unsigned char)(cy + dy);
+        if (OPEN((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
+        else if (dy && OPEN(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
     } else if (dy) {
-        if (!pursuit_blocked(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
-        else if (dx && !pursuit_blocked((unsigned char)(cx + dx), cy))
-            nx = (unsigned char)(cx + dx);
+        if (OPEN(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
+        else if (dx && OPEN((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
     }
 
-    /* Greedy pursuit walks into dead ends: a chaser ends up pressed against a wall
-     * with Winky straight through it and no second axis to try, and stands there
-     * forever. Rather than allow that, wander. In the hall it reads as the patrol a
-     * Hallmonster is supposed to be doing anyway. */
+    /* Both ways forward blocked. Sidestep across the direction we wanted, which
+     * walks round a body or a wall corner instead of staring at it. Deterministic, so
+     * a monster commits to going round one side rather than dithering. */
+    if (nx == cx && ny == cy) {
+        if (dx) {
+            if (OPEN(cx, (unsigned char)(cy - 1)))      ny = (unsigned char)(cy - 1);
+            else if (OPEN(cx, (unsigned char)(cy + 1))) ny = (unsigned char)(cy + 1);
+        } else if (dy) {
+            if (OPEN((unsigned char)(cx - 1), cy))      nx = (unsigned char)(cx - 1);
+            else if (OPEN((unsigned char)(cx + 1), cy)) nx = (unsigned char)(cx + 1);
+        }
+    }
+
+    /* Boxed in on all four sides -- possible once the room fills with bodies. Take
+     * any open cell rather than freeze. In the hall this is also what keeps a
+     * Hallmonster patrolling when the greedy path dead-ends. */
     if (nx == cx && ny == cy) {
         const unsigned char dir = rndn(4);
-        const signed char wdx = (dir == 0) ? 1 : (dir == 1) ? -1 : 0;
-        const signed char wdy = (dir == 2) ? 1 : (dir == 3) ? -1 : 0;
-        const unsigned char tx = (unsigned char)(cx + wdx);
-        const unsigned char ty = (unsigned char)(cy + wdy);
-        if (tx < gw && ty < gh && !pursuit_blocked(tx, ty)) { nx = tx; ny = ty; }
+        const unsigned char tx = (unsigned char)(cx + ((dir == 0) ? 1 : (dir == 1) ? -1 : 0));
+        const unsigned char ty = (unsigned char)(cy + ((dir == 2) ? 1 : (dir == 3) ? -1 : 0));
+        if (OPEN(tx, ty)) { nx = tx; ny = ty; }
     }
+#undef OPEN
 
-    /* Room monsters will not walk over a body either -- the room closes in on
-     * them as much as on you. A Hallmonster does not care about anything. */
-    if (over_bodies || grid[ny][nx] != T_CORPSE) { *px = nx; *py = ny; }
+    *px = nx;
+    *py = ny;
 }
 
 static void monsters_advance(void)
@@ -672,17 +709,22 @@ static void monsters_advance(void)
     unsigned char i;
     for (i = 0; i < MAX_MON; i++) {
         if (!m_live[i]) continue;
-        chase(&m_x[i], &m_y[i], 0);
+        chase(&m_x[i], &m_y[i], 0, 1);      /* walls stop them, and so do bodies */
         if (m_x[i] == wx && m_y[i] == wy) dead = 1;
     }
 }
 
+/* In the hall they walk it like anyone else. Inside a room they walk THROUGH THE
+ * WALLS -- straight at you, round nothing, stuck on nothing. There is no cornering
+ * one and no losing one behind a wall; the only answer is to leave, which is what
+ * makes it a clock rather than an enemy. */
 static void hall_advance(void)
 {
+    const unsigned char phases = (mode == MODE_ROOM);
     unsigned char i;
     for (i = 0; i < MAX_HALL; i++) {
         if (!h_live[i]) continue;
-        chase(&h_x[i], &h_y[i], 1);
+        chase(&h_x[i], &h_y[i], phases, 0);
         if (h_x[i] == wx && h_y[i] == wy) dead = 1;
     }
 }

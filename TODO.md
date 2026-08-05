@@ -148,14 +148,29 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     as open arenas rather than mazes. The pip fixes a readability problem this port
     invented for itself — facing persists after you release the key and nothing showed
     it. 23 tests, `VENTURE.PRG` 10,488 bytes.
+  - A **third pass** on what screenshots cannot show — behaviour. The room intruder
+    now **walks through walls** (it cannot be cornered or lost behind a wall; the only
+    answer is to leave, which is what makes it a deadline rather than an enemy), and
+    room monsters **route around corpses** instead of stalling next to them. That
+    second one was a real bug with a specific shape: the corpse was vetoed *after* the
+    greedy step had been chosen, so the monster did not move at all — obstacles have to
+    be part of the pathing, not a filter on its output. Rooms in the hall are now drawn
+    as hollow outlines that fill in when looted, as the arcade draws them. 24 tests,
+    `VENTURE.PRG` 11,274 bytes.
+    - Making the monsters better **broke a test route**: the 160-tick loot route
+      through room 0 only ever survived because serpents stalled. The harness moved to
+      the spider room (two clear columns, under 40 ticks) and stopped counting ticks
+      for room legs — the accumulator and the jiffy budget drift by a tick with phase,
+      so a leg lands one cell short and walks past its treasure.
   - **Two gaps, deliberate.** The Hallmonster that walks into a room you linger in
     needs Winky alive for `HALL_ROOM_TICKS` (260 ticks, ~17 s) with three serpents
     converging; standing still, lapping the room's outer circuit and clearing the
     serpents first were all tried and all die short. The between-levels tally needs
     all four rooms of a level looted, i.e. four bespoke routes through four layouts.
-    Both are noted in `test_venture.cpp` with what they leave unverified. What the
-    room intruder *does* once it is in is `chase()`/`hall_advance()`, which the
-    hall-side tests drive directly.
+    Both are noted in `test_venture.cpp` with what they leave unverified — including
+    the wall-phasing path, which rides on the same untested trigger. What the intruder
+    does otherwise is `chase()`/`hall_advance()`, which the hall-side tests drive
+    directly.
 - [ ] **OPCODE** — set aside, recorded so it is not lost. A puzzle game where each
   level is a spec plus a byte/cycle budget and you write real 65C02 to satisfy it,
   scored on size and speed. Extremely on-brand for "My First Computer", and four

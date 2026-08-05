@@ -51,9 +51,14 @@ constexpr int kThemes = 6, kRoomsPerLevel = 4;
 constexpr uint8_t kGlyphWinky = 0x01, kGlyphWinky2 = 0x02;
 constexpr uint8_t kGlyphWall = 0xDB, kGlyphCorpse = 0xB0;
 constexpr uint8_t kGlyphSerpent = 0x15, kGlyphApples = 0x05;
+constexpr uint8_t kGlyphRing = 0x09;   // the spider room's treasure
 constexpr uint8_t kGlyphDoor = 0xFE;      // an open room entrance in the hall
-constexpr uint8_t kGlyphBlock = 0xB1;     // a room block still holding treasure
-constexpr uint8_t kGlyphSealed = 0xDB;    // ...and once it has been looted
+/* A room in the hall is drawn with the solid-block glyph -- the same one as a wall,
+ * as in the arcade. Its outline is always there; what changes when it is looted is
+ * that the INTERIOR fills in with the same glyph and the entrances seal. So counting
+ * "room-coloured solid blocks" measures outline before, outline+interior+entrances
+ * after, and the attribute plane is the only way to tell a room from a wall. */
+constexpr uint8_t kGlyphSealed = 0xDB;
 constexpr uint8_t kGlyphDoorway = 0xF0;   // a doorway in a room's border
 constexpr uint8_t kGlyphHallmon = 0xE8;
 constexpr uint8_t kGlyphFaceL = 0x11, kGlyphFaceD = 0x1F;
@@ -106,7 +111,15 @@ std::vector<std::string> rowsOf(const std::string &src, const std::string &decl)
     return rows;
 }
 
-// Everything reachable from `start` without crossing a '#'.
+// Everything walkable reachable from `start`. In the hall a room is solid whichever
+// character it is drawn with -- only floor, Hallmonster posts and the entrance
+// notches are open, which is why this cannot just test for '#'.
+bool walkable(char c)
+{
+    return c == '.' || c == 'h' || c == '+' || c == 'm' || c == '*' ||
+           (c >= '1' && c <= '4');
+}
+
 std::set<std::pair<int, int>> flood(const std::vector<std::string> &g, int w, int h,
                                     std::pair<int, int> start)
 {
@@ -119,7 +132,7 @@ std::set<std::pair<int, int>> flood(const std::vector<std::string> &g, int w, in
         for (int i = 0; i < 4; i++) {
             const int nx = x + dx[i], ny = y + dy[i];
             if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-            if (g[ny][nx] == '#' || seen.count({nx, ny})) continue;
+            if (!walkable(g[ny][nx]) || seen.count({nx, ny})) continue;
             seen.insert({nx, ny});
             q.push_back({nx, ny});
         }
@@ -163,7 +176,7 @@ TEST(VentureLayout, EveryRoomIsWellFormedAndWinnable)
                 const char c = g[y][x];
                 const bool border = (x == 0 || x == kRoomW - 1 ||
                                      y == 0 || y == kRoomH - 1);
-                if (c == 'd') {
+                if (c == '+') {
                     doors.push_back({x, y});
                     EXPECT_TRUE(border) << "doorway at " << x << "," << y
                                         << " is not in the border";
@@ -237,16 +250,29 @@ TEST(VentureLayout, TheHallIsWellFormedAndNoRoomCanStrandAnother)
             }
     EXPECT_EQ(posts, kMaxHallPosts) << "one post per possible Hallmonster";
 
-    const char digits[] = "1234", blocks[] = "ABCD";
+    const char digits[] = "1234", outline[] = "ABCD", inside[] = "abcd";
     for (int i = 0; i < kRoomsPerLevel; i++) {
-        std::vector<std::pair<int, int>> doors, body;
+        std::vector<std::pair<int, int>> doors, body, interior;
         for (int y = 0; y < kMapH; y++)
             for (int x = 0; x < kMapW; x++) {
                 if (g[y][x] == digits[i]) doors.push_back({x, y});
-                if (g[y][x] == blocks[i]) body.push_back({x, y});
+                if (g[y][x] == outline[i]) body.push_back({x, y});
+                if (g[y][x] == inside[i]) interior.push_back({x, y});
             }
         ASSERT_EQ(doors.size(), 2u) << "room " << i << " needs two entrances";
-        EXPECT_FALSE(body.empty()) << "room " << i << " has no block to fill in";
+        EXPECT_FALSE(body.empty()) << "room " << i << " has no outline";
+        EXPECT_FALSE(interior.empty()) << "room " << i << " has no interior to fill in";
+
+        /* The interior is what fills in when the room is looted, so it must be
+         * sealed inside its own outline -- a leak would put unwalkable black cells
+         * out in the open hall, which reads as floor. */
+        for (const auto &cl : interior)
+            for (const auto &d : {std::pair{1, 0}, std::pair{-1, 0},
+                                  std::pair{0, 1}, std::pair{0, -1}}) {
+                const char n = g[cl.second + d.second][cl.first + d.first];
+                EXPECT_TRUE(n == outline[i] || n == inside[i] || n == digits[i])
+                    << "room " << i << " interior leaks into '" << n << "'";
+            }
         for (const auto &d : doors)
             EXPECT_TRUE(reach.count(d)) << "room " << i << " entrance " << d.first
                                         << "," << d.second << " cannot be walked to";
@@ -256,8 +282,9 @@ TEST(VentureLayout, TheHallIsWellFormedAndNoRoomCanStrandAnother)
          * impossible to finish through no fault of the player. Check it by turning
          * this room to wall and re-flooding. */
         std::vector<std::string> sealed = g;
-        for (const auto &c : doors) sealed[c.second][c.first] = '#';
-        for (const auto &c : body)  sealed[c.second][c.first] = '#';
+        for (const auto &cl : doors)    sealed[cl.second][cl.first] = '#';
+        for (const auto &cl : body)     sealed[cl.second][cl.first] = '#';
+        for (const auto &cl : interior) sealed[cl.second][cl.first] = '#';
         const auto after = flood(sealed, kMapW, kMapH, {28, 5});
         for (int j = 0; j < kRoomsPerLevel; j++) {
             if (j == i) continue;
@@ -372,6 +399,28 @@ protected:
         run(2);
     }
 
+    /* Hold `mask` until Winky has actually moved `cells` cells, or stops moving.
+     *
+     * Counting ticks cannot be trusted to the cell. The game's fixed-tick accumulator
+     * and this harness's jiffy budget drift by a tick depending on phase, so a leg
+     * asked for in ticks lands one cell short often enough to matter -- and a route
+     * that stops one cell short of its treasure walks the whole way back without it,
+     * which is exactly the bug this replaced. Reading the screen is exact. */
+    void walkInRoom(uint8_t mask, int cells)
+    {
+        int sx, sy;
+        if (!findWinky(&sx, &sy)) return;
+        pia->setKeyState(mask);
+        for (int i = 0; i < cells * 3 + 8; i++) {
+            run(4);
+            int x, y;
+            if (!findWinky(&x, &y)) break;
+            if (abs(x - sx) + abs(y - sy) >= cells) break;
+        }
+        pia->setKeyState(0);
+        run(2);
+    }
+
     // Hold control bits for `ticks` game ticks. TICK_RATE is 4 jiffies per tick.
     void hold(uint8_t mask, int ticks)
     {
@@ -478,20 +527,17 @@ protected:
         run(2);
     }
 
-    /* Walk from the middle of the hall round to room slot 0 -- the top-left block,
-     * whose left-hand entrance is at hall cell (4,3).
+    /* Walk from the middle of the hall to room slot 0 -- the top-left room, whose
+     * east-facing entrance is notched into its outline at hall cell (13,4).
      *
-     * West along the open middle, north up the west wall, then two steps east and
-     * two south to line up with the entrance. The first two legs are wall-clamped so
-     * only the short ones need counting, and the whole trip is about 35 ticks --
-     * which matters, because a Hallmonster is closing the entire time. */
+     * Straight west until the room's own outline stops us, one step north onto the
+     * entrance's row, then west onto it. Fifteen ticks, which matters: a Hallmonster
+     * is closing the whole time. */
     bool enterRoomZero()
     {
-        slideOnMap(kKsLeft);
-        slideOnMap(kKsUp);
-        hold(kKsRight, 2);
-        hold(kKsDown, 2);
-        hold(kKsRight, 3);
+        slideOnMap(kKsLeft);        // clamps at (14,5), against room 0's east wall
+        hold(kKsUp, 1);             // (14,4), level with the entrance
+        hold(kKsLeft, 2);           // and in
 
         /* Wait for the room to finish painting, and no longer. 660 cells through
          * the register port is the better part of a second of 6502 time, but the
@@ -506,28 +552,47 @@ protected:
         return false;
     }
 
-    /* Loot room 0 and get out by its far doorway -- the whole loop the game is
-     * built round, and what every test of the hall's after-state needs.
+    /* Loot a room and get out by a far doorway -- the whole loop the game is built
+     * round, and what every test of the hall's after-state needs.
      *
-     * Room 0 is the hook: one L of wall, so the treasure in the bottom-left cannot
-     * be reached from the top doorway directly. Round the outside of the L, back
-     * along row 12 over the apples, then down and east to the doorway cut into the
-     * bottom-right corner. Every leg but one is wall-clamped, so the route does not
-     * depend on tick counting.
+     * Slot 2 rather than slot 0. Room 0 is the hook: its treasure sits behind an L of
+     * wall, so looting it means crossing the room twice, about 160 ticks with three
+     * serpents hunting -- and the moment monsters learnt to walk round their own dead
+     * instead of stalling next to them, that route stopped surviving. Slot 2 is the
+     * spider room, whose pillars leave column 21 and column 33 clear from top to
+     * bottom: in, west, up over the ring, back, out. Under 40 ticks.
      *
-     * It can still fail -- three serpents are hunting the whole way -- so the caller
-     * retries. Returns false with the CAUGHT screen already acknowledged. */
-    bool lootRoomZero()
+     * Room 2's hall entrances are at (8,8) and (13,10); sliding west along row 10
+     * walks straight onto the second, which puts Winky at the room's bottom doorway.
+     *
+     * It can still fail -- three spiders are hunting -- so the caller retries.
+     * Returns false with the CAUGHT screen already acknowledged. */
+    bool lootSpiderRoom()
     {
-        if (!enterRoomZero()) return false;
-        hold(kKsRight, 30);         // east along the top, clear of the L
-        hold(kKsDown, 20);          // south down the east wall, past the L's foot
-        hold(kKsUp, 1);             // onto row 12, the treasure's row
-        hold(kKsLeft, 50);          // west over the apples, to the west wall
-        hold(kKsDown, 3);           // down to row 13
-        hold(kKsRight, 50);         // east to the corner
-        hold(kKsDown, 3);           // and out through the doorway
+        /* Counted, not slid. slideOnMap() polls for Winky in the MAP region, which
+         * overlaps the room region on screen, so it keeps finding him after he has
+         * gone in and keeps the key down -- and he runs off across the room before
+         * the route starts. */
+        hold(kKsDown, 5);           // (28,10), level with room 2's east entrance
+        hold(kKsLeft, 15);          // exactly onto the entrance at (13,10)
 
+        int x, y;
+        bool inside = false;
+        for (int i = 0; i < 60 && !inside; i++) {
+            run(5);
+            inside = countGlyph(kGlyphRing) == 1 && findWinky(&x, &y);
+        }
+        // Acknowledge a death here too, or the game sits on CAUGHT waiting for a key
+        // and every retry runs against a stopped machine.
+        // Acknowledge a death here too, or the game sits on CAUGHT waiting for a key
+        // and every retry runs against a stopped machine.
+        if (!inside) { if (caught()) { pressKey('\r'); run(240); } return false; }
+
+        walkInRoom(kKsLeft, 12);    // (21,13), the clear column
+        walkInRoom(kKsUp, 6);       // (21,7), the ring
+        walkInRoom(kKsDown, 6);     // back to (21,13)
+        walkInRoom(kKsRight, 12);   // (33,13), below the doorway we came in by
+        hold(kKsDown, 3);           // and out
         return waitForHall();
     }
 
@@ -538,10 +603,10 @@ protected:
      * TRANSITION rather than by the end state.
      *
      * Every screen in this game ends with the HUD -- draw_hud() runs after the whole
-     * board -- so "the HUD is up" means "that repaint finished". But it is also
-     * still up from the room we just left, and the map region on screen OVERLAPS the
-     * room region, so counting walls or blocks cannot tell the two apart either.
-     * Waiting for the HUD to go (the clear) and then come back is unambiguous. */
+     * board -- so "the HUD is up" means "that repaint finished". But it is also still
+     * up from the room we just left, and the map region on screen OVERLAPS the room
+     * region, so counting walls or blocks cannot tell the two apart either. Waiting
+     * for the HUD to go (the clear) and then come back is unambiguous. */
     bool waitForHall()
     {
         bool cleared = false;
@@ -558,10 +623,10 @@ protected:
     }
 
     // Three lives, so three attempts.
-    bool lootRoomZeroWithRetries()
+    bool lootARoomWithRetries()
     {
         for (int attempt = 0; attempt < 3; attempt++)
-            if (lootRoomZero()) return true;
+            if (lootSpiderRoom()) return true;
         return false;
     }
 
@@ -654,12 +719,12 @@ TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
     EXPECT_TRUE(findWinkyOnMap(&wx, &wy)) << "Winky was never drawn in the hall";
     EXPECT_GT(countGlyphOnMap(kGlyphWall), 120) << "the hall's walls did not paint";
 
-    // Four rooms, two entrances apiece, all open; four blocks, none filled in.
+    // Four rooms, two entrances apiece, all open, and four hollow outlines: an 11x5
+    // box is 26 perimeter cells once its two entrances are notched out of it.
     EXPECT_EQ(countGlyphOnMap(kGlyphDoor), kRoomsPerLevel * 2)
         << "every room should have both entrances open at a level's start";
-    EXPECT_GT(countGlyphOnMap(kGlyphBlock), 60) << "the room blocks did not paint";
-    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), 0)
-        << "nothing has been looted yet, so nothing should be sealed";
+    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), kRoomsPerLevel * 26)
+        << "the four room outlines did not paint, or are not hollow";
 }
 
 TEST_F(VentureTest, TheLevelOnePaletteIsMagenta)
@@ -667,18 +732,17 @@ TEST_F(VentureTest, TheLevelOnePaletteIsMagenta)
     // The arcade recolours the whole dungeon each level -- magenta, then cyan, then
     // yellow. Reaching level 2 means looting four rooms, so this pins level 1 and
     // the tables in venture.c carry the rest.
-    int wall = 0, block = 0;
+    int wall = 0;
     for (int y = 0; y < kMapH; y++)
-        for (int x = 0; x < kMapW; x++) {
-            const uint8_t g = mapGlyph(x, y);
-            if (g == kGlyphWall && attrAt(kMapX + x, kMapY + y) == kL1Wall) wall++;
-            if (g == kGlyphBlock && attrAt(kMapX + x, kMapY + y) == kL1Room) block++;
-        }
+        for (int x = 0; x < kMapW; x++)
+            if (mapGlyph(x, y) == kGlyphWall && attrAt(kMapX + x, kMapY + y) == kL1Wall)
+                wall++;
     EXPECT_GT(wall, 120) << "the hall's walls are not the level's colour";
-    EXPECT_GT(block, 60) << "the room blocks are not the level's colour";
+    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), kRoomsPerLevel * 26)
+        << "the room outlines are not the level's colour";
 
-    // Walls dim, rooms bright: that difference is what makes a sealed room read as
-    // done rather than as more wall, since they share the solid-block glyph.
+    // Walls dim, rooms bright. They share the solid-block glyph, so that difference
+    // is the only thing separating the dungeon's structure from its rooms.
     EXPECT_NE(kL1Wall, kL1Room);
 }
 
@@ -738,32 +802,34 @@ TEST_F(VentureRosterTest, ListsEveryTreasureBeforeTheLevel)
 TEST_F(VentureTest, LootingARoomSealsItInTheHall)
 {
     const int doors_before = countGlyphOnMap(kGlyphDoor);
-    const int blocks_before = countGlyphOnMap(kGlyphBlock);
+    const int solid_before = countOnMapWithAttr(kGlyphSealed, kL1Room);
     ASSERT_EQ(doors_before, kRoomsPerLevel * 2);
 
-    ASSERT_TRUE(lootRoomZeroWithRetries()) << "never got the treasure out of room 0";
+    ASSERT_TRUE(lootARoomWithRetries()) << "never got the treasure out of the spider room";
 
     // The arcade's signal, and the only thing the hall ever tells you about a room:
-    // both its entrances gone, its block filled in solid.
+    // both entrances gone and the hollow box filled in. That is the 9x3 interior plus
+    // the two entrance cells -- 29 more room-coloured blocks than before.
     EXPECT_EQ(countGlyphOnMap(kGlyphDoor), doors_before - 2)
         << "a looted room's entrances should be sealed";
-    EXPECT_LT(countGlyphOnMap(kGlyphBlock), blocks_before)
-        << "a looted room's block should have filled in";
-    EXPECT_GE(countOnMapWithAttr(kGlyphSealed, kL1Room), 20)
-        << "the looted room did not fill in solid (7x3 block plus both entrances)";
+    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), solid_before + 29)
+        << "the looted room did not fill in solid";
 }
 
 TEST_F(VentureTest, ASealedRoomCannotBeWalkedBackInto)
 {
-    ASSERT_TRUE(lootRoomZeroWithRetries()) << "never got the treasure out of room 0";
+    ASSERT_TRUE(lootARoomWithRetries()) << "never got the treasure out of the spider room";
 
-    // Winky comes back beside the entrance he used, which is now wall. Push into it
-    // and he must stay in the hall rather than re-enter a room with nothing in it.
-    hold(kKsLeft, 12);
-    hold(kKsUp | kKsLeft, 12);
+    // Winky comes back beside the entrance he used, which is now wall. Push straight
+    // into it: he must stay in the hall rather than re-enter a room with nothing left
+    // in it. Kept short on purpose -- two Hallmonsters are awake by now, and a long
+    // demonstration is just a long walk toward them.
     int wx, wy;
+    ASSERT_TRUE(findWinkyOnMap(&wx, &wy));
+    hold(kKsLeft, 6);
     ASSERT_TRUE(findWinkyOnMap(&wx, &wy)) << "left the hall through a sealed room";
-    EXPECT_EQ(countGlyph(kGlyphApples), 0) << "walked back into a looted room";
+    EXPECT_EQ(countGlyph(kGlyphRing), 0) << "walked back into a looted room";
+    EXPECT_GE(wx, 14) << "pushed through room 2's sealed outline at column 13";
 }
 
 TEST_F(VentureTest, HallmonstersGrowInNumberAsRoomsAreLooted)
@@ -773,7 +839,7 @@ TEST_F(VentureTest, HallmonstersGrowInNumberAsRoomsAreLooted)
     ASSERT_EQ(countGlyphOnMap(kGlyphHallmon), kHallBase)
         << "the hall should start with just the one";
 
-    ASSERT_TRUE(lootRoomZeroWithRetries()) << "never got the treasure out of room 0";
+    ASSERT_TRUE(lootARoomWithRetries()) << "never got the treasure out of the spider room";
     EXPECT_EQ(countGlyphOnMap(kGlyphHallmon), kHallBase + 1)
         << "looting a room should wake another Hallmonster";
 }
@@ -834,17 +900,18 @@ TEST_F(VentureTest, AHallmonsterKillsOnContact)
 
 /* NOT tested, and why. Both are logged in TODO.md.
  *
- * 1. The Hallmonster that comes into a room you linger in. It needs Winky alive for
+ * 1. The Hallmonster that comes into a room you linger in -- including the fact that
+ *    it walks through the walls to get to you. It needs Winky alive for
  *    HALL_ROOM_TICKS -- 260 ticks, about seventeen seconds -- inside a room with
  *    three serpents converging, and no scripted route survives that: standing still,
  *    lapping the room's outer circuit and clearing the serpents first were all tried
  *    and each dies well short. A test would have to actually play well, which is a
  *    bigger thing than the assertion is worth.
  *
- *    What that leaves unverified is narrow: the `dawdle` counter and the spawn point
- *    in hall_intrude(). Everything the intruder then does -- pursuit, ignoring
- *    bodies, killing on contact, stopping arrows -- is chase() and hall_advance(),
- *    which the hall tests above drive directly.
+ *    Unverified: the `dawdle` counter, the spawn point in hall_intrude(), and the
+ *    through_walls path in chase(). Everything else the intruder does -- pursuit,
+ *    ignoring bodies, killing on contact, stopping arrows -- is the same chase() and
+ *    hall_advance() the hall tests above drive directly.
  *
  * 2. The between-levels tally (SCORE THIS LEVEL / BONUS MULTIPLIER / TOTAL BONUS).
  *    It only appears once all four rooms of a level are looted, which is four bespoke
@@ -869,9 +936,8 @@ TEST_F(VentureTest, MovesOnHeldKeyFromTheControlPort)
 TEST_F(VentureTest, MovesDiagonallyWhenTwoBitsAreHeld)
 {
     int x0, y0, x1, y1;
-    // Out of the middle corridor first -- it is roofed by a wall band, so a
-    // diagonal there would slide instead of stepping and prove nothing.
-    hold(kKsLeft, 12);
+    // Straight from the start cell, which has open hall on both axes. Walking
+    // somewhere else first only spends ticks walking toward a Hallmonster.
     ASSERT_TRUE(findWinkyOnMap(&x0, &y0));
 
     // Both bits at once: the whole reason the control port exists. The keystroke
@@ -972,6 +1038,43 @@ TEST_F(VentureTest, DeadMonstersLeaveBodiesBehind)
     // Venture's signature cruelty: the body remains, and remains lethal, so every
     // kill shrinks the room you have left to move in.
     EXPECT_TRUE(killOneSerpent(60)) << "a killed serpent left no body on the floor";
+}
+
+TEST_F(VentureTest, MonstersKeepComingOnceTheirDeadAreInTheWay)
+{
+    ASSERT_TRUE(enterRoomZero());
+    ASSERT_GE(huntSerpents(60, 1), 1) << "could not get a body onto the floor";
+
+    /* A monster will not walk over a corpse. The question is what it does instead:
+     * route round it, or stop dead. It used to stop dead -- the step was chosen and
+     * then vetoed, which left the monster standing next to its own dead waiting to be
+     * shot, and a room full of bodies was a room full of statues.
+     *
+     * Sample every serpent's cell five times, six ticks apart. MON_EVERY is 3, so
+     * that is two moves per sample: a serpent that is still hunting cannot hold one
+     * cell across all five, and a stalled one cannot leave it. Winky keeps walking so
+     * he is not standing still while they close. */
+    std::vector<std::set<std::pair<int, int>>> samples;
+    for (int i = 0; i < 5; i++) {
+        std::set<std::pair<int, int>> here;
+        for (int y = 0; y < kRoomH; y++)
+            for (int x = 0; x < kRoomW; x++)
+                if (roomGlyph(x, y) == kGlyphSerpent) here.insert({x, y});
+        if (!here.empty()) samples.push_back(here);
+        hold(i & 1 ? kKsRight : kKsLeft, 6);
+        int wx, wy;
+        if (!findWinky(&wx, &wy)) break;
+    }
+    ASSERT_GE(samples.size(), 4u) << "the room ended before we could watch it";
+
+    for (const auto &cell : samples.front()) {
+        bool everywhere = true;
+        for (const auto &sample : samples)
+            if (!sample.count(cell)) { everywhere = false; break; }
+        EXPECT_FALSE(everywhere)
+            << "a serpent held cell " << cell.first << "," << cell.second
+            << " through every sample -- it is stalled, not hunting";
+    }
 }
 
 // --- step 10: sound --------------------------------------------------------
