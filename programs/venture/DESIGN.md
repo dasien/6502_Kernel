@@ -99,7 +99,9 @@ timer and a pursuit step, which is nearly free.
 
 ## Rooms, monsters and treasure
 
-Six themed rooms drawn from across the three levels, each with its treasure.
+Six themed rooms, each with its treasure. A level deals four of them, rotating with
+the level, so a full run of twelve room-visits is not four pictures seen three times
+each.
 
 Glyphs came first and the names follow them. Rather than pick a codepoint that
 ought to look like a necklace, the ROM was rendered and read, and whatever a shape
@@ -170,13 +172,12 @@ nothing while it runs -- no tutorial messages, no coaching when you take the
 treasure or kill something worthless. An arcade cabinet carried an instruction card
 and the machine just played; the manual is that card.
 
+**Finished.** All ten steps are in (`VENTURE.PRG`, 9,359 bytes): the hall, six
+rooms, Hallmonsters on the map and coming through room doors, the level loop, and
+the SID cues. Driven by `tests/test_venture.cpp` (16 tests), which runs the real
+blob and holds keys through `$FE0F` the way a player would.
 
-**Steps 1-5 are done** -- one playable room (`VENTURE.PRG`, 5,628 bytes). Serpents
-hunt, one arrow flies at a time, bodies stay lethal, and the scoring rule holds.
-Driven by `tests/test_venture.cpp` (8 assertions), which runs the real blob and
-holds keys through `$FE0F` the way a player would.
-
-Two things that came out of building it:
+Things that came out of building it:
 
 - **A missing repaint, found by the tests.** `step()` only restores cells belonging
   to things still alive, so when an arrow died its final cell was never redrawn --
@@ -189,6 +190,33 @@ Two things that came out of building it:
   counter (16,667 cycles per tick), which is a true 60 Hz rather than an
   instruction-count guess. Anything else jiffy-paced -- KERNEL PANIC included -- will
   need the same.
+- **The map and a room are the same code.** One `grid[]`, one `restore()`, one
+  `chase()`, one draw pass; they differ in dimensions, in what a door means, and in
+  whether firing is allowed. That is why the hall cost almost nothing to add, and
+  why a Hallmonster walking into a room needed no new machinery at all -- it is a
+  chaser that ignores bodies and cannot be shot.
+- **Greedy pursuit needs a wander fallback.** Closing the larger axis first leaves a
+  chaser pressed against the hall's long wall bands with Winky straight through them
+  and no second axis to try, standing still forever. A random open step when the
+  chase produces no movement fixes it, and on the map it reads as the patrol a
+  Hallmonster is supposed to be doing anyway.
+- **A layout typo is invisible until someone plays it.** One wrong character seals a
+  treasure off and the room is unwinnable, with nothing about the source looking
+  wrong. `tests/test_venture.cpp` reads the pictures back out of `venture.c` and
+  flood-fills them: exact dimensions, sealed border, treasure and every monster post
+  reachable from the door. Two real typos turned up that way while the rooms were
+  being drawn.
+- **One behaviour resisted testing.** The Hallmonster that comes into a room you
+  linger in needs Winky alive for 260 ticks with three serpents closing, and no
+  scripted route survives that -- standing still, lapping the room's outer circuit
+  and clearing the serpents first all die short. It is left untested rather than
+  tested flakily; the note in `test_venture.cpp` says exactly what that leaves
+  unverified (a counter and a spawn point) and what the map tests cover instead.
+- **The tests can catch a half-drawn frame.** `step()` erases every cell that can
+  move and only then redraws them, and a cycle budget stops the CPU at an arbitrary
+  instruction. Sampling in that window shows no Winky at all -- which looks exactly
+  like a death. The finders retry over a few frames; a single-frame scan is flaky by
+  construction, not by bad luck.
 
 ## Build order
 

@@ -19,10 +19,13 @@
 .export _vaddr, _vputc, _vattr
 .export _vfill, _vcmd, _vhidecur
 .export _rng_seed, _rtc_sec, _jiffies
+.export _sound_tone, _sound_off
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (also resets the kernel cursor)
 K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
+K_SOUND_TONE    = $FF33         ; play a tone on SID voice 1 (A=freq lo, X=freq hi)
+K_SOUND_OFF     = $FF36         ; gate voice 1 off
 DOS_WARM        = $AF1E
 
 ; PIA live key-state port: which control keys are held RIGHT NOW. Distinct from
@@ -145,6 +148,19 @@ RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
         lda     RTC_SEC
         ldx     #$00
         rts
+.endproc
+
+; void sound_tone(unsigned int freq) -- start a tone on voice 1. cc65 already
+; passes a 16-bit argument in A=lo/X=hi, which is what K_SOUND_TONE wants, so this
+; is a straight tail call. The kernel honours SOUND_ENABLE, so this is silent
+; rather than wrong on a muted machine.
+.proc _sound_tone
+        jmp     K_SOUND_TONE
+.endproc
+
+; void sound_off(void) -- gate voice 1 off.
+.proc _sound_off
+        jmp     K_SOUND_OFF
 .endproc
 
 .proc _QUITDOS

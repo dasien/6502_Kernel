@@ -486,6 +486,11 @@ target_include_directories(venture_tests PRIVATE
 
 target_compile_features(venture_tests PRIVATE cxx_std_20)
 
+# The layout tests proof-read the room pictures out of venture.c itself. A copy of
+# them in the test would pass forever while the shipped room was unwinnable.
+target_compile_definitions(venture_tests PRIVATE
+    VENTURE_SRC_DIR="${CMAKE_SOURCE_DIR}/programs/venture")
+
 # Create integration test executable that tests real 6502 monitor commands
 add_executable(monitor_integration_tests
     test_monitor_integration.cpp

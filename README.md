@@ -25,7 +25,7 @@ This project implements a complete 6502-based computer system kernel for emulate
 - Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
 - Interactive monitor with comprehensive debugging tools
 - **MFC/OS** DOS shell (`]` prompt) with a resident FAT16 filesystem and launch-by-name for disk programs
-- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **The Sunless Vault** roguelike, and the Scott Adams adventures) — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
+- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **KERNEL PANIC**, **VENTURE**, **The Sunless Vault** roguelike, and the Scott Adams adventures) — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
 - Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched by typing `BASIC` at the DOS prompt (with human-readable `.bas` LOAD/SAVE via a host file dialog)
 - **System-wide `--More--` pager**: long output from any program (DOS, monitor, BASIC, FORTH) pauses each screenful (SPACE advances, ESC stops)
 - Memory manipulation and program execution capabilities

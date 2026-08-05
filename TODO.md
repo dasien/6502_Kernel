@@ -121,15 +121,31 @@ anything today; all four are recorded so they are not rediscovered the hard way.
   again. `testLineNumbersCountBlankLines` pins the line numbering.
 
 ### Games
-- [ ] **VENTURE** (`programs/venture/`) — a port of Exidy's Venture (1981); design in
-  `programs/venture/DESIGN.md`. Planned as the final game. Fits the machine unusually
-  well: Winky is already CP437 glyph $01 (with $02 as a second animation frame), the
-  slow real-time pacing is a quarter of what KERNEL PANIC sustains, and 8-way movement
-  while firing is the exact case the $FE0F control port was added for. Movement model
-  adopted wholesale from KPANIC (fixed-tick accumulator off jiffies, keystate() once
-  per tick, one cell per tick), with `tickrate` doubling as the difficulty ramp.
-  Build order in the design doc is ten steps; steps 1-5 give a playable single room,
-  which is the point to stop and judge whether it feels like Venture.
+- [x] **VENTURE** (`programs/venture/`, 9,359 bytes) — a port of Exidy's Venture
+  (1981); design in `programs/venture/DESIGN.md`, manual in `docs/VENTURE.md`. All ten
+  build steps done: the dungeon hall, six themed rooms dealt four at a time per level,
+  Hallmonsters patrolling the hall and coming through room doors if you dawdle, the
+  three-level loop that speeds up and never ends, and SID cues. It fit the machine as
+  well as hoped — Winky was already CP437 glyph $01 with $02 as his second frame, and
+  8-way movement while firing is the exact case the $FE0F control port was added for.
+  - Map and room are one code path (one grid, one `restore()`, one `chase()`), which
+    is why the hall was nearly free and a Hallmonster entering a room needed no new
+    machinery: it is a chaser that ignores bodies and cannot be shot.
+  - Greedy pursuit needed a wander fallback — pressed against the hall's long wall
+    bands with no second axis to try, a chaser stood still forever.
+  - `tests/test_venture.cpp` (16 tests) reads the room pictures back out of
+    `venture.c` and flood-fills them, so a one-character typo that seals a treasure
+    off fails the build instead of shipping an unwinnable room. Two turned up that
+    way. It also has to retry when looking for Winky: `step()` erases before it
+    redraws, and a cycle budget can stop the CPU in that window.
+  - **One gap, deliberate:** the Hallmonster that walks into a room you linger in has
+    no automated test. It needs Winky alive for `HALL_ROOM_TICKS` (260 ticks, ~17 s)
+    in a room with three serpents converging; standing still, running the room's
+    outer circuit and clearing the serpents first were all tried and all die short. A
+    test would have to play the game well, which is more than the assertion is worth.
+    Unverified: the `dawdle` counter and the spawn point in `hall_intrude()`. What the
+    intruder then does is `chase()`/`hall_advance()`, which the map-side tests drive
+    directly.
 - [ ] **OPCODE** — set aside, recorded so it is not lost. A puzzle game where each
   level is a spec plus a byte/cycle budget and you write real 65C02 to satisfy it,
   scored on size and speed. Extremely on-brand for "My First Computer", and four
