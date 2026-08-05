@@ -15,6 +15,7 @@ Docs are split by audience: **manuals** (how to *use* a program) are `UPPERCASE.
 | [EDIT.md](EDIT.md) | The full-screen text editor |
 | [TERM.md](TERM.md) | The serial/telnet terminal + XMODEM |
 | [IRC.md](IRC.md) | The IRC client |
+| [VENTURE.md](VENTURE.md) | VENTURE — controls, glyphs and the scoring trap |
 
 *(Games are self-explanatory; the Sunless Vault keeps its own guide at
 `programs/vault/USER_GUIDE.md`.)*

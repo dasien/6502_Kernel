@@ -148,6 +148,9 @@ static void draw_hud(void)
     put_str(56, HUD_ROW, have_treasure ? "APPLES TAKEN" : "            ", A_TREAS);
 }
 
+/* The status line carries state, not advice. The game does not explain its own
+ * rules -- that is what docs/VENTURE.md is for, in the same way an arcade cabinet
+ * had an instruction card and the machine itself just played. */
 static void msg(const char *s)
 {
     put_str(4, MSG_ROW, "                                                       ",
@@ -248,7 +251,6 @@ static void winky_touch(void)
         grid[wy][wx] = T_FLOOR;
         have_treasure = 1;
         score += (unsigned int)SCORE_TREASURE * level;
-        msg("You take the APPLES. Now get out -- and monsters are worth points.");
         draw_hud();
     }
     if (lethal(wx, wy)) dead = 1;
@@ -301,8 +303,6 @@ static void arrow_advance(void)
                 if (have_treasure) {
                     score += (unsigned int)SCORE_MONSTER * level;
                     draw_hud();
-                } else {
-                    msg("Killed it -- but no points before you hold the treasure.");
                 }
                 return;
             }
@@ -348,13 +348,6 @@ static void monsters_advance(void)
 
         if (m_x[i] == wx && m_y[i] == wy) dead = 1;
     }
-}
-
-static unsigned char monsters_left(void)
-{
-    unsigned char i, n = 0;
-    for (i = 0; i < MAX_MON; i++) if (m_live[i]) n++;
-    return n;
 }
 
 /* ---- one simulation step ---------------------------------------------- */
@@ -426,13 +419,11 @@ static unsigned char swallow_esc(int k)
 }
 
 /* ---- shell ------------------------------------------------------------- */
-static void banner(const char *line1, const char *line2)
+static void banner(const char *line)
 {
     vfill(' ');
     vcmd(VCMD_CLEAR);
-    put_str(20, 10, line1, A_HUD);
-    if (line2) put_str(20, 12, line2, A_TEXT);
-    put_str(20, 16, "Press any key.", A_TEXT);
+    put_str(33, 11, line, A_HUD);
     while (INCH_NB() < 0) { }
 }
 
@@ -447,8 +438,7 @@ int main(void)
 
     vhidecur();
 
-    banner("V E N T U R E",
-           "Arrows move.  SPACE fires.  Take the treasure, then get out.");
+    banner("V E N T U R E");
 
     for (;;) {
         vfill(' ');
@@ -456,7 +446,6 @@ int main(void)
         load_room();
         draw_room();
         draw_hud();
-        msg("Find the APPLES. Bodies stay deadly -- mind where you leave them.");
 
         last = jiffies();
         for (;;) {
@@ -487,7 +476,7 @@ int main(void)
                 if (swallow_esc(k)) continue;   /* an arrow's ESC [ X, not a command */
                 if (k == 'q' || k == 'Q') { QUITDOS(); return 0; }
                 if (k == 'p' || k == 'P') {
-                    msg("Paused. Press any key.");
+                    msg("PAUSED");
                     while (INCH_NB() < 0) { }
                     msg("");
                     last = jiffies();
@@ -496,18 +485,16 @@ int main(void)
         }
 
         if (room_cleared) {
-            banner("ROOM CLEARED",
-                   monsters_left() ? "You left monsters alive -- and points behind."
-                                   : "Nothing left breathing in there.");
+            banner("ROOM CLEARED");
             level++;
         } else {
             if (lives) lives--;
             if (!lives) {
-                banner("G A M E   O V E R", "No lives left.");
+                banner("G A M E   O V E R");
                 QUITDOS();
                 return 0;
             }
-            banner("CAUGHT", "A body or a serpent got you. Try again.");
+            banner("CAUGHT");
         }
     }
 }

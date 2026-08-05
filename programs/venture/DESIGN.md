@@ -165,6 +165,12 @@ Comfortable. KERNEL PANIC is 8,299 bytes for a busier simulation.
 
 ## Status
 
+The player-facing manual is `docs/VENTURE.md`. The game deliberately explains
+nothing while it runs -- no tutorial messages, no coaching when you take the
+treasure or kill something worthless. An arcade cabinet carried an instruction card
+and the machine just played; the manual is that card.
+
+
 **Steps 1-5 are done** -- one playable room (`VENTURE.PRG`, 5,628 bytes). Serpents
 hunt, one arrow flies at a time, bodies stay lethal, and the scoring rule holds.
 Driven by `tests/test_venture.cpp` (8 assertions), which runs the real blob and
