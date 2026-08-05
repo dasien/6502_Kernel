@@ -50,47 +50,58 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define ROOM_X    ((SCR_W - ROOM_W) / 2)
 #define ROOM_Y    5
 
-/* ---- the dungeon map ----------------------------------------------------
- * The other half of Venture: a hall you walk between rooms, with the room
- * entrances set into it. The arcade zoomed from map to room; we switch screens,
- * which is cheaper and reads better at 80x25.
+/* ---- the dungeon hall ---------------------------------------------------
+ * The other half of Venture: an open arena you cross between rooms, with the four
+ * rooms sitting in it as blocks. The arcade zoomed from hall to room interior; we
+ * switch screens, because a 44x15 room cannot also be drawn to scale inside a
+ * 56x15 hall.
  *
- * Rooms stay BLIND from out here -- the map shows a door, never what is behind
- * it. You commit before you know, which is where the dread lives. */
+ * Rooms stay BLIND from out here -- the hall shows an entrance, never what is
+ * behind it. You commit before you know, which is where the dread lives. The one
+ * thing it does tell you is which rooms are DONE: a looted room seals its
+ * entrances and fills in solid, as the arcade's did. */
 #define MAP_W     56
 #define MAP_H     15
 #define MAP_X     ((SCR_W - MAP_W) / 2)
 #define MAP_Y     5
 
-#define MAP_START_X 28       /* the corridor between the two wall bands */
-#define MAP_START_Y 7
+#define MAP_START_X 28       /* the middle of the open arena */
+#define MAP_START_Y 5
 
-#define T_DOOR0   4          /* T_DOOR0 + n is the door into room n */
 #define ROOMS_PER_LEVEL 4
 #define LEVELS    3
 
-#define G_DOOR    0xFE       /* a filled block set into the hall wall */
-#define G_CLEARED 0xFA       /* a looted room's doorway: a faint mark */
+#define G_BLOCK   0xB1       /* medium shade: a room block, still to be robbed */
+#define G_SEALED  0xDB       /* solid: looted, sealed, and just an obstacle now */
+#define G_DOOR    0xFE       /* an entrance, while there is a reason to use it */
 #define A_DOOR    0x43       /* bright yellow, so entrances read at a glance */
-#define A_CLEARED 0x40       /* dark grey once its treasure is gone */
 
 /* ---- Hallmonsters -------------------------------------------------------
  * Invincible, unkillable, and not really an enemy: a clock. They patrol the hall
  * and, if you dawdle in a room, one comes through the door after you. Nothing
  * you can do stops them, which is what keeps Venture from being a leisurely
- * looting exercise. */
-#define MAX_HALL      3
+ * looting exercise.
+ *
+ * Their number GROWS as you clear rooms -- the arcade's hall starts nearly empty
+ * and is crawling by the fourth room, which is what stops the last room of a level
+ * being the easiest. The layout carries one post per possible Hallmonster;
+ * HALL_BASE of them are awake at the start of a level and one more wakes per room
+ * looted. */
+#define MAX_HALL      6
+#define HALL_BASE     1
 #define G_HALLMON     0xE8   /* a hooded figure */
-#define A_HALLMON     0x45   /* magenta -- shares no colour with anything killable */
-#define HALL_EVERY    4      /* map: steps every Nth tick (slower than Winky) */
+#define HALL_EVERY    4      /* hall: steps every Nth tick (slower than Winky) */
 #define HALL_ROOM_TICKS 260  /* room: ticks of dawdling before one comes in */
 #define HALL_IN_EVERY 5      /* room: how often the intruder steps */
 
-/* ---- room tiles (what is in a cell, independent of what is drawn) ------- */
+/* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
 #define T_FLOOR   0
 #define T_WALL    1
 #define T_TREAS   2
 #define T_CORPSE  3   /* a killed monster; still lethal to touch */
+#define T_EXIT    4   /* room: a doorway in the border -- walk out of it */
+#define T_BLK0    5   /* hall: T_BLK0 + n is the body of room n's block */
+#define T_DOOR0   9   /* hall: T_DOOR0 + n is an entrance to room n */
 
 /* ---- glyphs, all from the machine's CP437 ROM --------------------------- */
 /* Winky is $01/$02 -- an outline smiley and a filled one, so the protagonist
@@ -104,6 +115,16 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define G_ARROW_D 0x19
 #define G_ARROW_R 0x1A
 #define G_ARROW_L 0x1B
+#define G_DOORWAY 0xF0   /* a room's doorway -- white, as the arcade's notches are */
+
+/* Where the next arrow will go, shown as a dim pip in the cell Winky faces. The
+ * arcade draws this and it matters here for the same reason: facing persists after
+ * you let go of the key, so without it you cannot see what you are aimed at. */
+#define G_FACE_U  0x1E
+#define G_FACE_D  0x1F
+#define G_FACE_R  0x10
+#define G_FACE_L  0x11
+#define A_FACE    0x03   /* dark yellow: Winky's colour, dimmed */
 
 /* Monsters and treasures were chosen by rendering the ROM and looking at the
  * shapes, then naming them to match -- not by picking plausible codepoints. Six
@@ -117,14 +138,16 @@ extern void          sound_off(void);                /* SID voice 1 off */
 /* 4 SKELETON  */ /*   0x9D yen (ribs)      0x0A box       CHEST              */
 /* 5 WRAITH    */ /*   0xE8 phi (hooded)    0x03 heart     AMULET             */
 
-/* ---- attributes: [R][BRIGHT][bg:3][fg:3] -------------------------------- */
+/* ---- attributes: [R][BRIGHT][bg:3][fg:3] --------------------------------
+ * Walls, room blocks and Hallmonsters are recoloured every level, as the arcade
+ * recolours the whole dungeon: magenta, then cyan, then yellow. The tables are in
+ * venture.c; these are the fixed ones. */
 #define A_TEXT    0x02   /* green on black, the machine's default */
 #define A_HUD     0x47   /* bright white */
-#define A_WALL    0x06   /* cyan */
 #define A_WINKY   0x43   /* bright yellow, as the arcade smiley was */
 #define A_MON     0x41   /* bright red */
 #define A_CORPSE  0x40   /* bright black == dark grey */
-#define A_TREAS   0x47   /* bright white */
+#define A_DOORWAY 0x47   /* bright white */
 #define A_ARROW   0x42   /* bright green */
 
 /* ---- pacing -------------------------------------------------------------
@@ -161,6 +184,14 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define SND_DEATH     150
 #define SND_HALL      280   /* the approach warning */
 #define SND_TICKS       8   /* how long a cue holds, in ticks */
+
+/* ---- the level bonus ----------------------------------------------------
+ * The arcade tallies SCORE THIS LEVEL x BONUS MULTIPLIER between levels; the
+ * screenshot shows a x6. What sets the multiplier is not visible from a still, so
+ * this is our rule: the level you just finished plus the lives you still have. It
+ * reaches x6 exactly where the arcade's shot does (level 3, three lives) and it
+ * makes not dying worth something beyond not dying. */
+#define BONUS_MULT(lvl, liv) ((unsigned char)((lvl) + (liv)))
 
 /* ---- scoring ------------------------------------------------------------
  * The original's rule, kept exactly: the treasure is worth 200 x level, and a

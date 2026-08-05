@@ -1,10 +1,15 @@
 /*
  * VENTURE for MFC -- a port of Exidy's Venture (1981).
  *
- * The whole game: a dungeon map you walk between rooms, six themed rooms each
+ * The whole game: a dungeon hall you cross between rooms, six themed rooms each
  * holding a treasure and the things guarding it, Hallmonsters that cannot be
  * killed and come after you if you dawdle, three levels that loop faster every
  * time round, and no ending at all -- you play until the lives run out.
+ *
+ * The layouts, the two-doors-per-room structure, the way a looted room seals
+ * itself solid, the growing Hallmonster count and the per-level palette all come
+ * from reading screenshots of the arcade game rather than from a description of
+ * it. See DESIGN.md for what was taken and what could not be.
  *
  * The game explains nothing while it runs. docs/VENTURE.md is the instruction
  * card; an arcade cabinet carried one bolted to the side and the machine itself
@@ -17,37 +22,39 @@
  * Boards are held as a string per row so they can be read and edited as
  * pictures, and turned into a tile grid at load time. The screen sits behind a
  * register port with no random-access read, so the game keeps its own idea of
- * what each cell *is* (floor, wall, corpse, door) separately from what it looks
- * like.
+ * what each cell *is* (floor, wall, corpse, doorway) separately from what it
+ * looks like.
  *
- * Map:  '#' wall  '.' hall  '1'-'4' the door into room slot 0-3  'h' a
- *       Hallmonster's starting post.
+ * Hall: '#' loose wall  '.' floor  'A'-'D' the body of room 0-3's block
+ *       '1'-'4' an entrance to room 0-3, two apiece  'h' a Hallmonster post.
  * Room: '#' wall  '.' floor  '*' the treasure  'm' a monster post
- *       'd' the doorway in the top wall, which is both entrance and exit.
+ *       'd' a doorway in the border -- two of them, and either one is a way out.
  *
- * Every layout is checked at build time by tests/test_venture.cpp: exact
- * dimensions, a sealed border, and a flood fill proving the treasure and every
- * monster post are reachable from the door. A one-character typo that walls off
- * a treasure is otherwise an unwinnable room nobody notices until they play it.
+ * Every layout is checked by tests/test_venture.cpp: exact dimensions, a sealed
+ * border, both doorways connected to each other and to the treasure and every
+ * monster, and -- for the hall -- that sealing any one room cannot strand the
+ * entrances of another. A one-character typo makes a room unwinnable and nothing
+ * about the source looks wrong.
  */
 
-/* One map, reused by every level. What changes with the level is what is behind
- * the doors -- and the map is the part you have already learned by the time that
- * would matter. */
+/* The hall is an open arena with the four rooms sitting in it as blocks, which is
+ * how the arcade drew it. One hall serves every level; what changes is what is
+ * behind the doors, and by the time that would matter you have learnt the hall. */
+
 static const char *const map_layout[MAP_H] = {
     "########################################################",
     "#......................................................#",
-    "#..######...................h...................######.#",
-    "#..#.1....................................h.....2....#.#",
-    "#..######.......................................######.#",
+    "#...AAAAAAA......h.........##.........h......BBBBBBB...#",
+    "#...1AAAAA1................##................2BBBBB2...#",
+    "#...AAAAAAA................##................BBBBBBB...#",
     "#......................................................#",
-    "#..........########################################....#",
-    "#..............................................#.......#",
-    "#..........########################################....#",
     "#......................................................#",
-    "#..######...............h.......................######.#",
-    "#..#.3..........................................4....#.#",
-    "#..######.......................................######.#",
+    "#............h......################......h............#",
+    "#......................................................#",
+    "#......................................................#",
+    "#...CCCCCCC................##................DDDDDDD...#",
+    "#...3CCCCC3................##................4DDDDD4...#",
+    "#...CCCCCCC......h.........##.........h......DDDDDDD...#",
     "#......................................................#",
     "########################################################",
 };
@@ -56,137 +63,159 @@ static const char *const map_layout[MAP_H] = {
  * arrays and a pointer list -- cc65 will not initialise a pointer table from
  * other arrays' names, and the table is what the code wants anyway. */
 static const char *const room_art[THEMES][ROOM_H] = {
+
     {   /* 0 SERPENT */
         "######################d#####################",
+        "#.............#............................#",
+        "#.............#............................#",
+        "#.......m.....#............................#",
+        "#.............#.....m......................#",
+        "#.............#............................#",
+        "#.............#...............m............#",
+        "#.............#............................#",
+        "#.............#............................#",
+        "#.............#####################........#",
         "#..........................................#",
-        "#..####............................####....#",
-        "#..#..........m...................#...#....#",
-        "#..#....####.................####.#...#....#",
-        "#.......#..#.................#..#..........#",
-        "#.......#..#.......m.........#..#..........#",
-        "#.......####.................####..........#",
         "#..........................................#",
-        "#####..........####...####.............#####",
-        "#..................#...#.......m...........#",
-        "#..####............#...#...................#",
-        "#..#..*............#####...................#",
-        "#..#.......................................#",
-        "############################################",
+        "#.....*....................................#",
+        "#..........................................#",
+        "##########################################d#",
     },
     {   /* 1 CYCLOPS */
         "######################d#####################",
         "#..........................................#",
-        "#....######################.........m......#",
-        "#....#....................#................#",
-        "#....#..*.................#......####......#",
-        "#....#....................#......#..#......#",
-        "#....######.......#########......#..#......#",
-        "#.................#..............####......#",
-        "#.......m.........#........................#",
-        "#..................######..................#",
-        "#.........######........#........m.........#",
-        "#.........#....#........#..................#",
-        "#.........#....#........#..................#",
-        "#.........######........#..................#",
+        "#...m......................................#",
+        "#.........########################.........#",
+        "#.........#......................#.........#",
+        "#.........#......................#.........#",
+        "#.........#......................#.........#",
+        "d...............m....*.....................#",
+        "#.........#......................#.........#",
+        "#.........#......................#.........#",
+        "#.........#......................#.........#",
+        "#.........########################.........#",
+        "#......................................m...#",
+        "#..........................................#",
         "############################################",
     },
     {   /* 2 SPIDER */
-        "######################d#####################",
+        "##########d#################################",
         "#..........................................#",
-        "#..#..#..#..#..#..#..#..#..#..#..#..#..#...#",
-        "#..........................m...............#",
-        "#..#..#..#..#..#..#..#..#..#..#..#..#..#...#",
+        "#...##....##....##....##....##....##.......#",
+        "#......m...................................#",
         "#..........................................#",
-        "#..#..#..#..####.####..#..#..#..#..#..#....#",
-        "#..............#*#.........................#",
-        "#..#..#..#..#..#.#.....#..#..#..#..#..#....#",
-        "#........m.....###.........................#",
-        "#..#..#..#..#..#..#..#..#..#..#..#..#..#...#",
-        "#...........................m..............#",
-        "#..#..#..#..#..#..#..#..#..#..#..#..#..#...#",
+        "#...##....##....##....##....##....##.......#",
+        "#....................................m.....#",
+        "#....................*.....................#",
+        "#...##....##....##....##....##....##.......#",
+        "#........................m.................#",
         "#..........................................#",
-        "############################################",
+        "#...##....##....##....##....##....##.......#",
+        "#..........................................#",
+        "#..........................................#",
+        "#################################d##########",
     },
     {   /* 3 GOAT */
-        "######################d#####################",
+        "############################################",
         "#..........................................#",
-        "#...m..................................m...#",
+        "d..........................................#",
         "#..........................................#",
-        "#......######################..............#",
-        "#......#....................#..............#",
-        "#......#.........*..........#..............#",
-        "#......#....................#..............#",
-        "#......#####..........#######..............#",
+        "#.....#############......#############.....#",
+        "#.....#############......#############.....#",
+        "#.....#############......#############.....#",
+        "#..m..#############..*...#############..m..#",
+        "#.....#############......#############.....#",
+        "#.....#############......#############.....#",
+        "#.....#############......#############.....#",
         "#..........................................#",
-        "#..............#########...................#",
-        "#..............#.......#.......m...........#",
-        "#..............#.......#...................#",
-        "#..............#########...................#",
+        "#....................m.....................d",
+        "#..........................................#",
         "############################################",
     },
     {   /* 4 SKELETON */
-        "######################d#####################",
+        "#####d######################################",
         "#..........................................#",
-        "#..######..######..######..######..######..#",
-        "#.......#........#.......#.......#.........#",
-        "#...m...#........#...*...#.......#....m....#",
-        "#.......#........#.......#.......#.........#",
-        "#..######..######..#...##..######..######..#",
+        "#....m.....................................#",
         "#..........................................#",
-        "#..######..######..######..######..######..#",
-        "#.......#........#.......#.......#.........#",
-        "#.......#....m...#.......#.......#.........#",
-        "#.......#........#.......#.......#.........#",
-        "#..######..######..######..######..######..#",
+        "###############################............#",
         "#..........................................#",
-        "############################################",
+        "#..........................................#",
+        "#...................m.................*....#",
+        "#..........................................#",
+        "#..........................................#",
+        "#............###############################",
+        "#..........................................#",
+        "#.......m..................................#",
+        "#..........................................#",
+        "######################################d#####",
     },
     {   /* 5 WRAITH */
-        "######################d#####################",
+        "############################################",
+        "#....................#.....................#",
+        "#....................#....m................#",
+        "d....................#.....................#",
+        "#....................#..............m......#",
+        "#....................#.....................#",
         "#..........................................#",
-        "#..............m...........................#",
-        "#.....############...############..........#",
-        "#.....#..........#...#..........#..........#",
-        "#.....#...*......#...#..........#....m.....#",
-        "#.....#..........#...#..........#..........#",
-        "#.....#####..#####...#####..#####..........#",
+        "##############.......*.......###############",
         "#..........................................#",
-        "#..........#####################...........#",
-        "#..........#...................#...........#",
-        "#....m.....#...................#...........#",
-        "#..........#####################...........#",
-        "#..........................................#",
+        "#....................#.....................#",
+        "#....................#.....................#",
+        "#...............m....#.....................d",
+        "#....................#.....................#",
+        "#....................#.....................#",
         "############################################",
     },
 };
 
-/* Glyphs chosen by rendering the character ROM and reading the shapes; the names
- * in docs/VENTURE.md follow the glyphs, not the other way round. */
+/* Glyph tables, indexed by theme. Chosen by rendering the character ROM and reading
+ * the shapes; the names in docs/VENTURE.md follow the glyphs, not the other way
+ * round. The colours give the level-start roster the arcade's multicoloured look. */
 static const unsigned char theme_monster[THEMES]  = {
     0x15, 0xE9, 0x0F, 0xEA, 0x9D, 0xE8
 };
 static const unsigned char theme_treasure[THEMES] = {
     0x05, 0x04, 0x09, 0xFE, 0x0A, 0x03
 };
+static const unsigned char theme_attr[THEMES] = {
+    0x42, 0x47, 0x45, 0x43, 0x46, 0x41
+};
+
+/* The arcade recolours the whole dungeon each level -- magenta, then cyan, then
+ * yellow, with the Hallmonsters on a colour of their own. Cheap here, because the
+ * attribute plane is a separate write from the glyph. */
+static const unsigned char lvl_wall[LEVELS] = { 0x05, 0x06, 0x03 };
+static const unsigned char lvl_room[LEVELS] = { 0x45, 0x46, 0x43 };
+static const unsigned char lvl_hall[LEVELS] = { 0x42, 0x45, 0x46 };
+
+static unsigned char a_wall, a_room, a_hall;   /* this level's three */
 
 /* ---- the board on screen -----------------------------------------------
- * Map and room share one grid and one set of drawing and pursuit routines. They
- * differ only in dimensions, what a door means, and whether you are allowed to
- * shoot -- which is why the hall is nearly free. */
-static unsigned char grid[MAP_H][MAP_W];   /* the map is the larger of the two */
-static unsigned char gw, gh;        /* the current board's dimensions */
-static unsigned char gx0, gy0;      /* and where it is drawn on screen */
+ * Hall and room share one grid and one set of drawing and pursuit routines. They
+ * differ only in dimensions, in what a door means, and in whether you are allowed
+ * to shoot -- which is why the hall costs so little. */
+static unsigned char grid[MAP_H][MAP_W];   /* the hall is the larger of the two */
+static unsigned char gw, gh;               /* the current board's dimensions */
+static unsigned char gx0, gy0;             /* and where it is drawn on screen */
 
-static unsigned char mode;          /* MODE_MAP / MODE_ROOM */
-static unsigned char theme;         /* which of the six rooms we are inside */
+static unsigned char mode;                 /* MODE_MAP / MODE_ROOM */
+static unsigned char theme;                /* which of the six rooms we are in */
 static unsigned char room_of_slot[ROOMS_PER_LEVEL];
 static unsigned char slot_done[ROOMS_PER_LEVEL];
-static unsigned char slot_entered = 0xFF;   /* the door we last went through */
+static unsigned char slot_entered = 0xFF;  /* the room we last went into */
+static unsigned char ret_x, ret_y;         /* the hall cell we went in from */
+
+/* Which of a room's two doorways we came in by, so the hall's two entrances mean
+ * something: go in the left one and you start at the room's first doorway, the
+ * right one and you start at its second. */
+static unsigned char entry_side;
 
 /* ---- entities ---------------------------------------------------------- */
 static unsigned char wx, wy;             /* Winky, in board coordinates */
 static signed char   face_dx, face_dy;   /* last direction held; arrows use it */
 static unsigned char anim;               /* toggles the two Winky frames */
+
+static unsigned char f_live, f_x, f_y;   /* the facing pip, so it can be erased */
 
 static unsigned char m_live[MAX_MON], m_x[MAX_MON], m_y[MAX_MON];
 static unsigned char h_live[MAX_HALL], h_x[MAX_HALL], h_y[MAX_HALL];
@@ -197,16 +226,18 @@ static signed char   a_dx, a_dy;
 
 /* ---- game state -------------------------------------------------------- */
 static unsigned int  score;
+static unsigned int  level_base;         /* score when this level started */
 static unsigned char lives = LIVES_START;
 static unsigned char level = 1;
 static unsigned char tickrate = TICK_RATE;   /* the whole difficulty ramp */
 static unsigned char have_treasure;          /* gates monster scoring */
 static unsigned char left_room, dead, level_done;
+static unsigned char treas_got;              /* bit per theme, for the roster */
 static unsigned int  dawdle;                 /* ticks spent in the current room */
 
 static unsigned int  rng;
 static unsigned char tick_count;
-static unsigned char snd_left;               /* ticks a sound cue still has to run */
+static unsigned char snd_left;           /* ticks a sound cue still has to run */
 
 /* ---- RNG ---------------------------------------------------------------- */
 unsigned int rnd16(void)
@@ -260,22 +291,29 @@ static void put_str(unsigned char col, unsigned char row, const char *s,
 
 /* Repaint a cell from the grid -- used to erase an entity that moved off it.
  *
- * A door carries its room's state: bright while there is still treasure behind
- * it, dim once there is not. That is the only thing the map ever tells you about
- * a room, and it only tells you after you have already been inside. Rooms stay
- * blind from the hall, which is where the dread lives. */
+ * A room's block in the hall carries its state, and it is the only thing the hall
+ * ever tells you: shaded while there is still treasure in there, filled in solid
+ * once there is not, with its entrances sealed. That is the arcade's own signal,
+ * and it only appears after you have already been inside. */
 static void restore(unsigned char rx, unsigned char ry)
 {
     const unsigned char t = grid[ry][rx];
+
     if (t >= T_DOOR0) {
-        if (slot_done[t - T_DOOR0]) put_at(rx, ry, G_CLEARED, A_CLEARED);
-        else                        put_at(rx, ry, G_DOOR,    A_DOOR);
+        if (slot_done[t - T_DOOR0]) put_at(rx, ry, G_SEALED, a_room);
+        else                        put_at(rx, ry, G_DOOR,   A_DOOR);
+        return;
+    }
+    if (t >= T_BLK0) {
+        if (slot_done[t - T_BLK0]) put_at(rx, ry, G_SEALED, a_room);
+        else                       put_at(rx, ry, G_BLOCK,  a_room);
         return;
     }
     switch (t) {
-        case T_WALL:   put_at(rx, ry, G_WALL, A_WALL); break;
-        case T_TREAS:  put_at(rx, ry, theme_treasure[theme], A_TREAS); break;
+        case T_WALL:   put_at(rx, ry, G_WALL, a_wall); break;
+        case T_TREAS:  put_at(rx, ry, theme_treasure[theme], theme_attr[theme]); break;
         case T_CORPSE: put_at(rx, ry, G_CORPSE, A_CORPSE); break;
+        case T_EXIT:   put_at(rx, ry, G_DOORWAY, A_DOORWAY); break;
         default:       put_at(rx, ry, G_FLOOR, A_TEXT); break;
     }
 }
@@ -325,7 +363,20 @@ static void msg(const char *s)
 /* ---- loading a board --------------------------------------------------- */
 static unsigned char blocked(unsigned char rx, unsigned char ry)
 {
-    return grid[ry][rx] == T_WALL;
+    const unsigned char t = grid[ry][rx];
+    if (t == T_WALL) return 1;
+    if (t >= T_DOOR0) return slot_done[t - T_DOOR0];   /* sealed once looted */
+    if (t >= T_BLK0)  return 1;                        /* a room is never walked into */
+    return 0;
+}
+
+/* Where a pursuer may not go. Beyond the walls, that means a room's entrance: it
+ * is a single cell let into a solid block, so a chaser that steps in has nothing
+ * to step to and spends the rest of the level rattling in the doorway. They are
+ * patrolling the hall, not queueing to get into the rooms. */
+static unsigned char pursuit_blocked(unsigned char rx, unsigned char ry)
+{
+    return blocked(rx, ry) || grid[ry][rx] >= T_DOOR0;
 }
 
 static void load_board(const char *const *art, unsigned char w, unsigned char h,
@@ -337,6 +388,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
     for (rx = 0; rx < MAX_MON; rx++)  m_live[rx] = 0;
     for (rx = 0; rx < MAX_HALL; rx++) h_live[rx] = 0;
     a_live = 0;
+    f_live = 0;
 
     for (ry = 0; ry < h; ry++) {
         for (rx = 0; rx < w; rx++) {
@@ -344,6 +396,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
             switch (c) {
                 case '#': grid[ry][rx] = T_WALL;  break;
                 case '*': grid[ry][rx] = T_TREAS; break;
+                case 'd': grid[ry][rx] = T_EXIT;  break;
                 case 'm':
                     grid[ry][rx] = T_FLOOR;
                     if (nm < MAX_MON) {
@@ -359,47 +412,54 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
                 case '1': case '2': case '3': case '4':
                     grid[ry][rx] = (unsigned char)(T_DOOR0 + (c - '1'));
                     break;
-                default:  grid[ry][rx] = T_FLOOR; break;   /* '.', and 'd' */
+                case 'A': case 'B': case 'C': case 'D':
+                    grid[ry][rx] = (unsigned char)(T_BLK0 + (c - 'A'));
+                    break;
+                default:  grid[ry][rx] = T_FLOOR; break;
             }
         }
     }
 }
 
-/* Which slot's door is at this cell, or 0xFF for none. */
-static unsigned char door_at(unsigned char rx, unsigned char ry)
+/* The cell just inside a border doorway. */
+static void step_inward(unsigned char dx, unsigned char dy)
 {
-    const unsigned char t = grid[ry][rx];
-    return (t >= T_DOOR0) ? (unsigned char)(t - T_DOOR0) : 0xFF;
+    wx = dx; wy = dy;
+    face_dx = 0; face_dy = 0;
+    if (dy == 0)          { wy = 1;          face_dy =  1; }
+    else if (dy == gh - 1) { wy = gh - 2;    face_dy = -1; }
+    else if (dx == 0)      { wx = 1;         face_dx =  1; }
+    else                   { wx = gw - 2;    face_dx = -1; }
 }
 
-/* Put Winky back in the hall NEXT to the door he came out of, never on it.
- * Standing on the door would re-enter the room instantly, which after a death in
- * an uncleared room is an inescapable loop. */
-static void place_at_door(void)
+/* Wake HALL_BASE Hallmonsters plus one per room already looted, and put the rest
+ * back to sleep. The hall you cross for the fourth room is not the hall you
+ * crossed for the first. */
+static void set_hall_count(void)
 {
-    unsigned char rx, ry;
-
-    wx = MAP_START_X;
-    wy = MAP_START_Y;
-    if (slot_entered >= ROOMS_PER_LEVEL) return;
-
-    for (ry = 0; ry < MAP_H; ry++) {
-        for (rx = 0; rx < MAP_W; rx++) {
-            if (door_at(rx, ry) != slot_entered) continue;
-            if (rx + 1 < MAP_W && !blocked(rx + 1, ry)) { wx = rx + 1; wy = ry; }
-            else if (rx && !blocked(rx - 1, ry))        { wx = rx - 1; wy = ry; }
-            else if (ry + 1 < MAP_H && !blocked(rx, ry + 1)) { wx = rx; wy = ry + 1; }
-            else if (ry && !blocked(rx, ry - 1))        { wx = rx; wy = ry - 1; }
-            return;
-        }
-    }
+    unsigned char i, want = HALL_BASE;
+    for (i = 0; i < ROOMS_PER_LEVEL; i++) if (slot_done[i]) want++;
+    if (want > MAX_HALL) want = MAX_HALL;
+    for (i = want; i < MAX_HALL; i++) h_live[i] = 0;
 }
 
 static void enter_map(void)
 {
     mode = MODE_MAP;
     load_board(map_layout, MAP_W, MAP_H, MAP_X, MAP_Y);
-    place_at_door();
+    set_hall_count();
+
+    /* Back beside the entrance we went in by, never on it: standing on it would
+     * re-enter the room instantly, and after a death in an unfinished room that is
+     * a loop with no way out. */
+    wx = MAP_START_X;
+    wy = MAP_START_Y;
+    if (slot_entered < ROOMS_PER_LEVEL) {
+        if (ret_x + 1 < MAP_W && !blocked(ret_x + 1, ret_y)) { wx = ret_x + 1; wy = ret_y; }
+        else if (ret_x && !blocked(ret_x - 1, ret_y))        { wx = ret_x - 1; wy = ret_y; }
+        else if (ret_y + 1 < MAP_H && !blocked(ret_x, ret_y + 1)) { wx = ret_x; wy = ret_y + 1; }
+        else if (ret_y && !blocked(ret_x, ret_y - 1))        { wx = ret_x; wy = ret_y - 1; }
+    }
     face_dx = 0; face_dy = -1;
     dawdle = 0;
 
@@ -408,21 +468,27 @@ static void enter_map(void)
     draw_hud();
 }
 
-static void enter_room(unsigned char slot)
+static void enter_room(unsigned char slot, unsigned char side)
 {
-    unsigned char rx;
+    unsigned char rx, ry, seen = 0;
 
     mode = MODE_ROOM;
     slot_entered = slot;
+    entry_side = side;
     theme = room_of_slot[slot];
     load_board(room_art[theme], ROOM_W, ROOM_H, ROOM_X, ROOM_Y);
 
-    /* Winky arrives just inside the doorway cut into the top wall. */
-    wx = ROOM_W / 2;
-    for (rx = 0; rx < ROOM_W; rx++)
-        if (room_art[theme][0][rx] == 'd') { wx = rx; break; }
-    wy = 1;
-    face_dx = 0; face_dy = 1;
+    /* Arrive just inside the doorway matching the hall entrance we used. */
+    wx = ROOM_W / 2; wy = 1;
+    for (ry = 0; ry < ROOM_H; ry++) {
+        for (rx = 0; rx < ROOM_W; rx++) {
+            if (grid[ry][rx] != T_EXIT) continue;
+            if (seen++ != side) continue;
+            step_inward(rx, ry);
+            ry = ROOM_H; break;
+        }
+    }
+    if (!face_dx && !face_dy) face_dy = 1;
 
     have_treasure = 0;
     left_room = 0;
@@ -431,6 +497,26 @@ static void enter_room(unsigned char slot)
     vfill(' '); vcmd(VCMD_CLEAR);
     draw_board();
     draw_hud();
+}
+
+/* Which room's entrance is at this hall cell, or 0xFF. */
+static unsigned char door_at(unsigned char rx, unsigned char ry)
+{
+    const unsigned char t = grid[ry][rx];
+    return (t >= T_DOOR0) ? (unsigned char)(t - T_DOOR0) : 0xFF;
+}
+
+/* ...and which of that room's two entrances it is, in row-major order. */
+static unsigned char door_side(unsigned char rx, unsigned char ry, unsigned char slot)
+{
+    unsigned char x, y, n = 0;
+    for (y = 0; y < MAP_H; y++)
+        for (x = 0; x < MAP_W; x++) {
+            if (grid[y][x] != (unsigned char)(T_DOOR0 + slot)) continue;
+            if (x == rx && y == ry) return n;
+            n++;
+        }
+    return 0;
 }
 
 /* ---- collision --------------------------------------------------------- */
@@ -461,7 +547,8 @@ static void winky_move(unsigned char ks)
     if (!dx && !dy) return;
 
     /* Facing persists after the key is released, so you can back out of a room
-     * while still aiming into it. */
+     * while still aiming into it. The pip drawn each tick is what makes that
+     * legible instead of a guess. */
     face_dx = dx;
     face_dy = dy;
 
@@ -553,26 +640,26 @@ static void chase(unsigned char *px, unsigned char *py, unsigned char over_bodie
     ady = (unsigned char)(wy > cy ? wy - cy : cy - wy);
 
     if (dx && (!dy || adx >= ady)) {
-        if (!blocked((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
-        else if (dy && !blocked(cx, (unsigned char)(cy + dy)))
+        if (!pursuit_blocked((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
+        else if (dy && !pursuit_blocked(cx, (unsigned char)(cy + dy)))
             ny = (unsigned char)(cy + dy);
     } else if (dy) {
-        if (!blocked(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
-        else if (dx && !blocked((unsigned char)(cx + dx), cy))
+        if (!pursuit_blocked(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
+        else if (dx && !pursuit_blocked((unsigned char)(cx + dx), cy))
             nx = (unsigned char)(cx + dx);
     }
 
-    /* Greedy pursuit walks into dead ends: the hall's long wall bands leave a
-     * chaser pressed against one with Winky straight through it and no second axis
-     * to try. Rather than let it stand there forever, wander. On the map that reads
-     * as a patrol, which is what a Hallmonster is meant to be doing anyway. */
+    /* Greedy pursuit walks into dead ends: a chaser ends up pressed against a wall
+     * with Winky straight through it and no second axis to try, and stands there
+     * forever. Rather than allow that, wander. In the hall it reads as the patrol a
+     * Hallmonster is supposed to be doing anyway. */
     if (nx == cx && ny == cy) {
         const unsigned char dir = rndn(4);
         const signed char wdx = (dir == 0) ? 1 : (dir == 1) ? -1 : 0;
         const signed char wdy = (dir == 2) ? 1 : (dir == 3) ? -1 : 0;
         const unsigned char tx = (unsigned char)(cx + wdx);
         const unsigned char ty = (unsigned char)(cy + wdy);
-        if (tx < gw && ty < gh && !blocked(tx, ty)) { nx = tx; ny = ty; }
+        if (tx < gw && ty < gh && !pursuit_blocked(tx, ty)) { nx = tx; ny = ty; }
     }
 
     /* Room monsters will not walk over a body either -- the room closes in on
@@ -600,20 +687,39 @@ static void hall_advance(void)
     }
 }
 
-/* Dawdle in a room and one comes through the door after you. It cannot be shot,
+/* Dawdle in a room and one comes through a doorway after you. It cannot be shot,
  * blocked or outrun for long; there is nothing to do about it except leave. This
  * is the clock that stops Venture being a leisurely looting exercise. */
 static void hall_intrude(void)
 {
-    unsigned char rx;
+    unsigned char rx, ry;
 
     if (h_live[0]) return;
-    for (rx = 0; rx < ROOM_W; rx++) {
-        if (room_art[theme][0][rx] != 'd') continue;
-        h_live[0] = 1; h_x[0] = rx; h_y[0] = 0;
-        cue(SND_HALL);
-        return;
-    }
+    for (ry = 0; ry < ROOM_H; ry++)
+        for (rx = 0; rx < ROOM_W; rx++)
+            if (grid[ry][rx] == T_EXIT) {
+                h_live[0] = 1; h_x[0] = rx; h_y[0] = ry;
+                cue(SND_HALL);
+                return;
+            }
+}
+
+/* ---- the facing pip ---------------------------------------------------- */
+static void draw_facing(void)
+{
+    const unsigned char tx = (unsigned char)(wx + face_dx);
+    const unsigned char ty = (unsigned char)(wy + face_dy);
+
+    f_live = 0;
+    if (mode != MODE_ROOM) return;                 /* the bow is for rooms */
+    if (tx >= gw || ty >= gh) return;
+    if (grid[ty][tx] != T_FLOOR) return;           /* never over a wall or a body */
+    if (lethal(tx, ty)) return;                    /* let the danger show instead */
+
+    f_live = 1; f_x = tx; f_y = ty;
+    put_at(tx, ty,
+           face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
+           face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE);
 }
 
 /* ---- one simulation step ---------------------------------------------- */
@@ -623,31 +729,38 @@ static void step(unsigned char ks)
 
     /* Erase everything that can move, from the grid underneath it. */
     restore(wx, wy);
+    if (f_live) restore(f_x, f_y);
     if (a_live) restore(a_x, a_y);
     for (i = 0; i < MAX_MON; i++)  if (m_live[i]) restore(m_x[i], m_y[i]);
     for (i = 0; i < MAX_HALL; i++) if (h_live[i]) restore(h_x[i], h_y[i]);
+    f_live = 0;
 
     tick_count++;
     cue_tick();
     winky_move(ks);
 
     if (mode == MODE_MAP) {
-        /* Walking onto a door is the commitment. enter_room() rebuilds the whole
-         * board underneath us, so this step ends here. */
+        /* Walking onto an entrance is the commitment. enter_room() rebuilds the
+         * whole board underneath us, so this step ends here. */
         slot = door_at(wx, wy);
-        if (slot != 0xFF && !slot_done[slot]) { enter_room(slot); return; }
+        if (slot != 0xFF && !slot_done[slot]) {
+            ret_x = wx; ret_y = wy;
+            enter_room(slot, door_side(wx, wy, slot));
+            return;
+        }
         if (lethal(wx, wy)) { dead = 1; return; }
         if (!(tick_count % HALL_EVERY)) hall_advance();
     } else {
         if (grid[wy][wx] == T_TREAS) {
             grid[wy][wx] = T_FLOOR;
             have_treasure = 1;
+            treas_got |= (unsigned char)(1 << theme);
             score += (unsigned int)SCORE_TREASURE * level;
             cue(SND_TREASURE);
             draw_hud();
         }
-        /* The doorway in the top wall is the way out, and only with the goods. */
-        if (have_treasure && wy == 0) { left_room = 1; return; }
+        /* Either doorway is a way out, and only with the goods. */
+        if (have_treasure && grid[wy][wx] == T_EXIT) { left_room = 1; return; }
         if (lethal(wx, wy)) { dead = 1; return; }
 
         if (ks & KS_FIRE) fire();
@@ -660,12 +773,14 @@ static void step(unsigned char ks)
     if (lethal(wx, wy)) dead = 1;   /* something may have stepped onto Winky */
     if (dead) return;
 
-    /* Redraw in an order that keeps Winky visible: he is the thing the player is
-     * tracking, so he wins any overlap. */
+    /* Redraw in an order that keeps Winky visible, and puts anything dangerous
+     * over the facing pip: he is the thing the player is tracking, so he wins any
+     * overlap, and a pip must never hide a monster. */
+    draw_facing();
     for (i = 0; i < MAX_MON; i++)
         if (m_live[i]) put_at(m_x[i], m_y[i], theme_monster[theme], A_MON);
     for (i = 0; i < MAX_HALL; i++)
-        if (h_live[i]) put_at(h_x[i], h_y[i], G_HALLMON, A_HALLMON);
+        if (h_live[i]) put_at(h_x[i], h_y[i], G_HALLMON, a_hall);
     if (a_live)
         put_at(a_x, a_y,
                a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
@@ -704,32 +819,99 @@ static unsigned char swallow_esc(int k)
     }
 }
 
-/* ---- shell ------------------------------------------------------------- */
+/* ---- full-screen interludes -------------------------------------------- */
+static void wait_key(void)
+{
+    while (INCH_NB() >= 0) { }       /* drain, so a stale byte cannot skip it */
+    while (INCH_NB() < 0) { }
+}
+
 static void banner(const char *line)
 {
     vfill(' ');
     vcmd(VCMD_CLEAR);
     put_str(33, 11, line, A_HUD);
-    while (INCH_NB() < 0) { }
+    wait_key();
+}
+
+/* The arcade's level-start screen: a roster of every treasure in the game, each
+ * slot a '?' until you have taken that one, then its glyph in its own colour. It
+ * is the only long-run progress the game shows, and it is the reason to go back
+ * into a room type you have already survived. */
+static void roster_screen(void)
+{
+    unsigned char i;
+
+    vfill(' ');
+    vcmd(VCMD_CLEAR);
+    put_str(22, 9, "TREASURES:", A_HUD);
+    for (i = 0; i < THEMES; i++) {
+        vaddr((unsigned int)9 * SCR_W + 34 + i * 3);
+        if (treas_got & (1 << i)) {
+            vattr(theme_attr[i]);                 /* each treasure in its own colour */
+            vputc(theme_treasure[i]);
+        } else {
+            vattr(A_TEXT);
+            vputc('?');
+        }
+    }
+    put_str(31, 13, "PLAYER 1 GET READY", A_HUD);
+    wait_key();
+}
+
+/* ...and its between-levels tally. */
+static void bonus_screen(unsigned int earned, unsigned char mult, unsigned int total)
+{
+    vfill(' ');
+    vcmd(VCMD_CLEAR);
+    put_str(22, 9,  "SCORE THIS LEVEL", A_HUD);
+    put_num(46, 9,  earned, 6, A_HUD);
+    put_str(22, 11, "BONUS MULTIPLIER", A_HUD);
+    put_str(46, 11, "X", A_HUD);
+    put_num(47, 11, mult, 1, A_HUD);
+    put_str(22, 13, "TOTAL BONUS", A_HUD);
+    put_num(46, 13, total, 6, A_HUD);
+    wait_key();
 }
 
 /* Deal this level's four rooms from the six themes, rotating with the level so a
- * run of twelve room-visits is not four layouts seen three times each. */
+ * run of twelve room-visits is not four layouts seen three times each, and adopt
+ * the level's palette. */
 static void start_level(void)
 {
+    const unsigned char p = (unsigned char)((level - 1) % LEVELS);
     unsigned char i;
+
+    a_wall = lvl_wall[p];
+    a_room = lvl_room[p];
+    a_hall = lvl_hall[p];
+
     for (i = 0; i < ROOMS_PER_LEVEL; i++) {
         room_of_slot[i] =
             (unsigned char)(((level - 1) * ROOMS_PER_LEVEL + i) % THEMES);
         slot_done[i] = 0;
     }
     level_done = 0;
+    level_base = score;
+    slot_entered = 0xFF;
+}
+
+/* Multiply without a 32-bit runtime, and stop at 65535 rather than wrap -- a score
+ * that rolls over looks exactly like a bug. */
+static unsigned int scaled(unsigned int v, unsigned char n)
+{
+    unsigned int acc = 0;
+    while (n--) {
+        if ((unsigned int)(acc + v) < acc) return 0xFFFF;
+        acc += v;
+    }
+    return acc;
 }
 
 int main(void)
 {
-    unsigned int last, now;
-    unsigned char ks, catchup, i;
+    unsigned int last, now, earned, total;
+    unsigned char ks, catchup, i, mult;
     int k;
 
     rng = rng_seed();
@@ -739,6 +921,7 @@ int main(void)
     banner("V E N T U R E");
 
     start_level();
+    roster_screen();
     enter_map();
 
     for (;;) {
@@ -793,7 +976,13 @@ int main(void)
                 if (!slot_done[i]) level_done = 0;
 
             if (level_done) {
-                banner("LEVEL CLEARED");
+                earned = score - level_base;
+                mult = BONUS_MULT(level, lives);
+                total = scaled(earned, mult);
+                score = ((unsigned int)(score + total) < score) ? 0xFFFF
+                                                               : (score + total);
+                bonus_screen(earned, mult, total);
+
                 level++;
                 /* Three levels, then round again -- faster. tickrate is the only
                  * speed constant in the game, so lowering it speeds up Winky, the
@@ -805,7 +994,7 @@ int main(void)
                     if (tickrate > 1) tickrate--;
                 }
                 start_level();
-                slot_entered = 0xFF;
+                roster_screen();
             }
             enter_map();
         } else {

@@ -138,14 +138,24 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     off fails the build instead of shipping an unwinnable room. Two turned up that
     way. It also has to retry when looking for Winky: `step()` erases before it
     redraws, and a cycle budget can stop the CPU in that window.
-  - **One gap, deliberate:** the Hallmonster that walks into a room you linger in has
-    no automated test. It needs Winky alive for `HALL_ROOM_TICKS` (260 ticks, ~17 s)
-    in a room with three serpents converging; standing still, running the room's
-    outer circuit and clearing the serpents first were all tried and all die short. A
-    test would have to play the game well, which is more than the assertion is worth.
-    Unverified: the `dawdle` counter and the spawn point in `hall_intrude()`. What the
-    intruder then does is `chase()`/`hall_advance()`, which the map-side tests drive
-    directly.
+  - Then a **fidelity pass against ten screenshots of arcade play**, which is where
+    most of the above got rewritten. Four mechanics a written summary does not convey
+    were sitting in plain sight: a looted room **seals itself solid** (entrances gone,
+    block filled in), Hallmonsters **accumulate** as you loot (one wakes per room),
+    rooms have **two doorways** on opposite sides, and Winky carries a **visible
+    facing pip**. Plus the per-level recolour, the treasure roster with
+    `PLAYER 1 GET READY`, the between-levels bonus tally, and room interiors redrawn
+    as open arenas rather than mazes. The pip fixes a readability problem this port
+    invented for itself — facing persists after you release the key and nothing showed
+    it. 23 tests, `VENTURE.PRG` 10,488 bytes.
+  - **Two gaps, deliberate.** The Hallmonster that walks into a room you linger in
+    needs Winky alive for `HALL_ROOM_TICKS` (260 ticks, ~17 s) with three serpents
+    converging; standing still, lapping the room's outer circuit and clearing the
+    serpents first were all tried and all die short. The between-levels tally needs
+    all four rooms of a level looted, i.e. four bespoke routes through four layouts.
+    Both are noted in `test_venture.cpp` with what they leave unverified. What the
+    room intruder *does* once it is in is `chase()`/`hall_advance()`, which the
+    hall-side tests drive directly.
 - [ ] **OPCODE** — set aside, recorded so it is not lost. A puzzle game where each
   level is a spec plus a byte/cycle budget and you write real 65C02 to satisfy it,
   scored on size and speed. Extremely on-brand for "My First Computer", and four

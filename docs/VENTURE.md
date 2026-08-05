@@ -14,7 +14,8 @@ card bolted to it and the machine itself just played. This is the card.
 GAMES]VENTURE
 ```
 
-Press any key at the title, and again at each **CAUGHT** or **LEVEL CLEARED**.
+Press any key at the title, at the treasure roster, and at each **CAUGHT** or
+between-levels tally.
 
 ## Controls
 
@@ -33,27 +34,36 @@ and steer diagonally, which a keyboard alone could not manage.
 ESC does nothing on purpose. Every arrow key sends an ESC as the first byte of its
 sequence, so a key that quit on ESC would quit whenever you moved.
 
+## Before a level
+
+A roster of every treasure in the game, each slot a `?` until you have taken that
+one, then its own glyph in its own colour. It is the only long-run progress the game
+shows, and the reason to go back into a room type you have already survived.
+
 ## The hall
 
-The game opens on the **dungeon hall** — four alcoves off a corridor, each with a
-room entrance set into the back of it.
+The game proper opens on the **dungeon hall** — an open arena with the level's four
+rooms sitting in it as blocks.
 
 | | |
 |---|---|
 | `☺` | **Winky** — you |
-| `■` | A room entrance. Walk onto it to go in. |
-| `▓` | An entrance you have already looted. Nothing left in there. |
+| `▒` | A room. **Two entrances apiece**, one at each end. |
+| `■` | An entrance. Walk onto it to go in. |
+| `█` (bright) | A room you have looted: entrances sealed, filled in solid. |
 | `Φ` | **Hallmonster** — see below |
-| `█` | Wall |
+| `█` (dim) | Wall |
 
 **You cannot see into a room from the hall, ever.** The entrance tells you nothing
 about what is behind it until you have been inside. That is deliberate: you commit
-first and find out second.
+first and find out second. The one thing the hall does tell you is which rooms are
+*done* — and only after you have already been in them.
 
 **You cannot fire in the hall.** The bow is for rooms.
 
-Clear all four rooms and you descend a level. There are three levels, and then it
-starts again — faster. There is no ending; you play until your lives run out.
+Clear all four rooms and you descend a level, and the whole dungeon changes colour:
+magenta, then cyan, then yellow. Three levels, and then it starts again — faster.
+There is no ending; you play until your lives run out.
 
 ## Hallmonsters
 
@@ -63,8 +73,11 @@ toward you.
 
 They are slower than you are, so the hall is survivable if you keep moving. What
 they are really there for is the clock: **linger too long in a room and one comes
-through the door after you.** You will hear it arrive. There is nothing to be done
+through a doorway after you.** You will hear it arrive. There is nothing to be done
 about it except leave.
+
+**There are more of them as you go.** One at the start of a level, and another wakes
+every time you loot a room — so the fourth room of a level is not the easy one.
 
 ## Inside a room
 
@@ -76,11 +89,17 @@ about it except leave.
 | `░` | **Remains** — what is left of something you killed |
 | `█` | Wall |
 | `↑ ↓ ← →` | Your arrow, in flight |
+| `≡` | A doorway. There are **two**, and either is a way out. |
+| `▲ ▼ ◄ ►` | A dim pip showing where your next arrow will go |
 
 The bar across the top shows **SCORE**, **LIVES** and **LEVEL**.
 
-Take the treasure, then get out — the doorway you came in by, in the top wall, is
-also the way out, and it will not let you leave empty-handed.
+Take the treasure, then get out. Every room has two doorways on opposite sides — the
+one you came in by and one to run for — and neither will let you leave empty-handed.
+
+**Watch the pip.** Facing sticks after you let go of the key, and the pip is the only
+thing that shows it. It is how you know what you are aimed at while you are backing
+away from something.
 
 **One arrow at a time.** You cannot spray. The shot flies in whatever direction you
 last moved, and until it hits something or reaches a wall you are unarmed. Facing
@@ -103,6 +122,12 @@ due.
 **Dying costs the room, not the level.** You are put back in the hall and the room
 is still there to try again.
 
+## Between levels
+
+`SCORE THIS LEVEL` × `BONUS MULTIPLIER` = `TOTAL BONUS`, added to your score. The
+multiplier is the level you just finished plus the lives you still have, so a clean
+level is worth a great deal more than a survived one.
+
 ## Sound
 
 The game does not have a score, only cues: a chime for the treasure, a short note
@@ -115,12 +140,19 @@ that without looking away from what you are doing.
 - Movement is by whole character cells rather than smooth motion; there is no
   sprite layer on this machine, so cells are the resolution. At 15 cells a second
   it still plays as an arcade game rather than a board game.
-- The map and the rooms are separate screens instead of a zoom.
+- The hall and the rooms are separate screens instead of a zoom, so the hall shows
+  each room as a block rather than as its true shape.
 - Some monsters and treasures are renamed to match the glyphs the character ROM
   actually has: the Necklace, Urn, Key, Crown and Griffin are a Jewel, an Ingot, a
   Ring, an Amulet and a Wraith here.
 - Six room layouts serve the twelve room-visits of a run, dealt four at a time and
-  rotated by level, rather than twelve distinct pictures.
+  rotated by level, rather than twelve distinct pictures. The roster lists those six.
+- No moving walls. One arcade room has bars that slide back and forth; the room that
+  takes its shape from that screenshot does not take its motion.
+
+What *is* here because the arcade has it: two doorways per room, looted rooms sealing
+themselves solid, the growing Hallmonster count, the per-level recolour, the facing
+pip, the treasure roster and the between-levels tally.
 
 What is *not* changed: the invincible Hallmonsters, the lethal remains, the
 worthless-before-the-treasure rule, one arrow in flight, and the fact that there is

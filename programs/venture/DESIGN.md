@@ -33,13 +33,17 @@ this project can actually reach.
 
 Two views:
 
-**Dungeon map.** The level's four rooms as boxes joined by corridors, Winky moving
-between them, Hallmonsters patrolling. **Rooms stay blind** — the map shows a
-doorway, never the contents. You commit before you know what is inside, which is
-where the dread lives.
+**The hall.** An open arena with the four rooms sitting in it as blocks, each with
+**two entrances**. Winky crosses it; Hallmonsters patrol it. **Rooms stay blind** —
+the hall shows an entrance, never the contents. You commit before you know what is
+inside, which is where the dread lives.
+
+The one thing the hall does tell you is which rooms are **done**: a looted room
+seals both its entrances and fills in solid. That is the arcade's own signal, and it
+only appears after you have already been in.
 
 **Room interior.** Fills the screen. The treasure, the room's monsters, walls, and
-the door you came in by.
+**two doorways** — the one you came in by and one to run for.
 
 ## Movement
 
@@ -91,8 +95,12 @@ room, and it is also the cheapest possible projectile system — one x, y, dx, d
 ## Hallmonsters
 
 Invincible. Unkillable. They cannot be shot, blocked, or outrun indefinitely — they
-are a **clock**, not an enemy. They patrol the map and encroach on whatever room you
-are lingering in; stay too long and one comes through the door.
+are a **clock**, not an enemy. They patrol the hall and encroach on whatever room you
+are lingering in; stay too long and one comes through a doorway.
+
+**Their number grows as you loot.** The arcade's hall starts nearly empty and is
+crawling by the fourth room — one screenshot has seven of them. One wakes per room
+cleared, which is what stops the last room of a level being the easiest.
 
 This is what stops Venture being a leisurely looting exercise. Implementation is a
 timer and a pursuit step, which is nearly free.
@@ -102,6 +110,17 @@ timer and a pursuit step, which is nearly free.
 Six themed rooms, each with its treasure. A level deals four of them, rotating with
 the level, so a full run of twelve room-visits is not four pictures seen three times
 each.
+
+Each room is one big open arena with a single wall structure in it — a hook, a
+vault, a web of pillars, a pen, a switchback, a pinwheel — rather than a dense maze.
+That came from the screenshots: the arcade's rooms are mostly open space, and the
+structure is there to make you commit to a route rather than to make you thread a
+corridor.
+
+Two doorways apiece, on opposite sides. Either is a way out with the treasure, and
+which one you arrive at depends on which of the hall's two entrances you used. A
+one-door room is a cul-de-sac you have to fight back out of, which is not how
+Venture plays.
 
 Glyphs came first and the names follow them. Rather than pick a codepoint that
 ought to look like a necklace, the ROM was rendered and read, and whatever a shape
@@ -120,8 +139,12 @@ Griffin are a Jewel, an Ingot, a Ring, an Amulet and a Wraith here.
 Picking these from a table without looking at them is how you end up with a spider
 that reads as a snowflake.
 
-Colour comes from the attribute plane, so each monster type gets its own without
-costing a glyph.
+Colour comes from the attribute plane, so each monster type and each treasure gets
+its own without costing a glyph.
+
+**The dungeon is recoloured every level** — magenta, then cyan, then yellow, with
+the Hallmonsters on a colour of their own — exactly as the arcade does it. Two
+tables of three bytes.
 
 ## Lethal corpses
 
@@ -147,9 +170,20 @@ the way. Preserve it exactly.
 
 ## Lives and progression
 
-Three lives. Losing one restarts the current room; losing the last ends the run.
-Clearing all four rooms of a level descends. Clearing level 3 loops to level 1 with
-`tickrate` decremented and monster counts raised.
+Three lives. Losing one costs the room, not the level — you are put back in the hall
+and the room is still there. Losing the last ends the run. Clearing all four rooms of
+a level descends. Clearing level 3 loops to level 1 with `tickrate` decremented.
+
+Two screens frame a level, both from the arcade:
+
+**The roster**, before you start: a slot for every treasure in the game, each a `?`
+until you have taken that one, then its glyph in its own colour, over
+`PLAYER 1 GET READY`. It is the only long-run progress the game shows.
+
+**The tally**, between levels: `SCORE THIS LEVEL` × `BONUS MULTIPLIER` = `TOTAL
+BONUS`. The screenshot shows a ×6 but not what sets it, so the rule here is ours —
+the level you just finished plus the lives you still have, which reaches ×6 exactly
+where the arcade's shot does and makes not dying worth something beyond not dying.
 
 ## Memory budget
 
@@ -172,10 +206,10 @@ nothing while it runs -- no tutorial messages, no coaching when you take the
 treasure or kill something worthless. An arcade cabinet carried an instruction card
 and the machine just played; the manual is that card.
 
-**Finished.** All ten steps are in (`VENTURE.PRG`, 9,359 bytes): the hall, six
-rooms, Hallmonsters on the map and coming through room doors, the level loop, and
-the SID cues. Driven by `tests/test_venture.cpp` (16 tests), which runs the real
-blob and holds keys through `$FE0F` the way a player would.
+**Finished.** All ten steps are in, and then a fidelity pass against ten screenshots
+of arcade play (`VENTURE.PRG`, 10,488 bytes). Driven by `tests/test_venture.cpp`
+(23 tests), which runs the real blob and holds keys through `$FE0F` the way a player
+would.
 
 Things that came out of building it:
 
@@ -206,12 +240,28 @@ Things that came out of building it:
   flood-fills them: exact dimensions, sealed border, treasure and every monster post
   reachable from the door. Two real typos turned up that way while the rooms were
   being drawn.
-- **One behaviour resisted testing.** The Hallmonster that comes into a room you
-  linger in needs Winky alive for 260 ticks with three serpents closing, and no
-  scripted route survives that -- standing still, lapping the room's outer circuit
-  and clearing the serpents first all die short. It is left untested rather than
-  tested flakily; the note in `test_venture.cpp` says exactly what that leaves
-  unverified (a counter and a spawn point) and what the map tests cover instead.
+- **Two behaviours resisted testing**, and are left untested rather than tested
+  flakily. The Hallmonster that comes into a room you linger in needs Winky alive for
+  260 ticks with three serpents closing, and no scripted route survives that. The
+  between-levels tally needs all four rooms of a level looted, which is four bespoke
+  routes through four different layouts. Both are noted in `test_venture.cpp` with
+  what exactly they leave unverified.
+- **Screenshots beat descriptions.** The build was "finished" before anyone looked at
+  the arcade game running. Four mechanics that a written summary does not convey were
+  sitting in plain sight: a looted room seals solid, Hallmonsters accumulate, rooms
+  have two doors, and Winky carries a visible facing pip. All four were small changes
+  and all four matter to how it plays. The pip in particular fixes a readability
+  problem this port had invented for itself -- facing persists after you release the
+  key, and nothing showed it.
+- **Pursuers must not step into a doorway.** A room entrance is one cell let into a
+  solid block, so a chaser that walks in has nothing to step to and rattles there for
+  the rest of the level. `chase()` treats entrances as wall; they are patrolling the
+  hall, not queueing to get in.
+- **Aim and fire on the same tick.** `keystate()` is sampled once per tick and
+  `winky_move()` sets facing before `fire()` reads it, so pressing a direction and
+  fire together launches the arrow that tick. Turning first and firing second -- the
+  obvious way -- walks Winky into whatever he is aiming at whenever it is close. The
+  test harness had to learn this before it could reliably kill anything.
 - **The tests can catch a half-drawn frame.** `step()` erases every cell that can
   move and only then redraws them, and a cycle budget stops the CPU at an arbitrary
   instruction. Sampling in that window shows no Winky at all -- which looks exactly
@@ -240,16 +290,32 @@ feels like Venture or does not, and it is worth stopping there to judge.
 
 ## Fidelity
 
-Deliberate departures, and why:
+Ten screenshots of arcade play were read late in the build, and most of what they
+showed got implemented rather than excused: two doorways per room, looted rooms
+sealing solid, the growing Hallmonster count, the per-level palette, the facing pip,
+the roster and the tally, and open-arena room shapes instead of mazes.
+
+What is left is a genuine departure, and why:
 
 - **Cell-granular movement.** The arcade had sub-cell motion; character cells *are*
   the resolution here, with no sprite layer. At 15 cells/sec with independent
   direction bits this reads as smooth arcade movement, not as a board game — but it
-  is a genuine difference and the one thing no amount of engineering removes.
-- **Screen switch instead of a zoom** between map and room.
+  is a real difference and the one thing no amount of engineering removes.
+- **Screen switch instead of a zoom** between hall and room. The arcade draws each
+  room's true shape on the hall and zooms into it; a 44×15 room cannot also be drawn
+  to scale inside a 56×15 hall, so the hall carries a 7×3 block per room instead.
+  The block still fills in when looted, which is the part that matters.
+- **A shaded block, not an outline,** for a room still holding treasure. An outline
+  would need its interior drawn as floor you cannot walk on. Shaded-then-solid
+  carries the same information without lying about where you can go.
+- **No moving walls.** `room-moving-walls.png` has red bars that slide; that is a
+  per-room hazard system and it is not built. The pinwheel room takes its shape from
+  that screenshot without its motion.
+- **Six room layouts, not twelve.** Dealt four at a time and rotated by level.
+- **Six treasures on the roster, not twenty-seven.** It lists what this port has.
 - **Glyphs, not sprites.** The char-cell look is the aesthetic, as with KPANIC.
-- **Sound is suggestive, not sampled.** Three SID voices, not the arcade's board.
+- **Sound is suggestive, not sampled.** Cues on one SID voice, not the arcade's board.
 
 Not departures, and not to be "improved": the invincible Hallmonsters, the lethal
-corpses, the zero-points-before-treasure rule, one arrow in flight, and the absence
-of an ending. Each is load-bearing.
+corpses, the zero-points-before-treasure rule, one arrow in flight, blind rooms, and
+the absence of an ending. Each is load-bearing.
