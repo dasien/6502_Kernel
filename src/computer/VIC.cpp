@@ -98,6 +98,8 @@ namespace Computer
             case kCmdScrollUp: cmdScrollUp(); break;
             case kCmdScrollDown: cmdScrollDown(); break;
             case kCmdFillRow: cmdFillRow(); break;
+            case kCmdRowSize: cmdRowSize(); break;
+            case kCmdRowsNormal: row_double_ = 0; dirty_flag_ = true; break;
             default: break;
             }
             break;
@@ -121,7 +123,29 @@ namespace Computer
         screen_buffer_.fill(cmd_param_);
         color_buffer_.fill(attr_latch_);
         scroll_bot_ = kScreenHeight - 1;   // a clear also resets the scroll region
+        row_double_ = 0;                   // ...and puts every row back to 8x16, so a
+        dirty_flag_ = true;                // program cannot strand the shell at 16x32
+    }
+
+    // Flag one row double or normal. The row comes in the low bits of the command
+    // parameter and bit 7 says which way, so setting up a playfield is one write pair
+    // per row and needs no register of its own.
+    void VIC::cmdRowSize()
+    {
+        const uint8_t row = cmd_param_ & kRowSizeMask;
+        if (row >= kScreenHeight) return;
+        const uint32_t bit = 1u << row;
+        if (cmd_param_ & kRowSizeDouble) row_double_ |= bit;
+        else                             row_double_ &= ~bit;
         dirty_flag_ = true;
+    }
+
+    bool VIC::isRowDouble(const uint16_t row) const
+    {
+        // The bottom row has no row beneath it to grow into, so it stays 8x16 whatever
+        // the flag says -- the alternative is a half-drawn glyph hanging off the screen.
+        if (row + 1 >= kScreenHeight) return false;
+        return (row_double_ >> row) & 1u;
     }
 
     // Scroll/blank only the region rows 0..scroll_bot_ (default: whole screen), so
@@ -139,6 +163,7 @@ namespace Computer
             screen_buffer_[i] = cmd_param_;
             color_buffer_[i] = attr_latch_;
         }
+        shiftRowFlags(true);
         dirty_flag_ = true;
     }
 
@@ -155,7 +180,20 @@ namespace Computer
             screen_buffer_[i] = cmd_param_;
             color_buffer_[i] = attr_latch_;
         }
+        shiftRowFlags(false);
         dirty_flag_ = true;
+    }
+
+    // A row's size travels with its contents. Scrolling text past a double row and
+    // leaving the flag behind would resize whatever line happened to land there.
+    void VIC::shiftRowFlags(const bool up)
+    {
+        const uint32_t region = (scroll_bot_ + 1 >= 32)
+                                    ? 0xFFFFFFFFu
+                                    : ((1u << (scroll_bot_ + 1)) - 1u);
+        const uint32_t inside = row_double_ & region;
+        const uint32_t moved = up ? (inside >> 1) : ((inside << 1) & region);
+        row_double_ = (row_double_ & ~region) | moved;
     }
 
     void VIC::cmdFillRow()

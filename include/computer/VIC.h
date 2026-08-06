@@ -28,6 +28,22 @@ namespace Computer
      * Attribute byte format: bit7 = reverse-video, bit6 = bright, bits5-3 = bg
      * color (0-7), bits2-0 = fg color (0-7). Default = $02 (green on black).
      *
+     * DOUBLE-SIZE ROWS. Any row can be flagged double: its glyphs render at twice
+     * the size, 16x32 instead of 8x16, so the row spans two rows of screen and holds
+     * 40 characters instead of 80. The row underneath it is covered and its contents
+     * are not drawn. Same idea as the VT100's double-height lines, and for the same
+     * reason -- it is a property of the line, not a mode of the chip, so a program can
+     * have a chunky playfield above a normal-sized status line.
+     *
+     * The character plane does not change shape: a double row's 40 cells are just the
+     * first 40 cells of that row, addressed exactly as always. Nothing about the port
+     * protocol differs; only the size the pixels come out at.
+     *
+     * kCmdClear puts every row back to normal. That is deliberate -- it means no
+     * program can leave the machine in a state where the shell renders at double size,
+     * however badly it exits, and a program that wants double rows simply sets them up
+     * after it clears (which it was doing anyway).
+     *
      * Transitional compatibility: the legacy memory-mapped window at $0400-$07E7
      * (40 columns) still writes through into the top-left 40 columns of the new
      * 80-column character plane, so an unmodified kernel keeps rendering while the
@@ -67,6 +83,12 @@ namespace Computer
         static constexpr uint8_t kCmdScrollUp = 0x02;   ///< scroll up one row, blank bottom
         static constexpr uint8_t kCmdScrollDown = 0x03; ///< scroll down one row, blank top
         static constexpr uint8_t kCmdFillRow = 0x04;    ///< fill the row of the current cell
+        static constexpr uint8_t kCmdRowSize = 0x05;    ///< param: bit7 = double, bits4-0 = row
+        static constexpr uint8_t kCmdRowsNormal = 0x06; ///< every row back to 8x16
+
+        /// Set in VREG_CMD_PARAM alongside kCmdRowSize to make that row double.
+        static constexpr uint8_t kRowSizeDouble = 0x80;
+        static constexpr uint8_t kRowSizeMask = 0x1F;
 
         // Attribute byte layout.
         static constexpr uint8_t kAttrFgMask = 0x07;
@@ -89,6 +111,10 @@ namespace Computer
         void write(uint16_t address, uint8_t value);
 
         // --- Display buffer access (for the host renderer) ---
+        /// Is this row drawn at 16x32? A double row covers the row below it, and the
+        /// last row can never be one -- there is nothing under it to cover.
+        [[nodiscard]] bool isRowDouble(uint16_t row) const;
+
         [[nodiscard]] const std::array<uint8_t, kScreenSize> &getScreenBuffer() const;
         [[nodiscard]] const std::array<uint8_t, kScreenSize> &getColorBuffer() const;
         [[nodiscard]] uint8_t getCharacterAt(uint16_t x, uint16_t y) const;
@@ -116,6 +142,7 @@ namespace Computer
         uint8_t attr_latch_ = kDefaultAttr;
         uint8_t cmd_param_ = 0x20; ///< fill char for commands (default space)
         uint8_t scroll_bot_ = kScreenHeight - 1; ///< scroll-region bottom row (default: full screen)
+        uint32_t row_double_ = 0;                ///< one bit per row; set = 16x32
         uint16_t cursor_index_ = 0;
         bool cursor_hidden_ = false;
 
@@ -128,6 +155,8 @@ namespace Computer
         void cmdScrollUp();
         void cmdScrollDown();
         void cmdFillRow();
+        void cmdRowSize();
+        void shiftRowFlags(bool up);
         void advanceIndex() const;
 
         /// The cell index, clamped into range, for use when indexing the planes.

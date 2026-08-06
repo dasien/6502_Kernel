@@ -151,16 +151,25 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     painter.fillRect(rect(), background_color_);
 
-    // Glyphs are blitted from the CP437 character ROM (see drawCharacterAt);
-    // no QFont is involved.
+    /* Glyphs are blitted from the CP437 character ROM (see drawCharacterAt); no QFont
+     * is involved.
+     *
+     * A row flagged double renders at 16x32: forty cells, each covering two columns
+     * and two rows of the screen. The row beneath it is what it grows into, so that
+     * row is skipped rather than drawn -- whatever is in its buffer is hidden, exactly
+     * as on a VT100 double-height line. */
     for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
     {
-        for (int x = 0; x < Computer::VIC::kScreenWidth; ++x)
+        const bool dbl = video_chip_->isRowDouble(y);
+        const int cols = dbl ? Computer::VIC::kScreenWidth / 2
+                             : Computer::VIC::kScreenWidth;
+        for (int x = 0; x < cols; ++x)
         {
             const uint8_t character = video_chip_->getCharacterAt(x, y);
             const uint8_t attr = video_chip_->getColorAt(x, y);
-            drawCharacterAt(painter, x, y, character, attr);
+            drawCharacterAt(painter, x, y, character, attr, dbl ? 2 : 1);
         }
+        if (dbl) ++y;                       // the covered row draws nothing of its own
     }
     
     // Overlay the text selection (translucent, so the glyphs show through).
@@ -306,13 +315,14 @@ void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
     }
 }
 
-// Blit one 8x16 glyph from the CP437 character ROM into a cell: each scanline
-// byte's bits select fg (1) or bg (0). The glyph is built at its native 8x16 and
-// drawn into the char_width_ x char_height_ cell -- at 1x that's 1:1; when zoomed
-// the QPainter nearest-neighbor scales it (SmoothPixmapTransform is off), so the
-// pixels stay crisp.
+// Blit one glyph from the CP437 character ROM into a cell: each scanline byte's bits
+// select fg (1) or bg (0). The glyph is built at its native 8x16 and drawn into a
+// (char_width_ x scale) by (char_height_ x scale) rect -- at 1x1 that's 1:1; zooming
+// the window, or a double-size row, has QPainter nearest-neighbor scale it
+// (SmoothPixmapTransform is off), so the pixels stay crisp and square.
 void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
-                              const uint8_t glyph, const QColor& fg, const QColor& bg)
+                              const uint8_t glyph, const QColor& fg, const QColor& bg,
+                              const int scale)
 {
     const QRgb fg_rgb = fg.rgb();
     const QRgb bg_rgb = bg.rgb();
@@ -326,15 +336,17 @@ void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
         for (int c = 0; c < 8; ++c)
             line[c] = (bits & (0x80 >> c)) ? fg_rgb : bg_rgb;
     }
-    painter.drawImage(QRect(x * char_width_, y * char_height_, char_width_, char_height_), img);
+    painter.drawImage(QRect(x * char_width_ * scale, y * char_height_,
+                            char_width_ * scale, char_height_ * scale), img);
 }
 
 void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
-                                    const uint8_t glyph, const uint8_t attr)
+                                    const uint8_t glyph, const uint8_t attr,
+                                    const int scale)
 {
     QColor fg, bg;
     resolveCellColors(glyph, attr, fg, bg);
-    blitGlyph(painter, x, y, glyph, fg, bg);
+    blitGlyph(painter, x, y, glyph, fg, bg, scale);
 }
 
 void DisplayWidget::drawCursor(QPainter& painter)
