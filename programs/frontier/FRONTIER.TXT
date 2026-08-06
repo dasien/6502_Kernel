@@ -1,0 +1,253 @@
+==============================================================================
+                         F R O N T I E R   F O R T U N E
+                     a trading game for the MFC 6502
+==============================================================================
+
+You step off the coach at Grisley Gultch with two thousand dollars, a wagon,
+and fifty-five hundred owed to a man who does not forget.
+
+You have sixty days.
+
+Buy cheap, haul it somewhere they want it, sell dear. Pay the man before the
+interest buries you, and walk away with as much as you can carry.
+
+
+------------------------------------------------------------------------------
+THE GOAL
+------------------------------------------------------------------------------
+
+At the end of day sixty -- or whenever you choose to retire -- your score is
+what you are worth:
+
+        cash + savings + cargo (at local prices) - debt
+
+Cargo counts, so you are not punished for finishing with a full wagon. Debt
+counts against you, so finishing rich and owing more is no victory at all.
+
+The top eight fortunes are written into the Book of Fortunes and kept on the
+disk. A negative score still gets a line -- somebody has to be the warning.
+
+
+------------------------------------------------------------------------------
+THE GOODS
+------------------------------------------------------------------------------
+
+Eight things are worth hauling. Every town carries its own price for each,
+and those prices move every day:
+
+        Feed            $10  -  $59        Medicine     $500  -  $1,199
+        Water           $20  -  $149       Guns       $1,000  -  $3,499
+        Food            $30  -  $239       Lumber     $5,000  -  $12,499
+        Whiskey        $300  -  $799       Gold      $15,000  -  $29,999
+
+Your wagon holds one hundred units, and a unit of Feed takes exactly as much
+room as a unit of Gold.
+
+Read that twice. Space, not money, is what you are really short of. A wagon
+full of Feed bought at its floor and sold at its ceiling earns you a few
+thousand dollars; one bar of Gold in the same space can earn more than that by
+itself. The whole game is the climb from hauling bulk to hauling value.
+
+
+------------------------------------------------------------------------------
+THE TOWNS
+------------------------------------------------------------------------------
+
+Six towns, and they are not interchangeable. A town may be SHORT of a good --
+it pays well for it -- or have a SURPLUS, where it goes cheap. It might have
+both. It might have neither and be a perfectly ordinary place.
+
+        v  (green, pointing down)     surplus here: buy
+        ^  (red, pointing up)         short here:   sell
+
+And it changes. Every week or two some town's fortunes shift: a shortage is
+relieved, a new one opens up. The map is worth learning but it will not hold
+still, and what you knew a month ago may be wrong.
+
+You only learn a town by GOING there. The travel list shows what you found
+last time you visited, and how long ago that was.
+
+Your first journeys are exploration. After that they are a route -- one you
+will have to keep checking.
+
+
+------------------------------------------------------------------------------
+THE MARKET IS ALIVE
+------------------------------------------------------------------------------
+
+Prices are not dice. Every town has a real, live price for every good at all
+times, and it moves for reasons.
+
+It drifts. Each day a price eases back toward what is normal for that town and
+wanders a little on its own -- other people trade whether you are there or not.
+
+AND IT ANSWERS TO YOU. Sell into a market and the price drops THE MOMENT you
+sell. Not next visit -- you will watch it fall on the screen in front of you:
+
+        sell  25 units of Water at $124  ->  the price is now $109
+        sell  75 more                    ->  the price is now $69
+
+A hundred units cuts a price roughly in half. Buying does the reverse: clear
+out a town's cheap Feed and you have made it dear.
+
+Then it heals, over about a week, back toward normal.
+
+So no two towns are a machine you can run. Work one pair hard and the spread
+closes in your hands -- buying dearer every trip, selling cheaper -- until the
+route costs you money. Six towns exist so you can rotate and let one breathe.
+
+Beside each price the board tells you how today compares with normal there:
+
+        low      cheaper than this town usually asks
+        high     dearer than usual
+
+
+------------------------------------------------------------------------------
+YOUR LEDGER
+------------------------------------------------------------------------------
+
+Press L in town to open your ledger: every price you have personally seen, in
+every town you have been to, with how many days ago you saw it.
+
+This is the only place you can compare towns -- and it is a notebook, not a
+telegraph. Those prices have drifted since you wrote them down, and a town's
+needs shift every week or so too. An entry from yesterday is worth acting on.
+An entry from three weeks ago is a rumour.
+
+Which is the real reason to keep moving: information rots.
+
+
+------------------------------------------------------------------------------
+THE SCREENS
+------------------------------------------------------------------------------
+
+From the status screen:
+
+        S       General Store -- buy and sell, and buy a sidearm
+        T       Travel -- pick a town and spend a day getting there
+        B       Bank -- put cash somewhere safe
+        D       Loan Office -- pay the debt down, or borrow more
+        W       Wagon Yard -- buy more space
+        C       Casino -- Hi-Lo, for the desperate
+        L       Ledger -- every price you have written down
+        Q       Retire and settle up
+
+ESC backs out of any screen, and cancels any prompt.
+
+Every "how much?" prompt tells you your real maximum -- all you can afford when
+buying, all you are carrying when selling -- so you will never type a number
+and then be refused. And since "all of it" is what you usually want:
+
+        ENTER (on an empty field)    fills in the maximum
+        A                           the same thing
+        ENTER again                  agrees to it
+
+It fills rather than commits, so you always see the figure before it happens.
+Type a smaller number instead if you would rather.
+
+
+GENERAL STORE
+    Press 1-8 to choose a good, then B to buy or S to sell.
+    ENTER twice buys all you can afford, or sells everything you have.
+    Press G to buy a SIDEARM for $250. See ROAD AGENTS below.
+    You buy with CASH. Money in the bank must be withdrawn first.
+
+TRAVEL
+    Press 1-6. One day passes, the debt grows, and every market moves on.
+
+BANK
+    Deposits are safe from anything that happens on the trail. They earn no
+    interest -- this is a strongbox, not an investment. The catch is that
+    banked money cannot be spent until you come back and withdraw it.
+
+LOAN OFFICE
+    P pays the debt down. B borrows more, up to $100,000 total.
+    Borrowing is real capital now against real interest later. Whether that
+    trade is ever worth taking is the question the game is asking you.
+
+WAGON YARD
+    $500 buys another wagon and twenty more units of space.
+
+CASINO
+    Bet, then call High or Low against the dealer's card. Ties push.
+    It is an even bet -- no house edge, and no way to grind it for income.
+    What it can do is turn a bad run into a wild one.
+
+
+------------------------------------------------------------------------------
+THE DEBT
+------------------------------------------------------------------------------
+
+Every day you spend on the trail, the debt grows by about two percent.
+
+Left completely alone, fifty-five hundred dollars becomes roughly eighteen
+thousand by day sixty. It compounds, so it is cheapest to deal with early and
+most expensive to ignore. The loan office shows you exactly what the next day
+will cost.
+
+
+------------------------------------------------------------------------------
+THE TRAIL
+------------------------------------------------------------------------------
+
+About one journey in five, something happens:
+
+    - a hidden shortcut, and the day costs you nothing
+    - a washed-out bridge, and it costs you two
+    - word of a shortage, and one good's price here doubles
+    - a glut, and one good's price here is cut in half
+    - a new settlement, and EVERYTHING here is in demand
+    - a cache of goods by the roadside, free for the loading
+    - a swollen river, and some of your load goes downstream
+
+
+------------------------------------------------------------------------------
+ROAD AGENTS
+------------------------------------------------------------------------------
+
+About one journey in eight, riders block the trail.
+
+They are not fools. They go for whatever is worth most -- your purse if it is
+fat, your most valuable cargo if it is not.
+
+    UNARMED, you can only watch it happen.
+
+    ARMED, you get a choice: FIGHT or HAND IT OVER.
+    Fight and win, and they scatter with nothing -- a little better than even
+    odds. Fight and lose, and they take twice as much AND your pistol.
+
+That is the whole point of the $250 sidearm. It does not make you safer by
+sitting in your holster. It buys you a decision at the moment one is worth
+having.
+
+One thing they can never touch: MONEY IN THE BANK. That is what the bank is
+for, and it is why leaving profits in your pocket is a choice with a cost.
+
+
+------------------------------------------------------------------------------
+ADVICE FROM MEN WHO DID NOT MAKE IT
+------------------------------------------------------------------------------
+
+Space is the scarce thing, not dollars. Ask what a unit of room is earning.
+
+Learn the map early, while the debt is small -- then check it again, because
+towns change their minds.
+
+Watch what your selling does to a price. If it sags as you unload, the wagon
+was too full for this town.
+
+Deal with the shark early. Two percent of a small debt is nothing. Two percent
+of a large one, sixty times over, is the whole game.
+
+Bank what you cannot afford to lose, before the journey and not after.
+
+Buy the sidearm. It is a quarter of one percent of what a full wagon of Gold
+is worth, and the men on the road know the difference.
+
+
+------------------------------------------------------------------------------
+
+Frontier Fortune was written by Brian Gentry in 2008 for the iPhone, and
+brought to the MFC 6502 by its author.
+
+==============================================================================
