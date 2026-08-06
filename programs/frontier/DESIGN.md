@@ -151,6 +151,47 @@ ScottFree uses for saves).
 8. Balance pass; `FRONTIER.TXT` manual on disk beside the game; add to
    `disk/diskmap.txt` + the `disk` target.
 
+## Deferred: value-based market depth
+
+**Not implemented — recorded as an option.** `MARKET_DEPTH` is measured in
+**units**, so saturation only polices the cheap end of the market. Ten bars of
+Gold move a price 10/200 = 5%; a hundred barrels of Water move it 50%. High-value
+goods therefore dodge saturation entirely, because you can never afford enough
+volume to shift the market.
+
+The fix would be to move the price by **dollar volume traded** rather than unit
+count, so $90,000 of Gold hits a market as hard as $90,000 of Water. It closes the
+hole at its root and leaves the strategies below intact — leverage would still
+work, it just could not be repeated into the same town.
+
+### Why it is worth fixing eventually
+
+Combined with the $100,000 debt ceiling, a single leveraged trade on a crashed
+price is game-ending. Measured:
+
+| Trade | Best wagons | Net, one day |
+|---|---|---|
+| Gold, crashed $9,000 → $22,500 | **0** | **+$133,000** |
+| Whiskey, crashed $275 → $550 | 12 | +$82,475 |
+| Feed, surplus $20 → $35 | 0 | −$500 |
+
+From a starting net worth of −$3,500, that first row effectively ends the run on
+day two. The crash event is only ~0.4% per journey, so it is rare — which is why
+this is deferred rather than urgent.
+
+### What the same analysis validated
+
+The tiers above are a genuinely good emergent structure and should survive any
+fix. Space binds below **$965/unit** and cash binds above it, so:
+
+- **High value** (Gold, Lumber) — borrow; wagons are wasted, cash is the limit.
+- **Mid value** (Whiskey, Medicine, Guns) — borrow *and* buy wagons; both bind.
+- **Bulk** (Feed, Water, Food) — neither. Interest on max debt exceeds the whole
+  margin, so leverage actively loses money.
+
+That answers the design question of whether borrowing is ever correct: it is, and
+knowing *when* is the skill.
+
 ## Credits
 
 Original game and design by Brian Gentry (Trestle Development, 2008). This is the
