@@ -1001,7 +1001,9 @@ static void step(unsigned char ks)
         arrow_advance();
         if (!(tick_count % MON_EVERY)) monsters_advance();
         if (++dawdle > HALL_ROOM_TICKS) hall_intrude();
-        if (!(tick_count % HALL_IN_EVERY)) { hall_advance(); hall_arrow_check(); }
+        /* Note the sense: every tick EXCEPT every HALL_IN_SKIP'th, so the intruder
+         * runs at four fifths of Winky rather than a fraction of him. */
+        if (tick_count % HALL_IN_SKIP) { hall_advance(); hall_arrow_check(); }
     }
 
     if (lethal(wx, wy)) dead = 1;   /* something may have stepped onto Winky */

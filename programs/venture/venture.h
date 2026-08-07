@@ -113,16 +113,24 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * HALL_BASE of them are awake at the start of a level and one more wakes per room
  * looted.
  *
- * The one that comes into a room WALKS THROUGH THE WALLS. It does not path round the
- * layout, it does not get stuck on anything, and nothing you can build between you
- * and it helps: it comes straight at you until you leave. That is the whole point of
- * it, and it is why the room's second doorway matters. */
+ * The one that comes into a room WALKS THROUGH THE WALLS, and it moves at very nearly
+ * your own speed. It does not path round the layout, it does not get stuck on
+ * anything, and nothing you can build between you and it helps: it comes straight at
+ * you until you leave. That is the whole point of it, and it is why the room's second
+ * doorway matters.
+ *
+ * Its speed is set the other way round from everything else here. The rest step every
+ * Nth tick, which cannot express anything between "half your speed" and "all of it";
+ * the intruder steps on every tick EXCEPT every Nth, so HALL_IN_SKIP of 5 puts it at
+ * four fifths of Winky. Fast enough that you cannot outrun it in a straight line, slow
+ * enough that a diagonal -- which moves you on both axes at once, while it only ever
+ * moves on one -- buys you the time to reach a doorway. */
 #define MAX_HALL      6
 #define HALL_BASE     1
 #define G_HALLMON     0xE8   /* a hooded figure */
 #define HALL_EVERY    4      /* hall: steps every Nth tick (slower than Winky) */
 #define HALL_ROOM_TICKS 170  /* room: ticks of dawdling before one comes in */
-#define HALL_IN_EVERY 3      /* room: how often the intruder steps */
+#define HALL_IN_SKIP  5      /* room: the intruder steps on all but every Nth tick */
 
 /* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
 #define T_FLOOR   0
@@ -207,8 +215,8 @@ extern void          sound_off(void);                /* SID voice 1 off */
 /* Monsters step every Nth tick, which is how they end up slower than Winky without a
  * second clock. Four rather than three: a smaller room leaves less space to
  * out-manoeuvre anything, so the same relative speed reads as more pressure than it
- * used to. The Hallmonster constants keep their old relationship to this -- ones
- * patrolling the hall slower than room monsters, an intruder exactly as fast.
+ * used to. Hallmonsters patrolling the hall are slower again; the one that comes into
+ * a room is in a different league entirely, see above.
  *
  * Nothing starts anywhere near a doorway: every layout is checked offline for at
  * least MIN_SPAWN_GAP tiles between each monster post and either arrival cell, so
