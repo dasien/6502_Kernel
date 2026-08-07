@@ -49,9 +49,9 @@
 static const char *const map_layout[LEVELS][MAP_H] = {
     {   /* level 1 */
         "##############################",
-        "#............................#",
+        "#...........................h#",
         "#.AAAAAAA.......BBBBBBBBBBB..#",
-        "#hAaaaaaA.......BbbbbbbbbbB.h#",
+        "#hAaaaaaA.......BbbbbbbbbbB..#",
         "#.AAAAAAA.......BBBBBBBBBBB..#",
         "#............h...............#",
         "#.CCCCCCCCCCC.......DDDDDDD..#",
@@ -62,11 +62,11 @@ static const char *const map_layout[LEVELS][MAP_H] = {
     },
     {   /* level 2 */
         "##############################",
-        "#.........h.................h#",
+        "#...........................h#",
         "#.AAAAAAA....BBBBBBBBB.......#",
         "#.AaaaaaA....BbbbbbbbB..DDDD.#",
         "#.AaaaaaA....BBBBBBBBB..DddD.#",
-        "#.AaaaaaA.h.............DddD.#",
+        "#.AaaaaaA.h.............DddDh#",
         "#.AaaaaaA....CCCCCCCCC..DddD.#",
         "#.AaaaaaA....CcccccccC..DDDD.#",
         "#.AAAAAAA.h..CCCCCCCCC......h#",
@@ -75,7 +75,7 @@ static const char *const map_layout[LEVELS][MAP_H] = {
     },
     {   /* level 3 */
         "##############################",
-        "#.............h..............#",
+        "#...........................h#",
         "#.AAAAAAA..BBBBBBBBB..CCCCCC.#",
         "#hAaaaaaA..BbbbbbbbB..CccccC.#",
         "#.AAAAAAA..BBBBBBBBB..CccccCh#",
@@ -87,6 +87,7 @@ static const char *const map_layout[LEVELS][MAP_H] = {
         "##############################",
     },
 };
+
 
 
 
@@ -242,7 +243,9 @@ static signed char   face_dx, face_dy;   /* last direction held; arrows use it *
 static unsigned char f_live, f_x, f_y;   /* the facing pip, so it can be erased */
 
 static unsigned char m_live[MAX_MON], m_x[MAX_MON], m_y[MAX_MON];
+static unsigned char m_ox[MAX_MON], m_oy[MAX_MON];   /* the cell each came from */
 static unsigned char h_live[MAX_HALL], h_x[MAX_HALL], h_y[MAX_HALL];
+static unsigned char h_ox[MAX_HALL], h_oy[MAX_HALL];
 
 static unsigned char a_live;             /* one arrow in flight, as the original */
 static unsigned char a_x, a_y;
@@ -445,13 +448,17 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
                 case 'm':
                     grid[ry][rx] = T_FLOOR;
                     if (nm < MAX_MON) {
-                        m_live[nm] = 1; m_x[nm] = rx; m_y[nm] = ry; nm++;
+                        m_live[nm] = 1; m_x[nm] = rx; m_y[nm] = ry;
+                        m_ox[nm] = 0xFF; m_oy[nm] = 0xFF;
+                        nm++;
                     }
                     break;
                 case 'h':
                     grid[ry][rx] = T_FLOOR;
                     if (nh < MAX_HALL) {
-                        h_live[nh] = 1; h_x[nh] = rx; h_y[nh] = ry; nh++;
+                        h_live[nh] = 1; h_x[nh] = rx; h_y[nh] = ry;
+                        h_ox[nh] = 0xFF; h_oy[nh] = 0xFF;
+                        nh++;
                     }
                     break;
                 case '1': case '2': case '3': case '4':
@@ -753,6 +760,7 @@ static void arrow_advance(void)
  * `solid`, below -- and that is the whole difference between a monster and a clock.
  */
 static unsigned char chase_self;    /* the monster taking this step, 0xFF for none */
+static unsigned char back_x, back_y; /* the cell it came from, which it may not retake */
 
 static unsigned char chase_blocked(unsigned char rx, unsigned char ry,
                                    unsigned char through_walls,
@@ -768,6 +776,7 @@ static unsigned char chase_blocked(unsigned char rx, unsigned char ry,
      * this they converge into the same cell and draw as a single glyph -- you cannot
      * see how many are coming, and one arrow appears to kill two. Crowding is the
      * honest behaviour and it makes a doorway worth holding. */
+    if (rx == back_x && ry == back_y) return 1;
     if (avoid_bodies) {
         unsigned char i;
         if (grid[ry][rx] == T_CORPSE) return 1;
@@ -782,7 +791,7 @@ static void chase(unsigned char *px, unsigned char *py,
                   unsigned char through_walls, unsigned char avoid_bodies)
 {
     const unsigned char cx = *px, cy = *py;
-    unsigned char nx = cx, ny = cy, adx, ady;
+    unsigned char nx, ny, adx, ady, pass;
     const signed char dx = (wx > cx) ? 1 : (wx < cx) ? -1 : 0;
     const signed char dy = (wy > cy) ? 1 : (wy < cy) ? -1 : 0;
 
@@ -792,38 +801,58 @@ static void chase(unsigned char *px, unsigned char *py,
 #define OPEN(X, Y) ((X) < gw && (Y) < gh && \
                     !chase_blocked((X), (Y), through_walls, avoid_bodies))
 
-    if (dx && (!dy || adx >= ady)) {
-        if (OPEN((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
-        else if (dy && OPEN(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
-    } else if (dy) {
-        if (OPEN(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
-        else if (dx && OPEN((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
-    }
+    /* Twice: first refusing to step back where it came from, then -- only if that
+     * left it with nowhere at all -- allowing it.
+     *
+     * Without the first pass a monster meeting a long wall bounces between two cells
+     * forever. Greedy pursuit turns it toward the wall, the wall turns it aside, and
+     * the next step turns it straight back; it never gets to the end of the wall.
+     * From the player's chair that is indistinguishable from the stalling bug this
+     * already fixed once -- something that should be hunting standing about instead --
+     * so it gets the same answer: one cell of memory, which is enough to make the
+     * sidestep commit to a direction and walk the wall out. */
+    for (pass = 0; pass < 2; pass++) {
+        nx = cx; ny = cy;
 
-    /* Both ways forward blocked. Sidestep across the direction we wanted, which
-     * walks round a body or a wall corner instead of staring at it. Deterministic, so
-     * a monster commits to going round one side rather than dithering. */
-    if (nx == cx && ny == cy) {
-        if (dx) {
-            if (OPEN(cx, (unsigned char)(cy - 1)))      ny = (unsigned char)(cy - 1);
-            else if (OPEN(cx, (unsigned char)(cy + 1))) ny = (unsigned char)(cy + 1);
+        if (dx && (!dy || adx >= ady)) {
+            if (OPEN((unsigned char)(cx + dx), cy)) nx = (unsigned char)(cx + dx);
+            else if (dy && OPEN(cx, (unsigned char)(cy + dy)))
+                ny = (unsigned char)(cy + dy);
         } else if (dy) {
-            if (OPEN((unsigned char)(cx - 1), cy))      nx = (unsigned char)(cx - 1);
-            else if (OPEN((unsigned char)(cx + 1), cy)) nx = (unsigned char)(cx + 1);
+            if (OPEN(cx, (unsigned char)(cy + dy))) ny = (unsigned char)(cy + dy);
+            else if (dx && OPEN((unsigned char)(cx + dx), cy))
+                nx = (unsigned char)(cx + dx);
         }
-    }
 
-    /* Boxed in on all four sides -- possible once the room fills with bodies. Take
-     * any open cell rather than freeze. In the hall this is also what keeps a
-     * Hallmonster patrolling when the greedy path dead-ends. */
-    if (nx == cx && ny == cy) {
-        const unsigned char dir = rndn(4);
-        const unsigned char tx = (unsigned char)(cx + ((dir == 0) ? 1 : (dir == 1) ? -1 : 0));
-        const unsigned char ty = (unsigned char)(cy + ((dir == 2) ? 1 : (dir == 3) ? -1 : 0));
-        if (OPEN(tx, ty)) { nx = tx; ny = ty; }
+        /* Both ways forward blocked. Sidestep across the direction we wanted, which
+         * walks round a body or a wall corner instead of staring at it. */
+        if (nx == cx && ny == cy) {
+            if (dx) {
+                if (OPEN(cx, (unsigned char)(cy - 1)))      ny = (unsigned char)(cy - 1);
+                else if (OPEN(cx, (unsigned char)(cy + 1))) ny = (unsigned char)(cy + 1);
+            } else if (dy) {
+                if (OPEN((unsigned char)(cx - 1), cy))      nx = (unsigned char)(cx - 1);
+                else if (OPEN((unsigned char)(cx + 1), cy)) nx = (unsigned char)(cx + 1);
+            }
+        }
+
+        /* Boxed in on all four sides -- possible once a room fills with bodies. Take
+         * any open cell rather than freeze. */
+        if (nx == cx && ny == cy) {
+            const unsigned char dir = rndn(4);
+            const unsigned char tx = (unsigned char)(cx + ((dir == 0) ? 1 : (dir == 1) ? -1 : 0));
+            const unsigned char ty = (unsigned char)(cy + ((dir == 2) ? 1 : (dir == 3) ? -1 : 0));
+            if (OPEN(tx, ty)) { nx = tx; ny = ty; }
+        }
+
+        if (nx != cx || ny != cy) break;    /* moved */
+        back_x = 0xFF;                      /* truly stuck: let it double back */
+        back_y = 0xFF;
     }
 #undef OPEN
 
+    back_x = cx;                            /* where it just came from */
+    back_y = cy;
     *px = nx;
     *py = ny;
 }
@@ -834,7 +863,11 @@ static void monsters_advance(void)
     for (i = 0; i < MAX_MON; i++) {
         if (!m_live[i]) continue;
         chase_self = i;
+        back_x = m_ox[i];
+        back_y = m_oy[i];
         chase(&m_x[i], &m_y[i], 0, 1);      /* walls, bodies and each other stop them */
+        m_ox[i] = back_x;
+        m_oy[i] = back_y;
 
         /* A monster that walks INTO the arrow dies on it. Without this the two swap
          * cells and the shot goes straight through: the arrow advances past the
@@ -871,7 +904,11 @@ static void hall_advance(void)
     chase_self = 0xFF;
     for (i = 0; i < MAX_HALL; i++) {
         if (!h_live[i]) continue;
+        back_x = h_ox[i];
+        back_y = h_oy[i];
         chase(&h_x[i], &h_y[i], phases, 0);
+        h_ox[i] = back_x;
+        h_oy[i] = back_y;
         if (h_x[i] == wx && h_y[i] == wy) dead = 1;
     }
 }

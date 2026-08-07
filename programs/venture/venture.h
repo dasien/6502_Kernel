@@ -120,9 +120,9 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define MAX_HALL      6
 #define HALL_BASE     1
 #define G_HALLMON     0xE8   /* a hooded figure */
-#define HALL_EVERY    5      /* hall: steps every Nth tick (slower than Winky) */
-#define HALL_ROOM_TICKS 200  /* room: ticks of dawdling before one comes in */
-#define HALL_IN_EVERY 4      /* room: how often the intruder steps */
+#define HALL_EVERY    4      /* hall: steps every Nth tick (slower than Winky) */
+#define HALL_ROOM_TICKS 170  /* room: ticks of dawdling before one comes in */
+#define HALL_IN_EVERY 3      /* room: how often the intruder steps */
 
 /* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
 #define T_FLOOR   0
@@ -192,12 +192,16 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * ramp: later loops lower it and the whole world speeds up together, with no
  * per-entity speed constants anywhere.
  *
- * Five since the playfield went to double-size rows. A step used to cover 8 px across
+ * Six since the playfield went to double-size rows. A step used to cover 8 px across
  * and 16 down; it now covers 16 and 32, so at the old rate of four everything crossed
- * the screen at twice the speed. Six was a shade too stately -- twelve ticks a second
- * keeps Winky feeling responsive while a room-crossing stays around two and a half
- * seconds. The monsters are held back separately, below. */
-#define TICK_RATE   5    /* 60/5 = 12 ticks per second */
+ * the screen at twice the speed.
+ *
+ * This is the only lever Winky has -- he moves one tile per tick, so his speed IS the
+ * tick rate. Slowing him therefore slows the clock everything else runs on, and the
+ * divisors below were all pulled in by one to compensate: monsters, patrols and
+ * intruders all come out within about a tenth of the speed they were at twelve ticks a
+ * second, while Winky drops from twelve tiles a second to ten. */
+#define TICK_RATE   6    /* 60/6 = 10 ticks per second */
 #define MAX_CATCHUP 4    /* simulation steps per pass, so a stall cannot spiral */
 
 /* Monsters step every Nth tick, which is how they end up slower than Winky without a
@@ -209,7 +213,7 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * Nothing starts anywhere near a doorway: every layout is checked offline for at
  * least MIN_SPAWN_GAP tiles between each monster post and either arrival cell, so
  * walking into a room can never kill you before you have taken a step. */
-#define MON_EVERY   4
+#define MON_EVERY   3
 
 #define MAX_MON     6
 #define ARROW_STEP  2    /* cells per tick: an arrow outruns what it is shot at */

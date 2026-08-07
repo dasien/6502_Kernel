@@ -185,6 +185,13 @@ standing still, which turns a room full of bodies into a room full of statues wa
 to be shot — so a corpse is tested as part of the pathing, with a deterministic
 sidestep when both ways forward are shut.
 
+They also remember one cell -- the one they came from -- and will not step straight
+back into it unless there is nowhere else at all. Without that, a monster meeting a
+long wall bounces between two cells forever: pursuit turns it at the wall, the wall
+turns it aside, the next step turns it straight back, and it never reaches the end of
+the wall. From the player's chair that is the stalling bug again wearing a different
+hat, and it wants the same answer.
+
 Monsters do not step onto each other either. They all chase the same target, so without
 that they converge into one cell and draw as a single glyph: you cannot see how many are
 coming, and one arrow appears to kill two.
@@ -301,6 +308,11 @@ Things that came out of building it:
   code and from the tests, and both obvious within a minute of playing. The doors were
   matched by scan order, which is arbitrary and *looked* fine; the shots failed only on
   the one tick in three where monsters move.
+- **A calibration bug hid behind three real ones.** The test harness had `TICK_RATE`
+  hard-coded at 4, so every scripted leg silently shortened the moment the game's
+  pacing was retuned -- and the failures it caused looked like gameplay problems. It is
+  a constant now. Fixing it immediately surfaced a genuine one: monsters oscillating
+  against a long wall, which the harness had never been accurate enough to catch.
 - **A vetoed step is not a re-planned step.** Room monsters would not walk over a
   corpse, but the refusal happened *after* the greedy step had been chosen, so the
   monster simply did not move -- it stood next to its own dead until it was shot.
