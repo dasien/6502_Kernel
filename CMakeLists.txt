@@ -136,6 +136,75 @@ add_custom_target(disk
     VERBATIM
 )
 
+# ----------------------------------------------------------------------------
+# `ninja everything` - the whole machine, from sources to a bootable disk.
+#
+# The pipeline has one trap in it: the .PRG files are committed artifacts and nothing
+# in CMake rebuilds them, so editing a program's C and running `ninja` leaves the disk
+# carrying the old binary. Worse, `ninja` DOES rebuild the .bin blobs the test suites
+# load from the same sources -- so the tests pick up the change while the game does
+# not, and everything looks fine.
+#
+# This target closes that: every catalog build script, then the ROMs and the app, then
+# the disk. `ninja` and `ninja disk` keep their current meanings; this is the one to
+# reach for after touching a program.
+set(PROGRAM_BUILD_COMMANDS "")
+set(SEEN_BUILD_SCRIPTS "")
+foreach(entry IN LISTS MFC_CAT_NAMES)
+    if(MFC_CAT_${entry}_BUILD)
+        set(script ${CMAKE_SOURCE_DIR}/${MFC_CAT_${entry}_DIR}/${MFC_CAT_${entry}_BUILD})
+        # Two entries could name the same script; run it once.
+        if(NOT script IN_LIST SEEN_BUILD_SCRIPTS)
+            list(APPEND SEEN_BUILD_SCRIPTS ${script})
+            list(APPEND PROGRAM_BUILD_COMMANDS COMMAND ${script})
+        endif()
+    endif()
+endforeach()
+
+if(NOT CL65_FOUND)
+    # Without cc65 the programs cannot be rebuilt, but the committed .PRGs are still
+    # perfectly good -- stage those rather than failing the target outright.
+    set(PROGRAM_BUILD_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E echo
+                "cc65 not found - staging the committed .PRGs unchanged")
+endif()
+
+add_custom_target(everything
+    ${PROGRAM_BUILD_COMMANDS}
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${DISKROOT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${DISKROOT}
+    ${DISK_MKDIR_COMMANDS}
+    ${DISK_STAGE_COMMANDS}
+    COMMAND ${CMAKE_COMMAND} -E copy ${GENERATED_DISKMAP} ${DISKROOT}/diskmap.txt
+    COMMAND mkdisk create ${CMAKE_BINARY_DIR}/disk.img ${DISKROOT}/diskmap.txt
+    COMMENT "Building every program, ROM and the disk"
+    USES_TERMINAL
+    VERBATIM
+)
+
+# The ROMs and the app are ALL targets, so a plain `ninja` builds them -- but
+# `ninja everything` on its own would not, hence the explicit dependencies.
+set(EVERYTHING_DEPS mkdisk 6502-kernel)
+foreach(t kernel_rom dos_rom basic_rom forth_rom monitor_rom
+          xmodem_bin term_bin irc_bin venture_bin)
+    if(TARGET ${t})
+        list(APPEND EVERYTHING_DEPS ${t})
+    endif()
+endforeach()
+add_dependencies(everything ${EVERYTHING_DEPS})
+
+# `ninja run` - build everything, then boot it.
+#
+# From bin/, because two paths the machine uses are relative to the working
+# directory: ../kernel/kernel.rom and ../disk.img.
+add_custom_target(run
+    COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_BINARY_DIR}/bin ./6502-kernel
+    DEPENDS everything
+    COMMENT "Launching the MFC 6502"
+    USES_TERMINAL
+    VERBATIM
+)
+
 # Installation rules
 install(TARGETS 6502-kernel
     RUNTIME DESTINATION bin

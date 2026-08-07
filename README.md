@@ -239,8 +239,9 @@ The GUI loads `cmake-build-debug/disk.img`, assembled from **`programs/catalog.t
 item, saying where its files live, how to build them (or that they are committed),
 and where each lands on the disk. Files are declared by what they *are*: a `program`
 (the `.PRG`), `data` the program reads and writes at run time, or a `doc` for a human
-to `TYPE`. That distinction is what lets a disk drop documentation to save room
-without breaking anything.
+to `TYPE`. The distinction is there so `data` can never be separated from the program
+that needs it — naming `term` inescapably brings `SYSTEM/DIAL.LST`, because the
+catalog records that TERM reads and writes it.
 
 The build derives both the staging commands and the `diskmap.txt` that `mkdisk`
 consumes, so adding a program is one catalog entry rather than three edits that fail
