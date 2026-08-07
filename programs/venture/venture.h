@@ -35,20 +35,39 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define KS_FIRE   0x10
 #define KS_BTN2   0x20
 
-/* ---- screen and room geometry ------------------------------------------- */
-#define SCR_W     80
+/* ---- screen and playfield geometry --------------------------------------
+ * The playfield runs on the VIC's DOUBLE-SIZE ROWS: physical rows PLAY_ROW0,
+ * PLAY_ROW0+2, ... are flagged 16x32, so each holds 40 characters instead of 80 and
+ * covers two rows of screen. Glyphs come out four times the area, which is the only
+ * way to make the shapes themselves bigger with a fixed 8x16 font ROM -- reverse
+ * video and multi-cell bodies change ink and footprint, never the shape.
+ *
+ * The HUD and the status line stay on ordinary rows, so text is still crisp. That is
+ * what per-row double size buys over a whole-screen mode.
+ *
+ * A tile is 16x32 px, so 30x11 tiles is 480x352 -- about 4:3, close to the arcade's
+ * rooms, with five double-columns of bezel each side. Going the full 40 wide would
+ * have made a 1.8:1 letterbox. */
+#define SCR_W     80          /* the character plane is still 80 cells wide */
 #define SCR_H     25
 
-#define HUD_ROW    1
-#define MSG_ROW   22
+#define HUD_ROW    0          /* ordinary rows, above and below the playfield */
+#define MSG_ROW   23
 
-/* The room is drawn centred, with the HUD above and a message line below. Room
- * cells are addressed 0..ROOM_W-1 / 0..ROOM_H-1 and offset to the screen when
- * drawn, so all the game logic works in room coordinates. */
-#define ROOM_W    44
-#define ROOM_H    15
-#define ROOM_X    ((SCR_W - ROOM_W) / 2)
-#define ROOM_Y    5
+#define PLAY_ROW0  1          /* first physical row of the double-size band */
+#define PLAY_COLS 40          /* a double row holds this many characters */
+
+#define ROOM_W    30
+#define ROOM_H    11
+#define ROOM_X    ((PLAY_COLS - ROOM_W) / 2)   /* the bezel, in double-columns */
+#define ROOM_Y    0
+
+/* Setting a row's size is a command, not a register: parameter carries the row and
+ * bit 7 the size. A clear puts every row back to normal, so the band has to be laid
+ * out again after one -- which is why set_play_rows() sits next to every clear. */
+#define VCMD_ROWSIZE  5
+#define VCMD_ROWSNORM 6
+#define VROW_DOUBLE   0x80
 
 /* ---- the dungeon hall ---------------------------------------------------
  * The other half of Venture: an open arena you cross between rooms, with the four
@@ -64,12 +83,12 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * what is inside it. You commit before you know, which is where the dread lives.
  * Whether a room is DONE is the one thing the hall tells you, and only after you
  * have already been in. */
-#define MAP_W     56
-#define MAP_H     15
-#define MAP_X     ((SCR_W - MAP_W) / 2)
-#define MAP_Y     5
+#define MAP_W     ROOM_W     /* the hall is the same shape as a room */
+#define MAP_H     ROOM_H
+#define MAP_X     ROOM_X
+#define MAP_Y     ROOM_Y
 
-#define MAP_START_X 28       /* the middle of the open arena */
+#define MAP_START_X 14       /* the middle of the open arena */
 #define MAP_START_Y 5
 
 #define ROOMS_PER_LEVEL 4
