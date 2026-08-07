@@ -109,7 +109,7 @@ are lingering in; stay too long and one comes through a doorway.
 crawling by the fourth room — one screenshot has seven of them. One wakes per room
 cleared, which is what stops the last room of a level being the easiest.
 
-**The one that comes into a room walks through the walls, at four fifths of Winky's
+**The one that comes into a room walks through the walls, at two thirds of Winky's
 speed.** It does not path round the layout, it cannot be cornered, and nothing you put
 between you and it helps — it comes straight at you until you leave. In the hall they
 walk it like anyone else and slowly; inside a room they ignore it entirely and are
@@ -118,7 +118,8 @@ deadline, and it is why the room's second doorway earns its keep.
 
 Its speed is expressed the other way round from everything else: the rest step every
 Nth tick, which cannot say anything between half your speed and all of it, so the
-intruder steps on every tick *except* every Nth. Diagonal movement is what keeps it
+intruder steps on every tick *except* every Nth — `HALL_IN_SKIP`, where larger is
+faster. Diagonal movement is what keeps it
 survivable — Winky moves on both axes at once, the intruder only ever on one.
 
 This is what stops Venture being a leisurely looting exercise. Implementation is a

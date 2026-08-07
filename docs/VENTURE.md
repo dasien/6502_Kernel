@@ -80,11 +80,11 @@ They are slower than you are, so the hall is survivable if you keep moving. What
 they are really there for is the clock: **linger too long in a room and one comes
 through a doorway after you.** You will hear it arrive.
 
-**Inside a room it walks through the walls, and it is nearly as fast as you are.** It
-does not go round anything, it cannot be cornered, and nothing you put between you and
-it helps. You cannot outrun it in a straight line — the only thing that buys you any
-ground is moving diagonally, since that carries you on both axes at once and it only
-ever moves on one. There is one answer and it is to leave, by whichever doorway is not
+**Inside a room it walks through the walls, and it is not much slower than you are.**
+It does not go round anything, it cannot be cornered, and nothing you put between you
+and it helps. Walking away in a straight line barely gains you anything — what does is
+moving diagonally, since that carries you on both axes at once and it only ever moves
+on one. There is one answer and it is to leave, by whichever doorway is not
 on its side of the room.
 
 **There are more of them as you go.** One at the start of a level, and another wakes

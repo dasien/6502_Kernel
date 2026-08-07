@@ -121,16 +121,17 @@ extern void          sound_off(void);                /* SID voice 1 off */
  *
  * Its speed is set the other way round from everything else here. The rest step every
  * Nth tick, which cannot express anything between "half your speed" and "all of it";
- * the intruder steps on every tick EXCEPT every Nth, so HALL_IN_SKIP of 5 puts it at
- * four fifths of Winky. Fast enough that you cannot outrun it in a straight line, slow
- * enough that a diagonal -- which moves you on both axes at once, while it only ever
- * moves on one -- buys you the time to reach a doorway. */
+ * the intruder steps on every tick EXCEPT every Nth. So HALL_IN_SKIP is a fraction
+ * (N-1)/N of Winky's speed -- 3 gives two thirds, 5 gives four fifths -- and larger is
+ * faster. Fast enough that you cannot simply stroll away from it; slow enough that a
+ * diagonal, which moves you on both axes at once while it only ever moves on one,
+ * buys the time to reach a doorway. */
 #define MAX_HALL      6
 #define HALL_BASE     1
 #define G_HALLMON     0xE8   /* a hooded figure */
 #define HALL_EVERY    4      /* hall: steps every Nth tick (slower than Winky) */
 #define HALL_ROOM_TICKS 170  /* room: ticks of dawdling before one comes in */
-#define HALL_IN_SKIP  5      /* room: the intruder steps on all but every Nth tick */
+#define HALL_IN_SKIP  3      /* room: the intruder steps on all but every Nth tick */
 
 /* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
 #define T_FLOOR   0
