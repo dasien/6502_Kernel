@@ -361,6 +361,14 @@ void MainWindow::connectSignals()
             // Pump the modem once per tick: drain the ACIA TX into the
             // protocol (inbound socket data arrives via Qt signals).
             if (modem_) modem_->poll();
+
+            // SHUTDOWN wrote the power register. The machine is off, so the window
+            // that was showing it has nothing left to show.
+            if (computer_->isPoweredOff())
+            {
+                is_running_ = false;
+                close();
+            }
         }
     });
 }

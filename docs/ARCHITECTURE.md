@@ -787,6 +787,7 @@ New I/O page layout (re-based 1:1 from the old `$DCxx` block):
 | `$FE20/$FE21` | `FILE_END_ADDR_LO/HI` |
 | `$FE22` | `FIO_DATA` — BASIC byte-stream LOAD/SAVE |
 | `$FE23` | **`MODULE_BANK`** — bank-select register |
+| `$FE61` | **`POWER`** — soft power switch; write $5A then $A5 to switch off |
 
 Touched by the relocation:
 - `kernel.asm`: re-base the `PIA_*`, `FILE_*`, timer-ack equates.

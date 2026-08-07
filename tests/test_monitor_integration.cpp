@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <sys/wait.h>   // WIFEXITED/WEXITSTATUS for the fsck.fat subprocess
 #include "computer/Computer6502.h"
+#include "computer/PowerSwitch.h"
 #include "support/fat16_image.h"
 
 // Repository examples/ directory, passed in by CMake so the suite can build the
@@ -146,6 +147,10 @@ public:
         // otherwise consume the keystrokes of any following test.
         testBankLaunch();
 
+        // Runs on a machine of its own -- it switches that machine off, and nothing
+        // can follow a halted CPU.
+        testShutdown();
+
         // Print summary
         printSummary();
     }
@@ -253,7 +258,7 @@ public:
         verifyResponse("MONITOR COMMANDS", "MON launches the monitor");
         // Q returns to the DOS shell (HELP's built-in list proves we're back).
         sendCommand("Q");
-        sendCommand("HELP", 500000);   // the two-column list prints ~23 lines
+        sendCommand("HELP", 500000);   // the two-column list prints one line per verb
         verifyResponse("RENAME", "Q returns to the DOS shell");
         // HELP is now a two-column verb/description list (like the monitor's ?).
         verifyResponse("clear the screen", "HELP shows command descriptions");
@@ -462,7 +467,7 @@ public:
             std::cout << std::endl;
         }
         // Back at the DOS prompt and responsive (program RTS'd to DOS_WARM).
-        sendCommand("HELP", 500000);   // the two-column list prints ~23 lines
+        sendCommand("HELP", 500000);   // the two-column list prints one line per verb
         verifyResponse("RENAME", "Returned to the DOS prompt after the program");
     }
 
@@ -528,7 +533,7 @@ public:
 
         // VERSION / MEMMAP are static info commands.
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.20", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse("MFC/OS 1.21", "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
@@ -1103,6 +1108,14 @@ private:
     // Read a byte straight from emulator RAM - robust, unlike screen scraping.
     uint8_t readMem(uint16_t address) {
         return computer.getMemory()->read(address);
+    }
+
+    // Plain boolean assertion, for facts that are not screen text or memory bytes.
+    bool verifyTrue(bool ok, const std::string& test_name) {
+        std::cout << std::left << std::setw(30) << test_name << ": "
+                  << (ok ? "PASS" : "FAIL") << std::endl;
+        if (ok) tests_passed++; else tests_failed++;
+        return ok;
     }
 
     bool verifyMemEquals(uint16_t address, uint8_t expected, const std::string& test_name) {
@@ -2048,6 +2061,35 @@ private:
     }
 
     // Regression: a bare ESC at the command prompt is a clean no-op, not ERROR?.
+    // SHUTDOWN: the DOS arms and fires the soft power switch, then halts the CPU.
+    //
+    // On its own Computer6502, because it ends with a machine that cannot run another
+    // instruction -- sharing the suite's would kill every test after it.
+    void testShutdown() {
+        Computer::Computer6502 box;
+        box.power_on();
+        box.run(300000);                       // boot to the DOS prompt
+
+        verifyTrue(!box.isPoweredOff(), "the machine starts up powered on");
+
+        // The arming guard first: one write is not the sequence, and must not take a
+        // running machine down. This is the whole reason the register wants two.
+        box.getMemory()->write(Computer::PowerSwitch::kRegPower,
+                               Computer::PowerSwitch::kFire);
+        verifyTrue(!box.isPoweredOff(), "a lone write does nothing");
+        box.getMemory()->write(Computer::PowerSwitch::kRegPower,
+                               Computer::PowerSwitch::kArm);
+        box.getMemory()->write(Computer::PowerSwitch::kRegPower, 0x00);
+        verifyTrue(!box.isPoweredOff(), "a stray byte cancels the arming");
+
+        for (char c : std::string("SHUTDOWN")) box.getPia()->addKeypress(c);
+        box.getPia()->addKeypress('\r');
+        box.run(200000);
+
+        verifyTrue(box.isPoweredOff(), "SHUTDOWN switches the machine off");
+        verifyTrue(box.getCpu()->isStopped(), "SHUTDOWN halts the CPU too");
+    }
+
     void testEscAtPromptNoError() {
         clearScreen();
         computer.getPia()->addKeypress(27);   // ESC at an empty prompt

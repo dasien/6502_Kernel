@@ -220,7 +220,7 @@ cd cmake-build-debug/bin && ./6502-kernel
 
 ```
               MFC 6502  OPERATIONAL
-           MFC/OS 1.20   32768 BYTES FREE
+           MFC/OS 1.21   32768 BYTES FREE
 ]
 ```
 

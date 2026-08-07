@@ -5,6 +5,7 @@
 #include "Acia.h"
 #include "Sid.h"
 #include "Rtc.h"
+#include "PowerSwitch.h"
 
 #include <algorithm>
 
@@ -56,6 +57,11 @@ namespace Computer
         }
 
         // Check if this is an RTC register read ($FE55-$FE60).
+        if (power_ && PowerSwitch::isPowerAddress(address))
+        {
+            return power_->read(address);
+        }
+
         if (rtc_ && Rtc::isRtcAddress(address))
         {
             return rtc_->read(address);
@@ -126,6 +132,12 @@ namespace Computer
         }
 
         // Check if this is an RTC register write ($FE55-$FE60; RTC_LATCH).
+        if (power_ && PowerSwitch::isPowerAddress(address))
+        {
+            power_->write(address, value);
+            return;
+        }
+
         if (rtc_ && Rtc::isRtcAddress(address))
         {
             rtc_->write(address, value);
@@ -212,6 +224,11 @@ namespace Computer
     void Memory::setRtc(Rtc *rtc)
     {
         rtc_ = rtc;
+    }
+
+    void Memory::setPowerSwitch(PowerSwitch *power)
+    {
+        power_ = power;
     }
 
     void Memory::loadBank(uint8_t bank, const std::vector<uint8_t> &image)

@@ -18,6 +18,8 @@ namespace Computer
     class Acia;
     class Sid;
     class Rtc;
+    class PowerSwitch;
+    class PowerSwitch;
 
     /**
      * @class Memory
@@ -168,6 +170,12 @@ namespace Computer
         void setRtc(Rtc *rtc);
 
         /**
+         * @brief Attach the soft power switch.
+         * @param power PowerSwitch to route $FE61 to
+         */
+        void setPowerSwitch(PowerSwitch *power);
+
+        /**
          * @brief Install the always-mapped DOS ROM image ($8800-$AFFF)
          * @param image DOS ROM image; truncated/zero-padded to kDosRomSize (10KB)
          * @note Once installed the region is read-only (writes ignored). Passing
@@ -214,6 +222,7 @@ namespace Computer
         Acia *acia_ = nullptr;                ///< Serial ACIA ($FE29-$FE2C), or null
         Sid *sid_ = nullptr;                  ///< SID sound chip ($FE38-$FE54), or null
         Rtc *rtc_ = nullptr;                  ///< real-time clock ($FE55-$FE60), or null
+        PowerSwitch *power_ = nullptr;        ///< soft power switch ($FE61), or null
 
         /// Module ROM images, indexed by bank (1..255). Each entry is either
         /// empty (no module installed) or exactly kModuleWindowSize bytes.

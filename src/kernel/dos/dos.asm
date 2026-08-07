@@ -53,6 +53,14 @@ CURSOR_X         = $0276                ; current cursor column (for box padding
 
 ; RTC (real-time clock) registers in the I/O page, read directly. Write RTC_LATCH
 ; to snapshot the host time; the field registers are BCD (day-of-week is 0=Sun..6).
+; Soft power switch ($FE61). Two writes in order cut the power, and any other value
+; cancels a half-entered sequence -- one magic byte would let a wild pointer take the
+; machine down. Mirrors kernel_vars.inc, as the RTC equates below do: the DOS ROM
+; assembles on its own and carries its own copy of the I/O map.
+POWER_REG        = $FE61
+POWER_ARM        = $5A
+POWER_FIRE       = $A5
+
 RTC_LATCH        = $FE55
 RTC_SEC          = $FE56
 RTC_MIN          = $FE57
@@ -262,8 +270,17 @@ DOS_SIGNATURE:
 ;        discards everything the machine wrote), and _FS_MOUNT validates the BPB
 ;        instead of trusting it -- a FAT12/FAT32 or non-512-byte-sector image is
 ;        refused rather than driven as FAT16 and destroyed on the first write
+;   1.21 SHUTDOWN switches the machine off, via the soft power register at $FE61.
+;        Descended from the PARK/SHIPDISK utilities early hard-disk micros shipped:
+;        make it safe to lose power, then say so. Those stopped there because
+;        nothing of that vintage could cut its own mains power; we can. There is
+;        nothing to park -- sector writes go straight through -- so the message says
+;        that rather than pretending to flush. Deliberately NOT the CPU's STP, which
+;        stops the processor for battery reasons and leaves the system powered; the
+;        handler ends with one anyway, so a host that ignored the register gets a
+;        halted machine rather than a running one
 DOS_VERSION:
-    .BYTE $01, $14                      ; version 1.20 (major, minor)
+    .BYTE $01, $15                      ; version 1.21 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -1249,6 +1266,37 @@ _DOS_DO_VER:
     JSR _DOS_PRINT_BYTE_DEC
     JMP K_PRINT_NEWLINE
 
+; ----------------------------------------------------------------
+; _DOS_DO_SHUTDOWN - switch the machine off
+; ----------------------------------------------------------------
+; The descendant of the PARK and SHIPDISK utilities that CP/M and early DOS
+; machines with hard disks shipped: get the storage into a state where losing power
+; cannot hurt it, then say so. Those stopped there and left you to flip the switch,
+; because nothing of that vintage could cut its own mains power. We can, so we do.
+;
+; There is nothing to park. Sector writes go straight through to the image, so the
+; disk is consistent between any two of them and there is no cache to lose -- worth
+; saying plainly rather than printing a reassuring lie about flushing.
+;
+; POWER_REG wants two writes in order. One magic byte would mean a wild pointer
+; could take the machine down; the arming sequence is the same guard real soft-power
+; and watchdog registers used.
+;
+; Then STP. If a host ever ignored the power register, this leaves the processor
+; halted rather than running on into whatever follows the write -- and it is what STP
+; is actually for. It stops the CPU. Cutting the power is the register's job.
+_DOS_DO_SHUTDOWN:
+    JSR K_PRINT_NEWLINE
+    LDA #<MSG_DOS_SHUTDOWN
+    LDX #>MSG_DOS_SHUTDOWN
+    JSR _DOS_PMSG
+    JSR K_PRINT_NEWLINE
+    LDA #POWER_ARM                      ; arm...
+    STA POWER_REG
+    LDA #POWER_FIRE                     ; ...and fire
+    STA POWER_REG
+    STP                                 ; belt and braces; see above
+
 ; _DOS_PRINT_BYTE_DEC - print the byte in A as decimal (via K_PRINT_DEC).
 _DOS_PRINT_BYTE_DEC:
     STA DOS_W_SIZE                      ; zero-extend the byte to 32 bits
@@ -1994,6 +2042,7 @@ DOS_HELP_TABLE:
     .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_VER, DH_DATE, DH_CLS, DH_MON, DH_HELP
 DOS_HELP_COUNT = (* - DOS_HELP_TABLE) / 2
 
+DH_SHUTDOWN: .BYTE "SHUTDOWN", $09, "switch the machine off", 0
 DH_CAT:    .BYTE "CATALOG [pat]", $09, "list files (CAT)", 0
 DH_TYPE:   .BYTE "TYPE name", $09, "show a text file", 0
 DH_MORE:   .BYTE "MORE name", $09, "show a file (= TYPE)", 0
@@ -2035,6 +2084,7 @@ MSG_DOS_COPIED:  .BYTE "COPIED", $0D, $0A, 0
 MSG_DOS_MOVED:   .BYTE "MOVED", $0D, $0A, 0
 MSG_DOS_TOOBIG:  .BYTE "FILE TOO BIG", $0D, $0A, 0
 MSG_DOS_VER:     .BYTE "MFC/OS ", 0      ; version number appended from DOS_VERSION
+MSG_DOS_SHUTDOWN: .BYTE "DISK IS CONSISTENT - POWERING OFF", 0
 MSG_DOS_MEM:     .BYTE "$0000-$00FF ZERO PAGE", $0D, $0A
                  .BYTE "$0100-$01FF STACK", $0D, $0A
                  .BYTE "$0200-$03FF SYSTEM VARS", $0D, $0A
@@ -2085,8 +2135,10 @@ DOS_VERB_TAB:
     .word KW_DROPDRAWER,  _DOS_DO_DROPDRAWER
     .word KW_MOVE,        _DOS_DO_MOVE
     .word KW_DATE,        _DOS_DO_DATE
+    .word KW_SHUTDOWN,    _DOS_DO_SHUTDOWN
     .word $0000                         ; end of table
 
+KW_SHUTDOWN:     .BYTE "SHUTDOWN", 0
 KW_CLS:          .BYTE "CLS", 0
 KW_CLEAR:        .BYTE "CLEAR", 0
 KW_BANKS:        .BYTE "BANKS", 0

@@ -43,6 +43,7 @@ namespace Computer
 
         // Route the RTC registers ($FE55-$FE60) through memory.
         memory.setRtc(&rtc);
+        memory.setPowerSwitch(&power);
     }
 
     void Computer6502::showFatalError(const std::string& message)
@@ -60,6 +61,10 @@ namespace Computer
 
     void Computer6502::power_on()
     {
+        // Plugging it back in: whatever the last run did to the power switch, this
+        // one starts with the machine on.
+        power.powerOn();
+
         // The kernel ROM file.
         std::vector<uint8_t> kernel_rom;
 

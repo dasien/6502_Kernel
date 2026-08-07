@@ -17,6 +17,8 @@
 #include "Acia.h"
 #include "Sid.h"
 #include "Rtc.h"
+#include "PowerSwitch.h"
+#include "PowerSwitch.h"
 
 namespace Computer
 {
@@ -129,6 +131,23 @@ namespace Computer
          * @return Rtc* Pointer to the $FE55-$FE60 RTC
          * @note Used by tests to pin a known time via setTimeProvider
          */
+        /**
+         * @brief Has the machine been switched off at the power register?
+         *
+         * The host polls this and closes the window. Distinct from the CPU being
+         * stopped: STP halts the processor, this cuts the power.
+         */
+        [[nodiscard]] bool isPoweredOff() const { return power.isOff(); }
+
+        /**
+         * @brief Get the soft power switch
+         * @return PowerSwitch* Pointer to the $FE61 power register
+         */
+        PowerSwitch *getPowerSwitch()
+        {
+            return &power;
+        }
+
         Rtc *getRtc()
         {
             return &rtc;
@@ -178,6 +197,7 @@ namespace Computer
         Acia acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
         Sid sid; ///< SID sound chip ($FE38-$FE54)
         Rtc rtc; ///< real-time clock ($FE55-$FE60)
+        PowerSwitch power; ///< soft power switch ($FE61)
         Memory memory; ///< 64KB system memory with memory-mapped I/O
         CPU6502 cpu; ///< MOS 65C02 microprocessor
         ResetCircuit reset_circuit; ///< Reset circuit for system initialization

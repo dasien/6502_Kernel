@@ -15,6 +15,7 @@ set(SOURCES
     computer/PIA.cpp
     computer/Sid.cpp
     computer/Rtc.cpp
+    computer/PowerSwitch.cpp
     computer/MapFileParser.cpp
 )
 

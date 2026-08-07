@@ -197,6 +197,19 @@ RTC_HOUR           = $FE58         ; BCD hours
 RTC_FATTIME_LO     = $FE5D         ; host-packed FAT time (sub-second-ish entropy)
 RTC_FATTIME_HI     = $FE5E
 
+; Soft power switch ($FE61). Two writes in order cut the power: POWER_ARM then
+; POWER_FIRE, and any other value cancels a half-entered sequence. A single magic
+; byte would let one wild pointer take the machine down, which is why real
+; soft-power and watchdog registers wanted an unlock sequence too.
+;
+; Distinct from the CPU's STP, deliberately. STP stops the processor and its clock
+; -- it exists for battery work, where the part sleeps until a RESET wakes it -- so
+; it means "the processor is off" while the system around it still has power.
+; Switching the machine off is a system-level act and gets a system-level register.
+POWER_REG          = $FE61
+POWER_ARM          = $5A
+POWER_FIRE         = $A5
+
 VCMD_CLEAR         = $01           ; fill whole screen (char=param, color=latch)
 VCMD_SCROLL_UP     = $02           ; scroll up one row, blank bottom
 VCMD_SCROLL_DOWN   = $03           ; scroll down one row, blank top

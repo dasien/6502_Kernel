@@ -31,6 +31,7 @@ CHESS, VAULT, …) are all things you type at this prompt.
 | `MEMMAP` | memory map |
 | `VERSION` | OS version |
 | `DATE` | date and time |
+| `SHUTDOWN` | switch the machine off |
 | `CLS` / `CLEAR` | clear the screen |
 | `HELP` | list built-in commands |
 
@@ -41,7 +42,7 @@ At power-up the machine prints a sign-on box and drops you at the prompt:
 ```
 ╔══════════════════════════════════════╗
 ║        MFC 6502  OPERATIONAL         ║
-║  MFC/OS 1.20      32768 BYTES FREE   ║
+║  MFC/OS 1.21      32768 BYTES FREE   ║
 ╚══════════════════════════════════════╝
 
 ]
@@ -191,9 +192,23 @@ DISKFREE          free space in bytes and KB
 MEMMAP            the full memory map with region sizes
 VERSION           the MFC/OS version
 DATE              current weekday, date, and time (from the RTC)
+SHUTDOWN          switch the machine off
 CLS / CLEAR       clear the screen
 HELP              list the built-in commands
 ```
+
+`SHUTDOWN` switches the machine off and the window closes. It is the descendant of
+the `PARK` and `SHIPDISK` utilities that early hard-disk micros shipped: make it safe
+to lose power, then say so. Those stopped there and left you to flip the switch,
+because nothing of that vintage could cut its own mains power.
+
+There is nothing to park. Sector writes go straight through to the disk image, so it
+is consistent between any two of them and there is no cache to lose — which is what
+the message says, rather than pretending to flush something.
+
+Under it is a soft power register at `$FE61`. Switching off takes two writes, `$5A`
+then `$A5`, and any other value cancels a half-entered sequence: a single magic byte
+would let one wild pointer take the machine down.
 
 `DATE` prints one line such as `Wed 2026-07-26 14:30:05` — it shows both the date
 and the time, so there is no separate time command.
