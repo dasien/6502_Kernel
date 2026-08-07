@@ -99,7 +99,7 @@ Benefits every future real-time program.
 7. Juice (explosions, cell-offset screen-shake, SID cues) + 2-word/BCD score + score screen.
 8. Balance; **player manual** as a companion text file shipped on the disk beside
    the game (`KPANIC.TXT`, the way VAULT ships `STORY.TXT` in its drawer) — not a
-   `docs/*.md`; disk integration (`disk/diskmap.txt` → `GAMES/KPANIC.PRG` +
+   `docs/*.md`; disk integration (`programs/catalog.txt` → `GAMES/KPANIC.PRG` +
    `GAMES/KPANIC.TXT`, `ninja disk`).
 
 ## References

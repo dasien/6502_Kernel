@@ -1,0 +1,141 @@
+# programs/catalog.txt - everything that can go on an MFC disk.
+#
+# One section per item. This file says what EXISTS; which of it lands on a given
+# disk is a separate question (see the disk target, and profiles when they arrive).
+# It is the single source of truth: the build reads it to stage the disk bundle and
+# to generate the diskmap mkdisk consumes, so adding a program is one entry here
+# rather than three edits in three files that fail silently if you miss one.
+#
+#   [name]       the handle used to refer to this item
+#   dir   =      where its files live, relative to the repo root
+#   build =      script that produces them; OMIT for committed content
+#   desc  =      one line, for humans
+#
+# Files are declared by what they ARE, because the difference matters:
+#
+#   program = the .PRG. At most one -- it is what makes an entry launchable.
+#   data    = read or written by the program at run time. Never separable from it.
+#   doc     = for a human to read with TYPE. Droppable if a disk is tight.
+#
+# Each takes "SOURCE -> DISKPATH", SOURCE relative to dir. All three are repeatable.
+
+# ---- applications ----------------------------------------------------------
+
+[edit]
+dir     = programs/edit
+build   = build.sh
+program = EDIT.PRG -> EDIT.PRG
+desc    = full-screen text editor
+
+[term]
+dir     = programs/term
+build   = build.sh
+program = TERM.PRG -> TERM.PRG
+data    = DIAL.LST -> SYSTEM/DIAL.LST
+desc    = ANSI/telnet terminal with XMODEM
+
+[irc]
+dir     = programs/irc
+build   = build.sh
+program = IRC.PRG -> IRC.PRG
+data    = IRC.LST -> SYSTEM/IRC.LST
+desc    = IRC chat client
+
+# ---- games -----------------------------------------------------------------
+
+[vault]
+dir     = programs/vault
+build   = build.sh
+program = VAULT.PRG -> SVAULT/VAULT.PRG
+doc     = STORY.TXT -> SVAULT/STORY.TXT
+desc    = The Sunless Vault, a roguelike
+
+[chess]
+dir     = programs/micromax
+build   = build.sh
+program = CHESS.PRG -> GAMES/CHESS.PRG
+desc    = micro-Max chess
+
+[kpanic]
+dir     = programs/kpanic
+build   = build.sh
+program = KPANIC.PRG -> GAMES/KPANIC.PRG
+desc    = KERNEL PANIC, a vertical scroller
+
+[venture]
+dir     = programs/venture
+build   = build.sh
+program = VENTURE.PRG -> GAMES/VENTURE.PRG
+desc    = Venture (Exidy 1981) port
+
+[frontier]
+dir     = programs/frontier
+build   = build.sh
+program = FRONTIER.PRG -> GAMES/FRONTIER.PRG
+doc     = FRONTIER.TXT -> GAMES/FRONTIER.TXT
+desc    = Frontier Fortune, a Wild-West trading game
+
+# ---- Scott Adams adventures ------------------------------------------------
+# Committed rather than built: programs/scottfree/build.sh is a generator taking a
+# .dat game file and an output name, and the .dat files are not ours to ship. Run it
+# by hand to regenerate one; the .PRG it writes is what lives here.
+
+[advland]
+dir     = disk/GAMES
+program = ADVLAND.PRG -> GAMES/ADVLAND.PRG
+desc    = Adventureland (Scott Adams)
+
+[pirate]
+dir     = disk/GAMES
+program = PIRATE.PRG -> GAMES/PIRATE.PRG
+desc    = Pirate Adventure (Scott Adams)
+
+[secret]
+dir     = disk/GAMES
+program = SECRET.PRG -> GAMES/SECRET.PRG
+desc    = Secret Mission (Scott Adams)
+
+[voodoo]
+dir     = disk/GAMES
+program = VOODOO.PRG -> GAMES/VOODOO.PRG
+desc    = Voodoo Castle (Scott Adams)
+
+[count]
+dir     = disk/GAMES
+program = COUNT.PRG -> GAMES/COUNT.PRG
+desc    = The Count (Scott Adams)
+
+[odyssey]
+dir     = disk/GAMES
+program = ODYSSEY.PRG -> GAMES/ODYSSEY.PRG
+desc    = Strange Odyssey (Scott Adams)
+
+[funhouse]
+dir     = disk/GAMES
+program = FUNHOUSE.PRG -> GAMES/FUNHOUSE.PRG
+desc    = Mystery Fun House (Scott Adams)
+
+[pyramid]
+dir     = disk/GAMES
+program = PYRAMID.PRG -> GAMES/PYRAMID.PRG
+desc    = Pyramid of Doom (Scott Adams)
+
+[ghosttwn]
+dir     = disk/GAMES
+program = GHOSTTWN.PRG -> GAMES/GHOSTTWN.PRG
+desc    = Ghost Town (Scott Adams)
+
+[savage1]
+dir     = disk/GAMES
+program = SAVAGE1.PRG -> GAMES/SAVAGE1.PRG
+desc    = Savage Island part I (Scott Adams)
+
+[savage2]
+dir     = disk/GAMES
+program = SAVAGE2.PRG -> GAMES/SAVAGE2.PRG
+desc    = Savage Island part II (Scott Adams)
+
+[voyage]
+dir     = disk/GAMES
+program = VOYAGE.PRG -> GAMES/VOYAGE.PRG
+desc    = The Golden Voyage (Scott Adams)

@@ -149,7 +149,7 @@ ScottFree uses for saves).
 6. CASINO Hi-Lo.
 7. END screen, score, high-score table on disk.
 8. Balance pass; `FRONTIER.TXT` manual on disk beside the game; add to
-   `disk/diskmap.txt` + the `disk` target.
+   `programs/catalog.txt` (which the `disk` target reads).
 
 ## Deferred: value-based market depth
 

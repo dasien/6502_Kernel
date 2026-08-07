@@ -234,13 +234,19 @@ ctest --test-dir cmake-build-debug        # 20 tests: CPU, banking, FAT16, ACIA/
 
 ### Disk image (`mkdisk`)
 
-The GUI loads `cmake-build-debug/disk.img`. It is assembled from a **diskmap
-bundle** — the repo `disk/` directory holds `diskmap.txt` (the disk layout, one
-path per line; `DRAWER/NAME` = a one-level drawer) plus the stable content
-(`SYSTEM/` config lists, `GAMES/` the Scott Adams games). The rebuildable apps
-(`EDIT`/`TERM`/`IRC`, `GAMES/CHESS`, and the `SVAULT/` drawer holding `VAULT.PRG`
-and `STORY.TXT`) are staged from their fresh builds. Drawers grow across as many
-FAT16 clusters as they need, so a drawer is not capped at one cluster of files.
+The GUI loads `cmake-build-debug/disk.img`, assembled from **`programs/catalog.txt`**
+— the single source of truth for everything that can go on a disk. One section per
+item, saying where its files live, how to build them (or that they are committed),
+and where each lands on the disk. Files are declared by what they *are*: a `program`
+(the `.PRG`), `data` the program reads and writes at run time, or a `doc` for a human
+to `TYPE`. That distinction is what lets a disk drop documentation to save room
+without breaking anything.
+
+The build derives both the staging commands and the `diskmap.txt` that `mkdisk`
+consumes, so adding a program is one catalog entry rather than three edits that fail
+silently if you miss one. CMake refuses to configure if a `programs/*/build.sh` has no
+catalog entry. Drawers grow across as many FAT16 clusters as they need, so a drawer is
+not capped at one cluster of files.
 
 ```bash
 ninja disk                                  # (re)assemble cmake-build-debug/disk.img
@@ -265,7 +271,7 @@ mkdisk update <image> <diskmap.txt>   # replace/add listed files, keep the rest
 ├── include/               # C++ headers
 ├── programs/              # cc65/asm disk programs: edit, term, irc, micromax, scottfree, vault, common
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)
-├── disk/                  # diskmap.txt + committed disk content (SYSTEM/, GAMES/)
+├── disk/                  # committed disk content (GAMES/ Scott Adams .PRGs)
 ├── vendor/                # Pristine upstream sources we port/derive from
 ├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, dat2c
 ├── docs/                  # Documentation
