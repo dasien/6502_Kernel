@@ -86,6 +86,12 @@ add_custom_target(disk
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/edit/EDIT.PRG     ${DISKROOT}/EDIT.PRG
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/term/TERM.PRG     ${DISKROOT}/TERM.PRG
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/irc/IRC.PRG       ${DISKROOT}/IRC.PRG
+    # TERM's saved dial list and IRC's server list. They are runtime DATA -- both
+    # programs read them at startup and write them back -- so they live with the
+    # program that owns them rather than as loose content under disk/.
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${DISKROOT}/SYSTEM
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/term/DIAL.LST     ${DISKROOT}/SYSTEM/DIAL.LST
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/irc/IRC.LST       ${DISKROOT}/SYSTEM/IRC.LST
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/micromax/CHESS.PRG ${DISKROOT}/GAMES/CHESS.PRG
     COMMAND ${CMAKE_COMMAND} -E make_directory ${DISKROOT}/SVAULT
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/programs/vault/VAULT.PRG    ${DISKROOT}/SVAULT/VAULT.PRG

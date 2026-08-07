@@ -1,9 +1,9 @@
 # mkdisk diskmap: one disk-path per line (DRAWER/NAME = a drawer).
-# This is the default MFC disk. Config lists (SYSTEM/) and the ScottFree games
-# (GAMES/) are committed beside this file; the rebuildable programs below --
-# EDIT/TERM/IRC, GAMES/CHESS, and the SVAULT/ contents -- are NOT committed here:
-# the `disk` build target stages a bundle by copying their freshly built files in,
-# then runs `mkdisk create`.
+# This is the default MFC disk. The ScottFree games (GAMES/) are committed beside
+# this file; everything else is staged in by the `disk` build target -- the
+# rebuildable programs, and the SYSTEM/ lists, which live with the program that
+# reads them (TERM owns DIAL.LST, IRC owns IRC.LST) rather than as loose content
+# here. The target copies them all in, then runs `mkdisk create`.
 EDIT.PRG
 TERM.PRG
 IRC.PRG
