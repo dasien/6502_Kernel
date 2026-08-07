@@ -121,7 +121,7 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define HALL_BASE     1
 #define G_HALLMON     0xE8   /* a hooded figure */
 #define HALL_EVERY    5      /* hall: steps every Nth tick (slower than Winky) */
-#define HALL_ROOM_TICKS 170  /* room: ticks of dawdling before one comes in */
+#define HALL_ROOM_TICKS 200  /* room: ticks of dawdling before one comes in */
 #define HALL_IN_EVERY 4      /* room: how often the intruder steps */
 
 /* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
@@ -192,20 +192,23 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * ramp: later loops lower it and the whole world speeds up together, with no
  * per-entity speed constants anywhere.
  *
- * Six rather than four since the playfield went to double-size rows. A step used to
- * cover 8 px across and 16 down; it now covers 16 and 32, so at the old rate
- * everything crossed the screen at twice the speed while having a third less room to
- * cross it in. Ten ticks a second puts a room-crossing back at about three seconds,
- * which is where it was. It also leaves more headroom in the ramp, since the loop
- * decrements this and it can now come down further before bottoming out. */
-#define TICK_RATE   6    /* 60/6 = 10 ticks per second */
+ * Five since the playfield went to double-size rows. A step used to cover 8 px across
+ * and 16 down; it now covers 16 and 32, so at the old rate of four everything crossed
+ * the screen at twice the speed. Six was a shade too stately -- twelve ticks a second
+ * keeps Winky feeling responsive while a room-crossing stays around two and a half
+ * seconds. The monsters are held back separately, below. */
+#define TICK_RATE   5    /* 60/5 = 12 ticks per second */
 #define MAX_CATCHUP 4    /* simulation steps per pass, so a stall cannot spiral */
 
 /* Monsters step every Nth tick, which is how they end up slower than Winky without a
  * second clock. Four rather than three: a smaller room leaves less space to
  * out-manoeuvre anything, so the same relative speed reads as more pressure than it
  * used to. The Hallmonster constants keep their old relationship to this -- ones
- * patrolling the hall slower than room monsters, an intruder exactly as fast. */
+ * patrolling the hall slower than room monsters, an intruder exactly as fast.
+ *
+ * Nothing starts anywhere near a doorway: every layout is checked offline for at
+ * least MIN_SPAWN_GAP tiles between each monster post and either arrival cell, so
+ * walking into a room can never kill you before you have taken a step. */
 #define MON_EVERY   4
 
 #define MAX_MON     6

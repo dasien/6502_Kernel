@@ -38,26 +38,56 @@
  */
 
 /* The hall is an open arena with the four rooms drawn in it as hollow outlines, which
- * is how the arcade draws its dungeon floor. One hall serves every level; what
- * changes is what is behind the doors, and by the time that would matter you have
- * learnt the hall.
+ * is how the arcade draws its dungeon floor -- and, as there, the rooms are different
+ * shapes and sizes from each other and the whole floor changes between levels. Four
+ * identical rectangles reused three times reads as one room drawn four times.
  *
- * The entrances are cut in at runtime rather than being part of this picture, because
- * where they go depends on which room the slot is holding -- see cut_notches(). */
+ * Every block keeps a one-tile moat, so an entrance can be cut into any of its faces.
+ * The entrances are not in the picture: where they go depends on which room the slot
+ * is holding this level -- see cut_notches(). */
 
-static const char *const map_layout[MAP_H] = {
-    "##############################",
-    "#h............h.............h#",
-    "#.AAAAAAA............BBBBBBB.#",
-    "#.AaaaaaA............BbbbbbB.#",
-    "#.AAAAAAA............BBBBBBB.#",
-    "#............................#",
-    "#.CCCCCCC............DDDDDDD.#",
-    "#.CcccccC............DdddddD.#",
-    "#.CCCCCCC............DDDDDDD.#",
-    "#h............h.............h#",
-    "##############################",
+static const char *const map_layout[LEVELS][MAP_H] = {
+    {   /* level 1 */
+        "##############################",
+        "#h............h.............h#",
+        "#.AAAAAAA.......BBBBBBBBBBB..#",
+        "#.AaaaaaA.......BbbbbbbbbbB..#",
+        "#.AAAAAAA.......BBBBBBBBBBB..#",
+        "#............................#",
+        "#.CCCCCCCCCCC.......DDDDDDD..#",
+        "#.CcccccccccC.......DdddddD..#",
+        "#.CCCCCCCCCCC.......DDDDDDD..#",
+        "#h.............h............h#",
+        "##############################",
+    },
+    {   /* level 2 */
+        "##############################",
+        "#h.........h................h#",
+        "#.AAAAAAA....BBBBBBBBB.......#",
+        "#.AaaaaaA....BbbbbbbbB..DDDD.#",
+        "#.AaaaaaA....BBBBBBBBB..DddD.#",
+        "#.AaaaaaA...............DddD.#",
+        "#.AaaaaaA....CCCCCCCCC..DddD.#",
+        "#.AaaaaaA....CcccccccC..DDDD.#",
+        "#.AAAAAAA....CCCCCCCCC.......#",
+        "#h.........h................h#",
+        "##############################",
+    },
+    {   /* level 3 */
+        "##############################",
+        "#h........h.................h#",
+        "#.AAAAAAA..BBBBBBBBB..CCCCCC.#",
+        "#.AaaaaaA..BbbbbbbbB..CccccC.#",
+        "#.AAAAAAA..BBBBBBBBB..CccccC.#",
+        "#.....................CccccC.#",
+        "#....DDDDDDDDDDD......CCCCCC.#",
+        "#....DdddddddddD.............#",
+        "#....DDDDDDDDDDD....h........#",
+        "#h......................h....#",
+        "##############################",
+    },
 };
+
 
 /* Six themed rooms; a level deals four of them. One table rather than six named
  * arrays and a pointer list -- cc65 will not initialise a pointer table from
@@ -66,9 +96,9 @@ static const char *const room_art[THEMES][ROOM_H] = {
     {   /* 0 SERPENT */
         "###############+##############",
         "#.........#..................#",
-        "#.........#.....m............#",
-        "#....m....#..................#",
         "#.........#..............m...#",
+        "#....m....#..................#",
+        "#.........#.........m........#",
         "#.........#..................#",
         "#.........#############......#",
         "#............................#",
@@ -79,14 +109,14 @@ static const char *const room_art[THEMES][ROOM_H] = {
     {   /* 1 CYCLOPS */
         "###############+##############",
         "#............................#",
-        "#..m.........................#",
+        "#............................#",
         "#.......##############.......#",
         "#.......#............#.......#",
         "+..........m..*..............#",
         "#.......#............#.......#",
         "#.......##############.......#",
         "#.........................m..#",
-        "#............................#",
+        "#.......m....................#",
         "##############################",
     },
     {   /* 2 SPIDER */
@@ -104,20 +134,20 @@ static const char *const room_art[THEMES][ROOM_H] = {
     },
     {   /* 3 GOAT */
         "##############################",
-        "#............................#",
-        "+............................#",
+        "#.............m..............#",
+        "+.........................m..#",
         "#...#########....#########...#",
         "#...#########....#########...#",
-        "#.m.#########.*..#########.m.#",
+        "#...#########.*..#########...#",
         "#...#########....#########...#",
         "#...#########....#########...#",
         "#............................+",
-        "#.............m..............#",
+        "#.m..........................#",
         "##############################",
     },
     {   /* 4 SKELETON */
         "####+#########################",
-        "#...m........................#",
+        "#...............m............#",
         "#............................#",
         "#####################........#",
         "#............................#",
@@ -142,6 +172,7 @@ static const char *const room_art[THEMES][ROOM_H] = {
         "##############################",
     },
 };
+
 
 
 
@@ -188,12 +219,7 @@ static unsigned char gx0, gy0;             /* and where it is drawn on screen */
 #define SIDE_W 2
 #define SIDE_E 3
 
-/* The four room blocks in the hall, matching map_layout above. */
-#define BLK_W 7
-#define BLK_H 3
-static const unsigned char blk_x[ROOMS_PER_LEVEL] = { 2, 21, 2, 21 };
-static const unsigned char blk_y[ROOMS_PER_LEVEL] = { 2,  2, 6,  6 };
-
+static unsigned char hall_of_level;                 /* which floor plan is up */
 static unsigned char sl_side[ROOMS_PER_LEVEL][2];   /* each slot's two door sides */
 static unsigned char sl_x[ROOMS_PER_LEVEL][2];      /* and where they got cut */
 static unsigned char sl_y[ROOMS_PER_LEVEL][2];
@@ -469,26 +495,63 @@ static unsigned char exits_of(unsigned char th, unsigned char *side,
     return n;
 }
 
-/* Cut each slot's two entrances into the middle of the block edges that match its
- * room's doorway sides. The middle is close enough -- the SIDE is what a player reads,
- * and an 11-cell edge has nowhere meaningfully different to put it. */
+/* Is the cell on the given side of (x,y) open hall? */
+static unsigned char face_open(unsigned char x, unsigned char y, unsigned char side)
+{
+    switch (side) {
+        case SIDE_N: return y && grid[y - 1][x] == T_FLOOR;
+        case SIDE_S: return (unsigned char)(y + 1) < gh && grid[y + 1][x] == T_FLOOR;
+        case SIDE_W: return x && grid[y][x - 1] == T_FLOOR;
+        default:     return (unsigned char)(x + 1) < gw && grid[y][x + 1] == T_FLOOR;
+    }
+}
+
+/* Cut each slot's two entrances into the faces that match its room's doorway sides.
+ *
+ * Found by scanning rather than by arithmetic, because the blocks are no longer all
+ * the same rectangle: take the outline cells that have open hall on the wanted side
+ * and pick whichever is nearest the block's middle. Cutting the first entrance turns
+ * that cell into a door, so the second pass cannot pick it again.
+ *
+ * A side with no open face would leave a room unenterable; the layouts are checked
+ * for that offline, against the exact theme-to-slot mapping each level uses. */
 static void cut_notches(void)
 {
-    unsigned char s, k, x, y;
-    for (s = 0; s < ROOMS_PER_LEVEL; s++)
+    unsigned char s, k, x, y, tile, cx, cy;
+    unsigned char minx, maxx, miny, maxy, bx, by, bd, d, side;
+
+    for (s = 0; s < ROOMS_PER_LEVEL; s++) {
+        tile = (unsigned char)(T_BLK0 + s);
+        minx = MAP_W; maxx = 0; miny = MAP_H; maxy = 0;
+        for (y = 0; y < MAP_H; y++)
+            for (x = 0; x < MAP_W; x++)
+                if (grid[y][x] == tile) {
+                    if (x < minx) minx = x;
+                    if (x > maxx) maxx = x;
+                    if (y < miny) miny = y;
+                    if (y > maxy) maxy = y;
+                }
+        if (minx > maxx) continue;
+        cx = (unsigned char)((minx + maxx) >> 1);
+        cy = (unsigned char)((miny + maxy) >> 1);
+
         for (k = 0; k < 2; k++) {
-            x = blk_x[s];
-            y = blk_y[s];
-            switch (sl_side[s][k]) {
-                case SIDE_N: x += BLK_W / 2;                     break;
-                case SIDE_S: x += BLK_W / 2; y += BLK_H - 1;     break;
-                case SIDE_W:                 y += BLK_H / 2;     break;
-                default:     x += BLK_W - 1; y += BLK_H / 2;     break;
-            }
-            grid[y][x] = (unsigned char)(T_DOOR0 + s);
-            sl_x[s][k] = x;
-            sl_y[s][k] = y;
+            side = sl_side[s][k];
+            bd = 0xFF; bx = 0; by = 0;
+            for (y = miny; y <= maxy; y++)
+                for (x = minx; x <= maxx; x++) {
+                    if (grid[y][x] != tile || !face_open(x, y, side)) continue;
+                    d = (side == SIDE_N || side == SIDE_S)
+                            ? (unsigned char)(x > cx ? x - cx : cx - x)
+                            : (unsigned char)(y > cy ? y - cy : cy - y);
+                    if (d < bd) { bd = d; bx = x; by = y; }
+                }
+            if (bd == 0xFF) continue;
+            grid[by][bx] = (unsigned char)(T_DOOR0 + s);
+            sl_x[s][k] = bx;
+            sl_y[s][k] = by;
         }
+    }
 }
 
 /* The cell just inside a border doorway. */
@@ -516,7 +579,7 @@ static void set_hall_count(void)
 static void enter_map(void)
 {
     mode = MODE_MAP;
-    load_board(map_layout, MAP_W, MAP_H, MAP_X, MAP_Y);
+    load_board(map_layout[hall_of_level], MAP_W, MAP_H, MAP_X, MAP_Y);
     cut_notches();
     set_hall_count();
 
@@ -1014,6 +1077,7 @@ static void start_level(void)
     const unsigned char p = (unsigned char)((level - 1) % LEVELS);
     unsigned char i;
 
+    hall_of_level = p;
     a_wall = lvl_wall[p];
     a_room = lvl_room[p];
     a_hall = lvl_hall[p];
