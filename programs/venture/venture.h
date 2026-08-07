@@ -120,9 +120,9 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define MAX_HALL      6
 #define HALL_BASE     1
 #define G_HALLMON     0xE8   /* a hooded figure */
-#define HALL_EVERY    4      /* hall: steps every Nth tick (slower than Winky) */
-#define HALL_ROOM_TICKS 260  /* room: ticks of dawdling before one comes in */
-#define HALL_IN_EVERY 3      /* room: how often the intruder steps */
+#define HALL_EVERY    5      /* hall: steps every Nth tick (slower than Winky) */
+#define HALL_ROOM_TICKS 170  /* room: ticks of dawdling before one comes in */
+#define HALL_IN_EVERY 4      /* room: how often the intruder steps */
 
 /* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
 #define T_FLOOR   0
@@ -135,10 +135,10 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define T_DOOR0  13   /* hall: T_DOOR0 + n is an entrance to room n */
 
 /* ---- glyphs, all from the machine's CP437 ROM --------------------------- */
-/* Winky is $01/$02 -- an outline smiley and a filled one, so the protagonist
- * and his two-frame animation ship in the character ROM. */
+/* Winky is CP437 $01, an outline smiley -- the protagonist ships in the character
+ * ROM. $02 is the filled version and he used to alternate between the two every
+ * tick; at 16x32 that reads as a flicker rather than as animation, so he does not. */
 #define G_WINKY   0x01
-#define G_WINKY_2 0x02
 #define G_WALL    0xDB   /* solid block */
 #define G_FLOOR   ' '
 #define G_CORPSE  0xB0   /* light shade -- remains, clearly not a wall */
@@ -190,13 +190,23 @@ extern void          sound_off(void);                /* SID voice 1 off */
  *
  * TICK_RATE is jiffies per tick, so smaller is faster. It is also the difficulty
  * ramp: later loops lower it and the whole world speeds up together, with no
- * per-entity speed constants anywhere. */
-#define TICK_RATE   4    /* 60/4 = 15 ticks per second */
+ * per-entity speed constants anywhere.
+ *
+ * Six rather than four since the playfield went to double-size rows. A step used to
+ * cover 8 px across and 16 down; it now covers 16 and 32, so at the old rate
+ * everything crossed the screen at twice the speed while having a third less room to
+ * cross it in. Ten ticks a second puts a room-crossing back at about three seconds,
+ * which is where it was. It also leaves more headroom in the ramp, since the loop
+ * decrements this and it can now come down further before bottoming out. */
+#define TICK_RATE   6    /* 60/6 = 10 ticks per second */
 #define MAX_CATCHUP 4    /* simulation steps per pass, so a stall cannot spiral */
 
-/* Monsters step every Nth tick, which is how they end up slower than Winky
- * without a second clock. */
-#define MON_EVERY   3
+/* Monsters step every Nth tick, which is how they end up slower than Winky without a
+ * second clock. Four rather than three: a smaller room leaves less space to
+ * out-manoeuvre anything, so the same relative speed reads as more pressure than it
+ * used to. The Hallmonster constants keep their old relationship to this -- ones
+ * patrolling the hall slower than room monsters, an intruder exactly as fast. */
+#define MON_EVERY   4
 
 #define MAX_MON     6
 #define ARROW_STEP  2    /* cells per tick: an arrow outruns what it is shot at */

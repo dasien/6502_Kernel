@@ -211,7 +211,6 @@ static unsigned char ret_x, ret_y;         /* the hall cell we went in from */
 /* ---- entities ---------------------------------------------------------- */
 static unsigned char wx, wy;             /* Winky, in board coordinates */
 static signed char   face_dx, face_dy;   /* last direction held; arrows use it */
-static unsigned char anim;               /* toggles the two Winky frames */
 
 static unsigned char f_live, f_x, f_y;   /* the facing pip, so it can be erased */
 
@@ -920,8 +919,7 @@ static void step(unsigned char ks)
                a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
                a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW);
 
-    anim ^= 1;
-    put_at(wx, wy, anim ? G_WINKY : G_WINKY_2, A_WINKY);
+    put_at(wx, wy, G_WINKY, A_WINKY);
 }
 
 /* ---- keyboard FIFO ------------------------------------------------------
