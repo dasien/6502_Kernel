@@ -241,7 +241,7 @@ treasure or kill something worthless. An arcade cabinet carried an instruction c
 and the machine just played; the manual is that card.
 
 **Finished.** All ten steps are in, then a fidelity pass against ten screenshots of
-arcade play, then two passes on what screenshots cannot show — how the things in the
+arcade play, then passes on what screenshots cannot show — how the things in the
 rooms behave, and whether the geometry holds together when you actually walk it
 (`VENTURE.PRG`, 12,152 bytes). Driven by `tests/test_venture.cpp` (26 tests), which
 runs the real blob and holds keys through `$FE0F` the way a player would.
@@ -275,6 +275,11 @@ Things that came out of building it:
   flood-fills them: exact dimensions, sealed border, treasure and every monster post
   reachable from the door. Two real typos turned up that way while the rooms were
   being drawn.
+- **The tests moved with the geometry, twice.** Going to double-size rows changed every
+  coordinate in `test_venture.cpp`: a logical tile is no longer a screen cell, so the
+  glyph readers convert (logical row N is physical row `PLAY_ROW0 + 2N`) and everything
+  above them kept working in tiles. What did NOT survive was the routes -- the hall is a
+  different shape three times over now -- and those had to be rewalked by hand.
 - **Three things resisted testing**, and are left untested rather than tested flakily.
   The Hallmonster that comes into a room you linger in needs Winky alive for 260 ticks
   with three serpents closing. The between-levels tally needs all four rooms of a level

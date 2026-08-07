@@ -49,44 +49,45 @@
 static const char *const map_layout[LEVELS][MAP_H] = {
     {   /* level 1 */
         "##############################",
-        "#h............h.............h#",
-        "#.AAAAAAA.......BBBBBBBBBBB..#",
-        "#.AaaaaaA.......BbbbbbbbbbB..#",
-        "#.AAAAAAA.......BBBBBBBBBBB..#",
         "#............................#",
+        "#.AAAAAAA.......BBBBBBBBBBB..#",
+        "#hAaaaaaA.......BbbbbbbbbbB.h#",
+        "#.AAAAAAA.......BBBBBBBBBBB..#",
+        "#............h...............#",
         "#.CCCCCCCCCCC.......DDDDDDD..#",
-        "#.CcccccccccC.......DdddddD..#",
+        "#hCcccccccccC.......DdddddD..#",
         "#.CCCCCCCCCCC.......DDDDDDD..#",
-        "#h.............h............h#",
+        "#...........h...........h....#",
         "##############################",
     },
     {   /* level 2 */
         "##############################",
-        "#h.........h................h#",
+        "#.........h.................h#",
         "#.AAAAAAA....BBBBBBBBB.......#",
         "#.AaaaaaA....BbbbbbbbB..DDDD.#",
         "#.AaaaaaA....BBBBBBBBB..DddD.#",
-        "#.AaaaaaA...............DddD.#",
+        "#.AaaaaaA.h.............DddD.#",
         "#.AaaaaaA....CCCCCCCCC..DddD.#",
         "#.AaaaaaA....CcccccccC..DDDD.#",
-        "#.AAAAAAA....CCCCCCCCC.......#",
-        "#h.........h................h#",
+        "#.AAAAAAA.h..CCCCCCCCC......h#",
+        "#...........h................#",
         "##############################",
     },
     {   /* level 3 */
         "##############################",
-        "#h........h.................h#",
+        "#.............h..............#",
         "#.AAAAAAA..BBBBBBBBB..CCCCCC.#",
-        "#.AaaaaaA..BbbbbbbbB..CccccC.#",
-        "#.AAAAAAA..BBBBBBBBB..CccccC.#",
+        "#hAaaaaaA..BbbbbbbbB..CccccC.#",
+        "#.AAAAAAA..BBBBBBBBB..CccccCh#",
         "#.....................CccccC.#",
         "#....DDDDDDDDDDD......CCCCCC.#",
         "#....DdddddddddD.............#",
-        "#....DDDDDDDDDDD....h........#",
-        "#h......................h....#",
+        "#....DDDDDDDDDDD............h#",
+        "#h..................h........#",
         "##############################",
     },
 };
+
 
 
 /* Six themed rooms; a level deals four of them. One table rather than six named
@@ -1069,6 +1070,29 @@ static void bonus_screen(unsigned int earned, unsigned char mult, unsigned int t
     wait_key();
 }
 
+/* The end of a run: what you scored, and whether you want another go. The arcade put
+ * a coin slot here; the nearest thing we have is a key. */
+static unsigned char game_over_screen(void)
+{
+    int k;
+
+    vfill(' ');
+    vcmd(VCMD_CLEAR);
+    put_str(31, 8,  "G A M E   O V E R", A_HUD);
+    put_str(31, 11, "FINAL SCORE", A_HUD);
+    put_num(43, 11, score, 6, A_HUD);
+    put_str(31, 14, "PLAY AGAIN?  Y / N", A_TEXT);
+
+    while (INCH_NB() >= 0) { }         /* drain, so a stale byte cannot answer for you */
+    for (;;) {
+        k = INCH_NB();
+        if (k < 0) continue;
+        if (swallow_esc(k)) continue;  /* an arrow's ESC [ X, not an answer */
+        if (k == 'y' || k == 'Y') return 1;
+        if (k == 'n' || k == 'N' || k == 'q' || k == 'Q') return 0;
+    }
+}
+
 /* Deal this level's four rooms from the six themes, rotating with the level so a
  * run of twelve room-visits is not four layouts seen three times each, and adopt
  * the level's palette. */
@@ -1109,6 +1133,19 @@ static unsigned int scaled(unsigned int v, unsigned char n)
     return acc;
 }
 
+/* Everything a run owns, back to the start. The treasure roster goes with it: it is
+ * what THIS player has found, and the screen says PLAYER 1 GET READY. */
+static void new_game(void)
+{
+    score = 0;
+    lives = LIVES_START;
+    level = 1;
+    tickrate = TICK_RATE;
+    treas_got = 0;
+    start_level();
+    roster_screen();
+}
+
 int main(void)
 {
     unsigned int last, now, earned, total;
@@ -1121,8 +1158,7 @@ int main(void)
     vhidecur();
     banner("V E N T U R E");
 
-    start_level();
-    roster_screen();
+    new_game();
     enter_map();
 
     for (;;) {
@@ -1202,10 +1238,12 @@ int main(void)
             cue(SND_DEATH);
             if (lives) lives--;
             if (!lives) {
-                banner("G A M E   O V E R");
                 sound_off();
-                QUITDOS();
-                return 0;
+                snd_left = 0;
+                if (!game_over_screen()) { QUITDOS(); return 0; }
+                new_game();
+                enter_map();
+                continue;
             }
             banner("CAUGHT");
             sound_off();

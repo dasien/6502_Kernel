@@ -40,12 +40,23 @@ using Computer::Computer6502;
 
 namespace {
 
-// Must match venture.h.
+/* Must match venture.h.
+ *
+ * The playfield lives on the VIC's double-size rows, so a logical tile is NOT a
+ * screen cell: logical row N is physical row kPlayRow0 + 2N, and a double row holds
+ * 40 characters rather than 80. Columns are one-to-one, offset by the bezel. Every
+ * test below works in logical tiles; roomGlyph()/mapGlyph() do the conversion, and
+ * screenRow() is the one thing that still reads physical rows -- the HUD, the banners
+ * and the roster all sit on ordinary rows outside the band. */
 constexpr int kScrW = 80;
-constexpr int kRoomW = 44, kRoomH = 15;
-constexpr int kRoomX = (kScrW - kRoomW) / 2, kRoomY = 5;
-constexpr int kMapW = 56, kMapH = 15;
-constexpr int kMapX = (kScrW - kMapW) / 2, kMapY = 5;
+constexpr int kPlayCols = 40, kPlayRow0 = 1;
+constexpr int kRoomW = 30, kRoomH = 11;
+constexpr int kRoomX = (kPlayCols - kRoomW) / 2, kRoomY = 0;
+constexpr int kMapW = kRoomW, kMapH = kRoomH;
+constexpr int kMapX = kRoomX, kMapY = kRoomY;
+constexpr int kMapStartX = 14, kMapStartY = 5;
+constexpr int kMinSpawnGap = 7;
+constexpr int kLevels = 3;
 constexpr int kThemes = 6, kRoomsPerLevel = 4;
 
 constexpr uint8_t kGlyphWinky = 0x01, kGlyphWinky2 = 0x02;
@@ -118,6 +129,9 @@ bool walkable(char c)
 {
     return c == '.' || c == 'h' || c == '+' || c == 'm' || c == '*';
 }
+
+// std::abs on ints
+using std::abs;
 
 std::set<std::pair<int, int>> flood(const std::vector<std::string> &g, int w, int h,
                                     std::pair<int, int> start)
@@ -203,6 +217,23 @@ TEST(VentureLayout, EveryRoomIsWellFormedAndWinnable)
         EXPECT_GE(posts.size(), 2u) << "a room with nothing guarding it is not a room";
         EXPECT_LE(posts.size(), 6u) << "more monster posts than MAX_MON";
 
+        /* Nothing may be lying in wait at a doorway. This is not a tuning knob: a
+         * monster posted on or beside the cell a door puts you on kills you before you
+         * have taken a step, which is a coin flip rather than a difficulty. Both
+         * doorways count, because either can be the one you come in by -- and this
+         * caught two real ones, a skeleton sitting exactly on the north arrival cell
+         * and a serpent two tiles from it. */
+        for (const auto &d : doors) {
+            const auto in = insideOf(d.first, d.second, kRoomW, kRoomH);
+            for (const auto &p : posts) {
+                const int gap = std::abs(p.first - in.first) +
+                                std::abs(p.second - in.second);
+                EXPECT_GE(gap, kMinSpawnGap)
+                    << "a monster starts " << gap << " tiles from the arrival cell at "
+                    << in.first << "," << in.second;
+            }
+        }
+
         // Winnable from EITHER doorway, since either can be the one you enter by:
         // the treasure reachable, every monster able to reach you, and the other
         // doorway reachable so the escape route actually exists.
@@ -224,105 +255,143 @@ TEST(VentureLayout, EveryRoomIsWellFormedAndWinnable)
     }
 }
 
-TEST(VentureLayout, TheHallIsWellFormedAndNoRoomCanStrandAnother)
+/* Which sides a theme's two doorways are on, read off its room art exactly as
+ * exits_of() does in the game -- scanning the border and skipping the corners. */
+std::string doorSidesOf(const std::vector<std::string> &room)
+{
+    std::string sides;
+    for (int x = 1; x < kRoomW - 1; x++) if (room[0][x] == '+') sides += 'N';
+    for (int x = 1; x < kRoomW - 1; x++) if (room[kRoomH - 1][x] == '+') sides += 'S';
+    for (int y = 1; y < kRoomH - 1; y++) if (room[y][0] == '+') sides += 'W';
+    for (int y = 1; y < kRoomH - 1; y++) if (room[y][kRoomW - 1] == '+') sides += 'E';
+    return sides;
+}
+
+// Outline cells of a block that have open hall on the given side -- the candidates
+// cut_notches() chooses an entrance from.
+std::vector<std::pair<int, int>> exposedFaces(const std::vector<std::string> &g,
+                                              char block, char side)
+{
+    const int dx = side == 'W' ? -1 : side == 'E' ? 1 : 0;
+    const int dy = side == 'N' ? -1 : side == 'S' ? 1 : 0;
+    std::vector<std::pair<int, int>> out;
+    for (int y = 0; y < kMapH; y++)
+        for (int x = 0; x < kMapW; x++) {
+            if (g[y][x] != block) continue;
+            const int nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= kMapW || ny < 0 || ny >= kMapH) continue;
+            if (g[ny][nx] == '.') out.push_back({x, y});
+        }
+    return out;
+}
+
+TEST(VentureLayout, EveryHallIsWellFormedAndNoRoomCanStrandAnother)
 {
     const std::string src = sourceText();
     ASSERT_FALSE(src.empty());
 
-    const auto g = rowsOf(src, "map_layout[MAP_H] = {");
-    ASSERT_EQ(g.size(), static_cast<size_t>(kMapH));
-    for (int y = 0; y < kMapH; y++)
-        ASSERT_EQ(g[y].size(), static_cast<size_t>(kMapW)) << "hall row " << y;
+    const auto rooms = rowsOf(src, "room_art[THEMES][ROOM_H] = {");
+    ASSERT_EQ(rooms.size(), static_cast<size_t>(kThemes * kRoomH));
 
-    for (int x = 0; x < kMapW; x++) {
-        EXPECT_EQ(g[0][x], '#') << "the hall leaks at the top, column " << x;
-        EXPECT_EQ(g[kMapH - 1][x], '#') << "the hall leaks at the bottom, column " << x;
-    }
-    for (int y = 0; y < kMapH; y++) {
-        EXPECT_EQ(g[y][0], '#');
-        EXPECT_EQ(g[y][kMapW - 1], '#');
-    }
+    /* A slot's entrances are cut on the sides of whichever room it is holding, and
+     * slot i of level L holds theme ((L-1)*4 + i) % 6. So which faces each hall has to
+     * expose is decided by the room art, and the two have to be checked together --
+     * a hall that is fine for level 1 can leave a level-3 room with no way in. */
+    std::string sides[kThemes];
+    for (int t = 0; t < kThemes; t++)
+        sides[t] = doorSidesOf(std::vector<std::string>(rooms.begin() + t * kRoomH,
+                                                        rooms.begin() + (t + 1) * kRoomH));
 
-    // MAP_START_X / MAP_START_Y from venture.h.
-    ASSERT_EQ(g[5][28], '.') << "Winky would start inside a wall";
-    const auto reach = flood(g, kMapW, kMapH, {28, 5});
+    const auto all = rowsOf(src, "map_layout[LEVELS][MAP_H] = {");
+    ASSERT_EQ(all.size(), static_cast<size_t>(kLevels * kMapH))
+        << "expected " << kLevels << " halls of " << kMapH << " rows";
 
-    int posts = 0;
-    for (int y = 0; y < kMapH; y++)
-        for (int x = 0; x < kMapW; x++)
-            if (g[y][x] == 'h') {
-                posts++;
-                EXPECT_TRUE(reach.count({x, y}))
-                    << "a Hallmonster is sealed off from the hall it patrols";
-            }
-    EXPECT_EQ(posts, kMaxHallPosts) << "one post per possible Hallmonster";
-
-    /* Entrances are NOT in the layout. They are cut at runtime into the middle of
-     * whichever block edges match the room a slot is holding, so all four edge-middles
-     * of every block have to be usable -- and sealing any one room must not strand
-     * another's, whichever sides those turn out to be. */
     const char outline[] = "ABCD", inside[] = "abcd";
-    const std::pair<int, int> blk[] = {{3, 2}, {42, 2}, {3, 8}, {42, 8}};
-    const int kBlkW = 11, kBlkH = 5;
 
-    for (int i = 0; i < kRoomsPerLevel; i++) {
-        std::vector<std::pair<int, int>> body, interior;
+    for (int lvl = 0; lvl < kLevels; lvl++) {
+        SCOPED_TRACE("hall " + std::to_string(lvl + 1));
+        const std::vector<std::string> g(all.begin() + lvl * kMapH,
+                                         all.begin() + (lvl + 1) * kMapH);
+
         for (int y = 0; y < kMapH; y++)
-            for (int x = 0; x < kMapW; x++) {
-                if (g[y][x] == outline[i]) body.push_back({x, y});
-                if (g[y][x] == inside[i]) interior.push_back({x, y});
-            }
-        EXPECT_EQ(body.size(), 28u) << "room " << i << "'s outline is not an 11x5 ring";
-        EXPECT_EQ(interior.size(), 27u) << "room " << i << "'s interior is not 9x3";
-
-        const auto [x0, y0] = blk[i];
-        const std::pair<int, int> mid[] = {
-            {x0 + kBlkW / 2, y0}, {x0 + kBlkW / 2, y0 + kBlkH - 1},
-            {x0, y0 + kBlkH / 2}, {x0 + kBlkW - 1, y0 + kBlkH / 2},
-        };
-        for (const auto &m : mid) {
-            EXPECT_EQ(g[m.second][m.first], outline[i])
-                << "room " << i << " edge-middle " << m.first << "," << m.second
-                << " is not part of its outline";
-            bool open_beside = false;
-            for (const auto &d : {std::pair{1, 0}, std::pair{-1, 0},
-                                  std::pair{0, 1}, std::pair{0, -1}})
-                if (g[m.second + d.second][m.first + d.first] == '.') open_beside = true;
-            EXPECT_TRUE(open_beside) << "an entrance cut at " << m.first << ","
-                                     << m.second << " would be unreachable";
+            ASSERT_EQ(g[y].size(), static_cast<size_t>(kMapW)) << "row " << y;
+        for (int x = 0; x < kMapW; x++) {
+            EXPECT_EQ(g[0][x], '#') << "leaks at the top, column " << x;
+            EXPECT_EQ(g[kMapH - 1][x], '#') << "leaks at the bottom, column " << x;
         }
+        for (int y = 0; y < kMapH; y++) {
+            EXPECT_EQ(g[y][0], '#');
+            EXPECT_EQ(g[y][kMapW - 1], '#');
+        }
+        ASSERT_EQ(g[kMapStartY][kMapStartX], '.') << "Winky would start inside a wall";
 
-        // The interior is what fills in when the room is looted, so it must be sealed
-        // inside its own outline -- a leak would put unwalkable black cells out in the
-        // open hall, which reads as floor.
-        for (const auto &cl : interior)
-            for (const auto &d : {std::pair{1, 0}, std::pair{-1, 0},
-                                  std::pair{0, 1}, std::pair{0, -1}}) {
-                const char n = g[cl.second + d.second][cl.first + d.first];
-                EXPECT_TRUE(n == outline[i] || n == inside[i])
-                    << "room " << i << " interior leaks into '" << n << "'";
+        const auto reach = flood(g, kMapW, kMapH, {kMapStartX, kMapStartY});
+        int posts = 0;
+        for (int y = 0; y < kMapH; y++)
+            for (int x = 0; x < kMapW; x++)
+                if (g[y][x] == 'h') {
+                    posts++;
+                    EXPECT_TRUE(reach.count({x, y})) << "a Hallmonster is sealed off";
+                }
+        EXPECT_EQ(posts, 6) << "one post per possible Hallmonster";
+
+        for (int i = 0; i < kRoomsPerLevel; i++) {
+            const std::string want = sides[((lvl * kRoomsPerLevel) + i) % kThemes];
+            ASSERT_EQ(want.size(), 2u);
+
+            std::vector<std::pair<int, int>> ring, interior;
+            for (int y = 0; y < kMapH; y++)
+                for (int x = 0; x < kMapW; x++) {
+                    if (g[y][x] == outline[i]) ring.push_back({x, y});
+                    if (g[y][x] == inside[i]) interior.push_back({x, y});
+                }
+            ASSERT_FALSE(ring.empty()) << "room " << i << " has no outline";
+            EXPECT_FALSE(interior.empty()) << "room " << i << " has nothing to fill in";
+
+            // The interior must be sealed inside its own ring, or looting the room
+            // would paint unwalkable black cells out in the open hall.
+            for (const auto &c : interior)
+                for (const auto &d : {std::pair{1, 0}, std::pair{-1, 0},
+                                      std::pair{0, 1}, std::pair{0, -1}}) {
+                    const char n = g[c.second + d.second][c.first + d.first];
+                    EXPECT_TRUE(n == outline[i] || n == inside[i])
+                        << "room " << i << " interior leaks into '" << n << "'";
+                }
+
+            for (const char side : want) {
+                const auto faces = exposedFaces(g, outline[i], side);
+                EXPECT_FALSE(faces.empty())
+                    << "room " << i << " has no " << side
+                    << " face to cut an entrance into, so it cannot be entered";
+                bool reachable = false;
+                for (const auto &f : faces)
+                    for (const auto &d : {std::pair{1, 0}, std::pair{-1, 0},
+                                          std::pair{0, 1}, std::pair{0, -1}})
+                        if (reach.count({f.first + d.first, f.second + d.second}))
+                            reachable = true;
+                EXPECT_TRUE(reachable) << "room " << i << "'s " << side
+                                       << " entrance would be unreachable";
             }
 
-        std::vector<std::string> sealed = g;
-        for (const auto &cl : body)     sealed[cl.second][cl.first] = '#';
-        for (const auto &cl : interior) sealed[cl.second][cl.first] = '#';
-        const auto after = flood(sealed, kMapW, kMapH, {28, 5});
-        for (int j = 0; j < kRoomsPerLevel; j++) {
-            if (j == i) continue;
-            const auto [jx, jy] = blk[j];
-            const std::pair<int, int> jmid[] = {
-                {jx + kBlkW / 2, jy}, {jx + kBlkW / 2, jy + kBlkH - 1},
-                {jx, jy + kBlkH / 2}, {jx + kBlkW - 1, jy + kBlkH / 2},
-            };
-            for (const auto &m : jmid) {
-                bool reachable = false;
-                for (const auto &d : {std::pair{1, 0}, std::pair{-1, 0},
-                                      std::pair{0, 1}, std::pair{0, -1}})
-                    if (after.count({m.first + d.first, m.second + d.second}))
-                        reachable = true;
-                EXPECT_TRUE(reachable) << "sealing room " << i << " strands room " << j
-                                       << "'s " << m.first << "," << m.second
-                                       << " entrance";
+            /* Looting a room seals it solid, which changes the shape of the hall.
+             * That must never wall off another room: it would leave a level
+             * impossible to finish through no fault of the player. */
+            std::vector<std::string> sealed = g;
+            for (const auto &c : ring)     sealed[c.second][c.first] = '#';
+            for (const auto &c : interior) sealed[c.second][c.first] = '#';
+            const auto after = flood(sealed, kMapW, kMapH, {kMapStartX, kMapStartY});
+            for (int j = 0; j < kRoomsPerLevel; j++) {
+                if (j == i) continue;
+                for (const char side : sides[((lvl * kRoomsPerLevel) + j) % kThemes]) {
+                    bool ok = false;
+                    for (const auto &f : exposedFaces(g, outline[j], side))
+                        for (const auto &d : {std::pair{1, 0}, std::pair{-1, 0},
+                                              std::pair{0, 1}, std::pair{0, -1}})
+                            if (after.count({f.first + d.first, f.second + d.second}))
+                                ok = true;
+                    EXPECT_TRUE(ok) << "sealing room " << i << " strands room " << j
+                                    << "'s " << side << " entrance";
+                }
             }
         }
     }
@@ -437,16 +506,27 @@ protected:
      * asked for in ticks lands one cell short often enough to matter -- and a route
      * that stops one cell short of its treasure walks the whole way back without it,
      * which is exactly the bug this replaced. Reading the screen is exact. */
+    /* Hold `mask` until Winky has moved `cells` cells, or until a wall stops him.
+     *
+     * Both halves matter. Counting ticks cannot be trusted to the cell -- the game's
+     * accumulator and this harness's jiffy budget drift by a tick depending on phase,
+     * so a leg asked for in ticks lands one short and walks past its target. And a leg
+     * that clamps early must return early: standing on the spot with the key still
+     * down is how Winky used to get eaten in a corner, since a Hallmonster is closing
+     * the whole time. */
     void walk(uint8_t mask, int cells, bool on_map)
     {
         int sx, sy;
         if (!(on_map ? findWinkyOnMap(&sx, &sy) : findWinky(&sx, &sy))) return;
+        int px = sx, py = sy, stalled = 0;
         pia->setKeyState(mask);
         for (int i = 0; i < cells * 3 + 8; i++) {
             run(4);
             int x, y;
             if (!(on_map ? findWinkyOnMap(&x, &y) : findWinky(&x, &y))) break;
             if (abs(x - sx) + abs(y - sy) >= cells) break;
+            if (x == px && y == py) { if (++stalled >= 3) break; }
+            else { stalled = 0; px = x; py = y; }
         }
         pia->setKeyState(0);
         run(2);
@@ -481,13 +561,16 @@ protected:
         int n = 0;
         for (int y = 0; y < kMapH; y++)
             for (int x = 0; x < kMapW; x++)
-                if (glyphAt(kMapX + x, kMapY + y) == g &&
-                    attrAt(kMapX + x, kMapY + y) == attr) n++;
+                if (glyphAt(kMapX + x, physRow(kMapY + y)) == g &&
+                    attrAt(kMapX + x, physRow(kMapY + y)) == attr) n++;
         return n;
     }
 
-    uint8_t roomGlyph(int rx, int ry) { return glyphAt(kRoomX + rx, kRoomY + ry); }
-    uint8_t mapGlyph(int rx, int ry) { return glyphAt(kMapX + rx, kMapY + ry); }
+    // Logical tile -> physical cell. The row between two logical rows is the bottom
+    // half of the glyphs above it and is never addressed.
+    int physRow(int ry) const { return kPlayRow0 + ry * 2; }
+    uint8_t roomGlyph(int rx, int ry) { return glyphAt(kRoomX + rx, physRow(kRoomY + ry)); }
+    uint8_t mapGlyph(int rx, int ry) { return glyphAt(kMapX + rx, physRow(kMapY + ry)); }
 
     // Winky is drawn with two alternating frames, so either counts.
     bool isWinky(uint8_t g) { return g == kGlyphWinky || g == kGlyphWinky2; }
@@ -506,7 +589,7 @@ protected:
         for (int attempt = 0; attempt < 4; attempt++) {
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
-                    if (isWinky(glyphAt(ox + x, oy + y))) {
+                    if (isWinky(glyphAt(ox + x, physRow(oy + y)))) {
                         *rx = x; *ry = y; return true;
                     }
             run(2);
@@ -561,7 +644,7 @@ protected:
         run(2);
     }
 
-    bool hudUp() { return screenRow(1).find("LEVEL") != std::string::npos; }
+    bool hudUp() { return screenRow(0).find("LEVEL") != std::string::npos; }
     bool caught() { return screenRow(11).find("CAUGHT") != std::string::npos; }
 
     /* Wait until the hall is back up and fully drawn, and detect it by the TRANSITION
@@ -589,35 +672,29 @@ protected:
 
     /* Walk from the middle of the hall into a room, by one of its two entrances.
      *
-     * The entrances are cut into the middle of whichever block edges match the room's
-     * doorway sides, so a north entrance is approached from the row above it and a
-     * south one from the row below. At level 1 slot 0 holds the serpent room, whose
-     * doorways are north and south, so its entrances are at (8,2) and (8,6).
+     * Level 1's slot 0 holds the serpent room, whose doorways are north and south, so
+     * its entrances are cut into the top and bottom faces of its block -- (5,2) and
+     * (5,4), approached from row 1 and row 5 respectively.
      *
      * `north` picks which. Coming in the north entrance puts Winky at the room's north
-     * doorway; the south one puts him at its south doorway. That is the point.
+     * doorway, the south one at its south doorway. That is the point of the test above.
      *
-     * `ready` is the treasure glyph, which paints near the end of the board: polling
+     * Corner first, then count: this gets called again after a death, when Winky is
+     * back beside whichever entrance he last used, so two wall-clamped legs put him
+     * somewhere known from anywhere.
+     *
+     * `ready` is the treasure glyph, which paints near the end of the board -- polling
      * for it is how we know the room is up, and waiting no longer than that matters
-     * because every extra jiffy is one Winky spends in the doorway while the room
-     * converges on him. */
+     * because every extra jiffy is one Winky spends in the doorway. */
     bool enterSlotZero(bool north, uint8_t ready = kGlyphApples)
     {
-        /* Corner first, then count. Going straight for the entrance only works from
-         * the start cell, and this gets called again after a death -- when Winky is
-         * back beside whichever entrance he last used. Two wall-clamped legs put him
-         * somewhere known from anywhere. */
         if (north) {
-            hold(kKsUp, 20);             // clamps on row 1
-            hold(kKsLeft, 60);           // clamps at (1,1)
-            walkOnMap(kKsRight, 7);      // to (8,1), above the entrance
-            hold(kKsDown, 2);            // down onto it at (8,2)
+            walkOnMap(kKsUp, 20);        // clamps on row 1
+            walkOnMap(kKsLeft, 9);       // west to (5,1), above the entrance
+            hold(kKsDown, 2);            // down onto it at (5,2)
         } else {
-            hold(kKsDown, 20);           // clamps on row 13
-            hold(kKsLeft, 60);           // clamps at (1,13)
-            walkOnMap(kKsUp, 6);         // to (1,7), the open row below the block
-            walkOnMap(kKsRight, 7);      // to (8,7)
-            hold(kKsUp, 2);              // up onto the entrance at (8,6)
+            walkOnMap(kKsLeft, 9);       // row 5 is open; west to (5,5)
+            hold(kKsUp, 2);              // up onto the entrance at (5,4)
         }
         int x, y;
         for (int i = 0; i < 60; i++) {
@@ -628,7 +705,16 @@ protected:
         return false;
     }
 
-    bool enterRoomZero() { return enterSlotZero(true); }
+    // Three lives, so three goes at getting in. The way to slot 0 runs along the top
+    // of the hall, which is also where the first Hallmonster is patrolling.
+    bool enterSlot(bool north, uint8_t ready = kGlyphApples)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+            if (enterSlotZero(north, ready)) return true;
+        return false;
+    }
+
+    bool enterRoomZero() { return enterSlot(true); }
 
     /* Loot a room and get out by a far doorway -- the whole loop the game is built
      * round, and what every test of the hall's after-state needs.
@@ -644,14 +730,12 @@ protected:
      * Returns false with the CAUGHT screen already acknowledged. */
     bool lootSpiderRoom()
     {
-        /* In by slot 2's SOUTH entrance, at (8,12), which is approached from row 13.
-         * Row 13 is the one open lane in the hall with no Hallmonster post on or beside
-         * it, and at a level's start only the first post is awake -- so this is the
-         * quietest way across. */
-        hold(kKsDown, 20);          // clamps on row 13
-        hold(kKsLeft, 60);          // clamps at (1,13) -- works from anywhere, which
-        walkOnMap(kKsRight, 7);     // matters because this is retried after a death
-        hold(kKsUp, 2);             // up onto the entrance at (8,12)
+        /* Slot 2 holds the spider room at level 1. Its block is the long one on the
+         * bottom left, so the south entrance is at (7,8), reached from row 9 -- the
+         * quietest lane in the hall. */
+        walkOnMap(kKsDown, 20);     // clamps on row 9, the quietest lane in the hall
+        walkOnMap(kKsLeft, 7);      // west to (7,9), below the entrance
+        hold(kKsUp, 2);             // up onto it at (7,8)
 
         int x, y;
         bool inside = false;
@@ -663,14 +747,20 @@ protected:
         // and every retry runs against a stopped machine.
         if (!inside) { if (caught()) { pressKey('\r'); run(240); } return false; }
 
-        /* A south entrance puts Winky at the room's south doorway, (33,14), so he
-         * starts at (33,13). Column 33 and rows 1 and 13 are all clear of the web's
-         * pillars, and column 21 carries the ring. Out by the doorway he came in. */
-        walkInRoom(kKsLeft, 12);    // (21,13)
-        walkInRoom(kKsUp, 6);       // (21,7), the ring
-        walkInRoom(kKsDown, 6);     // back to (21,13)
-        walkInRoom(kKsRight, 12);   // (33,13), under the doorway
-        hold(kKsDown, 3);           // and out
+        /* In at the south doorway (20,10), so Winky starts at (20,9); out by the north
+         * one at (10,0). Two different doors on purpose -- it exercises the side
+         * matching in both directions.
+         *
+         * Up column 20 and along row 1 rather than straight west along row 9: a spider
+         * posts at (14,8), which is exactly seven tiles from the arrival cell and so
+         * legal, but walking the bottom lane goes straight at it. Columns 20 and 14 and
+         * rows 1 and 4 are all clear of the web's pillars. */
+        walkInRoom(kKsUp, 8);       // (20,1)
+        walkInRoom(kKsLeft, 6);     // (14,1)
+        walkInRoom(kKsDown, 3);     // (14,4), the ring
+        walkInRoom(kKsUp, 3);       // back to (14,1)
+        walkInRoom(kKsLeft, 4);     // (10,1), under the north doorway
+        hold(kKsUp, 3);             // and out
         return waitForHall();
     }
 
@@ -769,14 +859,15 @@ TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;
     EXPECT_TRUE(findWinkyOnMap(&wx, &wy)) << "Winky was never drawn in the hall";
-    EXPECT_GT(countGlyphOnMap(kGlyphWall), 120) << "the hall's walls did not paint";
+    EXPECT_GT(countGlyphOnMap(kGlyphWall), 100) << "the hall's walls did not paint";
 
     // Four rooms, two entrances apiece, all open, and four hollow outlines: an 11x5
     // box is 26 perimeter cells once its two entrances are notched out of it.
     EXPECT_EQ(countGlyphOnMap(kGlyphDoor), kRoomsPerLevel * 2)
         << "every room should have both entrances open at a level's start";
-    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), kRoomsPerLevel * 26)
-        << "the four room outlines did not paint, or are not hollow";
+    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), 72)
+        << "the four room outlines did not paint, or are not hollow "
+           "(rings of 16+24+24+16, less the eight cells cut into entrances)";
 }
 
 TEST_F(VentureTest, TheLevelOnePaletteIsMagenta)
@@ -787,10 +878,11 @@ TEST_F(VentureTest, TheLevelOnePaletteIsMagenta)
     int wall = 0;
     for (int y = 0; y < kMapH; y++)
         for (int x = 0; x < kMapW; x++)
-            if (mapGlyph(x, y) == kGlyphWall && attrAt(kMapX + x, kMapY + y) == kL1Wall)
+            if (mapGlyph(x, y) == kGlyphWall &&
+                attrAt(kMapX + x, physRow(kMapY + y)) == kL1Wall)
                 wall++;
-    EXPECT_GT(wall, 120) << "the hall's walls are not the level's colour";
-    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), kRoomsPerLevel * 26)
+    EXPECT_GT(wall, 60) << "the hall's walls are not the level's colour";
+    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), 72)
         << "the room outlines are not the level's colour";
 
     // Walls dim, rooms bright. They share the solid-block glyph, so that difference
@@ -800,7 +892,7 @@ TEST_F(VentureTest, TheLevelOnePaletteIsMagenta)
 
 TEST_F(VentureTest, HudShowsScoreLivesLevel)
 {
-    const std::string hud = screenRow(1);
+    const std::string hud = screenRow(0);
     EXPECT_NE(hud.find("SCORE"), std::string::npos);
     EXPECT_NE(hud.find("LIVES"), std::string::npos);
     EXPECT_NE(hud.find("LEVEL"), std::string::npos);
@@ -820,7 +912,7 @@ TEST_F(VentureTest, WalkingOntoADoorEntersTheRoomBehindIt)
 {
     ASSERT_TRUE(enterRoomZero()) << "never reached the first room";
     EXPECT_GE(countGlyph(kGlyphSerpent), 1) << "the room's monsters did not spawn";
-    EXPECT_GT(countGlyph(kGlyphWall), 100) << "the room's walls did not paint";
+    EXPECT_GT(countGlyph(kGlyphWall), 80) << "the room's walls did not paint";
     EXPECT_EQ(countGlyphOnMap(kGlyphDoor), 0) << "the hall is still on screen";
 }
 
@@ -857,7 +949,7 @@ TEST_F(VentureTest, TheEntranceYouUseDecidesWhichDoorwayYouArriveAt)
     // its hall entrances are cut into the north and south edges of its block. Come in
     // the north one and you should be at the room's north doorway -- not at whichever
     // doorway happened to be first in the layout, which is what it used to be.
-    ASSERT_TRUE(enterSlotZero(true)) << "never got into the room by the north entrance";
+    ASSERT_TRUE(enterSlot(true)) << "never got into the room by the north entrance";
     int wx, wy;
     ASSERT_TRUE(findWinky(&wx, &wy));
     EXPECT_LE(wy, 2) << "came in the north entrance and arrived at row " << wy;
@@ -870,7 +962,7 @@ TEST_F(VentureSouthTest, TheSouthEntranceArrivesAtTheSouthDoorway)
 {
     // The other half of the same rule, and the half that was visibly broken: entering
     // from one side and being put down on a completely different one.
-    ASSERT_TRUE(enterSlotZero(false)) << "never got into the room by the south entrance";
+    ASSERT_TRUE(enterSlot(false)) << "never got into the room by the south entrance";
     int wx, wy;
     ASSERT_TRUE(findWinky(&wx, &wy));
     EXPECT_GE(wy, kRoomH - 3) << "came in the south entrance and arrived at row " << wy;
@@ -887,38 +979,39 @@ TEST_F(VentureTest, LootingARoomSealsItInTheHall)
     ASSERT_TRUE(lootARoomWithRetries()) << "never got the treasure out of the spider room";
 
     // The arcade's signal, and the only thing the hall ever tells you about a room:
-    // both entrances gone and the hollow box filled in. That is the 9x3 interior plus
-    // the two entrance cells -- 29 more room-coloured blocks than before.
+    // both entrances gone and the hollow box filled in. Slot 2's block is 11x3, so
+    // that is a 9x1 interior plus its two entrance cells -- eleven more room-coloured
+    // blocks than before.
     EXPECT_EQ(countGlyphOnMap(kGlyphDoor), doors_before - 2)
         << "a looted room's entrances should be sealed";
-    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), solid_before + 29)
+    EXPECT_EQ(countOnMapWithAttr(kGlyphSealed, kL1Room), solid_before + 11)
         << "the looted room did not fill in solid";
 
-    /* And the rule runs the other way too. We went in and came out by the spider
-     * room's SOUTH doorway, so we should be standing at the south of its block --
-     * (8,13), the only open cell beside the entrance at (8,12). Coming out somewhere
-     * else is the same bug seen from the other end. */
+    /* And the rule runs the other way too. We went IN by the spider room's south
+     * doorway and OUT by its north one, so we should be standing at the north of its
+     * block -- (7,5), the only open cell beside that entrance. Coming out where we went
+     * in would be the same bug seen from the other end. */
     int wx, wy;
     ASSERT_TRUE(findWinkyOnMap(&wx, &wy));
-    EXPECT_EQ(wx, 8) << "left by the south doorway and came out at column " << wx;
-    EXPECT_EQ(wy, 13) << "left by the south doorway and came out at row " << wy;
+    EXPECT_EQ(wx, 7) << "left by the north doorway and came out at column " << wx;
+    EXPECT_EQ(wy, 5) << "left by the north doorway and came out at row " << wy;
 }
 
 TEST_F(VentureTest, ASealedRoomCannotBeWalkedBackInto)
 {
     ASSERT_TRUE(lootARoomWithRetries()) << "never got the treasure out of the spider room";
 
-    /* Winky comes back at (8,13), directly below the entrance he used -- which is now
-     * wall. Push straight up into it: he must stay on row 13 rather than re-enter a
-     * room with nothing left in it. Kept short on purpose; two Hallmonsters are awake
+    /* Winky comes back at (7,5), directly above the entrance he left by -- which is
+     * now wall. Push straight down into it: he must stay on row 5 rather than re-enter
+     * a room with nothing left in it. Kept short on purpose; two Hallmonsters are awake
      * by now and a long demonstration is just a long walk toward them. */
     int wx, wy;
     ASSERT_TRUE(findWinkyOnMap(&wx, &wy));
-    ASSERT_EQ(wy, 13) << "not where a south exit should have put us";
-    hold(kKsUp, 6);
+    ASSERT_EQ(wy, 5) << "not where a north exit should have put us";
+    hold(kKsDown, 6);
     ASSERT_TRUE(findWinkyOnMap(&wx, &wy)) << "left the hall through a sealed room";
     EXPECT_EQ(countGlyph(kGlyphRing), 0) << "walked back into a looted room";
-    EXPECT_EQ(wy, 13) << "pushed up through room 2's sealed entrance";
+    EXPECT_EQ(wy, 5) << "pushed down through room 2's sealed entrance";
 }
 
 TEST_F(VentureTest, HallmonstersGrowInNumberAsRoomsAreLooted)
@@ -1088,7 +1181,7 @@ TEST_F(VentureTest, ArrowKeysDoNotQuitTheGame)
 
     // ...and the HUD is still there, so swallowing the sequence has not eaten
     // the loop along with it.
-    const std::string hud = screenRow(1);
+    const std::string hud = screenRow(0);
     EXPECT_NE(hud.find("SCORE"), std::string::npos) << "still in the game";
 }
 
@@ -1127,7 +1220,7 @@ TEST_F(VentureTest, KillingBeforeTheTreasureScoresNothing)
     // which is what inverts the safe instinct to clear the room and then loot.
     ASSERT_TRUE(killOneSerpent(60)) << "never managed to kill a serpent";
 
-    const std::string row = screenRow(1);
+    const std::string row = screenRow(0);
     const size_t at = row.find("SCORE");
     ASSERT_NE(at, std::string::npos) << "the room ended before we could look";
     const std::string field = row.substr(at + 5, 8);
@@ -1180,6 +1273,50 @@ TEST_F(VentureTest, MonstersKeepComingOnceTheirDeadAreInTheWay)
             << "a serpent held cell " << cell.first << "," << cell.second
             << " through every sample -- it is stalled, not hunting";
     }
+}
+
+/* --- the end of a run ------------------------------------------------------ */
+
+TEST_F(VentureTest, GameOverShowsTheScoreAndOffersAnotherGo)
+{
+    /* Burn all three lives in the hall, which needs no skill at all -- a Hallmonster
+     * is already patrolling and standing still is fatal. Each death banners CAUGHT and
+     * waits for a key; the last one should not. */
+    bool over = false;
+    for (int life = 0; life < 4 && !over; life++) {
+        for (int i = 0; i < 400; i++) {
+            run(4);
+            if (screenRow(8).find("G A M E   O V E R") != std::string::npos) {
+                over = true;
+                break;
+            }
+            if (caught()) { pressKey('\r'); run(200); break; }
+        }
+    }
+    ASSERT_TRUE(over) << "three deaths did not end the run";
+    run(20);   // the banner paints before the score and the offer below it
+
+    // What you scored, and the offer. A run that just exits to the DOS tells you
+    // nothing about how you did.
+    EXPECT_NE(screenRow(11).find("FINAL SCORE"), std::string::npos)
+        << "no final score on the game-over screen";
+    EXPECT_NE(screenRow(14).find("PLAY AGAIN"), std::string::npos)
+        << "no offer of another game";
+
+    // Y starts a fresh run: back to the roster, with the score cleared.
+    pressKey('y');
+    run(200);
+    EXPECT_NE(screenRow(9).find("TREASURES"), std::string::npos)
+        << "answering Y should deal a new game, not resume the old one";
+
+    pressKey('\r');
+    run(220);
+    const std::string hud = screenRow(0);
+    ASSERT_NE(hud.find("SCORE"), std::string::npos) << "the new game did not start";
+    EXPECT_NE(hud.find("LIVES 3"), std::string::npos) << "lives were not restored";
+    const size_t at = hud.find("SCORE");
+    EXPECT_EQ(hud.substr(at + 5, 8).find_first_not_of(" 0"), std::string::npos)
+        << "the score carried over into the new game";
 }
 
 // --- step 10: sound --------------------------------------------------------

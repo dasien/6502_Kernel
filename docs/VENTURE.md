@@ -148,6 +148,13 @@ for a kill, a low tone when you die — and one that matters, the note that mean
 Hallmonster has just walked into the room you are standing in. You need to know
 that without looking away from what you are doing.
 
+## When it ends
+
+Three lives and the run is over. The last screen shows your **final score** and asks
+whether you want another go — **Y** for a new game, **N** or **Q** back to the DOS. A
+new game starts you over completely, treasure roster included: it is what *this*
+player has found.
+
 ## Differences from the arcade
 
 - Movement is by whole character cells rather than smooth motion; there is no
