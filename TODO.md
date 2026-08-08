@@ -39,12 +39,12 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
   - [x] In-machine generic text editor + resident filesystem: both shipped. MFC-DOS ($9000-$AFFF) is the resident FAT16 filesystem, and EDIT (programs/edit, docs/EDIT.md) is the full-screen editor. Self-hosting is complete — edit -> assemble -> SAVE -> run by name, all at the `]` prompt.
   - [ ] Remaining from post-Phase-4: assembler macros + more directives; single-step/breakpoints in the monitor.
 
-### Monitor out of the kernel (in progress)
+### Monitor out of the kernel (done)
 Splitting the kernel ROM into a true BIOS (the machine) and the monitor (an interactive
 debugger that happens to ship with it). The monitor ends up a bank module, not a disk
 program: a program loads at $0800 and so collides with the very code it is meant to
 debug, whereas a bank costs no user RAM and is reachable with a dead disk. The blind
-spot it accepts is that a banked monitor cannot inspect its own window ($B000-$DFFF)
+spot it accepts is that a banked monitor cannot inspect its own window ($B000-$EFFF)
 or a sibling bank.
 - [x] **Step 1 — separate the source, one ROM.** monitor.inc (1,878 lines) and the
   shared kernel_vars.inc split out of kernel.asm; still one assembly unit, CODE
@@ -62,13 +62,15 @@ or a sibling bank.
   (K_HEX_PAIR $FF3C, K_PARSE_DEC_VAL $FF3F) and PRINT_MSG_AY became a 4-byte private
   copy. Q exits via RETURN_FROM_MODULE so the window returns to RAM.
   - Accepted blind spot, asserted in the tests so it reads as a decision: the monitor
-    cannot show $B000-$DFFF as RAM (it is standing there) or inspect a sibling bank.
+    cannot show its own window as RAM (it is standing there) or inspect a sibling bank.
+    The window was $B000-$DFFF at the time of this step and is $B000-$EFFF now.
   - `kernel_bios_monitor_split` now checks the thing the assembler cannot see -- that
     monitor.asm's $FF00 equates still match the kernel's jump table. Renumber the
     table and every equate below the insertion point silently points one slot off.
-- [ ] Kernel after the move: ~1,400 bytes (BIOS ~1,300 + a bank-entry stub), which fits
-  a 4 KB window comfortably (3,584 usable below the I/O page). A 2 KB window leaves only
-  1,536 and is too tight to aim for.
+- [x] Kernel after the move fits a 4 KB window comfortably, as predicted (a 2 KB window
+  would have left only 1,536 usable and was never worth aiming for). Actual: CODE
+  $F000-$F610 = **1,553 bytes**, with 2,031 free below IORESV at $FE00. The move itself
+  is recorded under "Memory map" below.
 
 ## Deferred correctness work (2026-07)
 
@@ -212,6 +214,45 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     segment is bounds-checked. testRomWindowBoundaries pins it.
 
 ### Memory map (future, not urgent)
-- [ ] Reclaim ROM address space for user RAM by a *coordinated* relocation: shrink the kernel from 8KB ($E000-$FFFF) to a 4KB window ($F000-$FFFF) AND move the BASIC ROM up (e.g. $B000-$DFFF -> $C000-$EFFF). Done together, the reclaimed 4KB lands contiguous with the user RAM below BASIC, growing one usable block (shrinking the kernel alone just strands an isolated 4KB island between BASIC and the kernel — not worth it).
-  - **Prerequisite (blocking):** the kernel must first shrink to fit a 4KB ROM. CODE is 3951 bytes at v3.27 ($E000-$EF6E), but the $FF00 API jump table caps contiguous code at $F000-$FEFF = 3840 bytes, so we must free **at least ~111 bytes** (more for headroom) before this is even possible. The v3.25 size pass already took 178 bytes out mechanically (dead SAVE/RESTORE_MONITOR_STATE, 33 JSR+JMP/JSR+RTS tail calls, T:/Z: merged into DUMP_ONE_PAGE, dead stores) — that is the end of the easy wins. The remaining ~111 needs a structural change, and note the obvious candidate is harder than it looks: table-driving the monitor's command dispatch is not the clean win the DOS verb table was, because the per-command stubs are NOT uniform (C:/T:/Z: share a shape, but D:/H: carry their own validation), so the table would need a parse-kind field and two mechanisms.
-  - Also requires: rebuilding the EhBASIC ROM at the new base (Ram_top + any absolute self-references), updating memory.cfg / basic_memory.cfg, and the emulator's ROM load addresses + Memory region routing. Gate on a byte-diff sanity check. The reset/IRQ/NMI vectors ($FFFA) and jump table ($FF00) pin the kernel to the top regardless, so the kernel can only shrink the window, not move off the top.
+
+**Superseded, kept because the conclusion changed.** This used to read: shrink the
+kernel from 8 KB ($E000-$FFFF) to 4 KB ($F000-$FFFF) *and* move the BASIC ROM up
+(e.g. $B000-$DFFF -> $C000-$EFFF), so the reclaimed 4 KB lands contiguous with the
+user RAM below BASIC. It also called the kernel shrink a blocking prerequisite
+needing ~111 bytes freed by a structural change.
+
+Both halves are obsolete:
+
+- **The kernel shrink is done** — see "Memory map" directly above. The BIOS came in
+  at 1,562 bytes once the monitor became a bank, so the ~111-byte problem evaporated
+  rather than being solved, and no monitor dispatch table was needed. Kernel CODE is
+  now $F000-$F610 (1,553 bytes) with 2,031 free below IORESV.
+- **The relocation would no longer buy user RAM at all.** That plan assumed the
+  module window sat directly above user RAM. It does not: the **DOS ROM is between
+  them**. The map is now user RAM $0800-$87FF, DOS ROM $8800-$AFFF, module window
+  $B000-$EFFF, kernel $F000-$FFFF — so anything freed at the bottom of the module
+  window is stranded above the DOS ROM and cannot extend one usable block.
+
+- [ ] The only remaining lever that actually grows user RAM is the **DOS ROM base**,
+  because the DOS is the thing directly above user RAM. It currently occupies
+  $8800-$A6D5 (7,894 bytes) with **2,090 bytes free** below DOSJUMP at $AF00, so the
+  base could move up to about $8C00 — returning 1 KB to every program and still
+  leaving the DOS ~1 KB. Note this is exactly the boundary that moved *down* in the
+  other direction on 2026-07-31 ($9000 -> $8800) to relieve a DOS that had 145 bytes
+  left; moving it back is cheap in code (the routing derives from
+  `Memory::kDosRomStart`) but touches basic.asm `Ram_top`, the dos.asm COPY guard and
+  MEMMAP text, the assembler workspace, all five cc65 `.cfg` files, and the boundary
+  tests. Worth doing only when something concrete needs the KB.
+  - **The concrete case has already happened once.** That $9000 -> $8800 move took
+    2 KB from every program and VAULT, which had ~387 bytes of margin, stopped
+    linking. It was paid for on the program side instead (commit 8fd99b9: packed
+    visibility bits and deleted a render shadow buffer, freeing 3,080 bytes), which
+    was the right call there — but it is the kind of bill that comes due again, and
+    the next program may not have 3 KB of fat to cut.
+
+One constraint from the old plan outlives it: the reset/IRQ/NMI vectors ($FFFA) and
+the $FF00 jump table pin the kernel to the top of the map regardless, so the kernel
+can only ever shrink its window, never move off the top. The rest of that plan's
+checklist — rebuilding the EhBASIC ROM at a new base, memory.cfg / basic_memory.cfg,
+the emulator's ROM load addresses — went away with it; BASIC keeps its $B000 base and
+only `Ram_top` ever moves.
