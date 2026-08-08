@@ -43,7 +43,8 @@ struct Mon *nearest_vis_mon(void) {
     int bestd = 30000;
     for (i = 0; i < nmon; i++) {
         int dx, dy, d;
-        if (!mon[i].alive || !(vseen[(unsigned char)mon[i].y][(unsigned char)mon[i].x] & VVIS)) continue;
+        if (!mon[i].alive ||
+            !VS_VIS((unsigned char)mon[i].y, (unsigned char)mon[i].x)) continue;
         dx = mon[i].x - px; dy = mon[i].y - py; d = dx * dx + dy * dy;
         if (d < bestd) { bestd = d; best = i; }
     }
@@ -155,7 +156,7 @@ void mon_turn(void) {
         const struct MonDef *d;
         m = &mon[i];
         if (!m->alive) continue;
-        if (!(vseen[(unsigned char)m->y][(unsigned char)m->x] & VVIS)) continue;   /* act only when seen */
+        if (!VS_VIS((unsigned char)m->y, (unsigned char)m->x)) continue;   /* act only when seen */
         d = &mondef[m->type];
         if ((d->abil & AB_REGEN) && m->hp < (int)d->hp) m->hp++;        /* slow heal */
         {

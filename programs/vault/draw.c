@@ -1,10 +1,9 @@
 /* ============================================================================
- * draw.c -- all screen output: primitives, the diff-based map renderer, and the
+ * draw.c -- all screen output: primitives, the map renderer, and the
  * status/message rows. The only module that talks to the VIC video port.
  * ==========================================================================*/
 #include "vault.h"
 
-static unsigned char shown[MAP_H][MAP_W];   /* last view-code drawn per cell (diff) */
 static unsigned char last_attr;             /* skip redundant vattr() during a repaint */
 
 void cls(void) {   /* clear the whole screen (shared by render + all the menus) */
@@ -43,7 +42,8 @@ static void clear_row(unsigned char y) {
     last_attr = 0xFF;
 }
 
-/* view codes: a 1-byte "appearance class" per cell so the renderer can diff */
+/* view codes: a 1-byte "appearance class" per cell, collapsing terrain/entity/lit
+ * state into one value that then selects a glyph + attribute */
 #define V_BLANK  0
 #define V_DFLOOR 1
 #define V_DWALL  2
@@ -59,6 +59,26 @@ static void clear_row(unsigned char y) {
 #define V_DORB   12
 #define VC_MON   16     /* monster view codes: VC_MON + roster index (so each type diffs) */
 #define VC_ITEM  48     /* floor-item view codes: VC_ITEM + item index */
+/* Tile -> view code, lit and remembered. These replace a four-compare ternary
+ * cascade that ran per cell in both branches of the renderer's hot loop; tiles are
+ * a dense 0..T_COUNT-1 range, so one indexed load does the whole job. The old
+ * cascade ended in a catch-all `else V_FLOOR`, which quietly absorbed any
+ * out-of-range tile -- a table cannot, hence the size check below. */
+/* Sized by the initializer list, NOT by [T_COUNT] -- declaring them [T_COUNT] makes
+ * sizeof track T_COUNT and the check below can then never fail, which is precisely
+ * the bug it exists to catch: a new tile would zero-fill to V_BLANK and that cell
+ * would silently render as empty space. */
+static const unsigned char lit_of[] = { V_WALL,  V_FLOOR,  V_STAIR,  V_SHRINE,  V_ORB  };
+static const unsigned char dim_of[] = { V_DWALL, V_DFLOOR, V_DSTAIR, V_DSHRINE, V_DORB };
+/* Fails to compile if a tile is added without extending both tables. Spelled with
+ * arithmetic rather than a ternary because cc65 rejects ?: in an array bound; the
+ * comparison being compile-time constant is the entire point, so that warning is
+ * off just for these two lines. */
+#pragma warn(const-comparison, push, off)
+typedef char lit_of_size_check[1 - 2 * (sizeof lit_of != T_COUNT)];
+typedef char dim_of_size_check[1 - 2 * (sizeof dim_of != T_COUNT)];
+#pragma warn(const-comparison, pop)
+
 static const unsigned char vglyph[13] = { ' ', '.', '#', '>', '.', '#', '>', 'r', '@', 234, 234, 235, 235 };
 static const unsigned char vattrs[13] = { A_TEXT, A_DIM, A_DIM, A_DIM,
                                           A_FLOOR, A_WALL, A_STAIRS, A_MON, A_PLAYER,
@@ -101,11 +121,20 @@ static void draw_xp(void) {
     put_num((unsigned char)(c + 1), STA_ROW, pxpnext, A_STAIRS);
 }
 
-/* Diff repaint. full=1 wipes the screen + resets the shadow buffer (new level);
- * otherwise we scan only the union of last frame's lit box and this one. The cell
- * classification is inlined with per-row pointers so there's no y*80 multiply per
- * cell, and only cells whose view code CHANGED are written. Status/message rows
- * are redrawn only when their contents change. */
+/* Box repaint. full=1 wipes the screen first (new level); otherwise we scan the
+ * union of last frame's lit box and this one -- the union, because a cell that was
+ * lit last frame and is not now has to be repainted dim. The cell classification
+ * is inlined with per-row pointers so there's no y*80 multiply per cell.
+ * Status/message rows are redrawn only when their contents change.
+ *
+ * There is deliberately no per-cell shadow buffer. Keeping one cost a full
+ * MAP_H*MAP_W byte plane, and it bought less than it looks: because it skipped
+ * cells, every write it did allow needed its own vaddr() to re-point the port. A
+ * span that writes EVERY cell needs one vaddr per row and then just rides the
+ * char port's auto-increment, which is cheap enough that painting the whole box
+ * beats painting a third of it plus 300 address reloads. Rewriting a cell with the
+ * glyph it already holds is invisible here -- the VIC is a frame buffer, not a
+ * raster, so there is no flicker to avoid. */
 void render(unsigned char full) {
     signed char x0, y0, x1, y1, y, x;
     static signed char pbx0, pby0, pbx1, pby1;   /* previous scan box */
@@ -113,10 +142,6 @@ void render(unsigned char full) {
 
     if (full) {
         cls();
-        for (y = 0; y < MAP_H; y++) {
-            unsigned char *sh = shown[y];
-            for (x = 0; x < MAP_W; x++) sh[x] = V_BLANK;   /* screen is now blank */
-        }
         x0 = 0; y0 = 0; x1 = MAP_W - 1; y1 = MAP_H - 1;
     } else {
         x0 = litx0; if (pbx0 < x0) x0 = pbx0;    /* union(prev box, current lit box) */
@@ -126,28 +151,26 @@ void render(unsigned char full) {
     }
     last_attr = 0xFF;
     for (y = y0; y <= y1; y++) {
-        unsigned char *gp = gmap[y], *vsp = vseen[y], *entp = ent[y], *sh = shown[y];
-        unsigned int rowbase = (unsigned int)y * 80;     /* hoisted out of the x loop */
+        unsigned char *gp = gmap[y], *vsp = vseen[y], *entp = ent[y];
+        /* One address per row: the char port auto-increments, and vattr() is a
+         * latch that does not touch the index, so the whole span rides along. */
+        vaddr((unsigned int)y * 80 + x0);
         for (x = x0; x <= x1; x++) {
             if ((signed char)x == px && y == py)      code = V_PLAYER;
-            else if (vsp[x] & VVIS) {
+            else if (VSP_VIS(vsp, x)) {
                 unsigned char e = entp[x];
                 if (e) { code = (e <= MAX_MON) ? (VC_MON + occ_type(e))       /* monster */
                                                : (VC_ITEM + iocc_type(e - MAX_MON)); }  /* item */
-                else { t = gp[x]; code = (t == T_WALL) ? V_WALL : (t == T_STAIRS) ? V_STAIR :
-                                                 (t == T_SHRINE) ? V_SHRINE : (t == T_ORB) ? V_ORB : V_FLOOR; }
-            } else if (vsp[x] & VSEEN) {
-                t = gp[x]; code = (t == T_WALL) ? V_DWALL : (t == T_STAIRS) ? V_DSTAIR :
-                                          (t == T_SHRINE) ? V_DSHRINE : (t == T_ORB) ? V_DORB : V_DFLOOR;
+                else code = lit_of[gp[x]];
+            } else if (VSP_SEEN(vsp, x)) {
+                code = dim_of[gp[x]];
             } else code = V_BLANK;
-            if (code != sh[x]) {
+            {
                 unsigned char g, at;
                 if (code >= VC_ITEM)     { t = code - VC_ITEM; g = itemdef[t].glyph; at = itemdef[t].attr; }
                 else if (code >= VC_MON) { t = code - VC_MON;  g = mondef[t].glyph;  at = mondef[t].attr; }
                 else                     { g = vglyph[code];   at = vattrs[code]; }
-                vaddr(rowbase + x);
                 put_cell(g, at);
-                sh[x] = code;
             }
         }
     }

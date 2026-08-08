@@ -93,7 +93,9 @@ static void use_item(unsigned char slot) {
             break;
         case IT_MAP: {
             unsigned char y, x;
-            for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) vseen[y][x] |= VSEEN;
+            /* packed: one OR marks four cells seen at once */
+            for (y = 0; y < MAP_H; y++)
+                for (x = 0; x < VS_W; x++) vseen[y][x] |= VS_SEEN_BITS;
             msg_add("The level is laid bare.");
             break;
         }

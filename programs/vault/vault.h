@@ -47,6 +47,9 @@ extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for
 #define T_STAIRS 2
 #define T_SHRINE 3    /* an altar: stand on it and (p)ray to spend gold */
 #define T_ORB    4    /* the Shimmering Orb on L15; step on it to lift it */
+#define T_COUNT  5    /* tiles are a dense 0..T_COUNT-1 range, and draw.c indexes
+                       * lookup tables by tile -- add a tile, extend those tables
+                       * (there is a compile-time check on the size) */
 
 /* ---- colour attributes ([R:7][BR:6][bg:5-3][fg:2-0]) ---- */
 #define A_WALL   0x47   /* bright white */
@@ -63,11 +66,36 @@ extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for
 
 /* ---- map.c: the dungeon grid + rooms + FOV ---- */
 extern unsigned char gmap[MAP_H][MAP_W];    /* terrain */
-/* visibility packed 1 bit each to save a full grid: bit0 = ever seen (drawn dim),
- * bit1 = currently in view. */
+/* Visibility, packed four cells to a byte. Each cell owns a 2-bit field: the low
+ * bit is "ever seen" (drawn dim from memory), the high bit is "currently in view".
+ *
+ * Packing costs the per-cell accessors a shift and an extra indexed load, and it
+ * still wins outright, because the dominant visibility operation is not per-cell
+ * access -- it is the bulk clear of last frame's lit disc at the top of every
+ * light(), which was running to about half of an entire turn. Four cells to a byte
+ * makes that clear one AND per four cells. It also gives back 1,320 bytes, which
+ * is most of why VAULT fits in user RAM at all now.
+ *
+ * The mask LUTs are load-bearing, not decoration: spelling the shift out longhand
+ * as (VVIS << ((x & 3) << 1)) makes cc65 emit a call to its variable-shift helper
+ * on every single access, which costs more than the packing saves. Indexing a
+ * 4-entry table is one absolute load. */
+/* The bit values WITHIN a cell's 2-bit field -- documentation of the layout, not
+ * byte masks. `vseen[y][x] & VVIS` would compile and be silently wrong, because x
+ * is a cell index and the array is indexed in bytes: always go through the VS_*
+ * macros below. */
 #define VSEEN 1
 #define VVIS  2
-extern unsigned char vseen[MAP_H][MAP_W];
+#define VS_W  (MAP_W / 4)          /* packed bytes per row */
+#define VS_SEEN_BITS 0x55          /* the four VSEEN bits of a byte: AND to clear
+                                    * all four VVIS, OR to mark all four seen */
+extern unsigned char vseen[MAP_H][VS_W];
+extern const unsigned char vs_vis[4], vs_seen[4], vs_both[4];
+/* Row-pointer forms, for loops that already hoisted `vsp = vseen[y]`. */
+#define VSP_VIS(vsp, x)   ((vsp)[(x) >> 2] & vs_vis[(x) & 3])
+#define VSP_SEEN(vsp, x)  ((vsp)[(x) >> 2] & vs_seen[(x) & 3])
+#define VS_VIS(y, x)      VSP_VIS(vseen[y], x)
+#define VS_MARK(y, x)     (vseen[y][(x) >> 2] |= vs_both[(x) & 3])
 /* one "entity" grid instead of separate monster/item grids (a cell holds at most
  * one): 0 = empty; 1..MAX_MON = monster index+1; >MAX_MON = MAX_MON + itemindex+1. */
 extern unsigned char ent[MAP_H][MAP_W];

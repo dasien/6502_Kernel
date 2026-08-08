@@ -6,8 +6,14 @@
 #include "vault.h"
 
 unsigned char gmap[MAP_H][MAP_W];
-unsigned char vseen[MAP_H][MAP_W];   /* bit0 seen, bit1 visible */
+unsigned char vseen[MAP_H][VS_W];    /* 2 bits per cell, four cells to a byte */
 unsigned char ent[MAP_H][MAP_W];     /* monster (1..MAX_MON) or item (>MAX_MON), else 0 */
+
+/* Which bits of a packed byte belong to cell x -- indexed by x & 3. See vault.h:
+ * these exist so the shift never happens at runtime. */
+const unsigned char vs_vis[4]  = { 0x02, 0x08, 0x20, 0x80 };
+const unsigned char vs_seen[4] = { 0x01, 0x04, 0x10, 0x40 };
+const unsigned char vs_both[4] = { 0x03, 0x0C, 0x30, 0xC0 };
 unsigned char rcx[MAX_ROOMS], rcy[MAX_ROOMS], nrooms;
 unsigned char litx0, lity0, litx1, lity1;
 
@@ -35,9 +41,8 @@ void gen_level(void) {
 
     for (i = 0; i < MAP_H; i++) {
         unsigned char x;
-        for (x = 0; x < MAP_W; x++) {
-            gmap[i][x] = T_WALL; vseen[i][x] = 0; ent[i][x] = 0;
-        }
+        for (x = 0; x < MAP_W; x++) { gmap[i][x] = T_WALL; ent[i][x] = 0; }
+        for (x = 0; x < VS_W; x++) vseen[i][x] = 0;   /* packed: a quarter as wide */
     }
     /* Place non-overlapping rooms (reject any that touch an existing one, so a
      * wall always separates them). */
@@ -112,12 +117,24 @@ void random_floor(signed char *ox, signed char *oy) {
  * recursing into the sub-cone above it. Divisions happen per row, not per tile,
  * so it's cheap at ~1 MHz while giving true line-of-sight. `litx0..lity1` bounds
  * the lit disc for the diff renderer + the next clear. */
-static void clear_vis_box(void) {   /* clear the visible bit, preserve the seen bit */
-    signed char y, x;
-    for (y = lity0; y <= (signed char)lity1; y++) {
-        unsigned char *vp = vseen[y];
-        for (x = litx0; x <= (signed char)litx1; x++) vp[x] &= (unsigned char)~VVIS;
-    }
+/* Unlight last frame's disc: clear the visible bits, keep the seen bits. A whole
+ * byte at a time, so this touches a quarter as many locations as the grid has
+ * cells, and rounding the span outward to byte boundaries is free -- a cell
+ * outside the lit box is not visible by definition, so clearing its VVIS bit
+ * cannot change anything.
+ *
+ * The counters are `unsigned char` with a walking pointer very deliberately. The
+ * obvious `for (x = litx0; x <= (signed char)litx1; x++)` promotes both sides of
+ * the comparison to int, and cc65 then emits a pushax + tosicmp call pair per
+ * iteration -- about 90 cycles of the 200 this loop used to cost, spent entirely
+ * on comparing a loop counter against a screen coordinate. */
+static void clear_vis_box(void) {
+    unsigned char y = lity0, ylast = lity1;
+    unsigned char b0 = litx0 >> 2, blast = litx1 >> 2;
+    do {
+        unsigned char *vp = &vseen[y][b0], b = b0;
+        do { *vp++ &= VS_SEEN_BITS; } while (b++ != blast);
+    } while (y++ != ylast);
 }
 
 /* current sight radius -- FOV_R normally, widened while the Light spell is up */
@@ -135,7 +152,8 @@ static void reveal(signed char x, signed char y) {
     int dx, dy;
     if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) return;
     dx = x - px; dy = y - py;
-    if (dx * dx + dy * dy <= (int)fov_r * fov_r) vseen[y][x] |= (VVIS | VSEEN);
+    if (dx * dx + dy * dy <= (int)fov_r * fov_r)
+        VS_MARK((unsigned char)y, (unsigned char)x);
 }
 
 static void scan(unsigned char q, int d, int sN, int sD, int eN, int eD) {
