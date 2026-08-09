@@ -54,6 +54,18 @@ static void orcell(int idx)
     vaddr(idx); vputcolor(a | 0x80);
 }
 
+/* Undo orcell() on one cell.
+   Writing a character stamps the attribute latch into the colour plane, so
+   repainting a row also wipes the block cursor sitting on it -- which is why
+   every cursor move used to force a full 24-row redraw just to erase the old
+   cursor. Clearing the one cell does the same job in two port writes. */
+static void uncell(int idx)
+{
+    unsigned char a;
+    vaddr(idx); a = vgetcolor();
+    vaddr(idx); vputcolor(a & 0x7F);
+}
+
 /* logical keys returned by readkey() for nav (above the byte range) */
 #define K_LEFT  1001
 #define K_RIGHT 1002
@@ -80,6 +92,7 @@ char dirty = 0;                 /* unsaved changes since last load/save */
 char curname[NAMEMAX];
 char statusmsg[32];             /* transient status text (until next key) */
 char full_redraw = 1;           /* 1 = repaint the whole text area next refresh */
+int cursor_cell = -1;           /* cell the block cursor is drawn on, -1 = none */
 char quit_armed = 0;            /* a dirty Ctrl-Q was issued; next one quits */
 
 static void msg(char *m) { strcpy(statusmsg, m); }
@@ -111,12 +124,29 @@ static void appendnum(char *buf, int *pi, int v)
     while (n) buf[(*pi)++] = t[--n];
 }
 
-/* "MFC EDIT name* Lx/y Cz  <msg>" on the reverse-video bottom row */
+/* How far along row TEXTROWS the last status draw reached. Anything that
+   overwrites that row behind status()'s back (prompt(), the search preview) has
+   to clear status_valid, or the leftovers past the new text never get erased. */
+int  lastlen = 0;
+char status_valid = 0;
+
+/* "MFC EDIT name* Lx/y Cz  <msg>" on the reverse-video bottom row.
+ *
+ * refresh() calls this on every keystroke and it used to rewrite all 80 cells
+ * each time. Two things that look like obvious savings are not: the row carries
+ * the cursor's line and column, so it genuinely changes on every key and caching
+ * an unchanged row never hits; and diffing the row against the last one to find
+ * the few cells that moved costs MORE than it saves, because a cc65 byte compare
+ * is dearer than a VIC cell write (measured: 82k cycles a keystroke, against
+ * 59k for just writing all eighty).
+ *
+ * What is real is that most of the row is blank. Write out only as far as the
+ * text actually reaches. */
 static void status(void)
 {
     char buf[COLS];
     char *nm = curname[0] ? curname : "[new]";
-    int i = 0, c;
+    int i = 0, c, hi;
     for (c = 0; c < COLS; c++) buf[c] = ' ';
     { char *p = "MFC EDIT "; while (*p) buf[i++] = *p++; }
     { char *p = nm; while (*p && i < 22) buf[i++] = *p++; }
@@ -125,9 +155,18 @@ static void status(void)
     buf[i++] = '/'; appendnum(buf, &i, numrows);
     buf[i++] = ' '; buf[i++] = 'C'; appendnum(buf, &i, cx + 1);
     if (statusmsg[0]) { char *p = statusmsg; buf[i++] = ' '; while (*p && i < COLS - 1) buf[i++] = *p++; }
+
+    /* Everything past `i` is blank. Repaint only as far as the text reaches, plus
+       whatever the last draw reached (so a shrinking line still gets erased);
+       row 24 is typically ~25 characters, not 80. */
+    hi = (i > lastlen) ? i : lastlen;
+    if (!status_valid) hi = COLS;               /* row was overwritten behind our back */
+    lastlen = i;
+    status_valid = 1;
+
     vaddr(TEXTROWS * COLS);
     vattr(ATTR_REV);
-    for (c = 0; c < COLS; c++) vputc(buf[c]);
+    for (c = 0; c < hi; c++) vputc(buf[c]);
     vattr(ATTR_NORMAL);
 }
 
@@ -145,6 +184,11 @@ static void status(void)
 extern unsigned int jiffies(void);
 extern void vfill(unsigned char ch);
 extern void vcmd(unsigned char cmd);
+extern void vscrollbot(unsigned char row);  /* scroll affects rows 0..row only */
+
+#define VCMD_CLEAR      1
+#define VCMD_SCROLLUP   2
+#define VCMD_SCROLLDOWN 3
 
 static void splash_puts(unsigned int cell, const char *s)
 {
@@ -177,22 +221,45 @@ static void paint_row(int r)
     for (c = 0; c < COLS; c++) { sc = coloff + c; vputc((sc < len) ? (unsigned char)src[sc] : ' '); }
 }
 
+/* Repaint what changed.
+ *
+ * Moving the cursor used to set full_redraw, so every arrow key cost 1,920 cell
+ * writes (~0.28s at 1MHz -- about three keypresses a second). The redraw was only
+ * ever there to erase the old block cursor, so instead we remember which cell it
+ * was left on and clear just that one. A move inside the visible window is now a
+ * single repainted row; scrolling the window is still the only thing that needs
+ * the whole text area. */
 static void refresh(void)
 {
-    int oldr = rowoff, oldc = coloff, r;
+    int oldr = rowoff, oldc = coloff, r, cell, dr;
     if (cy < rowoff) rowoff = cy;
     if (cy >= rowoff + TEXTROWS) rowoff = cy - TEXTROWS + 1;
     if (cx < coloff) coloff = cx;
     if (cx >= coloff + COLS) coloff = cx - COLS + 1;
-    if (rowoff != oldr || coloff != oldc) full_redraw = 1;
+    dr = rowoff - oldr;
 
-    if (full_redraw) {
+    if (full_redraw || coloff != oldc || dr > 1 || dr < -1) {
         for (r = 0; r < TEXTROWS; r++) paint_row(r);
         full_redraw = 0;
+        cursor_cell = -1;                       /* the repaint already erased it */
+    } else if (dr != 0) {
+        /* Arrowing one line off the top or bottom -- the one window move the chip
+           can do for us. Shift the region (the status row is pinned below it) and
+           paint the single row that came into view instead of all 24. rowoff only
+           ever moves by one to bring the cursor back in frame, so that new row is
+           always the cursor's row. */
+        if (cursor_cell >= 0) uncell(cursor_cell);   /* before it scrolls away */
+        vfill(' ');                                  /* blank the row coming in */
+        vcmd((dr == 1) ? VCMD_SCROLLUP : VCMD_SCROLLDOWN);
+        cursor_cell = -1;
+        paint_row((dr == 1) ? TEXTROWS - 1 : 0);
     } else {
+        if (cursor_cell >= 0) uncell(cursor_cell);
         paint_row(cy - rowoff);                 /* typing: only the cursor's row */
     }
-    orcell((cy - rowoff) * COLS + (cx - coloff));   /* block cursor */
+    cell = (cy - rowoff) * COLS + (cx - coloff);
+    orcell(cell);                               /* block cursor */
+    cursor_cell = cell;
     status();
 }
 
@@ -274,6 +341,7 @@ static int readkey(void)
 static int prompt(char *label, char *buf, int max)
 {
     int len = 0, k, i, c;
+    status_valid = 0;                   /* we are about to overwrite the status row */
     for (;;) {
         i = 0;
         vaddr(TEXTROWS * COLS);
@@ -399,6 +467,7 @@ static void draw_search(char *q, int qlen)
     base = (cy - rowoff) * COLS + (cx - coloff);
     if (search_found) for (c = 0; c < qlen && (cx - coloff) + c < COLS; c++) orcell(base + c);
     else orcell(base);                          /* just the cursor when no match */
+    status_valid = 0;                   /* the search line replaces the status row */
     vaddr(TEXTROWS * COLS);
     vattr(ATTR_REV);
     { char *p = "Search: "; while (*p) { vputc((unsigned char)*p++); i++; } }
@@ -434,6 +503,10 @@ int main(void)
        cursor shows; returning to DOS re-shows it on the next PRINT_CHAR. */
     vhidecur();
     splash();
+    /* Pin the status line below the scroll region, so a chip scroll moves the
+       text area and leaves row 24 alone. After the splash, because the clear
+       the splash does resets the region to the whole screen. */
+    vscrollbot(TEXTROWS - 1);
     /* If DOS launched us with a filename argument (e.g. "EDIT SYSTEM/DIAL.LST"),
        open it. DOS leaves the command tail, NUL-terminated, in DOS_ARGBUF ($0382);
        an empty string means no argument, so we start with a blank document. */
@@ -461,26 +534,26 @@ int main(void)
             case 0x08: case 0x7F: backspace(); break;
             case K_LEFT:
                 if (cx > 0) cx--;
-                else if (cy > 0) { cy--; cx = row[cy].len; full_redraw = 1; }
+                else if (cy > 0) { cy--; cx = row[cy].len; }
                 break;
             case K_RIGHT:
                 if (cx < row[cy].len) cx++;
-                else if (cy < numrows - 1) { cy++; cx = 0; full_redraw = 1; }
+                else if (cy < numrows - 1) { cy++; cx = 0; }
                 break;
             case K_UP:
-                if (cy > 0) { cy--; if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; }
+                if (cy > 0) { cy--; if (cx > row[cy].len) cx = row[cy].len; }
                 break;
             case K_DOWN:
-                if (cy < numrows - 1) { cy++; if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; }
+                if (cy < numrows - 1) { cy++; if (cx > row[cy].len) cx = row[cy].len; }
                 break;
             case K_HOME: cx = 0; break;
             case K_END:  cx = row[cy].len; break;
             case K_PGUP:
                 cy -= TEXTROWS; if (cy < 0) cy = 0;
-                if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; break;
+                if (cx > row[cy].len) cx = row[cy].len; break;
             case K_PGDN:
                 cy += TEXTROWS; if (cy > numrows - 1) cy = numrows - 1;
-                if (cx > row[cy].len) cx = row[cy].len; full_redraw = 1; break;
+                if (cx > row[cy].len) cx = row[cy].len; break;
             default:
                 if (k >= 0x20 && k < 0x7F) insert_ch((char)k);
                 break;

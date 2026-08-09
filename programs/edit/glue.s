@@ -12,7 +12,7 @@
 ; ============================================================================
 
 .export _INCH, _INCH_NB, _QUITDOS
-.export _jiffies, _vfill, _vcmd
+.export _jiffies, _vfill, _vcmd, _vscrollbot
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
 .export _vaddr, _vputc, _vgetc, _vhidecur
 .export _vattr, _vgetcolor, _vputcolor
@@ -32,7 +32,8 @@ VREG_CHAR       = $FE2F         ; char data port; full 8-bit glyph; auto-increme
 VREG_COLOR      = $FE30         ; color/attribute data port; auto-increments
 VREG_ATTR       = $FE31         ; attribute latch [R][BR][bg:3][fg:3]
 VREG_CMD        = $FE32         ; command engine (1 = clear screen)
-VREG_CMD_PARAM  = $FE36         ; fill char for the clear
+VREG_CMD_PARAM  = $FE36         ; fill char for the clear/scroll
+VREG_SCROLL_BOT = $FE37         ; scroll-region bottom row (scroll affects rows 0..this)
 VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
 
@@ -59,6 +60,13 @@ K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
 ; void vcmd(unsigned char cmd) -- run a chip-side block operation.
 .proc _vcmd
         sta     VREG_CMD
+        rts
+.endproc
+
+; void vscrollbot(unsigned char row) -- set the scroll-region bottom row; scroll
+; commands then affect only rows 0..row (pinned footer rows stay put).
+.proc _vscrollbot
+        sta     VREG_SCROLL_BOT
         rts
 .endproc
 

@@ -391,6 +391,7 @@ target_compile_features(pia_keystate_tests PRIVATE cxx_std_20)
 # EDIT's title card, on the real 6502 blob. EDIT had no suite before this.
 add_executable(edit_splash_tests
     test_edit_splash.cpp
+    test_edit_refresh.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
