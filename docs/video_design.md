@@ -233,9 +233,16 @@ Rides the command engine, matching the precedent set by double-size rows
 (`kCmdRowSize`) and the scroll-region top (`kCmdScrollTop`), so it needs no address
 space:
 
-- `kCmdFineY`, parameter = 0..31 pixel offset in `VREG_CMD_PARAM`.
+- `kCmdFineY` (`0x0C`), parameter = 0..31 pixel offset in `VREG_CMD_PARAM`. Clamped,
+  not ignored: the furthest the region can slide is an obvious right answer, and a
+  game computing the value from a tick counter is the normal way to overshoot.
 - Shifts the contents of the scroll region (`scroll_top..scroll_bot`) **down** by that
-  many pixels. Reset to 0 by `kCmdClear` and by `reset()`.
+  many pixels, and turns fine scrolling ON. `kCmdClear` and `reset()` turn it off.
+- On/off is a separate flag from the offset, because offset 0 is a *position* — it is
+  the wrap point of every scroll cycle — not a request to stop. If zero meant off, the
+  staging row would pop into view for one frame on every cell boundary. A program that
+  never issues the command is completely unaffected, which matters because turning it
+  on costs a row.
 - Like `kCmdRowSize` and `kCmdScrollTop` it consumes the shared command parameter, so
   the fill char must be re-set before the next clear or scroll.
 
@@ -259,17 +266,26 @@ being forced to row 0, so a program can pin header rows above the scrolling band
 `shiftRowFlags` masks to the top..bottom window so a double-size band still scrolls its
 size flags correctly inside a partial region.
 
-### Host changes
+### Host changes — DONE
 
-- `VIC.h` / `VIC.cpp` — `fine_y_`, the command, `[[nodiscard]] uint8_t fineY() const`.
-- `DisplayWidget::paintEvent` — offset and clip the region; rows outside it are
-  unaffected, so a pinned HUD stays put.
+- `VIC.h` / `VIC.cpp` — `fine_y_`, `fine_active_`, `kCmdFineY`, plus `fineY()`,
+  `fineActive()` and `getScrollRegion()` for the renderer to read.
+- `DisplayWidget::paintEvent` — the offset goes into each cell's destination rect via
+  a new `y_offset` argument on `drawCharacterAt`/`blitGlyph`, and the clip is scoped to
+  the cell loop with `save()`/`restore()`. Deliberately not a `painter.translate()` or
+  a frame-wide clip: a later sprite pass would inherit either, and sprites are exactly
+  the things that must NOT move with the region.
 
 ### Tests
 
-`tests/test_vic_finescroll.cpp`: defaults to 0; the command sets it; `kCmdClear` and
-`reset()` zero it; values >= cell height are rejected or clamped (decide and pin it).
-Renderer geometry is not unit-testable here — verify by eye.
+`tests/test_vic_finescroll.cpp`, 7 tests: off by default; the command sets the offset
+and turns it on; offset 0 still counts as on; out-of-range clamps; `kCmdClear` turns it
+off; the region accessor agrees with the scroll commands; and it disturbs neither the
+cell plane nor the font selection it shares a command engine with.
+
+Renderer geometry is not unit-testable here — verify by eye. The two safety behaviours
+were mutation-checked: removing the reset from `cmdClear` fails `ClearTurnsItOff`, and
+treating offset 0 as "stop" fails `ZeroOffsetStillCountsAsOn`.
 
 ### Known limitation to state in the header comment
 

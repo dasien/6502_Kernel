@@ -105,10 +105,12 @@ private:
     void resolveCellColors(uint8_t glyph, uint8_t attr, QColor& fg, QColor& bg) const;
     // Blit one 8x16 CP437 glyph (from the character ROM) into a cell. `scale` is 1
     // for a normal cell and 2 for one on a double-size row.
+    // y_offset is a PIXEL shift applied to this cell only -- never a painter
+    // translate, so a future sprite pass cannot inherit the scroll offset.
     void blitGlyph(QPainter& painter, int x, int y, uint8_t glyph,
-                   const QColor& fg, const QColor& bg, int scale = 1);
+                   const QColor& fg, const QColor& bg, int scale = 1, int y_offset = 0);
     void drawCharacterAt(QPainter& painter, int x, int y, uint8_t glyph, uint8_t attr,
-                         int scale = 1);
+                         int scale = 1, int y_offset = 0);
     void drawCursor(QPainter& painter);
     uint8_t qtKeyToAscii(QKeyEvent* event) const;
     // Selection helpers.

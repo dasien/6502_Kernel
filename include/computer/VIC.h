@@ -62,6 +62,25 @@ namespace Computer
      * can switch to RAM, redefine a handful of glyphs and leave the other 248 alone --
      * and no program can strand the shell with an unreadable font.
      *
+     * FINE VERTICAL SCROLL. kCmdFineY slides the whole scroll region down by a pixel
+     * count, so a program can move the world in steps finer than a character cell and
+     * only issue a real row-scroll when the offset wraps. This is the C64 VIC-II's
+     * YSCROLL; a character-cell chip without it can only scroll in whole-cell jumps,
+     * which reads as a strobe rather than motion.
+     *
+     * The region's TOP row is a hidden staging row. Sliding down opens a gap at the
+     * top of the region and what belongs there is the row that does not exist yet, so
+     * the renderer clips the region to start one row down: at offset 0 the top row is
+     * entirely above the clip and invisible, and it slides into view as the offset
+     * grows. When the offset reaches a cell height the program issues a real scroll,
+     * resets the offset and writes a fresh hidden top row. It costs one row.
+     *
+     * KNOWN LIMITATION: everything in the region shifts, including objects the game
+     * drew there. Things that ride the world (terrain, enemies riding the scroll) come
+     * out right for free; a SCREEN-FIXED object -- a player craft, a shot travelling
+     * up -- will sawtooth by one cell per scroll, because it is in the plane being
+     * slid. That is what sprites are for, and we do not have them yet.
+     *
      * @see Memory, BlockDevice, Computer6502
      */
     class VIC
@@ -115,6 +134,11 @@ namespace Computer
         static constexpr uint8_t kCmdFillRow = 0x04;    ///< fill the row of the current cell
         static constexpr uint8_t kCmdRowSize = 0x05;    ///< param: bit7 = double, bits4-0 = row
         static constexpr uint8_t kCmdRowsNormal = 0x06; ///< every row back to 8x16
+        static constexpr uint8_t kCmdFineY = 0x0C;      ///< param: 0..cell height-1.
+                                                        ///< Slides the scroll region
+                                                        ///< down that many PIXELS, and
+                                                        ///< turns fine scrolling on;
+                                                        ///< kCmdClear turns it off.
         static constexpr uint8_t kCmdFontRom = 0x08;    ///< render from the CP437 ROM
         static constexpr uint8_t kCmdFontRam = 0x09;    ///< render from font RAM
         static constexpr uint8_t kCmdFontReset = 0x0A;  ///< reload CP437 into every set
@@ -158,6 +182,13 @@ namespace Computer
         /// last row can never be one -- there is nothing under it to cover.
         [[nodiscard]] bool isRowDouble(uint16_t row) const;
 
+        /// Pixel offset the scroll region is currently slid down by, and whether fine
+        /// scrolling is on at all. Off means the renderer draws exactly as before --
+        /// a program that never issues kCmdFineY is completely unaffected.
+        [[nodiscard]] uint8_t fineY() const { return fine_y_; }
+        [[nodiscard]] bool fineActive() const { return fine_active_; }
+        void getScrollRegion(uint8_t &top, uint8_t &bot) const { top = scroll_top_; bot = scroll_bot_; }
+
         /// The 16 scanline bytes for a glyph, from the ROM or the live font set.
         /// The renderer calls this per cell instead of indexing kCp437Font directly.
         [[nodiscard]] const uint8_t *glyphRows(uint8_t glyph) const;
@@ -191,6 +222,10 @@ namespace Computer
         uint8_t scroll_top_ = 0;                 ///< scroll-region top row (default: full screen)
         uint8_t scroll_bot_ = kScreenHeight - 1; ///< scroll-region bottom row (default: full screen)
         uint32_t row_double_ = 0;                ///< one bit per row; set = 16x32
+
+        // Fine vertical scroll. See the class comment for the staging-row contract.
+        uint8_t fine_y_ = 0;
+        bool fine_active_ = false;
 
         // Soft font. Not in the 6502's address space -- see the class comment.
         std::vector<uint8_t> font_ram_;          ///< kFontSets x kFontSize

@@ -158,6 +158,15 @@ namespace Computer
             case kCmdScrollTop:
                 scroll_top_ = (cmd_param_ < kScreenHeight) ? cmd_param_ : (kScreenHeight - 1);
                 break;
+            case kCmdFineY:
+                // Clamped rather than ignored: unlike a font set, an out-of-range
+                // offset has an obvious right answer (the furthest the region can
+                // slide), and a game computing it from a tick counter is the normal
+                // way to get one.
+                fine_y_ = (cmd_param_ < 32) ? cmd_param_ : 31;
+                fine_active_ = true;
+                dirty_flag_ = true;
+                break;
             case kCmdFontRom: font_ram_active_ = false; dirty_flag_ = true; break;
             case kCmdFontRam: font_ram_active_ = true;  dirty_flag_ = true; break;
             case kCmdFontReset: seedFontRam(); dirty_flag_ = true; break;
@@ -199,6 +208,8 @@ namespace Computer
                                            // program cannot strand the shell at 16x32
         font_ram_active_ = false;          // ...and back to the ROM font, set 0, for
         font_set_ = 0;                     // exactly the same reason
+        fine_y_ = 0;                       // ...and fine scrolling off, so the shell
+        fine_active_ = false;              // never loses a row to a staging row
         dirty_flag_ = true;
     }
 
