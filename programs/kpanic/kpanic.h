@@ -36,30 +36,71 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define VCMD_FILLROW    0x04
 
 /* ---- screen geometry ----
- * The playfield is the full 80 columns of rows 0..PLAY_BOT (the chip-side scroll
- * moves whole rows, so a side-panel HUD would scroll with the world). The HUD is
- * pinned on the rows below the scroll region, the way IRC pins its input line. */
-#define SCR_W       80
-#define PLAY_BOT    21          /* last playfield row = scroll-region bottom */
-#define PLAY_H      22          /* rows 0..21 */
-#define HUD_ROW     22          /* HUD occupies rows 22..24 */
+ * The playfield is a band of DOUBLE-SIZE rows, exactly as VENTURE's is. A double
+ * row renders its glyphs at 16x32 instead of 8x16, so it holds 40 characters and
+ * covers two rows of screen. That is the only way to make the shapes themselves
+ * bigger against a fixed 8x16 font ROM -- reverse video and multi-cell bodies
+ * change a thing's ink and its footprint, never its shape.
+ *
+ * It costs vertical runway: 22 single rows become 11 logical ones. The trade is
+ * worth it because the hard axis in this game is the one you STEER on -- lining a
+ * one-cell craft up with a one-cell target across 80 columns is the thing that
+ * made it unhittable, and 40 columns halves that precision requirement while
+ * doubling the size of everything. The lost runway is bought back in TIME instead,
+ * by slowing the tick (see TICK_DEFAULT): what matters is how long a threat is on
+ * screen, not how many rows it crossed.
+ *
+ * Logical playfield row r lives on PHYSICAL row r*2; the row below it is covered
+ * and never addressed. The HUD stays on ordinary single rows 22..24, so its text
+ * is still crisp -- which is the whole point of per-row double size over a
+ * whole-screen mode. */
+#define SCR_W       80          /* the character plane is still 80 cells wide */
+#define SCR_H       25
+#define PLAY_COLS   40          /* ...but a double row holds only 40 */
+#define PLAY_H      12          /* logical playfield rows 0..11 */
+#define BAND_BOT    23          /* PHYSICAL bottom of the band = scroll-region bottom.
+                                 * The ONLY place a physical row is wanted; every
+                                 * simulation coordinate is a logical row. */
+#define PLAY_LAST   (PLAY_H - 1)    /* last LOGICAL playfield row */
+#define PROW(r)     ((unsigned int)(r) * 2)     /* logical row -> physical row */
+
+/* ONE ordinary row of HUD, on the last line of the screen. It was three, which put
+ * the craft five physical rows clear of the bottom and made it look like it was
+ * flying in the middle of the screen. The key legend those rows carried is now on
+ * the title screen where it belongs, and the band grew from 11 logical rows to 12
+ * -- so this bought back runway as well as seating the craft where it belongs. */
+#define HUD_ROW     24
+
+/* Row size is a command, not a register: the parameter carries the row and bit 7
+ * the size. A clear puts every row back to normal, so the band has to be laid out
+ * again after one -- which is why set_play_rows() sits next to every clear. */
+#define VCMD_ROWSIZE  5
+#define VCMD_ROWSNORM 6
+#define VROW_DOUBLE   0x80
 
 /* The conduit is generated per row as a center column +/- a half-width, so it
  * meanders and squeezes naturally (two independent wall walks are much harder to
  * keep sane). Walls must stay on screen, and the channel has to stay wide enough
- * to dodge in. */
-#define WALL_MIN_X  2           /* leftmost a wall may sit */
-#define WALL_MAX_X  77          /* rightmost a wall may sit */
-#define HW_MIN      4           /* half-width floor -> 7 open columns */
-#define HW_MAX      21          /* half-width ceiling -> 41 open columns */
-#define ISL_MIN_HW  12          /* islands only appear in a channel this wide */
+ * to dodge in. All rescaled for the 40-column band: a wall may not sit at column 0
+ * or 39, because the bevel one cell outside it has to stay on screen. */
+#define WALL_MIN_X  1           /* leftmost a wall may sit */
+#define WALL_MAX_X  38          /* rightmost a wall may sit */
+#define HW_MIN      3           /* half-width floor -> 5 open columns */
+#define HW_MAX      10          /* half-width ceiling -> 19 open columns */
+#define ISL_MIN_HW  7           /* islands only appear in a channel this wide */
 
 /* ---- timing ----
- * TICK_* are jiffies-per-simulation-step at 60 Hz: 4 -> 15 steps/sec. Difficulty
- * scales by shrinking this divisor, never by fractional speeds (cc65 has no float). */
-#define TICK_DEFAULT 4
-#define TICK_MIN     1          /* 60 steps/sec */
-#define TICK_MAX     15         /* 4 steps/sec */
+ * TICK_* are jiffies-per-simulation-step at 60 Hz. Difficulty scales by shrinking
+ * this divisor, never by fractional speeds (cc65 has no float).
+ *
+ * 10 -> 6 steps/sec. Slower than the 15/sec this started at, for two reasons
+ * that compound: a double-size row is twice as tall, so one row of scroll is twice
+ * the apparent motion, and the band is half as deep, so there is less runway to
+ * read a threat in. Both say the same thing -- the world has to move fewer rows
+ * per second than it did at 80x22. */
+#define TICK_DEFAULT 10
+#define TICK_MIN     2          /* 30 steps/sec */
+#define TICK_MAX     30         /* 2 steps/sec */
 #define MAX_CATCHUP  4          /* sim steps per pass before we resync to now */
 
 /* Steering reads the PIA's live key-state port once per tick, so movement is
@@ -83,8 +124,27 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define NODE_W          2       /* node width in cells -- one cell was too fine a
                                  * target to line up on while dodging */
 
-/* ---- weapon ---- */
-#define MAX_SHOTS        6
+/* ---- weapon ----
+ * Colour-coded pickups swap the gun's character; collecting the same kind again
+ * deepens it. On a text display the pickup's LETTER carries the identity, not its
+ * colour -- red already means corruption and green already means a data node, so
+ * a third colour-coded meaning would be one too many for the eye to hold. */
+#define W_PLAIN          0      /* one shot up the column */
+#define W_SPREAD         1      /* S: fires into adjacent columns too */
+#define W_BEAM           2      /* B: shots punch through what they hit */
+#define W_HOMING         3      /* H: shots drift toward the nearest target */
+#define W_MAXLEVEL       3
+
+/* Deep enough that a spread level 3 volley always fits, even while OVERCLOCKED:
+ * five shots take ~9 ticks to cross the playfield and OC fires every 2, so about
+ * five volleys are in the air at once. That is why this is 26 and not 10.
+ *
+ * It matters more than a pool size usually would, because fire() spawns the
+ * centre shot first and works outwards -- so a full pool drops the WINGS, and
+ * level 3 spread quietly renders as level 1 at exactly the moment you overclocked
+ * to get it. The fire rate is the balance dial here (FIRE_COOLDOWN_OC); shrinking
+ * the pool does not limit the weapon, it deforms it. */
+#define MAX_SHOTS        26
 #define SHOT_SPEED       2      /* screen rows per tick, substepped so it can't tunnel */
 #define FIRE_COOLDOWN    3      /* ticks between shots */
 #define FIRE_COOLDOWN_OC 1      /* ... while overclocked */
@@ -94,6 +154,18 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
  * the world, so they need their own pools and explicit erase/redraw. */
 #define MAX_ENEMIES     8
 #define MAX_PELLETS     6
+
+/* Corruption is TWO cells wide. On a double-size row that is a 32x32 px body --
+ * an arcade-sized target instead of a 16x32 sliver. It is the single biggest thing
+ * that makes the game hittable: a one-cell enemy needs the craft on exactly the
+ * right column, and at that precision a miss is indistinguishable from a bug.
+ * Every test against an enemy has to cover e_x AND e_x+1. */
+#define ENEMY_W         2
+
+/* Kill/impact markers. Without these a hit had no signature at all -- the target
+ * simply stopped being drawn, which reads as the shot having passed through it. */
+#define MAX_POPS        6
+#define POP_TICKS       2
 
 #define E_NONE          0
 #define E_DAEMON        1       /* closes on you faster than the world scrolls */
@@ -119,6 +191,10 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define SCORE_WORM      25
 #define SCORE_SENTINEL  40
 
+/* ---- fragments (weapon pickups) ---- */
+#define MAX_FRAGS       3
+#define FRAG_CHANCE     6       /* 1-in-N chance a kill drops one */
+
 /* ---- attributes: [R][BR][bg:3][fg:3]; 0x40 = bright ---- */
 #define A_WALL      0x46        /* bright cyan -- conduit wall (the lethal edge) */
 #define A_BEVEL     0x06        /* cyan -- the wall's outer bevel cell */
@@ -130,6 +206,10 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define A_FOE2      0x45        /* bright magenta -- the weaving variety */
 #define A_NODE      0x42        /* bright green -- data node (matches the energy bar,
                                  * and stays clear of craft yellow / wall cyan) */
+#define A_FRAG      0xC4        /* bright blue, reverse video -- a weapon fragment.
+                                 * Reverse makes it read as a solid chip rather
+                                 * than a glyph, and blue was the one bright
+                                 * colour nothing else had claimed. */
 #define A_SHOT      0x47        /* bright white -- reserved for the fastest thing on
                                  * screen, so the eye tracks projectiles first */
 #define A_OK        0x42        /* energy bar: healthy */

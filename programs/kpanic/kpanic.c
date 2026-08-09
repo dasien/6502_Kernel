@@ -1,5 +1,5 @@
 /* ============================================================================
- * kpanic.c -- KERNEL PANIC: engine (build step 4).
+ * kpanic.c -- KERNEL PANIC: engine (build step 5).
  *
  * Working: the fixed-tick simulation loop paced off the kernel's 60 Hz jiffy
  * counter; the bounded scroll region with a pinned HUD; procedurally generated
@@ -23,8 +23,16 @@
  * relative to the world rather than with it, so they carry their own pools and
  * explicit erase/redraw.
  *
- * Deliberately NOT here yet: power-ups (step 5), bosses (6), juice/scoring
- * polish (7). The game-over screen is a placeholder.
+ * Power-ups (step 5) are the weapon chain: fragments dropped by kills swap the
+ * gun's character and deepen it, and a crash knocks a level back off.
+ *
+ * The playfield is a band of DOUBLE-SIZE rows -- 40 columns by 11 logical rows,
+ * each covering two physical rows. Simulation coordinates are LOGICAL rows
+ * throughout; PROW() converts, and BAND_BOT is the one place a physical row is
+ * wanted. Getting that distinction wrong indexes the terrain ring out of bounds.
+ *
+ * Deliberately NOT here yet: bosses + sector progression (step 6), juice and the
+ * real scoring/outcome tally (step 7), balance and the manual (step 8).
  * ==========================================================================*/
 #include "kpanic.h"
 
@@ -101,7 +109,7 @@ static unsigned char slot(unsigned char r) {
 }
 
 /* Generator state: the conduit is a meandering center with a drifting width. */
-static unsigned char gen_cx = 39;       /* channel center column */
+static unsigned char gen_cx = 19;       /* channel center column */
 static unsigned char gen_hw = HW_MAX;   /* channel half-width */
 static unsigned char gen_target = HW_MAX;
 static unsigned char gen_gaunt;         /* rows left in a deliberate squeeze */
@@ -202,13 +210,13 @@ static unsigned int rows;               /* conduit rows generated (world distanc
  * spacing and the odd adjacent pair, because evenly spaced traces read as graph
  * paper rather than routed copper. Stable in x, so the traces are continuous
  * lines down the board. */
-static unsigned char board_col[SCR_W];
+static unsigned char board_col[PLAY_COLS];
 
 static void board_init(void) {
     unsigned char x = 1;
-    while (x < SCR_W) {
+    while (x < PLAY_COLS) {
         board_col[x] = 1;
-        if (rndn(4) == 0 && x + 1 < SCR_W) { board_col[x + 1] = 1; x++; }
+        if (rndn(4) == 0 && x + 1 < PLAY_COLS) { board_col[x + 1] = 1; x++; }
         x += 2 + rndn(4);
     }
 }
@@ -272,7 +280,7 @@ static void terrain_cell(unsigned char r, unsigned char x,
 static void restore_cell(unsigned char r, unsigned char x) {
     unsigned char g, a;
     terrain_cell(r, x, &g, &a);
-    vaddr((unsigned int)r * SCR_W + x);
+    vaddr(PROW(r) * SCR_W + x);
     last_attr = 0xFF;
     put_cell(g, a);
 }
@@ -299,9 +307,9 @@ static void draw_row(unsigned char r) {
     unsigned char pad_row   = ((wy % 24) == 0);     /* hoisted: expensive modulo */
     unsigned char x, g, a;
 
-    vaddr((unsigned int)r * SCR_W);
+    vaddr(PROW(r) * SCR_W);
     last_attr = 0xFF;
-    for (x = 0; x < SCR_W; x++) {
+    for (x = 0; x < PLAY_COLS; x++) {
         if (x == lx || x == rx) {
             g = G_WALL; a = A_WALL;
         } else if (x == (unsigned char)(lx - 1) || x == (unsigned char)(rx + 1)) {
@@ -328,7 +336,7 @@ static void draw_row(unsigned char r) {
 }
 
 /* ---- world state ---- */
-static unsigned char craft_x = 39;
+static unsigned char craft_x = 19;
 static unsigned char tickrate = TICK_DEFAULT;
 static unsigned char paused;
 static unsigned char flash;             /* frames left showing the impact pop */
@@ -342,11 +350,49 @@ static unsigned char dead;
 
 /* shots: structure-of-arrays, fixed pool, no allocation */
 static unsigned char s_x[MAX_SHOTS], s_y[MAX_SHOTS], s_live[MAX_SHOTS];
+static unsigned char s_from[MAX_SHOTS];     /* row this shot started the tick on */
+static unsigned char s_pierce[MAX_SHOTS];   /* hits left before the shot dies */
+static unsigned char s_home[MAX_SHOTS];     /* 1 = drifts toward a target */
 
-#define CRAFT_ROW  (PLAY_BOT - 1)
+/* The gun: a kind and a level. Collecting the same fragment again deepens it;
+ * a different one swaps you to that kind at level 1 -- so a pickup is a real
+ * decision when you are already deep in something else. */
+static unsigned char weapon = W_PLAIN;
+static unsigned char wlevel = 1;
+
+/* Fragments drift down with the world like a node, but they are objects rather
+ * than terrain because they are dropped mid-run, not generated with a row. */
+static unsigned char f_live[MAX_FRAGS];
+static unsigned char f_x[MAX_FRAGS], f_y[MAX_FRAGS], f_kind[MAX_FRAGS];
+
+static unsigned char frag_glyph(unsigned char k) {
+    if (k == W_SPREAD) return 'S';
+    if (k == W_BEAM)   return 'B';
+    return 'H';
+}
+
+/* A LOGICAL row. It used to be derived from the band's physical bottom, which was
+ * the same number back when the playfield was 22 single rows -- with an 11-row
+ * double band it indexed the terrain ring out of bounds and drew off-screen. */
+#define CRAFT_ROW  (PLAY_H - 1)
+
+/* Did an object sweep over the craft on its way from row `from` to row `to`?
+ *
+ * Nothing here moves exactly one row per tick. The world scrolls two under
+ * OVERCLOCK, a daemon adds one on top of that, and a pellet adds one again -- so
+ * testing `y == CRAFT_ROW` AFTER the move silently misses anything that stepped
+ * straight over the craft. The effect was backwards from the design: OVERCLOCK,
+ * the reckless mode you are meant to pay for, became the safest one, because
+ * pellets and daemons flew through you untouched. Anything that can hit the craft
+ * has to be resolved across the span it travelled, not at its landing row. */
+static unsigned char swept_craft(unsigned char from, unsigned char to,
+                                 unsigned char x) {
+    return (unsigned char)(from <= CRAFT_ROW && to >= CRAFT_ROW &&
+                           x == craft_x);
+}
 
 static void draw_craft(void) {
-    vaddr((unsigned int)CRAFT_ROW * SCR_W + craft_x);
+    vaddr(PROW(CRAFT_ROW) * SCR_W + craft_x);
     last_attr = 0xFF;
     if (flash) put_cell(G_BOOM, (unsigned char)(A_WARN | 0x80));  /* reverse video */
     else       put_cell(G_CRAFT, A_CRAFT);
@@ -370,21 +416,46 @@ static void crash(void) {
     flash = 3;
     craft_x = (unsigned char)((r_lx[i] + r_rx[i]) >> 1);
     energy_spend(ENERGY_CRASH);
+    /* The impact shakes the gun down a level. Energy is the obvious cost of a
+     * crash; losing hard-won firepower is the one that actually stings. */
+    if (wlevel > 1) wlevel--;
 }
 
 /* ---- weapon ---- */
-static void fire(void) {
+/* Put one shot in the air at column x, if a slot is free. */
+static void shot_spawn(unsigned char x) {
     unsigned char i;
-    if (cooldown) return;
     for (i = 0; i < MAX_SHOTS; i++) {
         if (!s_live[i]) {
             s_live[i] = 1;
-            s_x[i] = craft_x;
+            s_x[i] = x;
             s_y[i] = CRAFT_ROW - 1;
-            cooldown = overclock ? FIRE_COOLDOWN_OC : FIRE_COOLDOWN;
+            /* Beam punches through one extra target per level; everything else
+             * is consumed by the first thing it hits. */
+            s_pierce[i] = (weapon == W_BEAM) ? (unsigned char)(wlevel + 1) : 1;
+            s_home[i]   = (weapon == W_HOMING) ? 1 : 0;
             return;
         }
     }
+}
+
+static void fire(void) {
+    if (cooldown) return;
+    cooldown = overclock ? FIRE_COOLDOWN_OC : FIRE_COOLDOWN;
+
+    shot_spawn(craft_x);
+    if (weapon == W_SPREAD) {
+        /* Level 1-2 covers three columns, level 3 covers five. Width is the
+         * clearest way to show a level on a character grid -- you can see it. */
+        if (craft_x > 1)          shot_spawn(craft_x - 1);
+        if (craft_x < PLAY_COLS - 2)  shot_spawn(craft_x + 1);
+        if (wlevel >= 3) {
+            if (craft_x > 2)         shot_spawn(craft_x - 2);
+            if (craft_x < PLAY_COLS - 3) shot_spawn(craft_x + 2);
+        }
+    }
+    /* Deeper levels of the other kinds fire faster instead of wider. */
+    if (weapon != W_SPREAD && wlevel > 1 && cooldown > 1) cooldown--;
 }
 
 /* Resolve a shot arriving at one cell. Returns 1 if the shot is consumed.
@@ -395,6 +466,10 @@ static void fire(void) {
 static unsigned char enemy_at(unsigned char r, unsigned char x);
 static void          enemy_damage(unsigned char idx);
 
+/* 0 = nothing here, 1 = hit something destructible (a beam may punch on through),
+ * 2 = hit the conduit wall, which stops anything. The wall has to be a distinct
+ * answer: a beam that spent a pierce on it would carry on straight out through
+ * the side of the channel. */
 static unsigned char shot_hits(unsigned char r, unsigned char x) {
     unsigned char i = slot(r), nx, k, e;
 
@@ -413,7 +488,7 @@ static unsigned char shot_hits(unsigned char r, unsigned char x) {
         for (k = 0; k < NODE_W; k++) restore_cell(r, nx + k);
         return 1;
     }
-    return blocked(r, x);
+    return blocked(r, x) ? 2 : 0;
 }
 
 /* ============================================================================
@@ -429,6 +504,10 @@ static unsigned char shot_hits(unsigned char r, unsigned char x) {
  * ==========================================================================*/
 static unsigned char e_type[MAX_ENEMIES];   /* E_NONE = free slot */
 static unsigned char e_x[MAX_ENEMIES], e_y[MAX_ENEMIES];
+/* The row this enemy started the tick on, and the column it descended in (before
+ * a worm's weave). Needed to resolve shot collisions across the span it swept --
+ * see shots_enemies_resolve(). */
+static unsigned char e_from[MAX_ENEMIES], e_fx[MAX_ENEMIES];
 static unsigned char e_hp[MAX_ENEMIES];
 static unsigned char e_t[MAX_ENEMIES];      /* fire timer / weave phase */
 
@@ -436,6 +515,18 @@ static unsigned char p_live[MAX_PELLETS];
 static unsigned char p_x[MAX_PELLETS], p_y[MAX_PELLETS];
 
 static unsigned char spawn_timer = SPAWN_MIN;
+
+/* Short-lived impact markers, so a hit has a visible signature. A kill used to
+ * just stop drawing the target, which is indistinguishable from the shot having
+ * gone straight through -- the thing the player was already suspicious of. */
+static unsigned char pop_x[MAX_POPS], pop_y[MAX_POPS], pop_t[MAX_POPS];
+
+static void pop_add(unsigned char x, unsigned char y) {
+    unsigned char i;
+    for (i = 0; i < MAX_POPS; i++) {
+        if (!pop_t[i]) { pop_t[i] = POP_TICKS; pop_x[i] = x; pop_y[i] = y; return; }
+    }
+}
 
 static unsigned char enemy_glyph(unsigned char t) {
     if (t == E_DAEMON)   return G_DAEMON;
@@ -450,8 +541,22 @@ static unsigned char enemy_attr(unsigned char t) {
 static unsigned char enemy_at(unsigned char r, unsigned char x) {
     unsigned char i;
     for (i = 0; i < MAX_ENEMIES; i++)
-        if (e_type[i] && e_y[i] == r && e_x[i] == x) return i + 1;
+        if (e_type[i] && e_y[i] == r &&
+            x >= e_x[i] && x < (unsigned char)(e_x[i] + ENEMY_W)) return i + 1;
     return 0;
+}
+
+static void frag_drop(unsigned char x, unsigned char y) {
+    unsigned char f;
+    for (f = 0; f < MAX_FRAGS; f++) {
+        if (!f_live[f]) {
+            f_live[f] = 1;
+            f_x[f] = x;
+            f_y[f] = y;
+            f_kind[f] = (unsigned char)(W_SPREAD + rndn(3));   /* S, B or H */
+            return;
+        }
+    }
 }
 
 static void enemy_kill(unsigned char i) {
@@ -459,11 +564,15 @@ static void enemy_kill(unsigned char i) {
     else if (e_type[i] == E_WORM)     score += SCORE_WORM;
     else                              score += SCORE_SENTINEL;
     e_type[i] = E_NONE;
+    if (rndn(FRAG_CHANCE) == 0) frag_drop(e_x[i], e_y[i]);
+    pop_add(e_x[i], e_y[i]);
     restore_cell(e_y[i], e_x[i]);
+    restore_cell(e_y[i], (unsigned char)(e_x[i] + 1));
 }
 
 static void enemy_damage(unsigned char idx) {
     if (--e_hp[idx] == 0) enemy_kill(idx);
+    else pop_add(e_x[idx], e_y[idx]);   /* wounded: show that it landed */
 }
 
 /* Spawn one enemy at the top of the channel. Placed inside the walls with a
@@ -476,8 +585,8 @@ static void spawn_enemy(void) {
 
     lx = r_lx[head];
     rx = r_rx[head];
-    span = rx - lx - 3;
-    if (span == 0) return;                      /* channel too tight to place one */
+    span = rx - lx - 2 - ENEMY_W;
+    if (span == 0 || span > PLAY_COLS) return;  /* channel too tight to place one */
 
     t = 1 + rndn(3);
     e_type[i] = t;
@@ -505,18 +614,34 @@ static void enemies_advance(unsigned char scrolled) {
     for (i = 0; i < MAX_ENEMIES; i++) {
         if (!e_type[i]) continue;
 
+        e_from[i] = e_y[i];
+        e_fx[i]   = e_x[i];             /* the column it descends in, pre-weave */
+
         ny = e_y[i] + scrolled;
         if (e_type[i] == E_DAEMON) ny++;        /* closes faster than the world */
 
-        if (ny > PLAY_BOT) { e_type[i] = E_NONE; continue; }   /* off the bottom */
+        /* Corruption you fly into: costs energy and dies, with you passing
+         * through -- there is no bouncing off, so a missed dodge is always paid
+         * for. Resolved here, across the span it just travelled, and BEFORE the
+         * off-bottom test, or a daemon moving three rows could step over the
+         * craft and out of the world in the same tick. */
+        if (swept_craft(e_y[i], ny, e_x[i])) {
+            e_type[i] = E_NONE;
+            flash = 3;
+            energy_spend(ENERGY_HIT);
+            continue;
+        }
+
+        if (ny > PLAY_LAST) { e_type[i] = E_NONE; continue; }  /* off the bottom */
         e_y[i] = ny;
 
         if (e_type[i] == E_WORM) {
             /* Weave one column at a time, reversing at the walls rather than
              * grinding along them. */
             nx = e_t[i] ? e_x[i] + 1 : e_x[i] - 1;
-            if (blocked(e_y[i], nx)) e_t[i] ^= 1;
-            else                     e_x[i] = nx;
+            if (blocked(e_y[i], nx) ||
+                blocked(e_y[i], (unsigned char)(nx + ENEMY_W - 1))) e_t[i] ^= 1;
+            else                                                    e_x[i] = nx;
         } else if (e_type[i] == E_SENTINEL) {
             if (e_t[i]) e_t[i]--;
             else { pellet_spawn(e_x[i], e_y[i] + 1); e_t[i] = SENTINEL_FIRE; }
@@ -524,7 +649,75 @@ static void enemies_advance(unsigned char scrolled) {
 
         /* Crushed by a narrowing channel. Corruption is not privileged over the
          * conduit -- if the walls close on it, it dies like anything else. */
-        if (blocked(e_y[i], e_x[i])) e_type[i] = E_NONE;
+        if (blocked(e_y[i], e_x[i]) ||
+            blocked(e_y[i], (unsigned char)(e_x[i] + 1))) e_type[i] = E_NONE;
+    }
+}
+
+/* Resolve shots against corruption ACROSS THE ROWS EACH SWEPT this tick.
+ *
+ * This is why almost nothing could be shot. The two close head-on, several rows
+ * apiece in one tick -- a shot climbs two while a daemon descends three -- so they
+ * routinely pass clean through each other without ever sharing a cell. Take a shot
+ * at row 10 and an enemy at row 6: the shot substeps to 9, 8, checking as it goes,
+ * finds the enemy still at 6; then the enemy moves to 8, which the shot has already
+ * left. Next tick the shot is at 6 and the enemy at 10. They have swapped ends and
+ * nothing ever looked. VENTURE had exactly this bug between its arrow and its
+ * monsters, for exactly this reason.
+ *
+ * Per-cell substepping cannot fix it, because the failure is not a shot skipping a
+ * cell -- it is the target moving after the shot has been and gone. The fix is to
+ * ask whether the two SPANS overlap. The shot swept rows [s_y, s_from] going up and
+ * the enemy swept [e_from, e_y] coming down, so they met iff
+ *     s_y <= e_y  &&  e_from <= s_from
+ * which is interval overlap with the two "moved the right way" terms dropped as
+ * always-true. */
+static void shots_enemies_resolve(void) {
+    unsigned char i, e;
+    for (i = 0; i < MAX_SHOTS; i++) {
+        if (!s_live[i]) continue;
+        for (e = 0; e < MAX_ENEMIES; e++) {
+            if (!e_type[e]) continue;
+            /* A worm changes column mid-move; either the column it descended in
+             * or the one it weaved into counts as a hit. */
+            if (!(s_x[i] >= e_fx[e] && s_x[i] < (unsigned char)(e_fx[e] + ENEMY_W)) &&
+                !(s_x[i] >= e_x[e]  && s_x[i] < (unsigned char)(e_x[e]  + ENEMY_W)))
+                continue;
+            if (s_y[i] > e_y[e] || e_from[e] > s_from[i]) continue;   /* no overlap */
+            enemy_damage(e);
+            if (s_pierce[i] > 1) { s_pierce[i]--; continue; }        /* beam */
+            s_live[i] = 0;
+            break;
+        }
+    }
+}
+
+/* Fragments ride the world, so they only need the scroll amount -- no drift of
+ * their own. Collecting one is the decision: same kind deepens the gun, a
+ * different kind swaps you back to level 1 of that kind.
+ *
+ * Moving and collecting are one pass because the collect test needs the row the
+ * fragment came FROM as well as the one it landed on -- under OVERCLOCK the world
+ * moves two rows a tick, so a fragment can pass clean over the craft. */
+static void frags_step(unsigned char scrolled) {
+    unsigned char f, ny;
+    for (f = 0; f < MAX_FRAGS; f++) {
+        if (!f_live[f]) continue;
+        ny = f_y[f] + scrolled;
+
+        if (swept_craft(f_y[f], ny, f_x[f])) {
+            if (f_kind[f] == weapon) {
+                if (wlevel < W_MAXLEVEL) wlevel++;
+            } else {
+                weapon = f_kind[f];
+                wlevel = 1;
+            }
+            f_live[f] = 0;
+            continue;
+        }
+
+        if (ny > PLAY_LAST || blocked(ny, f_x[f])) { f_live[f] = 0; continue; }
+        f_y[f] = ny;
     }
 }
 
@@ -533,30 +726,84 @@ static void pellets_advance(unsigned char scrolled) {
     for (i = 0; i < MAX_PELLETS; i++) {
         if (!p_live[i]) continue;
         ny = p_y[i] + scrolled + 1;
-        if (ny > PLAY_BOT || blocked(ny, p_x[i])) { p_live[i] = 0; continue; }
+        /* A pellet is the fastest thing coming at you -- three rows a tick under
+         * OVERCLOCK -- so it is the one that most needed resolving across its
+         * span rather than at its landing row. */
+        if (swept_craft(p_y[i], ny, p_x[i])) {
+            p_live[i] = 0;
+            flash = 3;
+            energy_spend(ENERGY_PELLET);
+            continue;
+        }
+        if (ny > PLAY_LAST || blocked(ny, p_x[i])) { p_live[i] = 0; continue; }
         p_y[i] = ny;
     }
 }
 
 static void shots_advance(void) {
-    unsigned char i, step;
+    unsigned char i, step, h;
     for (i = 0; i < MAX_SHOTS; i++) {
         if (!s_live[i]) continue;
+        s_from[i] = s_y[i];             /* remembered for the span test below */
+
+        /* Homing: nudge one column toward the nearest target ahead. One column
+         * per tick, so it curves rather than snapping -- a snap would make the
+         * shot look like it teleported. */
+        if (s_home[i]) {
+            unsigned char e, best = 255, bestd = 255, d;
+            for (e = 0; e < MAX_ENEMIES; e++) {
+                if (!e_type[e] || e_y[e] > s_y[i]) continue;
+                d = (unsigned char)(s_y[i] - e_y[e]);
+                if (d < bestd) { bestd = d; best = e; }
+            }
+            if (best != 255) {
+                if (e_x[best] < s_x[i]) s_x[i]--;
+                else if (e_x[best] > s_x[i]) s_x[i]++;
+            }
+        }
+
         for (step = 0; step < SHOT_SPEED; step++) {
             if (s_y[i] == 0) { s_live[i] = 0; break; }   /* off the top */
             s_y[i]--;
-            if (shot_hits(s_y[i], s_x[i])) { s_live[i] = 0; break; }
+            h = shot_hits(s_y[i], s_x[i]);
+            if (h) {
+                /* A beam spends one of its hits and keeps going -- through
+                 * corruption and nodes only. The wall (h == 2) stops everything. */
+                if (h == 1 && s_pierce[i] > 1) { s_pierce[i]--; continue; }
+                s_live[i] = 0;
+                break;
+            }
         }
     }
 }
 
 /* Advance the world one row: chip-side scroll, then paint the freshly opened
  * top row. Terrain rides the scroll; moving objects are handled by the caller. */
+/* Flag the band's rows double. A clear resets every row to normal, so this has to
+ * follow every clear -- and the top row has to be re-flagged after every scroll,
+ * see scroll_world(). */
+static void set_play_rows(void) {
+    unsigned char r;
+    for (r = 0; r < PLAY_H; r++) {
+        vfill((unsigned char)(VROW_DOUBLE | (PROW(r) & 0x1F)));
+        vcmd(VCMD_ROWSIZE);
+    }
+}
+
 static void scroll_world(void) {
     vattr(A_BOARD);
     last_attr = A_BOARD;
     vfill(' ');
+    /* TWICE. One logical row of this band is two physical rows, and the chip
+     * carries a row's size flag along with its contents -- so a single scroll
+     * would leave the whole band flagged on the odd rows, rendering it half a tile
+     * out of step. Two puts every flag back on an even row. Both writes land in
+     * the same host time-slice, so the intermediate state is never painted. */
     vcmd(VCMD_SCROLLDOWN);
+    vcmd(VCMD_SCROLLDOWN);
+    /* Row 0's flag shifted away and nothing shifted in behind it. */
+    vfill((unsigned char)(VROW_DOUBLE | 0));
+    vcmd(VCMD_ROWSIZE);
 
     head = head ? (unsigned char)(head - 1) : (unsigned char)(PLAY_H - 1);
     rows++;
@@ -575,9 +822,19 @@ static void step_world(void) {
     for (i = 0; i < MAX_SHOTS; i++)
         if (s_live[i]) restore_cell(s_y[i], s_x[i]);
     for (i = 0; i < MAX_ENEMIES; i++)
-        if (e_type[i]) restore_cell(e_y[i], e_x[i]);
+        if (e_type[i]) {
+            restore_cell(e_y[i], e_x[i]);
+            restore_cell(e_y[i], (unsigned char)(e_x[i] + 1));
+        }
+    for (i = 0; i < MAX_POPS; i++)
+        if (pop_t[i]) {
+            restore_cell(pop_y[i], pop_x[i]);
+            restore_cell(pop_y[i], (unsigned char)(pop_x[i] + 1));
+        }
     for (i = 0; i < MAX_PELLETS; i++)
         if (p_live[i]) restore_cell(p_y[i], p_x[i]);
+    for (i = 0; i < MAX_FRAGS; i++)
+        if (f_live[i]) restore_cell(f_y[i], f_x[i]);
 
     /* Sample the live control port ONCE per tick and act on every bit that is
      * set. Movement is therefore exactly as smooth as the tick rate, and steering
@@ -592,6 +849,7 @@ static void step_world(void) {
 
     if (flash) flash--;
     if (cooldown) cooldown--;
+    for (i = 0; i < MAX_POPS; i++) if (pop_t[i]) pop_t[i]--;
 
     if (ks & KS_LEFT)  craft_x -= MOVE_PER_TICK;
     if (ks & KS_RIGHT) craft_x += MOVE_PER_TICK;
@@ -599,32 +857,21 @@ static void step_world(void) {
 
     shots_advance();
     enemies_advance(scrolled);
+    shots_enemies_resolve();    /* AFTER both have moved -- see the note there */
     pellets_advance(scrolled);
+    frags_step(scrolled);
 
     if (--spawn_timer == 0) {
         spawn_enemy();
         spawn_timer = SPAWN_MIN + rndn(SPAWN_VAR);
     }
 
-    /* Corruption you fly into: costs energy and dies with you passing through --
-     * there is no bouncing off, so a missed dodge is always paid for. */
-    i = enemy_at(CRAFT_ROW, craft_x);
-    if (i) {
-        e_type[i - 1] = E_NONE;
-        restore_cell(e_y[i - 1], e_x[i - 1]);
-        flash = 3;
-        energy_spend(ENERGY_HIT);
-    }
-    for (i = 0; i < MAX_PELLETS; i++) {
-        if (p_live[i] && p_y[i] == CRAFT_ROW && p_x[i] == craft_x) {
-            p_live[i] = 0;
-            restore_cell(p_y[i], p_x[i]);
-            flash = 3;
-            energy_spend(ENERGY_PELLET);
-        }
-    }
-
-    /* Take a node by flying over it: refill, and forfeit the score you'd have
+    /* Collisions with corruption and pellets are resolved inside their own
+     * advance passes now, where the row each object came from is still known --
+     * see swept_craft(). Testing for them here, after everything had landed,
+     * missed anything that stepped over the craft row.
+     *
+     * Take a node by flying over it: refill, and forfeit the score you'd have
      * got for shooting it. This is the bet the whole game is built around. */
     i = slot(CRAFT_ROW);
     if (on_node(i, craft_x)) {
@@ -641,54 +888,69 @@ static void step_world(void) {
     /* Redraw order is deliberate: corruption, then pellets, then your shots, then
      * the craft. Later writes win, so the things you most need to see never end
      * up hidden under something else sharing a cell. */
+    /* Impact markers first, so a live object drawn over one still wins the cell. */
+    for (i = 0; i < MAX_POPS; i++)
+        if (pop_t[i]) {
+            vaddr(PROW(pop_y[i]) * SCR_W + pop_x[i]);
+            last_attr = 0xFF;
+            put_cell(G_BOOM, A_SHOT);
+            put_cell(G_BOOM, A_SHOT);       /* auto-increment: the second cell */
+        }
     for (i = 0; i < MAX_ENEMIES; i++)
         if (e_type[i]) {
-            vaddr((unsigned int)e_y[i] * SCR_W + e_x[i]);
+            vaddr(PROW(e_y[i]) * SCR_W + e_x[i]);
             last_attr = 0xFF;
+            put_cell(enemy_glyph(e_type[i]), enemy_attr(e_type[i]));
             put_cell(enemy_glyph(e_type[i]), enemy_attr(e_type[i]));
         }
     for (i = 0; i < MAX_PELLETS; i++)
         if (p_live[i]) {
-            vaddr((unsigned int)p_y[i] * SCR_W + p_x[i]);
+            vaddr(PROW(p_y[i]) * SCR_W + p_x[i]);
             last_attr = 0xFF;
             put_cell(G_PELLET, A_FOE);
         }
+    for (i = 0; i < MAX_FRAGS; i++)
+        if (f_live[i]) {
+            vaddr(PROW(f_y[i]) * SCR_W + f_x[i]);
+            last_attr = 0xFF;
+            put_cell(frag_glyph(f_kind[i]), A_FRAG);
+        }
     for (i = 0; i < MAX_SHOTS; i++)
         if (s_live[i]) {
-            vaddr((unsigned int)s_y[i] * SCR_W + s_x[i]);
+            vaddr(PROW(s_y[i]) * SCR_W + s_x[i]);
             last_attr = 0xFF;
             put_cell(G_SHOT, A_SHOT);
         }
     draw_craft();
 }
 
-/* ---- HUD (rows 22..24, pinned below the scroll region) ---- */
+/* ---- HUD: ONE ordinary row, the last line of the screen ----
+ * It was three rows, and that was the whole reason the craft looked marooned in
+ * the middle of the display -- three lines of chrome plus a spare playfield row
+ * put five physical rows under it. The key legend those rows carried now lives on
+ * the title screen, where a player actually reads it.
+ *
+ * Layout, all of which must end by column 79:
+ *   0 PWR   4..23 bar   25..28 energy   30 SCORE   36..40   42 ROWS   47..51
+ *   53 WPN  57..62 name  63..66 Lv#   68..71 [OC]   73..77 PAUSE               */
 static void draw_hud_static(void) {
-    unsigned char i;
-
-    vaddr((unsigned int)HUD_ROW * SCR_W);
-    last_attr = 0xFF;
-    for (i = 0; i < SCR_W; i++) put_cell(G_HBAR, A_HUD);
-    put_str(2, HUD_ROW, " KERNEL PANIC  v1.0  corruption ", A_CRAFT);
-
-    put_str(2,  HUD_ROW + 1, "PWR", A_HUD);
-    put_str(34, HUD_ROW + 1, "SCORE:", A_HUD);
-    put_str(48, HUD_ROW + 1, "ROWS:", A_HUD);
-    put_str(61, HUD_ROW + 1, "ACT:", A_HUD);
-    put_str(67, HUD_ROW + 1, "/s", A_HUD);
-
-    put_str(2, HUD_ROW + 2,
-            "arrows steer   SPACE fire   SHIFT overclock   P pause   . step   +/- speed   Q quit",
-            A_TEXT);
+    put_str(0,  HUD_ROW, "PWR", A_HUD);
+    put_str(30, HUD_ROW, "SCORE", A_HUD);
+    put_str(42, HUD_ROW, "ROWS", A_HUD);
+    put_str(53, HUD_ROW, "WPN", A_HUD);
 }
 
 /* Last-drawn HUD values. Every field is diffed before it is repainted: the bar
- * alone is 24 cells, and repainting the whole HUD each tick costs more than the
- * simulation step it is reporting on. The bar in particular only changes once
- * per 50 energy, i.e. roughly every 25 ticks. */
+ * alone is 20 cells, and repainting the whole HUD each tick costs more than the
+ * simulation step it is reporting on. */
 static unsigned int  hud_score = 0xFFFF, hud_rows = 0xFFFF, hud_energy = 0xFFFF;
-static unsigned char hud_filled = 0xFF, hud_meas = 0xFF;
+static unsigned char hud_filled = 0xFF;
 static unsigned char hud_oc = 0xFF, hud_pause = 0xFF;
+static unsigned char hud_wpn = 0xFF, hud_wlev = 0xFF;
+
+/* Padded to a common width so the field is fixed-size and the diff never has to
+ * blank a leftover tail. Indexed by W_PLAIN/W_SPREAD/W_BEAM/W_HOMING. */
+static const char *const wname[4] = { "PLAIN ", "SPREAD", "BEAM  ", "HOMING" };
 
 /* A 20-cell bar plus the raw number: the bar for glanceable state mid-dodge, the
  * number for judging whether a node is worth passing up. */
@@ -700,32 +962,33 @@ static void draw_energy_bar(void) {
 
     if (filled != hud_filled) {
         hud_filled = filled;
-        vaddr((unsigned int)(HUD_ROW + 1) * SCR_W + 6);
+        vaddr((unsigned int)HUD_ROW * SCR_W + 4);
         last_attr = 0xFF;
         for (i = 0; i < 20; i++) put_cell(i < filled ? G_BAR_FULL : G_BAR_EMPTY, a);
     }
     if (energy != hud_energy) {
         hud_energy = energy;
-        put_num(27, HUD_ROW + 1, energy, 4, a);
+        put_num(25, HUD_ROW, energy, 4, a);
     }
 }
 
-static void draw_hud_live(unsigned char measured) {
+static void draw_hud_live(void) {
     draw_energy_bar();
-    if (score != hud_score) { hud_score = score; put_num(40, HUD_ROW + 1, score, 5, A_TEXT); }
-    if (rows  != hud_rows)  { hud_rows  = rows;  put_num(53, HUD_ROW + 1, rows,  5, A_TEXT); }
-    if (measured != hud_meas) {
-        hud_meas = measured;
-        put_num(65, HUD_ROW + 1, measured, 2,
-                (measured + 1u >= 60u / tickrate) ? A_TEXT : A_WARN);
-    }
+    if (score != hud_score) { hud_score = score; put_num(36, HUD_ROW, score, 5, A_TEXT); }
+    if (rows  != hud_rows)  { hud_rows  = rows;  put_num(47, HUD_ROW, rows,  5, A_TEXT); }
     if (overclock != hud_oc) {
         hud_oc = overclock;
-        put_str(70, HUD_ROW + 1, overclock ? "[OC]" : "    ", A_WARN);
+        put_str(68, HUD_ROW, overclock ? "[OC]" : "    ", A_WARN);
     }
     if (paused != hud_pause) {
         hud_pause = paused;
-        put_str(75, HUD_ROW + 1, paused ? "PAUSE" : "     ", A_WARN);
+        put_str(73, HUD_ROW, paused ? "PAUSE" : "     ", A_WARN);
+    }
+    if (weapon != hud_wpn || wlevel != hud_wlev) {
+        hud_wpn = weapon; hud_wlev = wlevel;
+        put_str(57, HUD_ROW, wname[weapon], A_CRAFT);
+        put_str(63, HUD_ROW, " Lv", A_HUD);
+        put_num(66, HUD_ROW, wlevel, 1, A_CRAFT);
     }
 }
 
@@ -797,35 +1060,116 @@ static unsigned char handle_key(int k) {
     return 1;
 }
 
-/* Placeholder end screen; the real outcome tally is step 7. */
-static void game_over(void) {
-    unsigned char r, c;
-    for (r = 8; r <= 16; r++) {
-        vaddr((unsigned int)r * SCR_W + 24);
-        last_attr = 0xFF;
-        for (c = 0; c < 32; c++) put_cell(' ', A_TEXT);
+/* Drain everything already buffered, THEN block for one fresh key.
+ *
+ * This is why the end screen used to vanish before it could be read. It waited
+ * with `while (INCH_NB() < 0) ;` -- but you die with a fistful of keys still in
+ * the buffer, because you were holding them when it happened, so the wait was
+ * already satisfied and the screen was acknowledged by a keystroke from before it
+ * existed. Any screen a player is meant to READ has to discard the past first.
+ *
+ * `esc_state` is reset too: an arrow's three bytes can be split across the drain,
+ * and a half-consumed escape sequence would swallow the next real key. */
+static unsigned char wait_fresh_key(void) {
+    int c;
+    while (INCH_NB() >= 0) ;            /* discard whatever was already typed */
+    esc_state = 0;
+    for (;;) {
+        c = getkey();
+        if (c >= 0) return (unsigned char)c;
     }
+}
+
+/* Title screen. Waits for a deliberate key, and Q here quits without a run --
+ * returns 0 to mean "quit". */
+static unsigned char title_screen(void) {
+    unsigned char k;
+
+    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    vcmd(VCMD_ROWSNORM);                /* plain rows: this screen is all text */
+
+    put_str(30, 4,  "K E R N E L", A_CRAFT);
+    put_str(31, 5,  "P A N I C", A_WARN);
+    put_str(24, 7,  "the conduit is corrupted -- run it", A_TEXT);
+
+    put_str(26, 10, "arrows", A_HUD);   put_str(36, 10, "steer", A_TEXT);
+    put_str(26, 11, "SPACE",  A_HUD);   put_str(36, 11, "fire", A_TEXT);
+    put_str(26, 12, "SHIFT",  A_HUD);   put_str(36, 12, "overclock", A_TEXT);
+    put_str(26, 13, "P",      A_HUD);   put_str(36, 13, "pause", A_TEXT);
+    put_str(26, 14, "+ -",    A_HUD);   put_str(36, 14, "speed", A_TEXT);
+    put_str(26, 15, "Q",      A_HUD);   put_str(36, 15, "quit", A_TEXT);
+
+    put_str(24, 18, "S to start        Q to quit", A_BEVEL);
+
+    for (;;) {
+        k = wait_fresh_key();
+        if (k == 'Q' || k == 'q') return 0;
+        if (k == 'S' || k == 's' || k == ' ' || k == 13) return 1;
+    }
+}
+
+/* End screen. Returns 1 to play again, 0 to quit. The real outcome tally with the
+ * score table is step 7; this is the honest minimum -- it states the outcome, it
+ * stays up until it is dismissed, and it says which key does what. */
+static unsigned char game_over(void) {
+    unsigned char k;
+
+    /* Clear and put every row back to single size FIRST. The playfield band is
+     * double-size rows, so text written into rows 8..16 would land half on covered
+     * rows that are never drawn and half at 40-column double width -- the panel
+     * would come out shredded. Wiping to a plain screen also suits a panic. */
+    vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
+    vcmd(VCMD_ROWSNORM);
+
     put_str(30, 9,  "*** KERNEL PANIC ***", A_WARN);
     put_str(28, 11, "ENERGY DEPLETED", A_TEXT);
     put_str(28, 12, "SCORE", A_HUD);
     put_num(38, 12, score, 5, A_TEXT);
     put_str(28, 13, "ROWS", A_HUD);
     put_num(38, 13, rows, 5, A_TEXT);
-    put_str(26, 15, "press any key", A_BEVEL);
-    while (INCH_NB() < 0) ;             /* wait for acknowledgement */
+    put_str(27, 15, "R retry   Q quit", A_BEVEL);
+
+    for (;;) {
+        k = wait_fresh_key();
+        if (k == 'Q' || k == 'q') return 0;
+        if (k == 'R' || k == 'r' || k == ' ' || k == 13) return 1;
+    }
 }
 
-void main(void) {
+/* One run, from a fresh conduit to death or Q. Returns 1 if the run ended in a
+ * kernel panic (so the caller shows the end screen), 0 if the player quit out. */
+static unsigned char play_run(void) {
     unsigned int  last, now;
-    unsigned char catchup, sec, persec = 0, measured = 0, hud_dirty = 1, r, quit;
+    unsigned char catchup, hud_dirty = 1, r, quit;
     int k;
 
-    rngv = rng_seed();
-    if (rngv == 0) rngv = 0xACE1;       /* xorshift must never start at zero */
+    /* Every run starts from the same state, because R on the end screen replays
+     * without re-launching. Anything with an initialiser at file scope has to be
+     * re-set here as well -- a static initialiser runs once per LOAD, not per run,
+     * so a second run would otherwise inherit the first one's dead pools, spent
+     * energy and deepened gun. */
+    energy = ENERGY_MAX;
+    score = 0; rows = 0; crashes = 0;
+    dead = 0; paused = 0; overclock = 0; flash = 0; cooldown = 0;
+    tickrate = TICK_DEFAULT;
+    spawn_timer = SPAWN_MIN;
+    weapon = W_PLAIN; wlevel = 1;
+    head = 0;
+    gen_cx = 19; gen_hw = HW_MAX; gen_target = HW_MAX; gen_gaunt = 0;
+    isl_left = 0; isl_x = 0; isl_w = 0;
+    for (r = 0; r < MAX_SHOTS; r++)   s_live[r] = 0;
+    for (r = 0; r < MAX_ENEMIES; r++) e_type[r] = E_NONE;
+    for (r = 0; r < MAX_PELLETS; r++) p_live[r] = 0;
+    for (r = 0; r < MAX_FRAGS; r++)   f_live[r] = 0;
+    /* Force every HUD field to repaint on the first frame of the run. */
+    hud_score = 0xFFFF; hud_rows = 0xFFFF; hud_energy = 0xFFFF;
+    hud_filled = 0xFF; hud_oc = 0xFF; hud_pause = 0xFF;
+    hud_wpn = 0xFF; hud_wlev = 0xFF;
 
     vhidecur();
     vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
-    vscrollbot(PLAY_BOT);               /* AFTER the clear -- a clear resets this */
+    set_play_rows();                    /* AFTER the clear -- a clear resets sizes */
+    vscrollbot(BAND_BOT);               /* ...and the scroll region too */
     board_init();                       /* fixed trace routing for the whole run */
 
     /* Fill the playfield so the run opens inside a conduit rather than a void. */
@@ -841,7 +1185,6 @@ void main(void) {
     draw_hud_static();
     draw_craft();
 
-    sec = rtc_sec();
     last = jiffies();
 
     for (;;) {
@@ -853,7 +1196,6 @@ void main(void) {
             while ((unsigned int)(now - last) >= tickrate && catchup < MAX_CATCHUP) {
                 step_world();
                 last += tickrate;
-                persec++;
                 catchup++;
                 if (dead) break;
             }
@@ -863,18 +1205,9 @@ void main(void) {
             hud_dirty = 1;
         }
 
-        if (dead) { draw_hud_live(measured); game_over(); break; }
+        if (dead) { draw_hud_live(); return 1; }
 
-        /* Measure real steps-per-second off the RTC -- the readout that proves
-         * the loop is actually pacing at the target rate. */
-        if (rtc_sec() != sec) {
-            sec = rtc_sec();
-            measured = persec;
-            persec = 0;
-            hud_dirty = 1;
-        }
-
-        if (hud_dirty) { draw_hud_live(measured); hud_dirty = 0; }
+        if (hud_dirty) { draw_hud_live(); hud_dirty = 0; }
 
         /* Poll input every pass, not just on tick boundaries, so steering and
          * firing stay responsive independently of the world's scroll cadence.
@@ -892,5 +1225,23 @@ void main(void) {
         if (paused) last = jiffies();   /* don't bank a backlog while paused */
     }
 
+    return 0;                           /* quit out mid-run */
+}
+
+void main(void) {
+    rngv = rng_seed();
+    if (rngv == 0) rngv = 0xACE1;       /* xorshift must never start at zero */
+
+    vhidecur();
+    while (title_screen()) {             /* Q on the title screen leaves */
+        if (!play_run()) break;          /* quit out mid-run */
+        if (!game_over()) break;         /* Q on the end screen leaves */
+    }
+
+    /* Hand the machine back the way we found it: ordinary row sizes, full-screen
+     * scroll region, cursor visible. A program that left the band flagged double
+     * would hand the shell a 40-column screen. */
+    vcmd(VCMD_ROWSNORM);
+    vscrollbot(SCR_H - 1);
     QUITDOS();
 }
