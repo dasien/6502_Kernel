@@ -11,6 +11,7 @@
 ; ============================================================================
 
 .export _INCH, _INCH_NB, _QUITDOS
+.export _jiffies
 .export _vaddr, _vputc, _vattr, _vcursor, _vfill, _vcmd
 .export _vgetc, _vgetcolor
 .export _acia_init, _acia_get, _acia_put
@@ -44,6 +45,13 @@ ACIA_CONTROL    = $FE2C
 .segment "CODE"
 
 ; char INCH(void) -- blocking key read; returns the key as typed (X=0).
+K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
+
+; unsigned int jiffies(void) -- the 60 Hz tick counter, for the title card's timeout.
+.proc _jiffies
+        jmp     K_GET_JIFFIES
+.endproc
+
 .proc _INCH
 @wait:  jsr     K_GET_KEYSTROKE
         bcc     @wait

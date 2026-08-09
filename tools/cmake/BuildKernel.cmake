@@ -191,8 +191,21 @@ if(CA65_FOUND AND LD65_FOUND)
                     ${VENTURE_DIR}/venture.cfg ${VENTURE_DIR}/venture.h
             VERBATIM
         )
+        # EDIT blob (programs/edit). Same idea as the others: the tests load a raw
+        # $0800 image, while EDIT.PRG for the disk comes from programs/edit/build.sh.
+        set(EDIT_DIR ${CMAKE_SOURCE_DIR}/programs/edit)
+        set(EDIT_BIN ${CMAKE_BINARY_DIR}/kernel/edit.bin)
+        add_custom_target(edit_bin ALL
+            COMMAND cl65 -t none --signed-chars -O -C ${EDIT_DIR}/edit.cfg
+                    ${EDIT_DIR}/edit.c ${EDIT_DIR}/glue.s -o ${EDIT_BIN}
+            COMMAND ${CMAKE_COMMAND} -E echo "EDIT blob built ($0800)"
+            COMMENT "Building EDIT blob"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+            DEPENDS ${EDIT_DIR}/edit.c ${EDIT_DIR}/glue.s ${EDIT_DIR}/edit.cfg
+            VERBATIM
+        )
     else()
-        message(STATUS "cl65 not found - skipping TERM/IRC/VENTURE blobs")
+        message(STATUS "cl65 not found - skipping TERM/IRC/VENTURE/EDIT blobs")
     endif()
 
     # ================================================================

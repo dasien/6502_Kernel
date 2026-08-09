@@ -135,6 +135,40 @@ static void line_feed(void)
     if (cy >= ROWS) { scroll_up(); cy = ROWS - 1; }
 }
 
+/* ---- title card ---------------------------------------------------------
+ * Three seconds on a timer, and deliberately NOT dismissable by a keypress.
+ *
+ * Reading the keyboard to cut it short means consuming the key, and there is no way
+ * to hand it back -- so anyone who types ahead loses their first keystroke to the
+ * splash. That is not hypothetical: it ate the Ctrl-R that starts an XMODEM receive
+ * the first time this was built that way, and a user typing ahead into TERM or the
+ * editor would lose a character with nothing to show for it.
+ *
+ * Unsigned subtraction against the start tick, so the 60 Hz counter wrapping every
+ * eighteen minutes cannot leave us waiting for one. */
+extern unsigned int jiffies(void);
+
+static void splash_puts(unsigned int cell, const char *s)
+{
+    vaddr(cell);
+    while (*s) vputc((unsigned char)*s++);
+}
+
+static void splash(void)
+{
+    unsigned int t0;
+
+    vattr(ATTR_DEFAULT | ATTR_BRIGHT);
+    vfill(' ');
+    vcmd(VCMD_CLEAR);
+    splash_puts(10 * COLS + 32, "M F C   T E R M");
+    vattr(ATTR_DEFAULT);
+    splash_puts(12 * COLS + 27, "ANSI TERMINAL WITH XMODEM");
+
+    t0 = jiffies();
+    while ((unsigned int)(jiffies() - t0) < 180) { }
+}
+
 /* write one printable glyph at the cursor and advance (wraps at column 80) */
 static void put_glyph(unsigned char ch)
 {
@@ -636,6 +670,7 @@ int main(void)
     unsigned char kbuf[8];
     int kblen = 0;
 
+    splash();
     acia_init();
     while (acia_get() >= 0) { }   /* flush any stale RX from a prior session */
     vfill(' '); vcmd(VCMD_CLEAR);

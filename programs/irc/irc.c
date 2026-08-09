@@ -134,6 +134,34 @@ static void put_at(unsigned int cell, const char *s, int pad)
     while (i < pad)        { vputc(' '); i++; }
 }
 
+/* ---- title card ---------------------------------------------------------
+ * Three seconds on a timer, and deliberately NOT dismissable by a keypress.
+ *
+ * Reading the keyboard to cut it short means consuming the key, and there is no way
+ * to hand it back -- so anyone who types ahead loses their first keystroke to the
+ * splash. That is not hypothetical: it ate the Ctrl-R that starts an XMODEM receive
+ * the first time this was built that way, and a user typing ahead into TERM or the
+ * editor would lose a character with nothing to show for it.
+ *
+ * Unsigned subtraction against the start tick, so the 60 Hz counter wrapping every
+ * eighteen minutes cannot leave us waiting for one. */
+extern unsigned int jiffies(void);
+
+static void splash(void)
+{
+    unsigned int t0;
+
+    vattr(0x47);                            /* bright white */
+    vfill(' ');
+    vcmd(VCMD_CLEAR);
+    put_at(10 * COLS + 26, "M F C   I R C   C L I E N T", 0);
+    vattr(0x02);                            /* the system green */
+    put_at(12 * COLS + 30, "INTERNET RELAY CHAT", 0);
+
+    t0 = jiffies();
+    while ((unsigned int)(jiffies() - t0) < 180) { }
+}
+
 static void status_repaint(void);            /* defined below; used by chat_add */
 
 /* ---- chat region --------------------------------------------------------- */
@@ -770,6 +798,7 @@ static int chat_session(void)
 
 int main(void)
 {
+    splash();
     acia_init();
 
     /* Launched as "IRC host:port"? DOS leaves the argument in DOS_ARGBUF ($0382);

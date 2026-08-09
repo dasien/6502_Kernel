@@ -12,6 +12,7 @@
 ; ============================================================================
 
 .export _INCH, _INCH_NB, _QUITDOS
+.export _jiffies, _vfill, _vcmd
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
 .export _vaddr, _vputc, _vgetc, _vhidecur
 .export _vattr, _vgetcolor, _vputcolor
@@ -30,7 +31,10 @@ VREG_ADDR_HI    = $FE2E         ; cell index high
 VREG_CHAR       = $FE2F         ; char data port; full 8-bit glyph; auto-increments
 VREG_COLOR      = $FE30         ; color/attribute data port; auto-increments
 VREG_ATTR       = $FE31         ; attribute latch [R][BR][bg:3][fg:3]
+VREG_CMD        = $FE32         ; command engine (1 = clear screen)
+VREG_CMD_PARAM  = $FE36         ; fill char for the clear
 VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
+K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
 
 .segment "CODE"
 
@@ -38,6 +42,23 @@ VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 .proc _vaddr
         sta     VREG_ADDR_LO
         stx     VREG_ADDR_HI
+        rts
+.endproc
+
+; unsigned int jiffies(void) -- the 60 Hz tick counter, for the title card's timeout.
+.proc _jiffies
+        jmp     K_GET_JIFFIES
+.endproc
+
+; void vfill(unsigned char ch) -- the fill character a chip-side clear will use.
+.proc _vfill
+        sta     VREG_CMD_PARAM
+        rts
+.endproc
+
+; void vcmd(unsigned char cmd) -- run a chip-side block operation.
+.proc _vcmd
+        sta     VREG_CMD
         rts
 .endproc
 

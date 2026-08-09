@@ -131,6 +131,42 @@ static void status(void)
     vattr(ATTR_NORMAL);
 }
 
+/* ---- title card ---------------------------------------------------------
+ * Three seconds on a timer, and deliberately NOT dismissable by a keypress.
+ *
+ * Reading the keyboard to cut it short means consuming the key, and there is no way
+ * to hand it back -- so anyone who types ahead loses their first keystroke to the
+ * splash. That is not hypothetical: it ate the Ctrl-R that starts an XMODEM receive
+ * the first time this was built that way, and a user typing ahead into TERM or the
+ * editor would lose a character with nothing to show for it.
+ *
+ * Unsigned subtraction against the start tick, so the 60 Hz counter wrapping every
+ * eighteen minutes cannot leave us waiting for one. */
+extern unsigned int jiffies(void);
+extern void vfill(unsigned char ch);
+extern void vcmd(unsigned char cmd);
+
+static void splash_puts(unsigned int cell, const char *s)
+{
+    vaddr(cell);
+    while (*s) vputc((unsigned char)*s++);
+}
+
+static void splash(void)
+{
+    unsigned int t0;
+
+    vattr(ATTR_NORMAL | 0x40);              /* bright */
+    vfill(' ');
+    vcmd(1);                                /* chip-side clear */
+    splash_puts(10 * COLS + 30, "M F C   E D I T O R");
+    vattr(ATTR_NORMAL);
+    splash_puts(12 * COLS + 28, "FULL-SCREEN TEXT EDITOR");
+
+    t0 = jiffies();
+    while ((unsigned int)(jiffies() - t0) < 180) { }
+}
+
 /* paint one screen text row r (0..TEXTROWS-1), windowed horizontally at coloff */
 static void paint_row(int r)
 {
@@ -397,6 +433,7 @@ int main(void)
     /* Hide the kernel hardware cursor so only the editor's reverse-video block
        cursor shows; returning to DOS re-shows it on the next PRINT_CHAR. */
     vhidecur();
+    splash();
     /* If DOS launched us with a filename argument (e.g. "EDIT SYSTEM/DIAL.LST"),
        open it. DOS leaves the command tail, NUL-terminated, in DOS_ARGBUF ($0382);
        an empty string means no argument, so we start with a blank document. */

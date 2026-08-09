@@ -55,15 +55,32 @@ protected:
         cpu->pushByte(0xFF);
         cpu->reg.PC = 0x0800;
 
+        /* Jumping straight to $0800 skips the kernel boot, and RESET leaves the I
+         * flag set -- so the interval-timer IRQ step() raises would never be taken
+         * and the 60 Hz jiffy counter would stay at zero. TERM's title card waits on
+         * it, so without this the terminal never reaches its poll loop at all. */
+        cpu->setFlag(Computer::CPU6502::kInterrupt, false);
+
         // Let the cc65 startup run and the terminal reach its poll loop
         // (it prints a local banner, then idles reading the ACIA/keyboard).
         step(2'000'000);
     }
 
+    /* One instruction, plus the interval timer if enough cycles have gone by --
+     * on the machine the GUI pulses it, and a harness driving the CPU directly has to
+     * do it itself or nothing that waits on elapsed time ever finishes. */
+    static constexpr uint64_t kCyclesPerJiffy = 1000000 / 60;
+    uint64_t next_jiffy_ = kCyclesPerJiffy;
+
     void step(long n)
     {
-        for (long i = 0; i < n; ++i)
+        for (long i = 0; i < n; ++i) {
             if (!cpu->executeSingleInstruction()) break;
+            if (cpu->getCycles() >= next_jiffy_) {
+                next_jiffy_ = cpu->getCycles() + kCyclesPerJiffy;
+                c.getPia()->pulseTimerIrq();
+            }
+        }
     }
 
     // Feed an ANSI byte stream as "the BBS", then let the terminal render it.
@@ -74,6 +91,16 @@ protected:
     }
 
     uint8_t charAt(int x, int y) { return c.getVideoChip()->getCharacterAt(x, y); }
+
+    std::string rowText(int y)
+    {
+        std::string t;
+        for (int x = 0; x < 80; ++x) {
+            const uint8_t ch = charAt(x, y);
+            t.push_back((ch >= 32 && ch < 127) ? static_cast<char>(ch) : ' ');
+        }
+        return t;
+    }
     uint8_t colorAt(int x, int y) { return c.getVideoChip()->getColorAt(x, y); }
 };
 
@@ -181,4 +208,46 @@ TEST_F(TermAnsiTest, AnswersAnsiCapabilityQueries)
     // Device Attributes (ESC[c) -> identify as a VT100-class ANSI terminal.
     feed("\x1b[c");
     EXPECT_NE(drainTx().find("\x1b[?1;0c"), std::string::npos);
+}
+
+/* The title card. Three seconds is a long time to leave unverified -- it is the first
+ * thing anyone sees, and it is drawn before the terminal has painted anything else.
+ *
+ * On its own machine, stepped only far enough to be inside the card's three seconds:
+ * the fixture deliberately runs past it to reach the poll loop. */
+TEST(TermSplash, TitleCardShowsAtStartup)
+{
+    Computer::Computer6502 box;
+    box.power_on();
+
+    std::ifstream f("../kernel/term.bin", std::ios::binary);
+    ASSERT_TRUE(f.good()) << "term.bin not found - build the term_bin target";
+    const std::vector<uint8_t> blob((std::istreambuf_iterator<char>(f)),
+                                    std::istreambuf_iterator<char>());
+    for (size_t i = 0; i < blob.size(); ++i)
+        box.getMemory()->write(static_cast<uint16_t>(0x0800 + i), blob[i]);
+
+    auto *bcpu = box.getCpu();
+    bcpu->reg.SP = 0xFF;
+    bcpu->pushByte(0xFF);
+    bcpu->pushByte(0xFF);
+    bcpu->reg.PC = 0x0800;
+    bcpu->setFlag(Computer::CPU6502::kInterrupt, false);
+
+    // No timer pulses at all, so the card cannot time out and we can read it at
+    // leisure. Enough instructions to be well past cc65's startup.
+    for (int i = 0; i < 200000; ++i)
+        if (!bcpu->executeSingleInstruction()) break;
+
+    std::string title, subtitle;
+    for (int x = 0; x < 80; ++x) {
+        const uint8_t a = box.getVideoChip()->getCharacterAt(x, 10);
+        const uint8_t b = box.getVideoChip()->getCharacterAt(x, 12);
+        title.push_back((a >= 32 && a < 127) ? static_cast<char>(a) : ' ');
+        subtitle.push_back((b >= 32 && b < 127) ? static_cast<char>(b) : ' ');
+    }
+    EXPECT_NE(title.find("M F C   T E R M"), std::string::npos)
+        << "no title on row 10, got: [" << title << "]";
+    EXPECT_NE(subtitle.find("ANSI TERMINAL WITH XMODEM"), std::string::npos)
+        << "no subtitle on row 12, got: [" << subtitle << "]";
 }

@@ -388,6 +388,34 @@ target_compile_features(pia_keystate_tests PRIVATE cxx_std_20)
 
 # Headless test of the 6502 serial terminal's ANSI engine (programs/term).
 # Runs the real TERM blob; the C++ side feeds ANSI and asserts on the screen.
+# EDIT's title card, on the real 6502 blob. EDIT had no suite before this.
+add_executable(edit_splash_tests
+    test_edit_splash.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(edit_splash_tests gtest_main gtest)
+
+target_include_directories(edit_splash_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(edit_splash_tests PRIVATE cxx_std_20)
+
 add_executable(term_ansi_tests
     test_term_ansi.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
@@ -590,6 +618,9 @@ add_test(NAME modem
 # Add the serial-terminal ANSI engine test to CTest
 add_test(NAME term_ansi
     COMMAND term_ansi_tests)
+
+add_test(NAME edit_splash
+    COMMAND edit_splash_tests)
 
 # Add the terminal XMODEM-receive test to CTest
 add_test(NAME term_xmodem

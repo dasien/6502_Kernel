@@ -95,6 +95,13 @@ protected:
         cpu->pushByte(0xFF);
         cpu->pushByte(0xFF);
         cpu->reg.PC = 0x0800;
+
+        /* Jumping straight to $0800 skips the kernel boot, and RESET leaves the I
+         * flag set -- so the interval-timer IRQ step() pulses would never be taken
+         * and the 60 Hz jiffy counter would stay at zero. The kernel CLIs before
+         * handing off to a program; do the same here, or anything that waits on
+         * elapsed time waits for ever. */
+        cpu->setFlag(Computer::CPU6502::kInterrupt, false);
     }
 
     void TearDown() override
@@ -111,7 +118,31 @@ protected:
                 static_cast<std::streamsize>(img.size()));
     }
 
-    void step(long n) { for (long i = 0; i < n; ++i) if (!cpu->executeSingleInstruction()) break; }
+    /* Step instructions, pulsing the 60 Hz interval timer as real time passes.
+     *
+     * On the machine the GUI pulses it; a harness that drives the CPU directly has to
+     * do it itself or the jiffy counter never moves. Anything that waits on elapsed
+     * time then waits forever -- which is exactly what TERM's title card did here the
+     * moment it was added. Driven off the cycle counter, so it is a true 60 Hz rather
+     * than an instruction-count guess. */
+    static constexpr uint64_t kCyclesPerJiffy = 1000000 / 60;
+
+    // One instruction, plus the interval timer if enough cycles have gone by. Every
+    // loop that runs the CPU has to go through here, or the jiffy counter stalls
+    // wherever that loop happens to be.
+    bool cycle()
+    {
+        if (!cpu->executeSingleInstruction()) return false;
+        if (cpu->getCycles() >= next_jiffy_) {
+            next_jiffy_ = cpu->getCycles() + kCyclesPerJiffy;
+            computer.getPia()->pulseTimerIrq();
+        }
+        return true;
+    }
+
+    void step(long n) { for (long i = 0; i < n; ++i) if (!cycle()) break; }
+
+    uint64_t next_jiffy_ = kCyclesPerJiffy;
 
     // Read a file back through the real 6502 DOS FS (FS_OPEN read + FS_GETB).
     bool fsRead(const std::string &name, std::vector<uint8_t> &out)
@@ -181,7 +212,7 @@ TEST_F(TermXmodemTest, ReceivesFileToFat16)
     // Play the XMODEM sender as the terminal drives the receive.
     int state = 0; // 0=await 'C', 1=sent f1, 2=sent f2, 3=sent EOT, 4=done
     for (int i = 0; i < 40'000'000 && state < 4; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) {
             const uint8_t t = acia->hostRecv();
             if (state == 0 && t == 'C') { for (uint8_t b : f1) acia->hostSend(b); state = 1; }
@@ -222,7 +253,7 @@ TEST_F(TermXmodemTest, DialListMenuDialsChosenEntry)
     // Run, draining anything the terminal transmits into a string.
     std::string tx;
     for (int i = 0; i < 12'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (tx.find('\r') != std::string::npos) break; // dial line sent
     }

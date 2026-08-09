@@ -56,6 +56,30 @@ protected:
         cpu->pushByte(0xFF);
         cpu->pushByte(0xFF);
         cpu->reg.PC = 0x0800;
+
+        /* Jumping straight to $0800 skips the kernel boot, and RESET leaves the I
+         * flag set -- so the interval-timer IRQ cycle() raises would never be taken
+         * and the 60 Hz jiffy counter would stay at zero. The kernel CLIs before
+         * handing off to a program; do the same, or anything that waits on elapsed
+         * time waits for ever. IRC's title card does. */
+        cpu->setFlag(Computer::CPU6502::kInterrupt, false);
+    }
+
+    /* One instruction, plus the interval timer if enough cycles have gone by. Every
+     * loop that runs the CPU goes through here, or the jiffy counter stalls wherever
+     * that loop happens to be. Driven off the cycle counter, so it is a true 60 Hz
+     * rather than an instruction-count guess. */
+    static constexpr uint64_t kCyclesPerJiffy = 1000000 / 60;
+    uint64_t next_jiffy_ = kCyclesPerJiffy;
+
+    bool cycle()
+    {
+        if (!cpu->executeSingleInstruction()) return false;
+        if (cpu->getCycles() >= next_jiffy_) {
+            next_jiffy_ = cpu->getCycles() + kCyclesPerJiffy;
+            c.getPia()->pulseTimerIrq();
+        }
+        return true;
     }
 
     std::string image_path_;
@@ -109,7 +133,7 @@ TEST_F(IrcTest, RegistersDisplaysAndPongs)
     std::string tx;
     bool connected = false, fed = false;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
 
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
@@ -126,7 +150,7 @@ TEST_F(IrcTest, RegistersDisplaysAndPongs)
         if (fed && tx.find("PONG :xyz") != std::string::npos) break; // full token drained
     }
     // Repaint is coalesced (fires when RX goes idle); step so it lands before we scrape.
-    for (int i = 0; i < 1'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    for (int i = 0; i < 1'000'000; ++i) if (!cycle()) break;
 
     // Registration the client sent on connect.
     EXPECT_NE(tx.find("ATDT test.irc:6667"), std::string::npos) << tx;
@@ -151,7 +175,7 @@ TEST_F(IrcTest, RendersEventsAndHandlesNickInUse)
     std::string tx;
     bool connected = false, fed = false;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -172,7 +196,7 @@ TEST_F(IrcTest, RendersEventsAndHandlesNickInUse)
     }
     // The 433 handler sends NICK (what we broke on) and only *then* paints its
     // notice; step a little more so that repaint lands before we scrape.
-    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    for (int i = 0; i < 2'000'000; ++i) if (!cycle()) break;
 
     const std::string s = screen();
     EXPECT_NE(s.find("* alice joined #t"), std::string::npos);        // JOIN event
@@ -205,7 +229,7 @@ TEST_F(IrcTest, ChannelCommandsTransmitProperIrc)
     std::string tx;
     bool connected = false, sent = false;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -236,7 +260,7 @@ TEST_F(IrcTest, ServerCommandDisconnects)
     std::string tx;
     bool connected = false, sent = false;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -262,7 +286,7 @@ TEST_F(IrcTest, DisconnectAliasHangsUp)
     std::string tx;
     bool connected = false, sent = false;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -291,7 +315,7 @@ TEST_F(IrcTest, ListCommandSendsAndRenders)
     bool connected = false, listed = false;
     long flush = 0;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -323,7 +347,7 @@ TEST_F(IrcTest, ListBurstRowsStayIntact)
     bool connected = false, fed = false;
     long flush = 0;
     for (int i = 0; i < 80'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -363,7 +387,7 @@ TEST_F(IrcTest, NewestLineAtBottomRow)
     bool connected = false, fed = false;
     long flush = 0;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -403,7 +427,7 @@ TEST_F(IrcTest, ScrollbackPageUpShowsOlderLines)
     bool connected = false, fed = false;
     long flush = 0;
     for (int i = 0; i < 80'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -426,13 +450,13 @@ TEST_F(IrcTest, ScrollbackPageUpShowsOlderLines)
 
     // Page up: ESC[5~ walks the view back to the oldest retained lines.
     type("\x1b[5~");
-    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    for (int i = 0; i < 2'000'000; ++i) if (!cycle()) break;
     EXPECT_NE(screen().find("* line01"), std::string::npos) << "PgUp should reveal line01";
     EXPECT_NE(statusRow().find("review"), std::string::npos) << statusRow();
 
     // End: ESC[F snaps back to the live tail; line40 is on the bottom row again.
     type("\x1b[F");
-    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    for (int i = 0; i < 2'000'000; ++i) if (!cycle()) break;
     EXPECT_EQ(rowText(22).rfind("* line40", 0), 0u) << rowText(22);
     EXPECT_EQ(statusRow().find("review"), std::string::npos) << statusRow();
 }
@@ -454,7 +478,7 @@ TEST_F(IrcTest, ReviewHoldsWhileNewLinesArrive)
     bool connected = false, fed = false;
     long flush = 0;
     for (int i = 0; i < 80'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -469,7 +493,7 @@ TEST_F(IrcTest, ReviewHoldsWhileNewLinesArrive)
 
     // Enter review at the very top.
     type("\x1b[5~");
-    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    for (int i = 0; i < 2'000'000; ++i) if (!cycle()) break;
     auto *vic = c.getVideoChip();
     auto rowText = [&](int y) { std::string r; for (int x = 0; x < 80; ++x) r += (char)vic->getCharacterAt(x, y); return r; };
     ASSERT_NE(screen().find("* line01"), std::string::npos);
@@ -478,7 +502,7 @@ TEST_F(IrcTest, ReviewHoldsWhileNewLinesArrive)
     // A fresh line arrives while reviewing: it must not appear on screen or move
     // the view; it only queues below (the [review +N] indicator still shows).
     for (char ch : std::string("NOTICE AUTH :freshline\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
-    for (int i = 0; i < 2'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    for (int i = 0; i < 2'000'000; ++i) if (!cycle()) break;
 
     EXPECT_EQ(rowText(0), top_before) << "review view moved";
     EXPECT_EQ(screen().find("freshline"), std::string::npos) << "new line leaked onto the frozen view";
@@ -497,7 +521,7 @@ TEST_F(IrcTest, FoldsUtf8AndWrapsLongLines)
     bool connected = false, fed = false;
     long flush = 0;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -544,7 +568,7 @@ TEST_F(IrcTest, ServerMenuPicksFromList)
     std::string tx;
     bool connected = false;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT beta.irc:7000") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -579,7 +603,7 @@ TEST_F(IrcTest, ServerMenuReappearsAfterDisconnect)
     bool connected = false, disc = false;
     long flush = 0;
     for (int i = 0; i < 80'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT alpha.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -613,7 +637,7 @@ TEST_F(IrcTest, NoCarrierInsideAMessageIsNotADisconnect)
     std::string tx;
     bool connected = false, fed = false;
     for (int i = 0; i < 60'000'000; ++i) {
-        if (!cpu->executeSingleInstruction()) break;
+        if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
@@ -629,7 +653,7 @@ TEST_F(IrcTest, NoCarrierInsideAMessageIsNotADisconnect)
         }
         if (fed && tx.find("JOIN #t") != std::string::npos && i > 40'000'000) break;
     }
-    for (int i = 0; i < 3'000'000; ++i) if (!cpu->executeSingleInstruction()) break;
+    for (int i = 0; i < 3'000'000; ++i) if (!cycle()) break;
 
     const std::string s = screen();
     EXPECT_NE(s.find("alice"), std::string::npos)
