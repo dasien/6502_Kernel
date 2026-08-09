@@ -323,6 +323,23 @@ target_include_directories(vic_charplane_tests PRIVATE
 
 target_compile_features(vic_charplane_tests PRIVATE cxx_std_20)
 
+# VIC soft-font unit test: the $FE62-$FE64 port, font sets, and the safety defaults
+# that stop a program leaving the shell with an unreadable font. Device-only, no Qt.
+add_executable(vic_softfont_tests
+    test_vic_softfont.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+)
+
+target_link_libraries(vic_softfont_tests gtest_main gtest)
+
+target_include_directories(vic_softfont_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(vic_softfont_tests PRIVATE cxx_std_20)
+
 # SID sound-chip unit test: register map + oscillator/ADSR synthesis. Self-
 # contained (Sid has no other device deps), like the VIC char-plane test.
 add_executable(sid_tests
@@ -637,6 +654,10 @@ add_test(NAME venture
 # Add the VIC character-plane (8-bit CP437) unit test to CTest
 add_test(NAME vic_charplane
     COMMAND vic_charplane_tests)
+
+# Add the VIC soft-font unit test to CTest
+add_test(NAME vic_softfont
+    COMMAND vic_softfont_tests)
 
 # Add the SID sound-chip unit test to CTest
 add_test(NAME sid

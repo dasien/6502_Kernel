@@ -43,8 +43,9 @@ namespace Computer
             return acia_->read(address);
         }
 
-        // Check if this is a VIC video-register read ($FE2D-$FE37). The screen
-        // itself is not in the 64K map -- it lives behind this register port.
+        // Check if this is a VIC video-register read ($FE2D-$FE37, plus the
+        // soft-font port at $FE62-$FE64). Neither the screen nor the font is in
+        // the 64K map -- both live behind these register ports.
         if (video_chip_ && VIC::isVideoRegAddress(address))
         {
             return video_chip_->read(address);
@@ -116,7 +117,8 @@ namespace Computer
             return;
         }
 
-        // Check if this is a VIC video-register write ($FE2D-$FE37). The screen
+        // Check if this is a VIC video-register write ($FE2D-$FE37, plus the
+        // soft-font port at $FE62-$FE64). The screen
         // itself is not in the 64K map -- it lives behind this register port.
         if (video_chip_ && VIC::isVideoRegAddress(address))
         {

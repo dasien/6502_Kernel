@@ -80,7 +80,7 @@ memory/zero-page/I-O addresses, `Part 2 (Memory and zero-page map)` is authorita
         ┌─────────────────────────────────────────────────┴────────────────┐
         │                          Memory (64K)                            │
         │  RAM  •  ROM overlay ($F000-$FFFF)  •  bank window ($B000-$EFFF) │
-        │  •  I/O page routed to peripherals ($FE00-$FE60)                 │
+        │  •  I/O page routed to peripherals ($FE00-$FE64)                 │
         └───┬──────┬───────┬───────┬───────┬───────┬───────────────────────┘
             ▼      ▼       ▼       ▼       ▼       ▼
         ┌──────┐┌─────┐┌──────┐┌─────┐┌─────┐┌───────────┐
@@ -103,7 +103,7 @@ the `Computer6502` class wires them together.
   `RMB`/`SMB`/`BBR`/`BBS`, `WAI`, `STP`, and correct decimal-mode flags. Validated
   against the Klaus2m5/amb5l functional, decimal, and 65C02-extended suites.
 - **Memory** — 64K store plus the address decoder: it overlays the kernel ROM at
-  `$F000-$FFFF`, routes the I/O page (`$FE00-$FE60`) to the peripherals, and drives
+  `$F000-$FFFF`, routes the I/O page (`$FE00-$FE64`) to the peripherals, and drives
   the bank-switched module window at `$B000-$EFFF` (BASIC / FORTH / MONITOR,
   selected via `MODULE_BANK` at `$FE23`).
 - **VIC** — text video. The 80×25 screen and its per-cell color/attribute plane
@@ -139,7 +139,8 @@ $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
 $B000-$EFFF  Bank-switched module window (BASIC 1, FORTH 3, MONITOR 4; 2 free)
 $F000-$FFFF  Kernel BIOS; jump table at $FF00, vectors at $FFFA
-$FE00-$FE60  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC (carved out of the ROM window)
+$FE00-$FE64  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font port
+             (carved out of the ROM window; $FE65-$FEFF free)
 ```
 
 See `Part 2 (Memory and zero-page map)` for the full zero-page allocation, the I/O
@@ -799,6 +800,7 @@ New I/O page layout (re-based 1:1 from the old `$DCxx` block):
 | `$FE22` | `FIO_DATA` — BASIC byte-stream LOAD/SAVE |
 | `$FE23` | **`MODULE_BANK`** — bank-select register |
 | `$FE61` | **`POWER`** — soft power switch; write $5A then $A5 to switch off |
+| `$FE62–$FE64` | **`VREG_FONT_LO/HI/DATA`** — VIC soft-font port; index + auto-incrementing data. Font storage is inside the chip, not in the 64K map (see `docs/video_design.md`) |
 
 Touched by the relocation:
 - `kernel.asm`: re-base the `PIA_*`, `FILE_*`, timer-ack equates.

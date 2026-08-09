@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <array>
+#include <vector>
 
 namespace Computer
 {
@@ -44,11 +45,22 @@ namespace Computer
      * however badly it exits, and a program that wants double rows simply sets them up
      * after it clears (which it was doing anyway).
      *
-     * Transitional compatibility: the legacy memory-mapped window at $0400-$07E7
-     * (40 columns) still writes through into the top-left 40 columns of the new
-     * 80-column character plane, so an unmodified kernel keeps rendering while the
-     * port is brought online. This window is removed once the kernel drives the
-     * port directly.
+     * SOFT FONT. The glyph shapes themselves are RAM, not a fixed ROM. Font storage
+     * lives inside the chip like the cell planes do -- it is NOT in the 6502's address
+     * space -- and is reached through its own index/data port at $FE62-$FE64. This is
+     * the TMS9918 / VDC 8563 model; the C64 and Atari instead let the video chip read
+     * main RAM, which costs address space and steals CPU cycles.
+     *
+     * It holds kFontSets complete 256-glyph fonts, and kCmdFontSet picks which one the
+     * renderer reads. That is the important part: a program does not rewrite glyphs
+     * per frame, it uploads the variants once and then switches sets with a single
+     * write -- the equivalent of pointing the C64's $D018 at a different charset, and
+     * what makes pixel-smooth character scrolling affordable. "Set" and not "bank",
+     * because MODULE_BANK ($FE23) already means something entirely different.
+     *
+     * reset() seeds every set from the CP437 ROM and selects the ROM font, so a program
+     * can switch to RAM, redefine a handful of glyphs and leave the other 248 alone --
+     * and no program can strand the shell with an unreadable font.
      *
      * @see Memory, BlockDevice, Computer6502
      */
@@ -71,12 +83,30 @@ namespace Computer
         static constexpr uint16_t kRegCursorLo = 0xFE34; ///< cursor cell low (W)
         static constexpr uint16_t kRegCursorHi = 0xFE35; ///< cursor cell high; bit7 set = hidden (W)
         static constexpr uint16_t kRegCmdParam = 0xFE36; ///< command parameter / fill char (W)
+        // Soft-font port. Separate from the block above because the VIC's own range
+        // ends at $FE37 and $FE38 is the SID; these sit in the free space above the
+        // RTC ($FE61 is the PowerSwitch). isVideoRegAddress() accepts both ranges.
+        static constexpr uint16_t kRegFontLo = 0xFE62;   ///< font byte index low (W)
+        static constexpr uint16_t kRegFontHi = 0xFE63;   ///< font byte index high (W)
+        static constexpr uint16_t kRegFontData = 0xFE64; ///< font data, auto-inc (R/W)
+
         static constexpr uint16_t kRegScrollBot = 0xFE37; ///< scroll-region bottom row (W);
                                                           ///< scroll affects rows 0..this. Reset
                                                           ///< to the last row on clear.
 
         static constexpr uint16_t kRegFirst = kRegAddrLo;
         static constexpr uint16_t kRegLast = kRegScrollBot;
+        static constexpr uint16_t kRegFontFirst = kRegFontLo;
+        static constexpr uint16_t kRegFontLast = kRegFontData;
+
+        /// Glyphs per font, bytes per glyph, and how many complete fonts are held.
+        /// 16 sets is enough for 2 px phase steps of a 32 px double-height cell; the
+        /// whole thing is 64 KB of host memory and zero guest address space.
+        static constexpr uint16_t kGlyphCount = 256;
+        static constexpr uint16_t kGlyphBytes = 16;
+        static constexpr uint16_t kFontSize = kGlyphCount * kGlyphBytes; // 4096
+        static constexpr uint8_t kFontSets = 16;
+        static constexpr uint32_t kFontRamSize = static_cast<uint32_t>(kFontSize) * kFontSets;
 
         // Command codes written to VREG_CMD.
         static constexpr uint8_t kCmdClear = 0x01;      ///< fill whole screen
@@ -85,6 +115,12 @@ namespace Computer
         static constexpr uint8_t kCmdFillRow = 0x04;    ///< fill the row of the current cell
         static constexpr uint8_t kCmdRowSize = 0x05;    ///< param: bit7 = double, bits4-0 = row
         static constexpr uint8_t kCmdRowsNormal = 0x06; ///< every row back to 8x16
+        static constexpr uint8_t kCmdFontRom = 0x08;    ///< render from the CP437 ROM
+        static constexpr uint8_t kCmdFontRam = 0x09;    ///< render from font RAM
+        static constexpr uint8_t kCmdFontReset = 0x0A;  ///< reload CP437 into every set
+        static constexpr uint8_t kCmdFontSet = 0x0B;    ///< param: live set index. The
+                                                        ///< $D018 equivalent -- this is
+                                                        ///< the one written per frame.
         static constexpr uint8_t kCmdScrollTop = 0x07;  ///< param: scroll-region top row.
                                                         ///< A command rather than a register
                                                         ///< only because the port block ends
@@ -122,6 +158,10 @@ namespace Computer
         /// last row can never be one -- there is nothing under it to cover.
         [[nodiscard]] bool isRowDouble(uint16_t row) const;
 
+        /// The 16 scanline bytes for a glyph, from the ROM or the live font set.
+        /// The renderer calls this per cell instead of indexing kCp437Font directly.
+        [[nodiscard]] const uint8_t *glyphRows(uint8_t glyph) const;
+
         [[nodiscard]] const std::array<uint8_t, kScreenSize> &getScreenBuffer() const;
         [[nodiscard]] const std::array<uint8_t, kScreenSize> &getColorBuffer() const;
         [[nodiscard]] uint8_t getCharacterAt(uint16_t x, uint16_t y) const;
@@ -151,6 +191,12 @@ namespace Computer
         uint8_t scroll_top_ = 0;                 ///< scroll-region top row (default: full screen)
         uint8_t scroll_bot_ = kScreenHeight - 1; ///< scroll-region bottom row (default: full screen)
         uint32_t row_double_ = 0;                ///< one bit per row; set = 16x32
+
+        // Soft font. Not in the 6502's address space -- see the class comment.
+        std::vector<uint8_t> font_ram_;          ///< kFontSets x kFontSize
+        mutable uint32_t font_index_ = 0;        ///< byte index for the data port
+        uint8_t font_set_ = 0;                   ///< which set the renderer reads
+        bool font_ram_active_ = false;           ///< false = render from the ROM
         uint16_t cursor_index_ = 0;
         bool cursor_hidden_ = false;
 
@@ -164,6 +210,7 @@ namespace Computer
         void cmdScrollDown();
         void cmdFillRow();
         void cmdRowSize();
+        void seedFontRam();
         void shiftRowFlags(bool up);
         void advanceIndex() const;
 

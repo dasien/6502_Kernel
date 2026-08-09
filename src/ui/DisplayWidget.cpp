@@ -315,8 +315,9 @@ void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
     }
 }
 
-// Blit one glyph from the CP437 character ROM into a cell: each scanline byte's bits
-// select fg (1) or bg (0). The glyph is built at its native 8x16 and drawn into a
+// Blit one glyph into a cell: each scanline byte's bits select fg (1) or bg (0).
+// The shape comes from the VIC rather than straight out of kCp437Font, because the
+// chip's font is RAM that a program can redefine and switch between sets. The glyph is built at its native 8x16 and drawn into a
 // (char_width_ x scale) by (char_height_ x scale) rect -- at 1x1 that's 1:1; zooming
 // the window, or a double-size row, has QPainter nearest-neighbor scale it
 // (SmoothPixmapTransform is off), so the pixels stay crisp and square.
@@ -326,7 +327,7 @@ void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
 {
     const QRgb fg_rgb = fg.rgb();
     const QRgb bg_rgb = bg.rgb();
-    const uint8_t* rows = &Computer::kCp437Font[glyph * 16];
+    const uint8_t* rows = video_chip_->glyphRows(glyph);
 
     QImage img(8, 16, QImage::Format_RGB32);
     for (int r = 0; r < 16; ++r)
