@@ -28,6 +28,7 @@ Docs are split by audience: **manuals** (how to *use* a program) are `UPPERCASE.
 | [BOARD.md](BOARD.md) | The virtual chipset drawn as a single-board computer: bus, chips, I/O decode, interrupt lines, and what backs each chip on the host |
 | [opcode_table_65c02.md](opcode_table_65c02.md) | 65C02 opcode table |
 | [sound_design.md](sound_design.md) | SID sound-chip design |
+| [video_design.md](video_design.md) | Why the VIC scrolls in whole cells, and the two proposed fixes: a redefinable character set and a fine vertical scroll |
 | [cc65_to_prg.md](cc65_to_prg.md) | Building C programs into `.PRG` files |
 
 ## Design / internal (dev)
