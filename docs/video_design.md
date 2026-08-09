@@ -56,17 +56,51 @@ The soft font instead shifts **glyph patterns**: rephase the terrain glyphs, lea
 object glyphs alone, and nothing bobs. But a *solid* glyph is shift-invariant, so it
 cannot smooth a solid wall at all.
 
-| | smooths texture | smooths silhouette | player bobs |
-|---|---|---|---|
-| soft font, texture only | yes | **no** | no |
-| soft font + transition tiles | yes | yes | no |
-| fine scroll | yes | yes | **yes** — needs sprites |
+**Prototyped, and it settled the question — see "What the prototype showed" below.**
+Glyph rephasing moves only the things whose glyphs are rephased, and a cell-plane
+object cannot usefully be one. Counting KERNEL PANIC's moving parts:
 
-**The real destination is fine scroll + a few sprites.** The soft font is a cheaper
-partial and a capability worth having regardless (tile art, animation, pseudo-bitmap),
-not a substitute for sprites.
+| object | moves with | fine scroll | glyph rephase |
+|---|---|---|---|
+| conduit terrain | the world | smooth | smooth |
+| data nodes | the world | smooth | smooth |
+| enemies | the world | smooth | **judders** |
+| enemy pellets | the world +1 | smooth | **judders** |
+| weapon fragments | the world | smooth | **judders** |
+| your shots | screen, upward | **judders** | **judders** |
+| your craft | screen, fixed | **judders** | **judders** |
+| | | **5/7 smooth** | **2/7 smooth** |
+
+Fine scroll wins because everything that rides the world is inside the scroll region
+and moves with it for free. Its two failures are precisely the two *screen-referenced*
+objects — the craft and your shots — which is exactly what sprites are for.
+
+**So the destination is fine scroll plus a small sprite set**, and the sprites only
+have to cover the player's own craft and shots, not the whole cast. The soft font is
+a real capability (tile art, animation, pseudo-bitmap) but it is **not** the route to
+smooth scrolling in a game with objects in the playfield.
 
 ---
+
+## What the prototype showed
+
+Before reworking any terrain, the pair-glyph scheme was prototyped on the host: a
+cell's appearance is derived from its own terrain type and the type of the cell
+*above* it, and at phase k the glyph shows k pixel rows of the one above followed by
+its own. Two results:
+
+**The mechanism works.** Dumped as ASCII art, the wall/lane boundary descends exactly
+one pixel row per phase step, and it stays correct across the hardware scroll because
+both cells move down together, so the (above, this) pair a glyph encodes is preserved.
+Same-type pairs (wall over wall, lane over lane) are shift-invariant and need only one
+glyph, so the budget is modest: KERNEL PANIC's terrain needs about 84 codes, because
+trace-versus-blank is decided by COLUMN and so never changes as you go down one.
+
+**But it only moves the terrain.** Everything else in the playfield is a cell-plane
+object drawn with its own glyph, and rephasing an object glyph does not move the
+object — to sit at a sub-row position it would have to straddle two cells, and a
+glyph cannot composite itself over the terrain behind it. That is not a limitation of
+the scheme; it is what sprites exist to solve. The table above is the consequence.
 
 ## Part A — Redefinable character set
 
@@ -281,10 +315,13 @@ redoing later.
 
 ## Sequencing
 
-1. **Part A host side** + the soft-font test. Self-contained, no game changes.
-2. **KERNEL PANIC terrain rephasing** — the tile-art rework, then 2 px scrolling.
-3. **Part B** — cheap once A is in, and useful for the next scroller; on its own it
-   would send the game backwards.
+1. **Part A host side** + the soft-font test. Self-contained, no game changes. DONE.
+2. **Part B — fine scroll.** Promoted ahead of the terrain rework by the prototype: it
+   smooths 5 of KERNEL PANIC's 7 moving parts against rephasing's 2.
+3. **A small sprite set** — enough for the craft and its shots, which are the two
+   things fine scroll cannot place correctly. This is what finishes the job.
+4. **KERNEL PANIC terrain rephasing** — demoted. Worth doing for tile art and
+   animation, not as a scrolling mechanism.
 
 Not in scope, recorded so the ordering makes sense: sprites are what make Part B fully
 useful and what a Scramble-style side-scroller really wants. (A side-scroller is
