@@ -85,6 +85,13 @@ namespace Computer
         static constexpr uint8_t kCmdFillRow = 0x04;    ///< fill the row of the current cell
         static constexpr uint8_t kCmdRowSize = 0x05;    ///< param: bit7 = double, bits4-0 = row
         static constexpr uint8_t kCmdRowsNormal = 0x06; ///< every row back to 8x16
+        static constexpr uint8_t kCmdScrollTop = 0x07;  ///< param: scroll-region top row.
+                                                        ///< A command rather than a register
+                                                        ///< only because the port block ends
+                                                        ///< at $FE37. Reset to 0 on clear.
+                                                        ///< Like kCmdRowSize it consumes the
+                                                        ///< shared parameter, so reset the fill
+                                                        ///< char before the next clear/scroll.
 
         /// Set in VREG_CMD_PARAM alongside kCmdRowSize to make that row double.
         static constexpr uint8_t kRowSizeDouble = 0x80;
@@ -141,6 +148,7 @@ namespace Computer
         mutable uint16_t cell_index_ = 0; ///< shared char/color data-port index
         uint8_t attr_latch_ = kDefaultAttr;
         uint8_t cmd_param_ = 0x20; ///< fill char for commands (default space)
+        uint8_t scroll_top_ = 0;                 ///< scroll-region top row (default: full screen)
         uint8_t scroll_bot_ = kScreenHeight - 1; ///< scroll-region bottom row (default: full screen)
         uint32_t row_double_ = 0;                ///< one bit per row; set = 16x32
         uint16_t cursor_index_ = 0;

@@ -35,6 +35,8 @@ void vattr(unsigned char a);     /* set the color/attribute latch */
 void vcursor(unsigned int cell); /* position the displayed hardware cursor */
 void vfill(unsigned char ch);    /* set the fill char for the next chip command */
 void vcmd(unsigned char cmd);    /* run a chip-side block op */
+void vscrolltop(unsigned char row); /* scroll-region top row (DECSTBM) */
+void vscrollbot(unsigned char row); /* scroll-region bottom row */
 unsigned char vgetc(void);       /* read glyph at the current cell (auto-inc) */
 unsigned char vgetcolor(void);   /* read color/attr at the current cell (auto-inc) */
 void acia_init(void);            /* init the 6551 */
@@ -57,6 +59,7 @@ char dclose(void);               /* 0 = ok, 1 = flush/finalize failed */
 
 #define VCMD_CLEAR    0x01
 #define VCMD_SCROLLUP 0x02
+#define VCMD_SCROLLDN 0x03
 #define VCMD_FILLROW  0x04
 
 /* local hot-keys (stolen from the remote; chosen to rarely matter to a BBS) */
@@ -115,24 +118,55 @@ static int feed_match(const char *pat, int *idx, unsigned char c)
 static void move_cursor(void) { vcursor((unsigned int)(cy * COLS + cx)); }
 
 /* Capture row 0 (about to be lost) into the scrollback ring, then scroll. */
+/* Scrolling region (DECSTBM), 0-based inclusive. Defaults to the whole screen.
+   The chip scrolls rows stop..sbot and leaves everything outside them alone, so
+   an app can pin a header above and a status line below. */
+int stop = 0, sbot = ROWS - 1;
+
+/* Push the region to the chip. A chip-side clear resets the region to the full
+   screen, so every clear has to be followed by one of these. */
+static void apply_region(void)
+{
+    vscrolltop((unsigned char)stop);
+    vscrollbot((unsigned char)sbot);
+}
+
 static void scroll_up(void)
 {
     int i, n;
-    vaddr(0);
-    for (i = 0; i < COLS; i++) cap_c[i] = vgetc();
-    vaddr(0);
-    for (i = 0; i < COLS; i++) cap_a[i] = vgetcolor();
-    n = COLS;                                /* trim trailing default-attr blanks */
-    while (n > 0 && cap_c[n - 1] == ' ' && cap_a[n - 1] == ATTR_DEFAULT) n--;
-    sb_push((char *)cap_c, cap_a, (unsigned char)n);
-    histn++;
+    /* Only the true top line of the screen belongs in scrollback. Text pushed out
+       of a smaller region is some app's split window, not the top of the session's
+       output, and capturing it would interleave nonsense into review mode. */
+    if (stop == 0 && sbot == ROWS - 1) {
+        vaddr(0);
+        for (i = 0; i < COLS; i++) cap_c[i] = vgetc();
+        vaddr(0);
+        for (i = 0; i < COLS; i++) cap_a[i] = vgetcolor();
+        n = COLS;                            /* trim trailing default-attr blanks */
+        while (n > 0 && cap_c[n - 1] == ' ' && cap_a[n - 1] == ATTR_DEFAULT) n--;
+        sb_push((char *)cap_c, cap_a, (unsigned char)n);
+        histn++;
+    }
     vfill(' '); vcmd(VCMD_SCROLLUP);
+}
+
+/* Reverse index: move up a line, scrolling the region down at its top edge. The
+   counterpart to a line feed at the bottom, and what a full-screen app uses to
+   pan backwards -- a scrolling region is not much use without it. */
+static void reverse_index(void)
+{
+    if (cy == stop) { vfill(' '); vcmd(VCMD_SCROLLDN); }
+    else if (cy > 0) cy--;
+    move_cursor();
 }
 
 static void line_feed(void)
 {
+    /* At the bottom of the region the region scrolls and the cursor stays put;
+       below it (a pinned status line) the cursor just runs into the last row. */
+    if (cy == sbot) { scroll_up(); return; }
     cy++;
-    if (cy >= ROWS) { scroll_up(); cy = ROWS - 1; }
+    if (cy >= ROWS) cy = ROWS - 1;
 }
 
 /* ---- title card ---------------------------------------------------------
@@ -193,7 +227,7 @@ static void erase_display(int n)
 {
     unsigned int cell = (unsigned int)(cy * COLS + cx);
     if (n == 1) fill_cells(0, cell);                 /* start..cursor */
-    else if (n >= 2) { vfill(' '); vcmd(VCMD_CLEAR); } /* whole screen */
+    else if (n >= 2) { vfill(' '); vcmd(VCMD_CLEAR); apply_region(); } /* whole screen */
     else fill_cells(cell, ROWS * COLS - 1);          /* cursor..end */
 }
 
@@ -265,6 +299,19 @@ static void csi_dispatch(unsigned char final)
             acia_put(0x1B); acia_put('['); acia_put('0'); acia_put('n');
         }
         break;
+    case 'r': {                           /* DECSTBM: set the scrolling region */
+        int t, b;
+        if (priv) break;                  /* ESC[?..r is DECRSTM, a different thing */
+        t = param[0] ? param[0] : 1;
+        b = (nparam >= 1 && param[1]) ? param[1] : ROWS;
+        if (t < 1) t = 1;
+        if (b > ROWS) b = ROWS;
+        if (t >= b) { t = 1; b = ROWS; }  /* a nonsense region resets to full screen */
+        stop = t - 1; sbot = b - 1;
+        apply_region();
+        cy = stop; cx = 0;                /* DECSTBM homes the cursor */
+        move_cursor();
+        break; }
     case 'c':                             /* Device Attributes: identify as ANSI/VT100 */
         if (priv == 0) {                  /* primary DA -> "ESC[?1;0c" (VT100, no options) */
             acia_put(0x1B); acia_put('['); acia_put('?'); acia_put('1');
@@ -291,6 +338,8 @@ static void ansi_byte(unsigned char c)
         if (c == '[') { pstate = GOTCSI; nparam = 0; param[0] = 0; priv = 0; }
         else if (c == '7') { scx = cx; scy = cy; pstate = GROUND; }
         else if (c == '8') { cx = scx; cy = scy; move_cursor(); pstate = GROUND; }
+        else if (c == 'M') { reverse_index(); pstate = GROUND; }       /* RI */
+        else if (c == 'D') { line_feed(); move_cursor(); pstate = GROUND; }  /* IND */
         else pstate = GROUND;             /* other ESC x: ignore */
         break;
     case GOTCSI:
@@ -674,6 +723,7 @@ int main(void)
     acia_init();
     while (acia_get() >= 0) { }   /* flush any stale RX from a prior session */
     vfill(' '); vcmd(VCMD_CLEAR);
+    stop = 0; sbot = ROWS - 1; apply_region();
     cx = 0; cy = 0; attr = ATTR_DEFAULT; vattr(attr); move_cursor();
     sb_init(0, ROWS, COLS);       /* history ring covers the whole screen */
     sb_reset();

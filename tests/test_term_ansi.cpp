@@ -142,6 +142,73 @@ TEST_F(TermAnsiTest, EraseLineClearsRow)
     EXPECT_EQ(charAt(4, 0), ' ');
 }
 
+/* DECSTBM: a full-screen app pins a header and a status line and scrolls only the
+ * middle. Without it the terminal scrolled all 25 rows on every line feed, so any
+ * app that set a region had its header walk off the top -- which is why vi and mc
+ * over telnet came out wrong. The region is the chip's, so this also exercises the
+ * scroll-top the VIC grew for it. */
+TEST_F(TermAnsiTest, ScrollingRegionPinsHeaderAndFooter)
+{
+    feed("\x1b[2J\x1b[H");
+    feed("HEAD\r\n");                              // row 0: the header
+    feed("\x1b[25;1HFOOT");                        // row 24: the status line
+    feed("\x1b[2;24r");                            // region = rows 1..23 (1-based 2..24)
+
+    /* DECSTBM homes the cursor to the top of the region. Fill the region exactly
+       (23 lines, no trailing newline, so nothing has scrolled yet), then one line
+       feed to scroll it once and one more line to land in the row that opened. */
+    for (int i = 1; i <= 23; ++i) feed("L" + std::to_string(i) + (i < 23 ? "\r\n" : ""));
+    feed("\r\n");
+    feed("L24");
+
+    EXPECT_EQ(rowText(0).substr(0, 4), "HEAD") << "the header must not scroll away";
+    EXPECT_EQ(rowText(24).substr(0, 4), "FOOT") << "the status line must not scroll";
+    EXPECT_EQ(rowText(1).substr(0, 3), "L2 ") << "the region scrolled by one line";
+    EXPECT_EQ(rowText(22).substr(0, 4), "L23 ");
+    EXPECT_EQ(rowText(23).substr(0, 4), "L24 ");
+}
+
+// ESC M (reverse index) at the top of the region scrolls it the other way. An app
+// panning backwards is unusable without it.
+TEST_F(TermAnsiTest, ReverseIndexScrollsTheRegionDown)
+{
+    feed("\x1b[2J\x1b[H""HEAD");
+    feed("\x1b[2;24r");                            // region = rows 1..23
+    feed("AAA\r\nBBB");                            // rows 1 and 2
+    feed("\x1b[2;1H");                             // back to the top of the region
+    feed("\x1bM");                                 // reverse index -> region scrolls down
+
+    EXPECT_EQ(rowText(0).substr(0, 4), "HEAD") << "the header is above the region";
+    EXPECT_EQ(rowText(1).substr(0, 3), "   ") << "a blank line came in at the top";
+    EXPECT_EQ(rowText(2).substr(0, 3), "AAA");
+    EXPECT_EQ(rowText(3).substr(0, 3), "BBB");
+}
+
+// ESC[r with no parameters puts the region back to the whole screen.
+TEST_F(TermAnsiTest, ResettingTheRegionRestoresFullScreenScrolling)
+{
+    feed("\x1b[2J\x1b[H""HEAD");
+    feed("\x1b[2;24r");                            // shrink...
+    feed("\x1b[r");                                // ...and reset
+    feed("\x1b[25;1H");                            // last row; a line feed now scrolls all
+    feed("\r\n");
+
+    EXPECT_EQ(rowText(0).substr(0, 4), "    ") << "row 0 scrolled off, region is full again";
+}
+
+/* A chip-side clear resets the region, so the terminal has to reprogram it or a
+ * mid-session ESC[2J silently un-pins the app's header. */
+TEST_F(TermAnsiTest, ClearScreenKeepsTheScrollingRegion)
+{
+    feed("\x1b[2;24r");                            // region = rows 1..23
+    feed("\x1b[2J");                               // clear -- resets the chip's region
+    feed("\x1b[1;1H""HEAD");                       // header outside the region
+    feed("\x1b[24;1H");                            // bottom row OF THE REGION
+    for (int i = 0; i < 3; ++i) feed("\r\n");      // scroll the region a few times
+
+    EXPECT_EQ(rowText(0).substr(0, 4), "HEAD") << "the region was not reprogrammed";
+}
+
 // A keypress is forwarded out the serial line (keyboard -> ACIA TX).
 TEST_F(TermAnsiTest, KeyboardForwardsToSerial)
 {

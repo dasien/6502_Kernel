@@ -64,6 +64,55 @@ TEST(VicCharPlane, ScrollRegionPinsRowsBelow)
     EXPECT_EQ(v.getCharacterAt(0, 2), 'P'); // row 2 pinned (below the region)
 }
 
+/* A region has a top as well as a bottom, so rows above it are pinned too.
+ * ANSI's DECSTBM asks for exactly that pair, and a terminal that could only pin
+ * footers would scroll an app's header away. The top rides the command engine
+ * rather than a register of its own only because the port block ends at $FE37. */
+TEST(VicCharPlane, ScrollRegionPinsRowsAboveAndBelow)
+{
+    VIC v;
+    putAt(v, 0 * VIC::kScreenWidth, 'H');   // row 0: header, above the region
+    putAt(v, 1 * VIC::kScreenWidth, 'A');   // row 1  |
+    putAt(v, 2 * VIC::kScreenWidth, 'B');   // row 2  | the region
+    putAt(v, 3 * VIC::kScreenWidth, 'C');   // row 3  |
+    putAt(v, 4 * VIC::kScreenWidth, 'F');   // row 4: footer, below the region
+
+    v.write(VIC::kRegCmdParam, 1);          // region = rows 1..3
+    v.write(VIC::kRegCmd, VIC::kCmdScrollTop);
+    v.write(VIC::kRegScrollBot, 3);
+    v.write(VIC::kRegCmdParam, ' ');        // param is shared: put the fill char back
+    v.write(VIC::kRegCmd, VIC::kCmdScrollUp);
+
+    EXPECT_EQ(v.getCharacterAt(0, 0), 'H') << "the row above the region must not move";
+    EXPECT_EQ(v.getCharacterAt(0, 1), 'B');
+    EXPECT_EQ(v.getCharacterAt(0, 2), 'C');
+    EXPECT_EQ(v.getCharacterAt(0, 3), ' ') << "the region's bottom row is blanked";
+    EXPECT_EQ(v.getCharacterAt(0, 4), 'F') << "the row below the region must not move";
+}
+
+// Scrolling the region the other way (what a reverse index does) pins the same rows.
+TEST(VicCharPlane, ScrollDownStaysInsideTheRegion)
+{
+    VIC v;
+    putAt(v, 0 * VIC::kScreenWidth, 'H');
+    putAt(v, 1 * VIC::kScreenWidth, 'A');
+    putAt(v, 2 * VIC::kScreenWidth, 'B');
+    putAt(v, 3 * VIC::kScreenWidth, 'C');
+    putAt(v, 4 * VIC::kScreenWidth, 'F');
+
+    v.write(VIC::kRegCmdParam, 1);
+    v.write(VIC::kRegCmd, VIC::kCmdScrollTop);
+    v.write(VIC::kRegScrollBot, 3);
+    v.write(VIC::kRegCmdParam, ' ');        // param is shared: put the fill char back
+    v.write(VIC::kRegCmd, VIC::kCmdScrollDown);
+
+    EXPECT_EQ(v.getCharacterAt(0, 0), 'H');
+    EXPECT_EQ(v.getCharacterAt(0, 1), ' ') << "the region's top row is blanked";
+    EXPECT_EQ(v.getCharacterAt(0, 2), 'A');
+    EXPECT_EQ(v.getCharacterAt(0, 3), 'B');
+    EXPECT_EQ(v.getCharacterAt(0, 4), 'F') << "'C' must not spill past the region";
+}
+
 // A write to VREG_ADDR_LO deliberately does not wrap (the stale high byte would
 // corrupt the address before the high byte arrives), so cell_index_ can hold up to
 // $07FF while the planes are only kScreenSize (2000) entries. Indexing the arrays
@@ -104,7 +153,9 @@ TEST(VicCharPlane, OutOfRangeCellIndexDoesNotCorruptState)
 TEST(VicCharPlane, ClearResetsScrollRegion)
 {
     VIC v;
-    v.write(VIC::kRegScrollBot, 1);         // shrink the region
+    v.write(VIC::kRegCmdParam, 2);          // shrink the region from both ends
+    v.write(VIC::kRegCmd, VIC::kCmdScrollTop);
+    v.write(VIC::kRegScrollBot, 4);
     v.write(VIC::kRegCmd, VIC::kCmdClear);   // clear should reset it to full-screen
 
     putAt(v, 0, 'X');

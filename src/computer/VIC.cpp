@@ -100,6 +100,9 @@ namespace Computer
             case kCmdFillRow: cmdFillRow(); break;
             case kCmdRowSize: cmdRowSize(); break;
             case kCmdRowsNormal: row_double_ = 0; dirty_flag_ = true; break;
+            case kCmdScrollTop:
+                scroll_top_ = (cmd_param_ < kScreenHeight) ? cmd_param_ : (kScreenHeight - 1);
+                break;
             default: break;
             }
             break;
@@ -122,7 +125,8 @@ namespace Computer
     {
         screen_buffer_.fill(cmd_param_);
         color_buffer_.fill(attr_latch_);
-        scroll_bot_ = kScreenHeight - 1;   // a clear also resets the scroll region
+        scroll_top_ = 0;                   // a clear also resets the scroll region
+        scroll_bot_ = kScreenHeight - 1;
         row_double_ = 0;                   // ...and puts every row back to 8x16, so a
         dirty_flag_ = true;                // program cannot strand the shell at 16x32
     }
@@ -148,12 +152,15 @@ namespace Computer
         return (row_double_ >> row) & 1u;
     }
 
-    // Scroll/blank only the region rows 0..scroll_bot_ (default: whole screen), so
-    // an app can pin footer rows (e.g. an input/status line) below the region.
+    // Scroll/blank only rows scroll_top_..scroll_bot_ (default: the whole screen),
+    // so an app can pin header rows above the region and footer rows (e.g. an
+    // input/status line) below it. That pair is what ANSI's DECSTBM asks for.
     void VIC::cmdScrollUp()
     {
+        if (scroll_top_ > scroll_bot_) return;      // empty region: nothing to shift
+        const uint16_t regionStart = static_cast<uint16_t>(scroll_top_) * kScreenWidth;
         const uint16_t regionEnd = (static_cast<uint16_t>(scroll_bot_) + 1) * kScreenWidth;
-        for (uint16_t i = 0; i + kScreenWidth < regionEnd; ++i)
+        for (uint16_t i = regionStart; i + kScreenWidth < regionEnd; ++i)
         {
             screen_buffer_[i] = screen_buffer_[i + kScreenWidth];
             color_buffer_[i] = color_buffer_[i + kScreenWidth];
@@ -169,13 +176,15 @@ namespace Computer
 
     void VIC::cmdScrollDown()
     {
+        if (scroll_top_ > scroll_bot_) return;
+        const uint16_t regionStart = static_cast<uint16_t>(scroll_top_) * kScreenWidth;
         const uint16_t regionEnd = (static_cast<uint16_t>(scroll_bot_) + 1) * kScreenWidth;
-        for (uint16_t i = regionEnd; i-- > kScreenWidth;)
+        for (uint16_t i = regionEnd; i-- > regionStart + kScreenWidth;)
         {
             screen_buffer_[i] = screen_buffer_[i - kScreenWidth];
             color_buffer_[i] = color_buffer_[i - kScreenWidth];
         }
-        for (uint16_t i = 0; i < kScreenWidth; ++i)
+        for (uint16_t i = regionStart; i < regionStart + kScreenWidth; ++i)
         {
             screen_buffer_[i] = cmd_param_;
             color_buffer_[i] = attr_latch_;
@@ -188,11 +197,12 @@ namespace Computer
     // leaving the flag behind would resize whatever line happened to land there.
     void VIC::shiftRowFlags(const bool up)
     {
-        const uint32_t region = (scroll_bot_ + 1 >= 32)
-                                    ? 0xFFFFFFFFu
-                                    : ((1u << (scroll_bot_ + 1)) - 1u);
+        if (scroll_top_ > scroll_bot_) return;
+        const uint32_t below = (scroll_bot_ + 1 >= 32) ? 0xFFFFFFFFu
+                                                       : ((1u << (scroll_bot_ + 1)) - 1u);
+        const uint32_t region = below & ~((1u << scroll_top_) - 1u);
         const uint32_t inside = row_double_ & region;
-        const uint32_t moved = up ? (inside >> 1) : ((inside << 1) & region);
+        const uint32_t moved = up ? ((inside >> 1) & region) : ((inside << 1) & region);
         row_double_ = (row_double_ & ~region) | moved;
     }
 

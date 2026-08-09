@@ -13,6 +13,7 @@
 .export _INCH, _INCH_NB, _QUITDOS
 .export _jiffies
 .export _vaddr, _vputc, _vattr, _vcursor, _vfill, _vcmd
+.export _vscrolltop, _vscrollbot
 .export _vgetc, _vgetcolor
 .export _acia_init, _acia_get, _acia_put
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
@@ -35,6 +36,7 @@ VREG_CMD        = $FE32         ; 1=clear 2=scroll-up 3=scroll-down 4=fill-row
 VREG_CURSOR_LO  = $FE34
 VREG_CURSOR_HI  = $FE35         ; bit7 = cursor hidden
 VREG_CMD_PARAM  = $FE36         ; fill char for commands
+VREG_SCROLL_BOT = $FE37         ; scroll-region bottom row
 
 ; 6551 ACIA registers.
 ACIA_DATA       = $FE29
@@ -111,6 +113,22 @@ K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
 ; void vcmd(unsigned char cmd) -- run a chip-side block op (clear/scroll/fill).
 .proc _vcmd
         sta     VREG_CMD
+        rts
+.endproc
+
+; void vscrolltop(unsigned char row) -- scroll-region top row. The port block ends
+; at $FE37 with no room for a register of its own, so it rides the command engine.
+.proc _vscrolltop
+        sta     VREG_CMD_PARAM
+        lda     #$07
+        sta     VREG_CMD
+        rts
+.endproc
+
+; void vscrollbot(unsigned char row) -- scroll-region bottom row. Scroll commands
+; then affect only rows top..row; anything outside stays put.
+.proc _vscrollbot
+        sta     VREG_SCROLL_BOT
         rts
 .endproc
 

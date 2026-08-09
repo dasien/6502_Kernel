@@ -303,12 +303,23 @@ block ops so the CPU never copies the screen.
 | `$FE2F` | `VREG_CHAR` | Char data port (bit 7 → reverse); auto-increments |
 | `$FE30` | `VREG_COLOR` | Color/attribute data port; auto-increments |
 | `$FE31` | `VREG_ATTR` | Current attribute latch applied to `VREG_CHAR` writes |
-| `$FE32` | `VREG_CMD` | `1`=clear, `2`=scroll up, `3`=scroll down, `4`=fill row |
+| `$FE32` | `VREG_CMD` | `1`=clear, `2`=scroll up, `3`=scroll down, `4`=fill row, `5`=set row size (param: bit 7 double, bits 4–0 row), `6`=all rows normal, `7`=set scroll-region top row (param) |
 | `$FE33` | `VREG_STATUS` | `0` = ready |
 | `$FE34` | `VREG_CURSOR_LO` | Hardware cursor cell low |
 | `$FE35` | `VREG_CURSOR_HI` | Cursor cell high; bit 7 = cursor hidden |
 | `$FE36` | `VREG_CMD_PARAM` | Command parameter / fill character |
-| `$FE37` | `VREG_SCROLL_BOT` | Scroll-region bottom row; scroll/fill affect rows 0..this (default 24). IRC pins its input/status rows below the region |
+| `$FE37` | `VREG_SCROLL_BOT` | Scroll-region bottom row (default 24) |
+
+The scroll region is rows *top*..*bottom* inclusive; scroll commands shift only
+those rows and leave everything outside them untouched, so an app can pin a
+header above and a status line below. A clear (`VREG_CMD` `1`) resets it to the
+whole screen, so anything holding a region has to reprogram it after a clear.
+The bottom has a register of its own; the top rides the command engine (`7`)
+only because the port block ends at `$FE37` with the SID immediately after.
+Commands `5` and `7` consume `VREG_CMD_PARAM`, which is also the fill
+character — set the fill char again before the next clear, scroll or fill-row.
+IRC pins its input/status rows below the region, EDIT pins its status line, and
+TERM maps the pair onto ANSI's DECSTBM (`ESC [ top ; bot r`).
 
 Attribute byte: `[R][BR][bg:3][fg:3]` — bit 7 reverse, bit 6 bright, bits 5–3
 background (0–7), bits 2–0 foreground (0–7). Power-on/clear default is `$02`
