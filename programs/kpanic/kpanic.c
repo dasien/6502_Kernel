@@ -26,10 +26,9 @@
  * Power-ups (step 5) are the weapon chain: fragments dropped by kills swap the
  * gun's character and deepen it, and a crash knocks a level back off.
  *
- * The playfield is a band of DOUBLE-SIZE rows -- 40 columns by 11 logical rows,
- * each covering two physical rows. Simulation coordinates are LOGICAL rows
- * throughout; PROW() converts, and BAND_BOT is the one place a physical row is
- * wanted. Getting that distinction wrong indexes the terrain ring out of bounds.
+ * The playfield is 80 columns by 24 ordinary rows. It was briefly a 40x12 band of
+ * double-size rows to make the glyphs bigger; that halved the runway and doubled the
+ * scroll quantum to 32 px, which lurched. See the geometry note in kpanic.h.
  *
  * Deliberately NOT here yet: bosses + sector progression (step 6), juice and the
  * real scoring/outcome tally (step 7), balance and the manual (step 8).
@@ -109,7 +108,7 @@ static unsigned char slot(unsigned char r) {
 }
 
 /* Generator state: the conduit is a meandering center with a drifting width. */
-static unsigned char gen_cx = 19;       /* channel center column */
+static unsigned char gen_cx = 39;       /* channel center column */
 static unsigned char gen_hw = HW_MAX;   /* channel half-width */
 static unsigned char gen_target = HW_MAX;
 static unsigned char gen_gaunt;         /* rows left in a deliberate squeeze */
@@ -336,7 +335,7 @@ static void draw_row(unsigned char r) {
 }
 
 /* ---- world state ---- */
-static unsigned char craft_x = 19;
+static unsigned char craft_x = 39;
 static unsigned char tickrate = TICK_DEFAULT;
 static unsigned char paused;
 static unsigned char flash;             /* frames left showing the impact pop */
@@ -779,31 +778,11 @@ static void shots_advance(void) {
 
 /* Advance the world one row: chip-side scroll, then paint the freshly opened
  * top row. Terrain rides the scroll; moving objects are handled by the caller. */
-/* Flag the band's rows double. A clear resets every row to normal, so this has to
- * follow every clear -- and the top row has to be re-flagged after every scroll,
- * see scroll_world(). */
-static void set_play_rows(void) {
-    unsigned char r;
-    for (r = 0; r < PLAY_H; r++) {
-        vfill((unsigned char)(VROW_DOUBLE | (PROW(r) & 0x1F)));
-        vcmd(VCMD_ROWSIZE);
-    }
-}
-
 static void scroll_world(void) {
     vattr(A_BOARD);
     last_attr = A_BOARD;
     vfill(' ');
-    /* TWICE. One logical row of this band is two physical rows, and the chip
-     * carries a row's size flag along with its contents -- so a single scroll
-     * would leave the whole band flagged on the odd rows, rendering it half a tile
-     * out of step. Two puts every flag back on an even row. Both writes land in
-     * the same host time-slice, so the intermediate state is never painted. */
     vcmd(VCMD_SCROLLDOWN);
-    vcmd(VCMD_SCROLLDOWN);
-    /* Row 0's flag shifted away and nothing shifted in behind it. */
-    vfill((unsigned char)(VROW_DOUBLE | 0));
-    vcmd(VCMD_ROWSIZE);
 
     head = head ? (unsigned char)(head - 1) : (unsigned char)(PLAY_H - 1);
     rows++;
@@ -1086,7 +1065,6 @@ static unsigned char title_screen(void) {
     unsigned char k;
 
     vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
-    vcmd(VCMD_ROWSNORM);                /* plain rows: this screen is all text */
 
     put_str(30, 4,  "K E R N E L", A_CRAFT);
     put_str(31, 5,  "P A N I C", A_WARN);
@@ -1114,12 +1092,9 @@ static unsigned char title_screen(void) {
 static unsigned char game_over(void) {
     unsigned char k;
 
-    /* Clear and put every row back to single size FIRST. The playfield band is
-     * double-size rows, so text written into rows 8..16 would land half on covered
-     * rows that are never drawn and half at 40-column double width -- the panel
-     * would come out shredded. Wiping to a plain screen also suits a panic. */
+    /* Wipe to a plain screen -- which suits a panic, and means the panel is never
+     * competing with terrain behind it. */
     vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
-    vcmd(VCMD_ROWSNORM);
 
     put_str(30, 9,  "*** KERNEL PANIC ***", A_WARN);
     put_str(28, 11, "ENERGY DEPLETED", A_TEXT);
@@ -1168,8 +1143,7 @@ static unsigned char play_run(void) {
 
     vhidecur();
     vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
-    set_play_rows();                    /* AFTER the clear -- a clear resets sizes */
-    vscrollbot(BAND_BOT);               /* ...and the scroll region too */
+    vscrollbot(BAND_BOT);               /* AFTER the clear -- a clear resets this */
     board_init();                       /* fixed trace routing for the whole run */
 
     /* Fill the playfield so the run opens inside a conduit rather than a void. */
@@ -1238,10 +1212,7 @@ void main(void) {
         if (!game_over()) break;         /* Q on the end screen leaves */
     }
 
-    /* Hand the machine back the way we found it: ordinary row sizes, full-screen
-     * scroll region, cursor visible. A program that left the band flagged double
-     * would hand the shell a 40-column screen. */
-    vcmd(VCMD_ROWSNORM);
+    /* Hand the machine back the way we found it: full-screen scroll region. */
     vscrollbot(SCR_H - 1);
     QUITDOS();
 }

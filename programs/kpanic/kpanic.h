@@ -36,33 +36,30 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define VCMD_FILLROW    0x04
 
 /* ---- screen geometry ----
- * The playfield is a band of DOUBLE-SIZE rows, exactly as VENTURE's is. A double
- * row renders its glyphs at 16x32 instead of 8x16, so it holds 40 characters and
- * covers two rows of screen. That is the only way to make the shapes themselves
- * bigger against a fixed 8x16 font ROM -- reverse video and multi-cell bodies
- * change a thing's ink and its footprint, never its shape.
+ * Ordinary single-size rows: 80 columns, playfield rows 0..PLAY_LAST, HUD pinned on
+ * the last line below the scroll region.
  *
- * It costs vertical runway: 22 single rows become 11 logical ones. The trade is
- * worth it because the hard axis in this game is the one you STEER on -- lining a
- * one-cell craft up with a one-cell target across 80 columns is the thing that
- * made it unhittable, and 40 columns halves that precision requirement while
- * doubling the size of everything. The lost runway is bought back in TIME instead,
- * by slowing the tick (see TICK_DEFAULT): what matters is how long a threat is on
- * screen, not how many rows it crossed.
+ * This was briefly a band of DOUBLE-SIZE rows (40x12, glyphs at 16x32) to make the
+ * shapes bigger. It did that, and it made the game worse, because the scroll quantum
+ * is one cell: at double size every step is a 32 px jump, which reads as a strobe
+ * rather than motion. Single rows halve the quantum to 16 px AND double the runway
+ * from 12 rows to 24 -- about the same pixel distance per second, but twice the
+ * granularity and twice as many decision points.
  *
- * Logical playfield row r lives on PHYSICAL row r*2; the row below it is covered
- * and never addressed. The HUD stays on ordinary single rows 22..24, so its text
- * is still crisp -- which is the whole point of per-row double size over a
- * whole-screen mode. */
-#define SCR_W       80          /* the character plane is still 80 cells wide */
+ * Bigger glyphs turned out not to be what made the game hittable anyway. Two-cell
+ * enemy bodies and span-based collision did that, and both survive at single size
+ * (a two-cell body is 16x16 px -- square, and twice the area of one cell).
+ *
+ * PROW() stays as an identity macro rather than being deleted: it marks every place
+ * that converts a playfield row to a screen row, which is exactly what has to change
+ * if the band ever moves again. */
+#define SCR_W       80
 #define SCR_H       25
-#define PLAY_COLS   40          /* ...but a double row holds only 40 */
-#define PLAY_H      12          /* logical playfield rows 0..11 */
-#define BAND_BOT    23          /* PHYSICAL bottom of the band = scroll-region bottom.
-                                 * The ONLY place a physical row is wanted; every
-                                 * simulation coordinate is a logical row. */
-#define PLAY_LAST   (PLAY_H - 1)    /* last LOGICAL playfield row */
-#define PROW(r)     ((unsigned int)(r) * 2)     /* logical row -> physical row */
+#define PLAY_COLS   80          /* the playfield is the full width again */
+#define PLAY_H      24          /* playfield rows 0..23 */
+#define BAND_BOT    23          /* bottom of the band = scroll-region bottom */
+#define PLAY_LAST   (PLAY_H - 1)
+#define PROW(r)     ((unsigned int)(r))         /* playfield row -> screen row */
 
 /* ONE ordinary row of HUD, on the last line of the screen. It was three, which put
  * the craft five physical rows clear of the bottom and made it look like it was
@@ -71,34 +68,25 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
  * -- so this bought back runway as well as seating the craft where it belongs. */
 #define HUD_ROW     24
 
-/* Row size is a command, not a register: the parameter carries the row and bit 7
- * the size. A clear puts every row back to normal, so the band has to be laid out
- * again after one -- which is why set_play_rows() sits next to every clear. */
-#define VCMD_ROWSIZE  5
-#define VCMD_ROWSNORM 6
-#define VROW_DOUBLE   0x80
-
 /* The conduit is generated per row as a center column +/- a half-width, so it
  * meanders and squeezes naturally (two independent wall walks are much harder to
  * keep sane). Walls must stay on screen, and the channel has to stay wide enough
- * to dodge in. All rescaled for the 40-column band: a wall may not sit at column 0
- * or 39, because the bevel one cell outside it has to stay on screen. */
-#define WALL_MIN_X  1           /* leftmost a wall may sit */
-#define WALL_MAX_X  38          /* rightmost a wall may sit */
-#define HW_MIN      3           /* half-width floor -> 5 open columns */
-#define HW_MAX      10          /* half-width ceiling -> 19 open columns */
-#define ISL_MIN_HW  7           /* islands only appear in a channel this wide */
+ * to dodge in. A wall may not sit at column 0
+ * or 79, because the bevel one cell outside it has to stay on screen. */
+#define WALL_MIN_X  2           /* leftmost a wall may sit */
+#define WALL_MAX_X  77          /* rightmost a wall may sit */
+#define HW_MIN      4           /* half-width floor -> 7 open columns */
+#define HW_MAX      21          /* half-width ceiling -> 41 open columns */
+#define ISL_MIN_HW  12          /* islands only appear in a channel this wide */
 
 /* ---- timing ----
  * TICK_* are jiffies-per-simulation-step at 60 Hz. Difficulty scales by shrinking
  * this divisor, never by fractional speeds (cc65 has no float).
  *
- * 10 -> 6 steps/sec. Slower than the 15/sec this started at, for two reasons
- * that compound: a double-size row is twice as tall, so one row of scroll is twice
- * the apparent motion, and the band is half as deep, so there is less runway to
- * read a threat in. Both say the same thing -- the world has to move fewer rows
- * per second than it did at 80x22. */
-#define TICK_DEFAULT 10
+ * 7 -> ~8.5 steps/sec. At a 16 px quantum that is ~137 px/sec, roughly 30% slower
+ * than the double-row band managed (32 px x 6/sec = 192 px/sec) -- and it covers the
+ * ground in twice as many steps, which is the whole point of the revert. */
+#define TICK_DEFAULT 7
 #define TICK_MIN     2          /* 30 steps/sec */
 #define TICK_MAX     30         /* 2 steps/sec */
 #define MAX_CATCHUP  4          /* sim steps per pass before we resync to now */
@@ -136,15 +124,15 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define W_MAXLEVEL       3
 
 /* Deep enough that a spread level 3 volley always fits, even while OVERCLOCKED:
- * five shots take ~9 ticks to cross the playfield and OC fires every 2, so about
- * five volleys are in the air at once. That is why this is 26 and not 10.
+ * five shots take ~12 ticks to cross the 24-row playfield and OC fires every 2, so
+ * about six volleys are in the air at once. That is why this is 32 and not 10.
  *
  * It matters more than a pool size usually would, because fire() spawns the
  * centre shot first and works outwards -- so a full pool drops the WINGS, and
  * level 3 spread quietly renders as level 1 at exactly the moment you overclocked
  * to get it. The fire rate is the balance dial here (FIRE_COOLDOWN_OC); shrinking
  * the pool does not limit the weapon, it deforms it. */
-#define MAX_SHOTS        26
+#define MAX_SHOTS        32
 #define SHOT_SPEED       2      /* screen rows per tick, substepped so it can't tunnel */
 #define FIRE_COOLDOWN    3      /* ticks between shots */
 #define FIRE_COOLDOWN_OC 1      /* ... while overclocked */
