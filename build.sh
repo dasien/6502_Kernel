@@ -96,8 +96,12 @@ cmake --preset "$PRESET"
 cmake --build --preset "$PRESET"
 
 if [ "$BUILD_DISK" -eq 1 ]; then
-    echo -e "${YELLOW}Assembling disk.img...${NC}"
-    cmake --build "$BUILD_DIR" --target disk
+    # `everything`, not `disk`: the .PRG files are committed artifacts and nothing in
+    # the ordinary build rebuilds them, so `disk` would stage yesterday's binaries
+    # while the test blobs -- built from the same sources -- picked up the change.
+    # Everything looked fine and the machine ran the old program.
+    echo -e "${YELLOW}Building programs and assembling disk.img...${NC}"
+    cmake --build "$BUILD_DIR" --target everything
 fi
 
 # ----------------------------------------------------------------
@@ -107,5 +111,6 @@ echo "Executable: $BUILD_DIR/bin/6502-kernel"
 echo "ROMs:       $BUILD_DIR/kernel/*.rom"
 echo "Disk image: $BUILD_DIR/disk.img"
 echo ""
-echo "Run it:     cd $BUILD_DIR/bin && ./6502-kernel"
+echo "Run it:     cmake --build $BUILD_DIR --target run"
+echo "            (or: cd $BUILD_DIR/bin && ./6502-kernel)"
 echo "Test it:    ctest --test-dir $BUILD_DIR"

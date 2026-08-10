@@ -183,15 +183,28 @@ brew install cmake ninja cc65 qt
 ### Build Instructions
 
 ```bash
-# Option 1: the build script -- configures, builds, and assembles disk.img
+# Option 1: the build script -- configures, builds every program, assembles disk.img
 ./build.sh
 ./build.sh --fresh              # after installing a new dependency
 
 # Option 2: CMake presets directly (see CMakePresets.json)
 cmake --preset dev              # dev | debug | release | no-gui
 cmake --build --preset dev
-cmake --build --preset dev-disk # assemble disk.img
+cmake --build --preset dev-everything   # programs + ROMs + disk.img
 ```
+
+Once configured, two targets cover the whole pipeline:
+
+```bash
+ninja -C cmake-build-debug everything   # every program, every ROM, the app, the disk
+ninja -C cmake-build-debug run          # ...then boot the machine
+```
+
+`everything` is the one to reach for after editing a program. A plain `ninja`
+rebuilds the ROMs, the app and the test blobs, but **not** the `.PRG` files — those
+are committed artifacts with no CMake rule behind them. So a plain build leaves the
+disk carrying the old binary while the test blobs, compiled from the same sources,
+pick the change up: the tests agree with you and the machine does not.
 
 Configuration ends with a summary of what was actually enabled — check it before
 filing a bug about missing sound or a missing window:
@@ -229,7 +242,7 @@ Type `CATALOG` to list the disk, or `HELP` for the command set.
 ### Verifying the build
 
 ```bash
-ctest --test-dir cmake-build-debug        # 20 tests: CPU, banking, FAT16, ACIA/XMODEM, SID, RTC, ROM layout
+ctest --test-dir cmake-build-debug        # 27 tests: CPU, banking, FAT16, ACIA/XMODEM, SID, RTC, VIC, ROM layout, disk programs
 ```
 
 ### Disk image (`mkdisk`)
@@ -250,10 +263,12 @@ catalog entry. Drawers grow across as many FAT16 clusters as they need, so a dra
 not capped at one cluster of files.
 
 ```bash
-ninja disk                                  # (re)assemble cmake-build-debug/disk.img
+ninja everything                            # rebuild the programs, then the disk
+ninja disk                                  # restage the committed .PRGs only
 ```
-`ninja disk` is explicit — a plain `ninja` never rewrites the disk. After changing
-a disk program, rebuild its `.PRG` (`programs/<x>/build.sh`) then `ninja disk`.
+Both are explicit — a plain `ninja` never rewrites the disk. Use `everything` after
+changing a disk program; `disk` only restages the `.PRG` files as they stand, which
+is what you want when nothing was recompiled.
 
 The `mkdisk` host tool (`cmake-build-debug/bin/mkdisk`) also works standalone:
 ```bash
@@ -270,7 +285,9 @@ mkdisk update <image> <diskmap.txt>   # replace/add listed files, keep the rest
 │   ├── ui/                # Qt GUI (MainWindow, DisplayWidget)
 │   └── kernel/            # 6502 assembly: kernel.asm, basic.asm, dos/, assembler/, forth/
 ├── include/               # C++ headers
-├── programs/              # cc65/asm disk programs: edit, term, irc, micromax, scottfree, vault, common
+├── programs/              # cc65/asm disk programs: edit, term, irc, venture, kpanic,
+│                         #   chess, frontier, micromax, scottfree, vault, common
+│                         #   (catalog.txt lists every one and where it lands on disk)
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)
 ├── disk/                  # committed disk content (GAMES/ Scott Adams .PRGs)
 ├── vendor/                # Pristine upstream sources we port/derive from

@@ -60,10 +60,18 @@
     },
     {
       "name": "dev-disk",
-      "displayName": "Assemble disk.img",
+      "displayName": "Assemble disk.img from the committed .PRGs",
       "configurePreset": "dev",
       "targets": [
         "disk"
+      ]
+    },
+    {
+      "name": "dev-everything",
+      "displayName": "Build every program and ROM, then assemble disk.img",
+      "configurePreset": "dev",
+      "targets": [
+        "everything"
       ]
     },
     {
