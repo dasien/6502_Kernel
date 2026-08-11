@@ -34,6 +34,7 @@
 #include "computer/Memory.h"
 #include "computer/PIA.h"
 #include "computer/Sid.h"
+#include "computer/Cp437Font.h"
 #include "computer/VIC.h"
 
 using Computer::Computer6502;
@@ -66,6 +67,14 @@ constexpr int kThemes = 6, kRoomsPerLevel = 4;
 
 constexpr uint8_t kGlyphWinky = 0x01, kGlyphWinky2 = 0x02;
 constexpr uint8_t kGlyphWall = 0xDB, kGlyphCorpse = 0xB0;
+
+/* Winky's 16 scanlines as venture.c uploads them. Duplicated here on purpose: a test
+   that read the shape out of the game's own table could only prove the upload path
+   round-trips, not that the intended picture arrived. */
+constexpr uint8_t kWinkyArt[16] = {
+    0x00, 0x3C, 0x7E, 0xFF, 0xDB, 0xDB, 0xFF, 0xFF,
+    0xFF, 0xBD, 0xC3, 0xFF, 0x7E, 0x3C, 0x00, 0x00
+};
 constexpr uint8_t kGlyphSerpent = 0x15, kGlyphApples = 0x05;
 constexpr uint8_t kGlyphRing = 0x09;   // the spider room's treasure
 constexpr uint8_t kGlyphDoor = 0xFE;      // an open room entrance in the hall
@@ -559,6 +568,20 @@ protected:
         return c.getVideoChip()->getColorAt(col, row);
     }
 
+    // The 16 scanlines the renderer would actually draw for a code, from whichever
+    // font the chip is currently reading.
+    std::vector<uint8_t> liveGlyph(uint8_t code)
+    {
+        const uint8_t *r = c.getVideoChip()->glyphRows(code);
+        return std::vector<uint8_t>(r, r + 16);
+    }
+
+    static std::vector<uint8_t> romGlyph(uint8_t code)
+    {
+        return std::vector<uint8_t>(&Computer::kCp437Font[code * 16],
+                                    &Computer::kCp437Font[code * 16] + 16);
+    }
+
     // A sealed room and a plain hall wall share the solid-block glyph -- as they do
     // in the arcade -- so telling them apart needs the attribute plane.
     int countOnMapWithAttr(uint8_t g, uint8_t attr)
@@ -859,6 +882,33 @@ protected:
 };
 
 // --- step 6: the hall ------------------------------------------------------
+
+/* The dungeon draws itself with its own glyphs, not the ones the character ROM
+ * happened to have.
+ *
+ * The monsters used to be whatever CP437 code looked closest -- a section sign for a
+ * serpent, a theta for a cyclops -- because a fixed font is as far as you can go.
+ * These shapes are drawn instead of found. The CODES did not change, which is why
+ * every other test in this file needed no edit. */
+TEST_F(VentureTest, TheDungeonUsesItsOwnGlyphsAndNotTheCharacterRom)
+{
+    EXPECT_NE(liveGlyph(kGlyphWinky), romGlyph(kGlyphWinky))
+        << "Winky is still the ROM's smiley";
+    EXPECT_EQ(liveGlyph(kGlyphWinky), std::vector<uint8_t>(kWinkyArt, kWinkyArt + 16))
+        << "Winky is not the shape venture.c uploads";
+
+    // Seeded from the ROM, so anything the game does not redefine is untouched --
+    // the HUD text renders exactly as it did.
+    EXPECT_EQ(liveGlyph('S'), romGlyph('S')) << "an unredefined glyph must be the ROM's";
+    EXPECT_EQ(liveGlyph(kGlyphWall), romGlyph(kGlyphWall))
+        << "the wall block is deliberately left as the ROM's solid block";
+}
+
+/* NOT TESTED: that quitting restores the ROM font. venture.c does restore it, but a
+ * test cannot tell -- DOS's warm start clears the screen on re-entry and a clear
+ * resets the font anyway, so the assertion passes with the restore removed. Verified
+ * by deleting the call and watching the test still pass, which is why there is no
+ * test here rather than a green one that checks nothing. */
 
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {

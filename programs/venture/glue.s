@@ -18,6 +18,7 @@
 .export _INCH_NB, _QUITDOS, _keystate
 .export _vaddr, _vputc, _vattr
 .export _vfill, _vcmd, _vhidecur
+.export _vfontaddr, _vfontput
 .export _rng_seed, _rtc_sec, _jiffies
 .export _sound_tone, _sound_off
 
@@ -42,6 +43,13 @@ VREG_ATTR       = $FE31         ; attribute latch [R][BR][bg:3][fg:3]
 VREG_CMD        = $FE32         ; 1=clear 2=scroll-up 3=scroll-down 4=fill-row
 VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 VREG_CMD_PARAM  = $FE36         ; fill char for clear / fill-row / scroll
+
+; Soft-font port. The glyph shapes are RAM inside the chip, reached through this
+; index/data pair -- they are NOT in the 6502's address space, so redefining a
+; character costs no memory here.
+VREG_FONT_LO    = $FE62         ; font byte index low
+VREG_FONT_HI    = $FE63         ; font byte index high
+VREG_FONT_DATA  = $FE64         ; font data port; auto-increments
 
 ; RTC (real-time clock) -- entropy source and a 1 Hz tick for the rate readout.
 RTC_LATCH       = $FE55         ; write snapshots the live clock into the read regs
@@ -89,6 +97,20 @@ RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
 ; void vcmd(unsigned char cmd) -- run a chip-side block op (clear/scroll/fill-row).
 .proc _vcmd
         sta     VREG_CMD
+        rts
+.endproc
+
+; void vfontaddr(unsigned int idx) -- point the font data port at a byte. The index
+; is glyph*16 + scanline within the live set (16 bytes a glyph, 256 glyphs a set).
+.proc _vfontaddr
+        sta     VREG_FONT_LO
+        stx     VREG_FONT_HI
+        rts
+.endproc
+
+; void vfontput(unsigned char bits) -- write one scanline and advance.
+.proc _vfontput
+        sta     VREG_FONT_DATA
         rts
 .endproc
 

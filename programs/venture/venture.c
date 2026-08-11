@@ -304,6 +304,322 @@ static void cue_tick(void)
  * physical row PLAY_ROW0 + 2N -- the row between is the bottom half of the glyphs
  * above it and is never addressed. Columns are one-to-one: a double row simply has
  * forty of them instead of eighty. */
+/* VENTURE's own glyphs, uploaded into the chip's font RAM at startup.
+ *
+ * The shapes used to be whichever CP437 codepoints looked closest -- a section
+ * sign for a serpent, a theta for a cyclops. They were chosen by rendering the
+ * ROM and picking, which is as far as a fixed font lets you go. With the font in
+ * RAM the shapes are ours, so these are drawn rather than found.
+ *
+ * Each glyph is 16 scanlines of 8 pixels, and the playfield is double-size rows,
+ * so every pixel here is a 2x2 block on screen. The art beside each row is the
+ * source of truth -- edit the picture, then the byte.
+ *
+ * The codes are the ones the game already used, so nothing else has to change:
+ * the tile tables, the tests and the draw calls all still name the same glyph. */
+static const unsigned char FONT_ART[] = {
+    /* G_WINKY  0x01 */ 0x01,
+        0x00,   /* |        | */
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xFF,   /* |########| */
+        0xDB,   /* |## ## ##| */
+        0xDB,   /* |## ## ##| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xBD,   /* |# #### #| */
+        0xC3,   /* |##    ##| */
+        0xFF,   /* |########| */
+        0x7E,   /* | ###### | */
+        0x3C,   /* |  ####  | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* G_CORPSE  0xB0 */ 0xB0,
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x3C,   /* |  ####  | */
+        0x42,   /* | #    # | */
+        0xA5,   /* |# #  # #| */
+        0x81,   /* |#      #| */
+        0x42,   /* | #    # | */
+        0x3C,   /* |  ####  | */
+        0x66,   /* | ##  ## | */
+        0xA5,   /* |# #  # #| */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* G_DOORWAY  0xF0 */ 0xF0,
+        0x00,   /* |        | */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0x00,   /* |        | */
+    /* M_SERPENT  0x15 */ 0x15,
+        0x00,   /* |        | */
+        0x38,   /* |  ###   | */
+        0x7C,   /* | #####  | */
+        0xD6,   /* |## # ## | */
+        0xFE,   /* |####### | */
+        0x7E,   /* | ###### | */
+        0x3C,   /* |  ####  | */
+        0x1C,   /* |   ###  | */
+        0x3C,   /* |  ####  | */
+        0x7C,   /* | #####  | */
+        0xDC,   /* |## ###  | */
+        0xCC,   /* |##  ##  | */
+        0xCC,   /* |##  ##  | */
+        0xF8,   /* |#####   | */
+        0x70,   /* | ###    | */
+        0x00,   /* |        | */
+    /* M_CYCLOPS  0xE9 */ 0xE9,
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xFF,   /* |########| */
+        0xC3,   /* |##    ##| */
+        0x99,   /* |#  ##  #| */
+        0xBD,   /* |# #### #| */
+        0x99,   /* |#  ##  #| */
+        0xC3,   /* |##    ##| */
+        0xFF,   /* |########| */
+        0x7E,   /* | ###### | */
+        0x3C,   /* |  ####  | */
+        0x24,   /* |  #  #  | */
+        0x24,   /* |  #  #  | */
+        0x66,   /* | ##  ## | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* M_SPIDER  0x0F */ 0x0F,
+        0x00,   /* |        | */
+        0x99,   /* |#  ##  #| */
+        0x5A,   /* | # ## # | */
+        0x3C,   /* |  ####  | */
+        0xBD,   /* |# #### #| */
+        0xDB,   /* |## ## ##| */
+        0xFF,   /* |########| */
+        0xDB,   /* |## ## ##| */
+        0xBD,   /* |# #### #| */
+        0x3C,   /* |  ####  | */
+        0x5A,   /* | # ## # | */
+        0x99,   /* |#  ##  #| */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* M_GOAT  0xEA */ 0xEA,
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0x42,   /* | #    # | */
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xDB,   /* |## ## ##| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0x7E,   /* | ###### | */
+        0x3C,   /* |  ####  | */
+        0x24,   /* |  #  #  | */
+        0x24,   /* |  #  #  | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* M_SKELETON  0x9D */ 0x9D,
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xDB,   /* |## ## ##| */
+        0xFF,   /* |########| */
+        0xBD,   /* |# #### #| */
+        0x3C,   /* |  ####  | */
+        0x18,   /* |   ##   | */
+        0x7E,   /* | ###### | */
+        0xFF,   /* |########| */
+        0xBD,   /* |# #### #| */
+        0xBD,   /* |# #### #| */
+        0x3C,   /* |  ####  | */
+        0x24,   /* |  #  #  | */
+        0x66,   /* | ##  ## | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* M_WRAITH  0xE8 */ 0xE8,
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xFF,   /* |########| */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFE,   /* |####### | */
+        0xFC,   /* |######  | */
+        0xF8,   /* |#####   | */
+        0xE0,   /* |###     | */
+        0x40,   /* | #      | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* T_APPLES  0x05 */ 0x05,
+        0x00,   /* |        | */
+        0x18,   /* |   ##   | */
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0x7E,   /* | ###### | */
+        0x3C,   /* |  ####  | */
+        0x18,   /* |   ##   | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* T_JEWEL  0x04 */ 0x04,
+        0x00,   /* |        | */
+        0x18,   /* |   ##   | */
+        0x3C,   /* |  ####  | */
+        0x66,   /* | ##  ## | */
+        0xC3,   /* |##    ##| */
+        0xC3,   /* |##    ##| */
+        0x66,   /* | ##  ## | */
+        0x3C,   /* |  ####  | */
+        0x18,   /* |   ##   | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* T_RING  0x09 */ 0x09,
+        0x00,   /* |        | */
+        0x18,   /* |   ##   | */
+        0x3C,   /* |  ####  | */
+        0x24,   /* |  #  #  | */
+        0x24,   /* |  #  #  | */
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xC3,   /* |##    ##| */
+        0x81,   /* |#      #| */
+        0x81,   /* |#      #| */
+        0x81,   /* |#      #| */
+        0x42,   /* | #    # | */
+        0x3C,   /* |  ####  | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* T_INGOT  0xFE */ 0xFE,
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0x7E,   /* | ###### | */
+        0x3C,   /* |  ####  | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* T_CHEST  0x0A */ 0x0A,
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xDB,   /* |## ## ##| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0x7E,   /* | ###### | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* T_AMULET  0x03 */ 0x03,
+        0x00,   /* |        | */
+        0x18,   /* |   ##   | */
+        0x18,   /* |   ##   | */
+        0x3C,   /* |  ####  | */
+        0x66,   /* | ##  ## | */
+        0xC3,   /* |##    ##| */
+        0xDB,   /* |## ## ##| */
+        0xDB,   /* |## ## ##| */
+        0xC3,   /* |##    ##| */
+        0x66,   /* | ##  ## | */
+        0x3C,   /* |  ####  | */
+        0x18,   /* |   ##   | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    0x00        /* terminator: a code of 0 ends the table */
+};
+
+
+/* Upload FONT_ART and switch the chip to the RAM font.
+ *
+ * Font RAM is seeded from the CP437 ROM, so writing only our glyphs leaves the other
+ * 240-odd alone -- the HUD text, the score digits and the wall block all still render
+ * exactly as before. */
+static void load_font(void)
+{
+    const unsigned char *p = FONT_ART;
+    unsigned char row;
+
+    while (*p) {
+        vfontaddr((unsigned int)*p++ * 16);
+        for (row = 0; row < 16; row++) vfontput(*p++);
+    }
+    vcmd(VCMD_FONTRAM);
+}
+
+/* Hand the chip's font back before leaving.
+ *
+ * Measured, not assumed: DOS's warm start clears the screen, and a clear already
+ * resets the font -- so the prompt comes back readable with or without this. It is
+ * here so that staying readable is not a property of what DOS happens to do on
+ * re-entry. The font is global state VENTURE switched on; VENTURE switches it off. */
+static void restore_font(void)
+{
+    vcmd(VCMD_FONTROM);
+}
+
+/* Clear the screen and put our font back.
+ *
+ * A chip-side clear resets the font to the ROM, the rows to single size and the
+ * scroll region to the whole screen -- deliberately, so that however badly a program
+ * exits it cannot strand the shell with an unreadable screen. The price is that a
+ * program which wants any of them has to re-assert after every clear. The playfield
+ * already re-flagged its double rows for exactly this reason; the font is the same
+ * contract, and missing it left the whole dungeon drawn in CP437 again. */
+static void clear_screen(void)
+{
+    vfill(' ');
+    vcmd(VCMD_CLEAR);
+    vcmd(VCMD_FONTRAM);
+}
+
 static void put_at(unsigned char rx, unsigned char ry, unsigned char ch,
                    unsigned char attr)
 {
@@ -605,7 +921,7 @@ static void enter_map(void)
     face_dx = 0; face_dy = -1;
     dawdle = 0;
 
-    vfill(' '); vcmd(VCMD_CLEAR);
+    clear_screen();
     set_play_rows();
     draw_board();
     draw_hud();
@@ -627,7 +943,7 @@ static void enter_room(unsigned char slot, unsigned char which)
     left_room = 0;
     dawdle = 0;
 
-    vfill(' '); vcmd(VCMD_CLEAR);
+    clear_screen();
     set_play_rows();
     draw_board();
     draw_hud();
@@ -1064,7 +1380,7 @@ static void wait_key(void)
 static void banner(const char *line)
 {
     vfill(' ');
-    vcmd(VCMD_CLEAR);
+    clear_screen();
     put_str(33, 11, line, A_HUD);
     wait_key();
 }
@@ -1078,7 +1394,7 @@ static void roster_screen(void)
     unsigned char i;
 
     vfill(' ');
-    vcmd(VCMD_CLEAR);
+    clear_screen();
     put_str(22, 9, "TREASURES:", A_HUD);
     for (i = 0; i < THEMES; i++) {
         vaddr((unsigned int)9 * SCR_W + 34 + i * 3);
@@ -1098,7 +1414,7 @@ static void roster_screen(void)
 static void bonus_screen(unsigned int earned, unsigned char mult, unsigned int total)
 {
     vfill(' ');
-    vcmd(VCMD_CLEAR);
+    clear_screen();
     put_str(22, 9,  "SCORE THIS LEVEL", A_HUD);
     put_num(46, 9,  earned, 6, A_HUD);
     put_str(22, 11, "BONUS MULTIPLIER", A_HUD);
@@ -1116,7 +1432,7 @@ static unsigned char game_over_screen(void)
     int k;
 
     vfill(' ');
-    vcmd(VCMD_CLEAR);
+    clear_screen();
     put_str(31, 8,  "G A M E   O V E R", A_HUD);
     put_str(31, 11, "FINAL SCORE", A_HUD);
     put_num(43, 11, score, 6, A_HUD);
@@ -1195,6 +1511,7 @@ int main(void)
     if (!rng) rng = 0xACE1;
 
     vhidecur();
+    load_font();                /* our glyphs, before anything is drawn with them */
     banner("V E N T U R E");
 
     new_game();
@@ -1231,7 +1548,7 @@ int main(void)
                 k = INCH_NB();
                 if (k < 0) break;
                 if (swallow_esc(k)) continue;   /* an arrow's ESC [ X, not a command */
-                if (k == 'q' || k == 'Q') { sound_off(); QUITDOS(); return 0; }
+                if (k == 'q' || k == 'Q') { sound_off(); restore_font(); QUITDOS(); return 0; }
                 if (k == 'p' || k == 'P') {
                     msg("PAUSED");
                     while (INCH_NB() < 0) { }
@@ -1279,7 +1596,7 @@ int main(void)
             if (!lives) {
                 sound_off();
                 snd_left = 0;
-                if (!game_over_screen()) { QUITDOS(); return 0; }
+                if (!game_over_screen()) { restore_font(); QUITDOS(); return 0; }
                 new_game();
                 enter_map();
                 continue;

@@ -14,6 +14,8 @@ extern int           INCH_NB(void);            /* next key, or -1 if none ready 
 extern void          QUITDOS(void);
 extern void          vaddr(unsigned int cell); /* point the data port at a cell */
 extern void          vputc(unsigned char ch);  /* write a glyph; auto-increments */
+extern void          vfontaddr(unsigned int idx); /* point the font port at glyph*16 */
+extern void          vfontput(unsigned char bits);/* write one scanline; auto-increments */
 extern void          vattr(unsigned char a);   /* colour latch for later writes */
 extern void          vfill(unsigned char ch);  /* fill char for clear/fill-row */
 extern void          vcmd(unsigned char cmd);  /* chip-side block op */
@@ -65,6 +67,8 @@ extern void          sound_off(void);                /* SID voice 1 off */
 /* Setting a row's size is a command, not a register: parameter carries the row and
  * bit 7 the size. A clear puts every row back to normal, so the band has to be laid
  * out again after one -- which is why set_play_rows() sits next to every clear. */
+#define VCMD_FONTROM  8      /* render from the CP437 ROM */
+#define VCMD_FONTRAM  9      /* render from font RAM (our glyphs) */
 #define VCMD_ROWSIZE  5
 #define VCMD_ROWSNORM 6
 #define VROW_DOUBLE   0x80
@@ -143,10 +147,14 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define T_VOID0   9   /* hall: T_VOID0 + n is inside it -- black, or filled if done */
 #define T_DOOR0  13   /* hall: T_DOOR0 + n is an entrance to room n */
 
-/* ---- glyphs, all from the machine's CP437 ROM --------------------------- */
-/* Winky is CP437 $01, an outline smiley -- the protagonist ships in the character
- * ROM. $02 is the filled version and he used to alternate between the two every
- * tick; at 16x32 that reads as a flicker rather than as animation, so he does not. */
+/* ---- glyphs -------------------------------------------------------------
+ * The codes are CP437's, but most of the shapes are not: FONT_ART in venture.c
+ * redefines them in the chip's font RAM at startup. Anything not listed there --
+ * the solid wall block, the arrows, all the HUD text -- still renders from the ROM,
+ * because font RAM is seeded from it and we overwrite only what we draw ourselves.
+ *
+ * Winky used to alternate between $01 and $02 every tick; at 16x32 that reads as a
+ * flicker rather than as animation, so he does not. */
 #define G_WINKY   0x01
 #define G_WALL    0xDB   /* solid block */
 #define G_FLOOR   ' '
