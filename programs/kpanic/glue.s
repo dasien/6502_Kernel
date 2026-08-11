@@ -15,6 +15,7 @@
 .export _INCH_NB, _QUITDOS, _keystate
 .export _vaddr, _vputc, _vattr
 .export _vfill, _vcmd, _vscrollbot, _vhidecur
+.export _spr_sel, _spr_x, _spr_y, _spr_glyph, _spr_attr, _spr_on
 .export _rng_seed, _rtc_sec, _jiffies
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
@@ -90,6 +91,112 @@ RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
 ; void vscrollbot(unsigned char row) -- bound the scroll region to rows 0..row.
 ; NOTE: a clear command resets this to the full screen, so always set it AFTER
 ; clearing, never before.
+; ---- sprites ------------------------------------------------------------
+; A sprite is pixel-positioned and does NOT ride the scroll region, which is the whole
+; reason these exist: anything in the cell plane rides the fine-scroll offset, so a
+; screen-fixed object sawtooths by a cell on every scroll.
+;
+; Select-then-set, so every setter takes a SINGLE argument and therefore arrives in A
+; with no C-stack handling at all. spr_sel() converts a sprite index into a byte offset
+; once; the setters then index the register block with it. Positions are given in CELLS
+; and converted here -- the chip wants nominal pixels on the 8x16 grid.
+SPR0            = $FE65
+SPR_STRIDE      = 6
+SPR_X_LO        = SPR0+0
+SPR_X_HI        = SPR0+1        ; bits 1-0
+SPR_Y_LO        = SPR0+2
+SPR_Y_HI        = SPR0+3        ; bits 1-0 = y high, bit 7 = enable
+SPR_GLYPH       = SPR0+4
+SPR_ATTR        = SPR0+5
+
+; void spr_sel(unsigned char index) -- offset = index * 6, so index*4 + index*2.
+; 24 sprites max here, so the product always fits a byte.
+.proc _spr_sel
+        asl     a               ; index*2
+        sta     spr_tmp
+        asl     a               ; index*4
+        clc
+        adc     spr_tmp         ; index*6
+        sta     spr_off
+        rts
+.endproc
+
+; void spr_x(unsigned char cell_col) -- x = col * 8, ten bits wide
+.proc _spr_x
+        ldx     spr_off
+        pha
+        lda     #$00
+        sta     spr_tmp         ; high bits accumulate here
+        pla
+        asl     a
+        rol     spr_tmp
+        asl     a
+        rol     spr_tmp
+        asl     a
+        rol     spr_tmp
+        sta     SPR_X_LO,x
+        lda     spr_tmp
+        and     #$03
+        sta     SPR_X_HI,x
+        rts
+.endproc
+
+; void spr_y(unsigned char cell_row) -- y = row * 16, nine bits wide. Preserves the
+; enable bit so a caller can reposition without re-enabling.
+.proc _spr_y
+        ldx     spr_off
+        pha
+        lda     #$00
+        sta     spr_tmp
+        pla
+        asl     a
+        rol     spr_tmp
+        asl     a
+        rol     spr_tmp
+        asl     a
+        rol     spr_tmp
+        asl     a
+        rol     spr_tmp
+        sta     SPR_Y_LO,x
+        lda     SPR_Y_HI,x
+        and     #$80            ; keep enable
+        ora     spr_tmp
+        sta     SPR_Y_HI,x
+        rts
+.endproc
+
+.proc _spr_glyph
+        ldx     spr_off
+        sta     SPR_GLYPH,x
+        rts
+.endproc
+
+.proc _spr_attr
+        ldx     spr_off
+        sta     SPR_ATTR,x
+        rts
+.endproc
+
+; void spr_on(unsigned char enable) -- leaves the position alone
+.proc _spr_on
+        ldx     spr_off
+        cmp     #$00
+        beq     @off
+        lda     SPR_Y_HI,x
+        ora     #$80
+        sta     SPR_Y_HI,x
+        rts
+@off:   lda     SPR_Y_HI,x
+        and     #$7F
+        sta     SPR_Y_HI,x
+        rts
+.endproc
+
+.segment "BSS"
+spr_off:        .res 1          ; selected sprite's byte offset into the block
+spr_tmp:        .res 1
+.segment "CODE"
+
 .proc _vscrollbot
         sta     VREG_SCROLL_BOT
         rts
