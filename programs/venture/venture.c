@@ -249,6 +249,17 @@ static unsigned char h_ox[MAX_HALL], h_oy[MAX_HALL];
 
 static unsigned char a_live;             /* one arrow in flight, as the original */
 static unsigned char a_x, a_y;
+
+/* Where every mover was at its last step, and when the slower classes took it.
+ * Drawing slides between the previous cell and the current one, so a mover crosses
+ * the cell over the whole span between its steps instead of appearing in the next
+ * one. The simulation is untouched: it still steps whole cells, and every
+ * collision, lethal() and tile test still asks the grid. Only the picture moves
+ * continuously, which is the only place the jump was ever visible. */
+static unsigned char pw_x, pw_y, pf_x0, pf_y0, pa_x, pa_y;
+static unsigned char pm_x[MAX_MON], pm_y[MAX_MON];
+static unsigned char ph_x[MAX_HALL], ph_y[MAX_HALL];
+static unsigned int  mon_at, hall_at;
 static signed char   a_dx, a_dy;
 
 /* ---- game state -------------------------------------------------------- */
@@ -620,15 +631,43 @@ static void clear_screen(void)
     vcmd(VCMD_FONTRAM);
 }
 
-/* Put a 2x2 sprite over the playfield cell at room coords (rx, ry) -- the sprite
-   equivalent of put_at, and deliberately the same call shape. */
-static void spr_at(unsigned char slot, unsigned char rx, unsigned char ry,
-                   unsigned char ch, unsigned char attr)
+/* How far through its step a class is, in sixteenths of a cell. One divide per
+ * class per frame, not per mover -- every room monster shares a cadence. Clamped,
+ * because a class can overrun its span while a room is being entered. */
+static unsigned char slide(unsigned int elapsed, unsigned int span)
+{
+    unsigned int o;
+    if (!span) return 16;
+    o = (elapsed << 4) / span;
+    return (unsigned char)(o > 16 ? 16 : o);
+}
+
+/* A cell's nominal-pixel position, `off` sixteenths of the way from prev to cur.
+ * A step is one cell, so anything longer is a teleport -- a room change, a respawn
+ * -- and snaps, or the mover would sail across the playfield. */
+static unsigned int glide_x(unsigned char prev, unsigned char cur, unsigned char off)
+{
+    unsigned int base = (unsigned int)(gx0 + prev) << 4;
+    if (cur == prev) return base;
+    if (cur == (unsigned char)(prev + 1)) return base + off;
+    if (prev == (unsigned char)(cur + 1)) return base - off;
+    return (unsigned int)(gx0 + cur) << 4;
+}
+
+/* Twice the offset per sixteenth: a playfield row is two character rows tall. */
+static unsigned int glide_y(unsigned char prev, unsigned char cur, unsigned char off)
+{
+    unsigned int base = (unsigned int)(PLAY_ROW0 + ((gy0 + prev) << 1)) << 4;
+    if (cur == prev) return base;
+    if (cur == (unsigned char)(prev + 1)) return base + (off << 1);
+    if (prev == (unsigned char)(cur + 1)) return base - (off << 1);
+    return (unsigned int)(PLAY_ROW0 + ((gy0 + cur) << 1)) << 4;
+}
+
+static void spr_nom(unsigned char slot, unsigned int nx, unsigned int ny,
+                    unsigned char ch, unsigned char attr)
 {
     volatile unsigned char *r = SPRITES + (unsigned int)slot * SPR_STRIDE;
-    unsigned int nx = (unsigned int)(gx0 + rx) << 4;
-    unsigned int ny = (unsigned int)(PLAY_ROW0 + ((gy0 + ry) << 1)) << 4;
-
     r[0] = (unsigned char)nx;
     r[1] = (unsigned char)(((nx >> 8) & 0x03) | SPR_2X2);
     r[2] = (unsigned char)ny;
@@ -1294,30 +1333,42 @@ static void draw_facing(void)
  * Slot order is fixed rather than allocated, so a mover keeps the same sprite for
  * its whole life. Overlap is settled by slot number -- lower draws first, so Winky
  * is under a monster standing on him, which is the moment you most want to see. */
-static void draw_movers(void)
+static void draw_movers(unsigned char frac)
 {
-    unsigned char i;
+    unsigned char i, ow, om, oh;
+    unsigned int span;
 
-    if (f_live) spr_at(SPR_FACE, f_x, f_y,
-                       face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
-                       face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE);
+    ow = slide(frac, tickrate);
+    om = slide((unsigned int)(tick_count - mon_at) * tickrate + frac,
+               (unsigned int)MON_EVERY * tickrate);
+    span = (mode == MODE_MAP) ? (unsigned int)HALL_EVERY * tickrate : tickrate;
+    oh = slide((unsigned int)(tick_count - hall_at) * tickrate + frac, span);
+
+    /* The pip slides with Winky. It is a reticle rather than a body, so snapping it
+       to its cell was tempting -- but it sits one cell from him, and a pip that
+       snapped while he slid would visibly detach and rejoin every step. */
+    if (f_live) spr_nom(SPR_FACE, glide_x(pf_x0, f_x, ow), glide_y(pf_y0, f_y, ow),
+                        face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
+                        face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE);
     else        spr_off(SPR_FACE);
 
-    spr_at(SPR_WINKY, wx, wy, G_WINKY, A_WINKY);
+    spr_nom(SPR_WINKY, glide_x(pw_x, wx, ow), glide_y(pw_y, wy, ow), G_WINKY, A_WINKY);
 
     for (i = 0; i < MAX_MON; i++) {
-        if (m_live[i]) spr_at((unsigned char)(SPR_MON0 + i), m_x[i], m_y[i],
-                              theme_monster[theme], A_MON);
+        if (m_live[i]) spr_nom((unsigned char)(SPR_MON0 + i),
+                               glide_x(pm_x[i], m_x[i], om), glide_y(pm_y[i], m_y[i], om),
+                               theme_monster[theme], A_MON);
         else           spr_off((unsigned char)(SPR_MON0 + i));
     }
     for (i = 0; i < MAX_HALL; i++) {
-        if (h_live[i]) spr_at((unsigned char)(SPR_HALL0 + i), h_x[i], h_y[i],
-                              G_HALLMON, a_hall);
+        if (h_live[i]) spr_nom((unsigned char)(SPR_HALL0 + i),
+                               glide_x(ph_x[i], h_x[i], oh), glide_y(ph_y[i], h_y[i], oh),
+                               G_HALLMON, a_hall);
         else           spr_off((unsigned char)(SPR_HALL0 + i));
     }
-    if (a_live) spr_at(SPR_ARROW, a_x, a_y,
-                       a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
-                       a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW);
+    if (a_live) spr_nom(SPR_ARROW, glide_x(pa_x, a_x, ow), glide_y(pa_y, a_y, ow),
+                        a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
+                        a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW);
     else        spr_off(SPR_ARROW);
 }
 
@@ -1336,6 +1387,12 @@ static void step(unsigned char ks)
 
     tick_count++;
     cue_tick();
+
+    /* Snapshot what the next frames will slide FROM, before anything moves. */
+    pw_x = wx; pw_y = wy;
+    pf_x0 = f_x; pf_y0 = f_y;
+    pa_x = a_x; pa_y = a_y;
+
     winky_move(ks);
 
     if (mode == MODE_MAP) {
@@ -1348,7 +1405,11 @@ static void step(unsigned char ks)
             return;
         }
         if (lethal(wx, wy)) { dead = 1; return; }
-        if (!(tick_count % HALL_EVERY)) hall_advance();
+        if (!(tick_count % HALL_EVERY)) {
+            for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
+            hall_at = tick_count;
+            hall_advance();
+        }
     } else {
         if (grid[wy][wx] == T_TREAS) {
             grid[wy][wx] = T_FLOOR;
@@ -1372,18 +1433,25 @@ static void step(unsigned char ks)
 
         if (ks & KS_FIRE) fire();
         arrow_advance();
-        if (!(tick_count % MON_EVERY)) monsters_advance();
+        if (!(tick_count % MON_EVERY)) {
+            for (i = 0; i < MAX_MON; i++) { pm_x[i] = m_x[i]; pm_y[i] = m_y[i]; }
+            mon_at = tick_count;
+            monsters_advance();
+        }
         if (++dawdle > HALL_ROOM_TICKS) hall_intrude();
         /* Note the sense: every tick EXCEPT every HALL_IN_SKIP'th, so the intruder
          * runs at four fifths of Winky rather than a fraction of him. */
-        if (tick_count % HALL_IN_SKIP) { hall_advance(); hall_arrow_check(); }
+        if (tick_count % HALL_IN_SKIP) {
+            for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
+            hall_at = tick_count;
+            hall_advance(); hall_arrow_check();
+        }
     }
 
     if (lethal(wx, wy)) dead = 1;   /* something may have stepped onto Winky */
     if (dead) return;
 
     draw_facing();
-    draw_movers();
 }
 
 /* ---- keyboard FIFO ------------------------------------------------------
@@ -1548,7 +1616,7 @@ static void new_game(void)
 
 int main(void)
 {
-    unsigned int last, now, earned, total;
+    unsigned int last, now, lastdraw, earned, total;
     unsigned char ks, catchup, i, mult;
     int k;
 
@@ -1566,6 +1634,7 @@ int main(void)
         dead = 0;
         left_room = 0;
         last = jiffies();
+        lastdraw = last - 1;          /* force a first draw */
 
         for (;;) {
             /* Fixed-timestep accumulator, all integer, unsigned subtraction so
@@ -1586,6 +1655,15 @@ int main(void)
             }
 
             if (dead || left_room) break;
+
+            /* Redraw every jiffy rather than every tick, sliding each mover the
+               fraction of its step that has elapsed. This is the whole point of
+               putting the movers on sprites: the simulation still runs at tickrate
+               and still thinks in whole cells, but the picture no longer has to. */
+            if (now != lastdraw) {
+                draw_movers((unsigned char)(now - last));
+                lastdraw = now;
+            }
 
             /* The FIFO carries the commands that are not movement. Drained a few
              * per pass so a burst cannot back up and start dropping bytes. */
