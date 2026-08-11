@@ -67,6 +67,28 @@ extern void          sound_off(void);                /* SID voice 1 off */
 /* Setting a row's size is a command, not a register: parameter carries the row and
  * bit 7 the size. A clear puts every row back to normal, so the band has to be laid
  * out again after one -- which is why set_play_rows() sits next to every clear. */
+/* ---- sprites ------------------------------------------------------------
+ * The movers are sprites, not cells. Unlike the character and font planes, the
+ * sprite registers ARE in the 6502's map, so C writes them directly.
+ *
+ * A sprite is positioned in nominal pixels on an 8x16 grid, and the playfield is
+ * double-size rows -- 16x32 a cell. Those two grids coincide exactly at 2x2: a
+ * 2x2 sprite at (16*col, 16*physrow) covers precisely the double-row cell at
+ * (col, physrow). So a mover can be lifted out of the cell plane and keep the
+ * position it already had, which is what makes sub-cell movement possible without
+ * moving the dungeon underneath it. */
+#define SPRITES     ((volatile unsigned char *)0xFE65)
+#define SPR_STRIDE  6
+#define SPR_2X2     0x04     /* size-1 in bits 4-2 of each position high byte */
+#define SPR_ENABLE  0x80
+
+#define SPR_WINKY   0
+#define SPR_ARROW   1
+#define SPR_FACE    2
+#define SPR_MON0    3                        /* MAX_MON slots */
+#define SPR_HALL0   (SPR_MON0 + MAX_MON)     /* MAX_HALL slots */
+#define SPR_COUNT   (SPR_HALL0 + MAX_HALL)   /* 15 of the chip's 17 */
+
 #define VCMD_FONTROM  8      /* render from the CP437 ROM */
 #define VCMD_FONTRAM  9      /* render from font RAM (our glyphs) */
 #define VCMD_ROWSIZE  5

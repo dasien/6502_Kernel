@@ -620,6 +620,28 @@ static void clear_screen(void)
     vcmd(VCMD_FONTRAM);
 }
 
+/* Put a 2x2 sprite over the playfield cell at room coords (rx, ry) -- the sprite
+   equivalent of put_at, and deliberately the same call shape. */
+static void spr_at(unsigned char slot, unsigned char rx, unsigned char ry,
+                   unsigned char ch, unsigned char attr)
+{
+    volatile unsigned char *r = SPRITES + (unsigned int)slot * SPR_STRIDE;
+    unsigned int nx = (unsigned int)(gx0 + rx) << 4;
+    unsigned int ny = (unsigned int)(PLAY_ROW0 + ((gy0 + ry) << 1)) << 4;
+
+    r[0] = (unsigned char)nx;
+    r[1] = (unsigned char)(((nx >> 8) & 0x03) | SPR_2X2);
+    r[2] = (unsigned char)ny;
+    r[3] = (unsigned char)(((ny >> 8) & 0x03) | SPR_2X2 | SPR_ENABLE);
+    r[4] = ch;
+    r[5] = attr;
+}
+
+static void spr_off(unsigned char slot)
+{
+    SPRITES[(unsigned int)slot * SPR_STRIDE + 3] = 0;   /* clears the enable bit */
+}
+
 static void put_at(unsigned char rx, unsigned char ry, unsigned char ch,
                    unsigned char attr)
 {
@@ -1259,9 +1281,44 @@ static void draw_facing(void)
     if (lethal(tx, ty)) return;                    /* let the danger show instead */
 
     f_live = 1; f_x = tx; f_y = ty;
-    put_at(tx, ty,
-           face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
-           face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE);
+}
+
+/* Put every mover on its sprite.
+ *
+ * Sprites draw over the cell plane and are not in it, so nothing here has to be
+ * erased first -- a mover that has gone simply has its sprite switched off. That is
+ * why the per-tick restore() calls that used to rub each one out are gone from
+ * everything except the cells whose GRID changed underneath a mover: a picked-up
+ * treasure still has to be repainted, because the tile itself is different now.
+ *
+ * Slot order is fixed rather than allocated, so a mover keeps the same sprite for
+ * its whole life. Overlap is settled by slot number -- lower draws first, so Winky
+ * is under a monster standing on him, which is the moment you most want to see. */
+static void draw_movers(void)
+{
+    unsigned char i;
+
+    if (f_live) spr_at(SPR_FACE, f_x, f_y,
+                       face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
+                       face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE);
+    else        spr_off(SPR_FACE);
+
+    spr_at(SPR_WINKY, wx, wy, G_WINKY, A_WINKY);
+
+    for (i = 0; i < MAX_MON; i++) {
+        if (m_live[i]) spr_at((unsigned char)(SPR_MON0 + i), m_x[i], m_y[i],
+                              theme_monster[theme], A_MON);
+        else           spr_off((unsigned char)(SPR_MON0 + i));
+    }
+    for (i = 0; i < MAX_HALL; i++) {
+        if (h_live[i]) spr_at((unsigned char)(SPR_HALL0 + i), h_x[i], h_y[i],
+                              G_HALLMON, a_hall);
+        else           spr_off((unsigned char)(SPR_HALL0 + i));
+    }
+    if (a_live) spr_at(SPR_ARROW, a_x, a_y,
+                       a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
+                       a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW);
+    else        spr_off(SPR_ARROW);
 }
 
 /* ---- one simulation step ---------------------------------------------- */
@@ -1325,20 +1382,8 @@ static void step(unsigned char ks)
     if (lethal(wx, wy)) dead = 1;   /* something may have stepped onto Winky */
     if (dead) return;
 
-    /* Redraw in an order that keeps Winky visible, and puts anything dangerous
-     * over the facing pip: he is the thing the player is tracking, so he wins any
-     * overlap, and a pip must never hide a monster. */
     draw_facing();
-    for (i = 0; i < MAX_MON; i++)
-        if (m_live[i]) put_at(m_x[i], m_y[i], theme_monster[theme], A_MON);
-    for (i = 0; i < MAX_HALL; i++)
-        if (h_live[i]) put_at(h_x[i], h_y[i], G_HALLMON, a_hall);
-    if (a_live)
-        put_at(a_x, a_y,
-               a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
-               a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW);
-
-    put_at(wx, wy, G_WINKY, A_WINKY);
+    draw_movers();
 }
 
 /* ---- keyboard FIFO ------------------------------------------------------
