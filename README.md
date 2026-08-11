@@ -200,11 +200,13 @@ ninja -C cmake-build-debug everything   # every program, every ROM, the app, the
 ninja -C cmake-build-debug run          # ...then boot the machine
 ```
 
-`everything` is the one to reach for after editing a program. A plain `ninja`
-rebuilds the ROMs, the app and the test blobs, but **not** the `.PRG` files — those
-are committed artifacts with no CMake rule behind them. So a plain build leaves the
-disk carrying the old binary while the test blobs, compiled from the same sources,
-pick the change up: the tests agree with you and the machine does not.
+The `.PRG` files are build outputs, not committed artifacts — they are produced into
+`cmake-build-debug/programs/<name>/` and staged from there, exactly like the ROMs.
+That is deliberate: when they were checked in, editing a program's C and forgetting
+to rebuild left the disk carrying yesterday's binary while the test blobs, compiled
+from the same sources by CMake, picked the change up — the tests agreed with you and
+the machine did not. The twelve Scott Adams games under `disk/GAMES/` *are* committed:
+they are content, not built from sources in this repo.
 
 Configuration ends with a summary of what was actually enabled — check it before
 filing a bug about missing sound or a missing window:
@@ -249,7 +251,8 @@ ctest --test-dir cmake-build-debug        # 27 tests: CPU, banking, FAT16, ACIA/
 
 The GUI loads `cmake-build-debug/disk.img`, assembled from **`programs/catalog.txt`**
 — the single source of truth for everything that can go on a disk. One section per
-item, saying where its files live, how to build them (or that they are committed),
+item, saying where its files live, how to build them (or that they are committed
+content needing no build),
 and where each lands on the disk. Files are declared by what they *are*: a `program`
 (the `.PRG`), `data` the program reads and writes at run time, or a `doc` for a human
 to `TYPE`. The distinction is there so `data` can never be separated from the program
@@ -263,12 +266,11 @@ catalog entry. Drawers grow across as many FAT16 clusters as they need, so a dra
 not capped at one cluster of files.
 
 ```bash
-ninja everything                            # rebuild the programs, then the disk
-ninja disk                                  # restage the committed .PRGs only
+ninja disk                                  # build the programs, then assemble the image
+ninja everything                            # ...and the ROMs and the app as well
 ```
-Both are explicit — a plain `ninja` never rewrites the disk. Use `everything` after
-changing a disk program; `disk` only restages the `.PRG` files as they stand, which
-is what you want when nothing was recompiled.
+Both are explicit — a plain `ninja` never rewrites the disk. `disk` builds every
+catalog program before staging it, so the image can never carry a stale binary.
 
 The `mkdisk` host tool (`cmake-build-debug/bin/mkdisk`) also works standalone:
 ```bash

@@ -1,4 +1,4 @@
-# cc65 build intermediates (rebuild via build.sh). TERM.PRG IS tracked.
-term.o
-glue.o
-term.bin
+# cc65 build outputs -- the .PRG is built, not committed
+*.o
+*.bin
+*.PRG

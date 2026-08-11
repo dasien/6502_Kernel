@@ -101,14 +101,22 @@ foreach(entry IN LISTS MFC_CAT_NAMES)
         string(REPLACE "|" ";" parts "${spec}")
         list(GET parts 0 src)
         list(GET parts 1 dst)
+        list(GET parts 2 kind)
+        # A built entry's `program` IS the build output, so it comes from the build
+        # tree; its `data`/`doc` are committed content and still come from the source
+        # tree. Entries with no build script (the Scott Adams games) are committed
+        # whole and unaffected.
+        if(MFC_CAT_${entry}_BUILD AND kind STREQUAL "program")
+            set(srcroot ${CMAKE_BINARY_DIR}/${MFC_CAT_${entry}_DIR})
+        else()
+            set(srcroot ${CMAKE_SOURCE_DIR}/${MFC_CAT_${entry}_DIR})
+        endif()
         get_filename_component(drawer "${dst}" DIRECTORY)
         if(drawer)
             list(APPEND DISK_DRAWERS "${drawer}")
         endif()
         list(APPEND DISK_STAGE_COMMANDS
-             COMMAND ${CMAKE_COMMAND} -E copy
-                     ${CMAKE_SOURCE_DIR}/${MFC_CAT_${entry}_DIR}/${src}
-                     ${DISKROOT}/${dst})
+             COMMAND ${CMAKE_COMMAND} -E copy ${srcroot}/${src} ${DISKROOT}/${dst})
         string(APPEND DISK_MANIFEST "${dst}\n")
     endforeach()
 endforeach()
@@ -124,52 +132,41 @@ endforeach()
 
 file(WRITE ${GENERATED_DISKMAP} ${DISK_MANIFEST})
 
-add_custom_target(disk
-    COMMAND ${CMAKE_COMMAND} -E rm -rf ${DISKROOT}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${DISKROOT}
-    ${DISK_MKDIR_COMMANDS}
-    ${DISK_STAGE_COMMANDS}
-    COMMAND ${CMAKE_COMMAND} -E copy ${GENERATED_DISKMAP} ${DISKROOT}/diskmap.txt
-    COMMAND mkdisk create ${CMAKE_BINARY_DIR}/disk.img ${DISKROOT}/diskmap.txt
-    DEPENDS mkdisk
-    COMMENT "Assembling disk.img from programs/catalog.txt"
-    VERBATIM
-)
-
 # ----------------------------------------------------------------------------
-# `ninja everything` - the whole machine, from sources to a bootable disk.
+# The build scripts that produce the .PRG files.
 #
-# The pipeline has one trap in it: the .PRG files are committed artifacts and nothing
-# in CMake rebuilds them, so editing a program's C and running `ninja` leaves the disk
-# carrying the old binary. Worse, `ninja` DOES rebuild the .bin blobs the test suites
-# load from the same sources -- so the tests pick up the change while the game does
-# not, and everything looks fine.
-#
-# This target closes that: every catalog build script, then the ROMs and the app, then
-# the disk. `ninja` and `ninja disk` keep their current meanings; this is the one to
-# reach for after touching a program.
+# These are build outputs, not committed artifacts, so nothing can stage a stale one
+# -- the failure this used to have was a program's C being edited, the .PRG not being
+# rebuilt, and the disk carrying yesterday's binary while the test blobs (built from
+# the same sources by CMake) picked the change up. The tests agreed with you and the
+# machine did not. With the .PRGs built here that state cannot exist.
 set(PROGRAM_BUILD_COMMANDS "")
 set(SEEN_BUILD_SCRIPTS "")
 foreach(entry IN LISTS MFC_CAT_NAMES)
     if(MFC_CAT_${entry}_BUILD)
         set(script ${CMAKE_SOURCE_DIR}/${MFC_CAT_${entry}_DIR}/${MFC_CAT_${entry}_BUILD})
-        # Two entries could name the same script; run it once.
+        # Two entries could name the same script; run it once. They share a directory,
+        # so they share an output directory too.
         if(NOT script IN_LIST SEEN_BUILD_SCRIPTS)
             list(APPEND SEEN_BUILD_SCRIPTS ${script})
-            list(APPEND PROGRAM_BUILD_COMMANDS COMMAND ${script})
+            list(APPEND PROGRAM_BUILD_COMMANDS
+                 COMMAND ${CMAKE_COMMAND} -E env
+                         MFC_OUT=${CMAKE_BINARY_DIR}/${MFC_CAT_${entry}_DIR} ${script})
         endif()
     endif()
 endforeach()
 
 if(NOT CL65_FOUND)
-    # Without cc65 the programs cannot be rebuilt, but the committed .PRGs are still
-    # perfectly good -- stage those rather than failing the target outright.
+    # cc65 is required to build at all (the ROMs are ca65 assembly and none are
+    # committed), so this is a broken-install path rather than a supported one. Say so
+    # plainly instead of failing in the staging copy with a missing-file error.
     set(PROGRAM_BUILD_COMMANDS
         COMMAND ${CMAKE_COMMAND} -E echo
-                "cc65 not found - staging the committed .PRGs unchanged")
+                "cc65 not found - cannot build the disk programs")
 endif()
 
-add_custom_target(everything
+# `ninja disk` - build the programs, then assemble disk.img from the catalog.
+add_custom_target(disk
     ${PROGRAM_BUILD_COMMANDS}
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${DISKROOT}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${DISKROOT}
@@ -177,16 +174,21 @@ add_custom_target(everything
     ${DISK_STAGE_COMMANDS}
     COMMAND ${CMAKE_COMMAND} -E copy ${GENERATED_DISKMAP} ${DISKROOT}/diskmap.txt
     COMMAND mkdisk create ${CMAKE_BINARY_DIR}/disk.img ${DISKROOT}/diskmap.txt
-    COMMENT "Building every program, ROM and the disk"
+    DEPENDS mkdisk
+    COMMENT "Building the disk programs and assembling disk.img"
     USES_TERMINAL
     VERBATIM
 )
 
-# The ROMs and the app are ALL targets, so a plain `ninja` builds them -- but
-# `ninja everything` on its own would not, hence the explicit dependencies.
-set(EVERYTHING_DEPS mkdisk 6502-kernel)
+# `ninja everything` - the whole machine: the disk, plus the ROMs and the app. All of
+# those are ALL targets, so a plain `ninja` builds them; naming them here is what
+# makes `ninja everything` on its own sufficient.
+add_custom_target(everything
+    COMMENT "Building every program, ROM and the disk"
+)
+set(EVERYTHING_DEPS disk mkdisk 6502-kernel)
 foreach(t kernel_rom dos_rom basic_rom forth_rom monitor_rom
-          xmodem_bin term_bin irc_bin venture_bin)
+          xmodem_bin term_bin irc_bin edit_bin venture_bin)
     if(TARGET ${t})
         list(APPEND EVERYTHING_DEPS ${t})
     endif()
