@@ -93,6 +93,9 @@ paraphrase):
 | `$FE2D-$FE37` | **VIC** | `VIC` | address, char, colour, attribute, command, cursor, scroll region |
 | `$FE38-$FE54` | **SID** | `Sid` | 3 voices, filter, master volume (29 registers) |
 | `$FE55-$FE60` | **RTC** | `Rtc` | latch, s/m/h/d/m/y, FAT timestamp |
+| `$FE61` | **PWR** | `PowerSwitch` | soft power switch |
+| `$FE62-$FE64` | **VIC** | `VIC` | soft-font index + data port (second range; see below) |
+| `$FE65-$FECA` | **VIC** | `VIC` | 17 sprite records, 6 bytes each |
 
 The RTC reaches `$FE60` because the FAT date registers were appended after the
 range was first written down; the other docs quoted `$FE5E` until this diagram was
@@ -139,6 +142,23 @@ buffer to poke. The VIC owns an 80×25 character-plus-attribute plane and the CP
 reaches it only through the register port at `$FE2D` — set an address, write a
 character, the index auto-increments. That is why `$0400-$07FF`, which on a
 Commodore 64 would be screen RAM, is free for the monitor and assembler to use.
+
+The same goes for everything else the chip holds. Its **font** is RAM rather than a
+fixed ROM — 16 complete 256-glyph sets, switchable with one write — and its **17
+sprites** are pixel-positioned glyphs drawn over the cell planes. None of it is
+addressable; it is all reached through ports. That makes this a TMS9918 / C128 VDC
+kind of chip rather than a C64 VIC-II, which read the CPU's own RAM and paid for it
+in bus contention. The trade is that every byte of font or sprite data costs a port
+write, which is why the font is organised as switchable *sets*: a program uploads
+its variants once and then changes the whole charset with a single write.
+
+Two of those features exist for one reason, and the VIC's header comment says so at
+more length: the scroll quantum is a whole character cell, which reads as a strobe
+rather than motion. **Fine scroll** slides the scroll region by a pixel count so the
+world can move in sub-cell steps; **sprites** are then needed because the offset
+moves *everything* in the region, so a screen-fixed object like a player's craft
+would sawtooth by a cell on every scroll. A sprite sits outside the region and does
+not. See `docs/video_design.md` for the full reasoning.
 
 ## Reading the code
 

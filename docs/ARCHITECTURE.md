@@ -80,7 +80,7 @@ memory/zero-page/I-O addresses, `Part 2 (Memory and zero-page map)` is authorita
         ┌─────────────────────────────────────────────────┴────────────────┐
         │                          Memory (64K)                            │
         │  RAM  •  ROM overlay ($F000-$FFFF)  •  bank window ($B000-$EFFF) │
-        │  •  I/O page routed to peripherals ($FE00-$FE60)                 │
+        │  •  I/O page routed to peripherals ($FE00-$FECA)                 │
         └───┬──────┬───────┬───────┬───────┬───────┬───────────────────────┘
             ▼      ▼       ▼       ▼       ▼       ▼
         ┌──────┐┌─────┐┌──────┐┌─────┐┌─────┐┌───────────┐
@@ -103,7 +103,7 @@ the `Computer6502` class wires them together.
   `RMB`/`SMB`/`BBR`/`BBS`, `WAI`, `STP`, and correct decimal-mode flags. Validated
   against the Klaus2m5/amb5l functional, decimal, and 65C02-extended suites.
 - **Memory** — 64K store plus the address decoder: it overlays the kernel ROM at
-  `$F000-$FFFF`, routes the I/O page (`$FE00-$FE60`) to the peripherals, and drives
+  `$F000-$FFFF`, routes the I/O page (`$FE00-$FE64`) to the peripherals, and drives
   the bank-switched module window at `$B000-$EFFF` (BASIC / FORTH / MONITOR,
   selected via `MODULE_BANK` at `$FE23`).
 - **VIC** — text video. The 80×25 screen and its per-cell color/attribute plane
@@ -139,7 +139,8 @@ $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
 $B000-$EFFF  Bank-switched module window (BASIC 1, FORTH 3, MONITOR 4; 2 free)
 $F000-$FFFF  Kernel BIOS; jump table at $FF00, vectors at $FFFA
-$FE00-$FE60  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC (carved out of the ROM window)
+$FE00-$FECA  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font + sprites
+             (carved out of the ROM window; $FECB-$FEFF free)
 ```
 
 See `Part 2 (Memory and zero-page map)` for the full zero-page allocation, the I/O
@@ -286,7 +287,7 @@ the two never run at the same time.
 Note: `DEC_DIGIT_BUFFER` ($027D) deliberately aliases `MON_SEARCH_PATTERN` —
 the D:/H: and X: commands never run at the same time.
 
-### Video (VIC) register port (`$FE2D-$FE37`)
+### Video (VIC) register port (`$FE2D-$FE37`, `$FE62-$FECA`)
 
 The 80×25 screen is **not** in the 64K address space. The VIC owns two parallel
 cell planes — a character plane (one 7-bit ASCII byte per cell) and a color
@@ -303,12 +304,20 @@ block ops so the CPU never copies the screen.
 | `$FE2F` | `VREG_CHAR` | Char data port (bit 7 → reverse); auto-increments |
 | `$FE30` | `VREG_COLOR` | Color/attribute data port; auto-increments |
 | `$FE31` | `VREG_ATTR` | Current attribute latch applied to `VREG_CHAR` writes |
-| `$FE32` | `VREG_CMD` | `1`=clear, `2`=scroll up, `3`=scroll down, `4`=fill row, `5`=set row size (param: bit 7 double, bits 4–0 row), `6`=all rows normal, `7`=set scroll-region top row (param) |
+| `$FE32` | `VREG_CMD` | `1`=clear, `2`=scroll up, `3`=scroll down, `4`=fill row, `5`=set row size (param: bit 7 double, bits 4–0 row), `6`=all rows normal, `7`=set scroll-region top row (param), `8`=render from font ROM, `9`=render from font RAM, `10`=reload CP437 into every font set, `11`=select font set (param), `12`=fine scroll offset in pixels (param) |
 | `$FE33` | `VREG_STATUS` | `0` = ready |
 | `$FE34` | `VREG_CURSOR_LO` | Hardware cursor cell low |
 | `$FE35` | `VREG_CURSOR_HI` | Cursor cell high; bit 7 = cursor hidden |
 | `$FE36` | `VREG_CMD_PARAM` | Command parameter / fill character |
 | `$FE37` | `VREG_SCROLL_BOT` | Scroll-region bottom row (default 24) |
+| `$FE62` | `VREG_FONT_LO` | Font byte index low |
+| `$FE63` | `VREG_FONT_HI` | Font byte index high (spans all font sets) |
+| `$FE64` | `VREG_FONT_DATA` | Font data port; auto-increments |
+| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0), Y lo, Y hi (bits 1–0; **bit 7 = enable**), glyph, attribute |
+
+The soft-font port and the sprite block sit above the RTC rather than beside the
+rest because the port block ends at `$FE37` with the SID immediately after.
+`$FECB-$FEFF` is the remaining free space in the I/O page.
 
 The scroll region is rows *top*..*bottom* inclusive; scroll commands shift only
 those rows and leave everything outside them untouched, so an app can pin a
@@ -316,10 +325,36 @@ header above and a status line below. A clear (`VREG_CMD` `1`) resets it to the
 whole screen, so anything holding a region has to reprogram it after a clear.
 The bottom has a register of its own; the top rides the command engine (`7`)
 only because the port block ends at `$FE37` with the SID immediately after.
-Commands `5` and `7` consume `VREG_CMD_PARAM`, which is also the fill
+Commands `5`, `7`, `11` and `12` consume `VREG_CMD_PARAM`, which is also the fill
 character — set the fill char again before the next clear, scroll or fill-row.
 IRC pins its input/status rows below the region, EDIT pins its status line, and
 TERM maps the pair onto ANSI's DECSTBM (`ESC [ top ; bot r`).
+
+**Soft font.** Glyph shapes are RAM, not a fixed ROM. Font storage lives inside
+the chip — like the cell planes, it is *not* in the 64K map — and holds 16
+complete 256-glyph sets, reached through the index/data port above. Command `11`
+picks which set the renderer reads, so a program uploads variants once and then
+switches with a single write; that is the equivalent of repointing the C64's
+`$D018`, and it is what makes pixel-smooth character scrolling affordable.
+`reset()` seeds every set from CP437 and a clear selects the ROM font, so
+redefining a handful of glyphs leaves the other 248 readable and no program can
+strand the shell with an unreadable font.
+
+**Fine scroll.** Command `12` slides the whole scroll region down by a pixel
+count, so the world can move in steps finer than a character cell (the C64's
+`YSCROLL`). The region's **top row becomes a hidden staging row**: sliding down
+opens a gap at the top and what belongs there is the row that does not exist
+yet, so the renderer clips the region one row in. When the offset reaches a cell
+height the program issues a real scroll, resets the offset and writes a fresh
+hidden top row. It costs one row. A clear turns it off.
+
+**Sprites.** 17 glyphs positioned in *pixels* (nominal 8×16 grid, so 0–639 ×
+0–399), drawn over the cell planes with the glyph's background bits transparent.
+Crucially they are **not** moved by the scroll region or the fine offset — that
+is the whole reason they exist. Anything drawn into the cell plane rides the fine
+offset, so a screen-fixed object like a player's craft sawtooths by a cell on
+every scroll; a sprite does not. Their shapes come from the same font storage the
+cells use. A clear disables all of them.
 
 Attribute byte: `[R][BR][bg:3][fg:3]` — bit 7 reverse, bit 6 bright, bits 5–3
 background (0–7), bits 2–0 foreground (0–7). Power-on/clear default is `$02`
@@ -799,6 +834,8 @@ New I/O page layout (re-based 1:1 from the old `$DCxx` block):
 | `$FE22` | `FIO_DATA` — BASIC byte-stream LOAD/SAVE |
 | `$FE23` | **`MODULE_BANK`** — bank-select register |
 | `$FE61` | **`POWER`** — soft power switch; write $5A then $A5 to switch off |
+| `$FE62–$FE64` | **`VREG_FONT_LO/HI/DATA`** — VIC soft-font port; index + auto-incrementing data. Font storage is inside the chip, not in the 64K map (see `docs/video_design.md`) |
+| `$FE65–$FECA` | **VIC sprites** — 17 sprites x 6 bytes: X lo/hi, Y lo/hi (bit 7 = enable), glyph, attribute. Positions are nominal pixels on the 8x16 grid; a sprite is drawn over the cell planes and is NOT moved by the scroll region or the fine offset |
 
 Touched by the relocation:
 - `kernel.asm`: re-base the `PIA_*`, `FILE_*`, timer-ack equates.

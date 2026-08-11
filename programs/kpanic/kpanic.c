@@ -373,7 +373,10 @@ static unsigned char frag_glyph(unsigned char k) {
 /* A LOGICAL row. It used to be derived from the band's physical bottom, which was
  * the same number back when the playfield was 22 single rows -- with an 11-row
  * double band it indexed the terrain ring out of bounds and drew off-screen. */
-#define CRAFT_ROW  (PLAY_H - 1)
+/* One row up from the band's bottom. The bottom row's overhang is what gets clipped
+ * as the region slides, so a craft sitting there would be sliced off; row PLAY_LAST is
+ * now the row terrain slides out through. */
+#define CRAFT_ROW  (PLAY_H - 2)
 
 /* Did an object sweep over the craft on its way from row `from` to row `to`?
  *
@@ -390,11 +393,19 @@ static unsigned char swept_craft(unsigned char from, unsigned char to,
                            x == craft_x);
 }
 
+/* The craft is SPRITE 0, not a cell.
+ *
+ * It used to be drawn into the character plane, and once the world started scrolling in
+ * sub-cell steps that was untenable: the fine offset slides the whole plane, so the
+ * craft slid down with the terrain and snapped back a full cell on every row -- the one
+ * object on screen that is supposed to hold its row. A sprite is outside the region and
+ * outside the offset, so it simply stays where it is put. */
 static void draw_craft(void) {
-    vaddr(PROW(CRAFT_ROW) * SCR_W + craft_x);
-    last_attr = 0xFF;
-    if (flash) put_cell(G_BOOM, (unsigned char)(A_WARN | 0x80));  /* reverse video */
-    else       put_cell(G_CRAFT, A_CRAFT);
+    spr_sel(0);
+    spr_x(craft_x);
+    spr_y(CRAFT_ROW);
+    if (flash) { spr_glyph(G_BOOM);  spr_attr((unsigned char)(A_WARN | 0x80)); }
+    else       { spr_glyph(G_CRAFT); spr_attr(A_CRAFT); }
 }
 
 /* ---- energy ---- */
@@ -438,8 +449,24 @@ static void shot_spawn(unsigned char x) {
     }
 }
 
+/* How many free slots the pool has right now. */
+static unsigned char shots_free(void) {
+    unsigned char i, n = 0;
+    for (i = 0; i < MAX_SHOTS; i++) if (!s_live[i]) n++;
+    return n;
+}
+
 static void fire(void) {
+    unsigned char want;
+
     if (cooldown) return;
+
+    /* A volley is all or nothing: see MAX_SHOTS. Spawning a partial one would drop the
+     * outermost shots and narrow the gun rather than slow it. */
+    want = 1;
+    if (weapon == W_SPREAD) want = (wlevel >= 3) ? 5 : 3;
+    if (shots_free() < want) return;    /* no cooldown: retried next tick */
+
     cooldown = overclock ? FIRE_COOLDOWN_OC : FIRE_COOLDOWN;
 
     shot_spawn(craft_x);
@@ -508,12 +535,55 @@ static unsigned char e_x[MAX_ENEMIES], e_y[MAX_ENEMIES];
  * see shots_enemies_resolve(). */
 static unsigned char e_from[MAX_ENEMIES], e_fx[MAX_ENEMIES];
 static unsigned char e_hp[MAX_ENEMIES];
+/* Ticks left showing a wounded enemy in the hit colour. A separate marker was wrong:
+ * it stayed where the hit landed while the enemy carried on without it, so the feedback
+ * pointed at empty space. Flashing the body itself travels with the body. */
+static unsigned char e_flash[MAX_ENEMIES];
 static unsigned char e_t[MAX_ENEMIES];      /* fire timer / weave phase */
 
 static unsigned char p_live[MAX_PELLETS];
 static unsigned char p_x[MAX_PELLETS], p_y[MAX_PELLETS];
 
 static unsigned char spawn_timer = SPAWN_MIN;
+
+static unsigned char fine_phase;
+
+/* Rows generated but not yet painted. draw_row() is 80 cells -- by far the most
+ * expensive thing in a step -- and it used to run in the same frame that erases and
+ * redraws every moving object, so the objects were missing for the ~10 ms it took and
+ * the host painted them absent several times over. That is the "blinking".
+ *
+ * The new row is the hidden staging row, so nothing needs it this instant: defer it to
+ * the next frame, which has nothing else to do. The boundary frame then only erases,
+ * moves and redraws objects, and the window in which they do not exist is short.
+ * Counts rather than flags because OVERCLOCK scrolls twice in one step. */
+static unsigned char rows_pending;
+
+/* DIAGNOSTIC (V): fine scroll on/off. Off sends offset 0 always, so the world advances
+ * in whole cells exactly as it did before the chip gained the feature -- the simulation
+ * rate and speed are untouched, only the sub-cell interpolation goes away.
+ *
+ * This is the test that separates the two possible causes of the craft's vertical
+ * movement. If it stops with V off, the offset is moving the craft (a known limitation,
+ * fixed by sprites). If it keeps moving with V off, it is a pre-existing bug that has
+ * nothing to do with fine scroll, and sprites would not touch it. */
+static unsigned char fine_on = 1;
+
+static void fine_apply(void) {
+    vfill((unsigned char)(fine_on ? fine_phase * FINE_PX : 0));
+    vcmd(VCMD_FINEY);
+}
+
+/* DEBUG (F): stop drawing the craft and your shots.
+ *
+ * They are the only screen-referenced things in the playfield, so they are the only
+ * things the fine-scroll offset moves WRONGLY -- it slides them down with the region
+ * and then they snap back a full cell when the offset resets. Everything else rides
+ * the world and comes out right. Hiding exactly these two answers whether the bouncing
+ * is that known limitation or a bug in the phase logic: with them hidden the conduit
+ * should be perfectly smooth. They still exist -- steering, firing and collision all
+ * run as normal, only the drawing is skipped. */
+static unsigned char show_player = 1;
 
 /* Short-lived impact markers, so a hit has a visible signature. A kill used to
  * just stop drawing the target, which is indistinguishable from the shot having
@@ -533,7 +603,9 @@ static unsigned char enemy_glyph(unsigned char t) {
     return G_SENTINEL;
 }
 static unsigned char enemy_attr(unsigned char t) {
-    return (t == E_WORM) ? A_FOE2 : A_FOE;
+    if (t == E_WORM)     return A_FOE2;
+    if (t == E_SENTINEL) return A_FOE3;
+    return A_FOE;                       /* the daemon keeps plain bright red */
 }
 
 /* Index+1 of a live enemy occupying (r,x), or 0. */
@@ -570,8 +642,9 @@ static void enemy_kill(unsigned char i) {
 }
 
 static void enemy_damage(unsigned char idx) {
-    if (--e_hp[idx] == 0) enemy_kill(idx);
-    else pop_add(e_x[idx], e_y[idx]);   /* wounded: show that it landed */
+    if (--e_hp[idx] == 0) enemy_kill(idx);      /* a marker at the death site is right:
+                                                 * there is no longer a body to flash */
+    else e_flash[idx] = 2;                      /* wounded: flash the body, which moves */
 }
 
 /* Spawn one enemy at the top of the channel. Placed inside the walls with a
@@ -784,10 +857,24 @@ static void scroll_world(void) {
     vfill(' ');
     vcmd(VCMD_SCROLLDOWN);
 
+    /* The chip scroll and the sub-cell offset reset are two halves of ONE 2 px step:
+     * the scroll moves content down a whole cell, the reset takes the offset from
+     * CELL_H-FINE_PX back to zero, and the net is a single small advance. They must be
+     * issued back to back, with nothing expensive in between.
+     *
+     * Getting this wrong is what made the whole playfield bounce. The reset used to
+     * happen after step_world() returned -- so for the ~13 ms it takes to generate and
+     * paint a new row, the content had already scrolled a full cell while the offset
+     * still held its old value, leaving the world 16 px low for several host repaints
+     * before it snapped back. Down, hold, up, once per row. Both writes now land in the
+     * same host time slice, so no repaint can ever see them apart. */
+    fine_phase = 0;
+    fine_apply();
+
     head = head ? (unsigned char)(head - 1) : (unsigned char)(PLAY_H - 1);
     rows++;
     gen_row();
-    draw_row(0);
+    if (rows_pending < PLAY_H) rows_pending++;   /* painted on the next frame */
 }
 
 /* One fixed simulation step: the single place anything moves, so world speed is
@@ -797,9 +884,10 @@ static void step_world(void) {
 
     /* Erase every moving object BEFORE the scroll, or the hardware shift drags
      * their glyphs down the screen as a trail of ghosts. */
-    restore_cell(CRAFT_ROW, craft_x);
-    for (i = 0; i < MAX_SHOTS; i++)
-        if (s_live[i]) restore_cell(s_y[i], s_x[i]);
+    /* Neither the craft nor the shots are erased: both are sprites now and never
+     * touch the plane. That is what stops them blinking -- a cell-plane object is
+     * absent from the screen for the whole gap between its erase and its redraw, and
+     * the host repaints several times inside that gap. */
     for (i = 0; i < MAX_ENEMIES; i++)
         if (e_type[i]) {
             restore_cell(e_y[i], e_x[i]);
@@ -829,6 +917,7 @@ static void step_world(void) {
     if (flash) flash--;
     if (cooldown) cooldown--;
     for (i = 0; i < MAX_POPS; i++) if (pop_t[i]) pop_t[i]--;
+    for (i = 0; i < MAX_ENEMIES; i++) if (e_flash[i]) e_flash[i]--;
 
     if (ks & KS_LEFT)  craft_x -= MOVE_PER_TICK;
     if (ks & KS_RIGHT) craft_x += MOVE_PER_TICK;
@@ -879,8 +968,11 @@ static void step_world(void) {
         if (e_type[i]) {
             vaddr(PROW(e_y[i]) * SCR_W + e_x[i]);
             last_attr = 0xFF;
-            put_cell(enemy_glyph(e_type[i]), enemy_attr(e_type[i]));
-            put_cell(enemy_glyph(e_type[i]), enemy_attr(e_type[i]));
+            {
+                unsigned char ea = e_flash[i] ? A_SHOT : enemy_attr(e_type[i]);
+                put_cell(enemy_glyph(e_type[i]), ea);
+                put_cell(enemy_glyph(e_type[i]), ea);
+            }
         }
     for (i = 0; i < MAX_PELLETS; i++)
         if (p_live[i]) {
@@ -894,13 +986,21 @@ static void step_world(void) {
             last_attr = 0xFF;
             put_cell(frag_glyph(f_kind[i]), A_FRAG);
         }
-    for (i = 0; i < MAX_SHOTS; i++)
-        if (s_live[i]) {
-            vaddr(PROW(s_y[i]) * SCR_W + s_x[i]);
-            last_attr = 0xFF;
-            put_cell(G_SHOT, A_SHOT);
+    /* Shots are sprites 1..MAX_SHOTS. A dead slot must be switched OFF explicitly or
+     * its sprite lingers where the shot died. */
+    for (i = 0; i < MAX_SHOTS; i++) {
+        spr_sel((unsigned char)(i + 1));
+        if (s_live[i] && show_player) {
+            spr_x(s_x[i]);
+            spr_y(s_y[i]);
+            spr_glyph(G_SHOT);
+            spr_attr(A_SHOT);
+            spr_on(1);
+        } else {
+            spr_on(0);
         }
-    draw_craft();
+    }
+    draw_craft();                       /* a sprite: cheap, and never leaves a hole */
 }
 
 /* ---- HUD: ONE ordinary row, the last line of the screen ----
@@ -915,7 +1015,7 @@ static void step_world(void) {
 static void draw_hud_static(void) {
     put_str(0,  HUD_ROW, "PWR", A_HUD);
     put_str(30, HUD_ROW, "SCORE", A_HUD);
-    put_str(42, HUD_ROW, "ROWS", A_HUD);
+    put_str(42, HUD_ROW, "DIST", A_HUD);
     put_str(53, HUD_ROW, "WPN", A_HUD);
 }
 
@@ -926,6 +1026,13 @@ static unsigned int  hud_score = 0xFFFF, hud_rows = 0xFFFF, hud_energy = 0xFFFF;
 static unsigned char hud_filled = 0xFF;
 static unsigned char hud_oc = 0xFF, hud_pause = 0xFF;
 static unsigned char hud_wpn = 0xFF, hud_wlev = 0xFF;
+
+/* DIAGNOSTIC: visual steps actually completed per second, measured off the RTC, shown
+ * at the right-hand end of the HUD. The target is 60. If it reads well under that the
+ * loop is not keeping up and the accumulator is advancing several phases per pass --
+ * which looks like the world jumping a row at a time, and no amount of sprite work
+ * would fix it. Green at target, red below. */
+static unsigned char hud_sps = 0xFF;
 
 /* Padded to a common width so the field is fixed-size and the diff never has to
  * blank a leftover tail. Indexed by W_PLAIN/W_SPREAD/W_BEAM/W_HOMING. */
@@ -951,8 +1058,12 @@ static void draw_energy_bar(void) {
     }
 }
 
-static void draw_hud_live(void) {
+static void draw_hud_live(unsigned char sps) {
     draw_energy_bar();
+    if (sps != hud_sps) {
+        hud_sps = sps;
+        put_num(78, HUD_ROW, sps, 2, (sps + 3u >= 60u / tickrate) ? A_NODE : A_WARN);
+    }
     if (score != hud_score) { hud_score = score; put_num(36, HUD_ROW, score, 5, A_TEXT); }
     if (rows  != hud_rows)  { hud_rows  = rows;  put_num(47, HUD_ROW, rows,  5, A_TEXT); }
     if (overclock != hud_oc) {
@@ -1024,12 +1135,28 @@ static unsigned char handle_key(int k) {
         case 'P': case 'p':
             paused ^= 1;
             break;
+        case 'F': case 'f':             /* hide the craft + shots (see show_player) */
+            show_player ^= 1;
+            spr_sel(0);
+            spr_on(show_player);        /* shots follow on the next redraw */
+            break;
+        case 'V': case 'v':             /* fine scroll on/off (see fine_apply) */
+            fine_on ^= 1;
+            fine_apply();
+            break;
         case '.':                       /* single-step while paused: frame debugging */
             if (paused) step_world();
             break;
-        case '+': case '=':             /* smaller divisor = faster world */
+        /* Speed on the UP/DOWN arrows. +/- needed a third hand: steering is already on
+         * the arrows and firing on the space bar, so reaching for the number row meant
+         * letting go of something. getkey() decodes the arrow escape sequences to
+         * h/j/k/l; left and right are ignored here because steering comes from the
+         * control port, not the keystroke stream. */
+        case 'k':                       /* up: smaller divisor = faster world */
+        case '+': case '=':
             if (tickrate > TICK_MIN) tickrate--;
             break;
+        case 'j':                       /* down: slower */
         case '-': case '_':
             if (tickrate < TICK_MAX) tickrate++;
             break;
@@ -1074,10 +1201,12 @@ static unsigned char title_screen(void) {
     put_str(26, 11, "SPACE",  A_HUD);   put_str(36, 11, "fire", A_TEXT);
     put_str(26, 12, "SHIFT",  A_HUD);   put_str(36, 12, "overclock", A_TEXT);
     put_str(26, 13, "P",      A_HUD);   put_str(36, 13, "pause", A_TEXT);
-    put_str(26, 14, "+ -",    A_HUD);   put_str(36, 14, "speed", A_TEXT);
-    put_str(26, 15, "Q",      A_HUD);   put_str(36, 15, "quit", A_TEXT);
+    put_str(26, 14, "up/down", A_HUD);   put_str(36, 14, "speed", A_TEXT);
+    put_str(26, 15, "F",      A_HUD);   put_str(36, 15, "hide craft + shots (debug)", A_TEXT);
+    put_str(26, 16, "V",      A_HUD);   put_str(36, 16, "smooth scroll on/off (debug)", A_TEXT);
+    put_str(26, 17, "Q",      A_HUD);   put_str(36, 17, "quit", A_TEXT);
 
-    put_str(24, 18, "S to start        Q to quit", A_BEVEL);
+    put_str(24, 20, "S to start        Q to quit", A_BEVEL);
 
     for (;;) {
         k = wait_fresh_key();
@@ -1100,7 +1229,7 @@ static unsigned char game_over(void) {
     put_str(28, 11, "ENERGY DEPLETED", A_TEXT);
     put_str(28, 12, "SCORE", A_HUD);
     put_num(38, 12, score, 5, A_TEXT);
-    put_str(28, 13, "ROWS", A_HUD);
+    put_str(28, 13, "DIST", A_HUD);
     put_num(38, 13, rows, 5, A_TEXT);
     put_str(27, 15, "R retry   Q quit", A_BEVEL);
 
@@ -1116,6 +1245,7 @@ static unsigned char game_over(void) {
 static unsigned char play_run(void) {
     unsigned int  last, now;
     unsigned char catchup, hud_dirty = 1, r, quit;
+    unsigned char sec, persec = 0, measured = 0;
     int k;
 
     /* Every run starts from the same state, because R on the end screen replays
@@ -1133,12 +1263,12 @@ static unsigned char play_run(void) {
     gen_cx = 19; gen_hw = HW_MAX; gen_target = HW_MAX; gen_gaunt = 0;
     isl_left = 0; isl_x = 0; isl_w = 0;
     for (r = 0; r < MAX_SHOTS; r++)   s_live[r] = 0;
-    for (r = 0; r < MAX_ENEMIES; r++) e_type[r] = E_NONE;
+    for (r = 0; r < MAX_ENEMIES; r++) { e_type[r] = E_NONE; e_flash[r] = 0; }
     for (r = 0; r < MAX_PELLETS; r++) p_live[r] = 0;
     for (r = 0; r < MAX_FRAGS; r++)   f_live[r] = 0;
     /* Force every HUD field to repaint on the first frame of the run. */
     hud_score = 0xFFFF; hud_rows = 0xFFFF; hud_energy = 0xFFFF;
-    hud_filled = 0xFF; hud_oc = 0xFF; hud_pause = 0xFF;
+    hud_filled = 0xFF; hud_oc = 0xFF; hud_pause = 0xFF; hud_sps = 0xFF;
     hud_wpn = 0xFF; hud_wlev = 0xFF;
 
     vhidecur();
@@ -1156,8 +1286,15 @@ static unsigned char play_run(void) {
 
     craft_x = (unsigned char)((r_lx[slot(CRAFT_ROW)] + r_rx[slot(CRAFT_ROW)]) >> 1);
 
+    fine_phase = 0;
+    fine_apply();                       /* AFTER the clear -- a clear turns fine off */
+    sec = rtc_sec();
+
     draw_hud_static();
     draw_craft();
+    spr_sel(0);
+    spr_on(show_player);                /* AFTER a position is set, so it never
+                                         * flashes on at a stale coordinate */
 
     last = jiffies();
 
@@ -1168,8 +1305,25 @@ static unsigned char play_run(void) {
         if (!paused && (unsigned int)(now - last) >= tickrate) {
             catchup = 0;
             while ((unsigned int)(now - last) >= tickrate && catchup < MAX_CATCHUP) {
-                step_world();
+                /* Advance the sub-cell offset; a full cell's worth of it is one row
+                 * of world, at which point the chip does the real scroll and the
+                 * simulation takes its step. */
+                if (++fine_phase >= FINE_STEPS) {
+                    /* step_world() resets the offset itself, right next to the chip
+                     * scroll -- see scroll_world(). Applying it again here would be
+                     * harmless, but doing it ONLY there keeps the invariant obvious. */
+                    step_world();
+                } else {
+                    fine_apply();
+                    /* The expensive terrain paint, on a frame that is otherwise idle.
+                     * Newest row last, so the ring's slot order is respected. */
+                    while (rows_pending) {
+                        rows_pending--;
+                        draw_row(rows_pending);
+                    }
+                }
                 last += tickrate;
+                persec++;
                 catchup++;
                 if (dead) break;
             }
@@ -1179,9 +1333,16 @@ static unsigned char play_run(void) {
             hud_dirty = 1;
         }
 
-        if (dead) { draw_hud_live(); return 1; }
+        if (dead) { draw_hud_live(measured); return 1; }
 
-        if (hud_dirty) { draw_hud_live(); hud_dirty = 0; }
+        if (rtc_sec() != sec) {         /* one-second window off the RTC */
+            sec = rtc_sec();
+            measured = persec;
+            persec = 0;
+            hud_dirty = 1;
+        }
+
+        if (hud_dirty) { draw_hud_live(measured); hud_dirty = 0; }
 
         /* Poll input every pass, not just on tick boundaries, so steering and
          * firing stay responsive independently of the world's scroll cadence.
@@ -1203,6 +1364,8 @@ static unsigned char play_run(void) {
 }
 
 void main(void) {
+    unsigned char i;
+
     rngv = rng_seed();
     if (rngv == 0) rngv = 0xACE1;       /* xorshift must never start at zero */
 
@@ -1212,7 +1375,9 @@ void main(void) {
         if (!game_over()) break;         /* Q on the end screen leaves */
     }
 
-    /* Hand the machine back the way we found it: full-screen scroll region. */
+    /* Hand the machine back the way we found it: no sprite, full-screen scroll
+     * region. A clear would do it too, but being explicit costs nothing. */
+    for (i = 0; i <= MAX_SHOTS; i++) { spr_sel(i); spr_on(0); }
     vscrollbot(SCR_H - 1);
     QUITDOS();
 }

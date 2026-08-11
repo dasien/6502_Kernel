@@ -158,17 +158,42 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
      * and two rows of the screen. The row beneath it is what it grows into, so that
      * row is skipped rather than drawn -- whatever is in its buffer is hidden, exactly
      * as on a VT100 double-height line. */
+    /* Fine scroll slides the scroll region down by a pixel count. Its TOP row is a
+     * hidden staging row: the clip starts one row in, so at offset 0 that row is
+     * entirely above the visible area and slides into view as the offset grows. The
+     * bottom row's overhang is clipped off at the far edge, which is what a row
+     * leaving the playfield should look like.
+     *
+     * The offset goes into each cell's destination rect and the clip is scoped to
+     * this loop -- deliberately NOT a painter.translate() or a frame-wide clip, both
+     * of which a later sprite pass would inherit, and sprites are precisely the
+     * things that must NOT move with the region. */
+    const bool fine = video_chip_->fineActive();
+    const int fine_y = fine ? video_chip_->fineY() : 0;
+    uint8_t region_top = 0, region_bot = 0;
+    video_chip_->getScrollRegion(region_top, region_bot);
+    const int clip_top = (region_top + 1) * char_height_;
+    const int clip_bot = (region_bot + 1) * char_height_;
+
     for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
     {
         const bool dbl = video_chip_->isRowDouble(y);
         const int cols = dbl ? Computer::VIC::kScreenWidth / 2
                              : Computer::VIC::kScreenWidth;
+        const bool shifted = fine && y >= region_top && y <= region_bot;
+        if (shifted)
+        {
+            painter.save();
+            painter.setClipRect(0, clip_top, width(), clip_bot - clip_top);
+        }
         for (int x = 0; x < cols; ++x)
         {
             const uint8_t character = video_chip_->getCharacterAt(x, y);
             const uint8_t attr = video_chip_->getColorAt(x, y);
-            drawCharacterAt(painter, x, y, character, attr, dbl ? 2 : 1);
+            drawCharacterAt(painter, x, y, character, attr, dbl ? 2 : 1,
+                            shifted ? fine_y : 0);
         }
+        if (shifted) painter.restore();
         if (dbl) ++y;                       // the covered row draws nothing of its own
     }
     
@@ -181,6 +206,8 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
                     painter.fillRect(x * char_width_, y * char_height_,
                                      char_width_, char_height_, QColor(120, 160, 255, 96));
     }
+
+    drawSprites(painter);
 
     // Draw cursor if widget has focus
     if (has_focus_ && show_cursor_)
@@ -315,18 +342,19 @@ void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
     }
 }
 
-// Blit one glyph from the CP437 character ROM into a cell: each scanline byte's bits
-// select fg (1) or bg (0). The glyph is built at its native 8x16 and drawn into a
+// Blit one glyph into a cell: each scanline byte's bits select fg (1) or bg (0).
+// The shape comes from the VIC rather than straight out of kCp437Font, because the
+// chip's font is RAM that a program can redefine and switch between sets. The glyph is built at its native 8x16 and drawn into a
 // (char_width_ x scale) by (char_height_ x scale) rect -- at 1x1 that's 1:1; zooming
 // the window, or a double-size row, has QPainter nearest-neighbor scale it
 // (SmoothPixmapTransform is off), so the pixels stay crisp and square.
 void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
                               const uint8_t glyph, const QColor& fg, const QColor& bg,
-                              const int scale)
+                              const int scale, const int y_offset)
 {
     const QRgb fg_rgb = fg.rgb();
     const QRgb bg_rgb = bg.rgb();
-    const uint8_t* rows = &Computer::kCp437Font[glyph * 16];
+    const uint8_t* rows = video_chip_->glyphRows(glyph);
 
     QImage img(8, 16, QImage::Format_RGB32);
     for (int r = 0; r < 16; ++r)
@@ -336,17 +364,60 @@ void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
         for (int c = 0; c < 8; ++c)
             line[c] = (bits & (0x80 >> c)) ? fg_rgb : bg_rgb;
     }
-    painter.drawImage(QRect(x * char_width_ * scale, y * char_height_,
+    // y_offset is in NOMINAL pixels (an 8x16 cell), so it scales with the zoom just
+    // like the cell rect does -- otherwise a zoomed window slides by the wrong amount.
+    painter.drawImage(QRect(x * char_width_ * scale,
+                            y * char_height_ + y_offset * char_height_ / 16,
                             char_width_ * scale, char_height_ * scale), img);
 }
 
 void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
                                     const uint8_t glyph, const uint8_t attr,
-                                    const int scale)
+                                    const int scale, const int y_offset)
 {
     QColor fg, bg;
     resolveCellColors(glyph, attr, fg, bg);
-    blitGlyph(painter, x, y, glyph, fg, bg, scale);
+    blitGlyph(painter, x, y, glyph, fg, bg, scale, y_offset);
+}
+
+// Sprites sit above the character planes at pixel positions, with the glyph's
+// background bits transparent so the terrain shows through. No clip and no fine
+// offset: a sprite must NOT move with the scroll region, which is what makes it the
+// right home for a screen-fixed object like a player's craft.
+void DisplayWidget::drawSprites(QPainter& painter)
+{
+    for (uint8_t i = 0; i < Computer::VIC::kSpriteCount; ++i)
+    {
+        const Computer::VIC::Sprite& sp = video_chip_->sprite(i);
+        if (!sp.enabled)
+        {
+            continue;
+        }
+
+        QColor fg, bg;
+        resolveCellColors(sp.glyph, sp.attr, fg, bg);
+        const QRgb fg_rgb = fg.rgb();
+        const uint8_t* rows = video_chip_->glyphRows(sp.glyph);
+
+        QImage img(8, 16, QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+        for (int r = 0; r < 16; ++r)
+        {
+            const uint8_t bits = rows[r];
+            QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(r));
+            for (int c = 0; c < 8; ++c)
+            {
+                if (bits & (0x80 >> c))
+                {
+                    line[c] = fg_rgb | 0xFF000000u;
+                }
+            }
+        }
+
+        // Positions are nominal pixels on an 8x16 grid; scale to the current zoom.
+        painter.drawImage(QRect(sp.x * char_width_ / 8, sp.y * char_height_ / 16,
+                                char_width_, char_height_), img);
+    }
 }
 
 void DisplayWidget::drawCursor(QPainter& painter)

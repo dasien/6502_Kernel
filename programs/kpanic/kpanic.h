@@ -19,6 +19,19 @@ extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy
 extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for change */
 extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick counter */
 extern unsigned char keystate(void);                  /* live held-key bitmask ($FE0F) */
+/* Sprites. Pixel-positioned and, crucially, NOT riding the scroll region -- the only
+ * place a screen-fixed object can live once the world scrolls in sub-cell steps.
+ * Select a sprite, then set its fields; positions are given in CELLS and the glue
+ * converts to the chip's nominal pixels.
+ *
+ * Sprite 0 is the craft; 1..MAX_SHOTS are the shots. Both were juddering in the cell
+ * plane for the same reason, and both are cured the same way. */
+extern void          spr_sel(unsigned char index);
+extern void          spr_x(unsigned char cell_col);
+extern void          spr_y(unsigned char cell_row);
+extern void          spr_glyph(unsigned char glyph);
+extern void          spr_attr(unsigned char attr);
+extern void          spr_on(unsigned char enable);
 
 /* keystate() bits, active-high. Independent bits are the whole point: holding a
  * direction and firing are simultaneous by construction. */
@@ -34,6 +47,24 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define VCMD_SCROLLUP   0x02
 #define VCMD_SCROLLDOWN 0x03    /* content moves down; row 0 opens (filled) */
 #define VCMD_FILLROW    0x04
+#define VCMD_FINEY      0x0C    /* param = pixels to slide the scroll region down */
+
+/* ---- fine scroll ----
+ * The chip can slide the scroll region down by a pixel count, so the world moves in
+ * sub-cell steps and a real row-scroll only happens when the offset wraps. One row
+ * of terrain is therefore FINE_STEPS visual frames instead of one jump.
+ *
+ * The region's top row becomes a hidden staging row: row 0 -- which is where gen_row()
+ * already writes the newest row -- sits above the visible area and slides into view.
+ * That fits this game exactly; nothing had to be restructured for it.
+ *
+ * Known cost: the offset moves EVERYTHING in the region, so the terrain, the nodes,
+ * the enemies and the pellets all ride it correctly -- but the craft and your shots are
+ * screen-referenced and will sawtooth by one cell per row. Fixing those two needs
+ * sprites. Press F to hide just those two and confirm the conduit itself is smooth. */
+#define CELL_H          16      /* pixel height of an ordinary row */
+#define FINE_PX         2       /* pixels per visual step */
+#define FINE_STEPS      (CELL_H / FINE_PX)
 
 /* ---- screen geometry ----
  * Ordinary single-size rows: 80 columns, playfield rows 0..PLAY_LAST, HUD pinned on
@@ -83,13 +114,16 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
  * TICK_* are jiffies-per-simulation-step at 60 Hz. Difficulty scales by shrinking
  * this divisor, never by fractional speeds (cc65 has no float).
  *
- * 7 -> ~8.5 steps/sec. At a 16 px quantum that is ~137 px/sec, roughly 30% slower
- * than the double-row band managed (32 px x 6/sec = 192 px/sec) -- and it covers the
- * ground in twice as many steps, which is the whole point of the revert. */
-#define TICK_DEFAULT 7
-#define TICK_MIN     2          /* 30 steps/sec */
-#define TICK_MAX     30         /* 2 steps/sec */
-#define MAX_CATCHUP  4          /* sim steps per pass before we resync to now */
+ * NOTE this now paces a VISUAL step (FINE_PX pixels), not a whole row: a row of world
+ * takes FINE_STEPS of them. 1 jiffy per step = 60 steps/sec = 7.5 rows/sec, near the
+ * 8.5 rows/sec the whole-cell version ran at, so speed is comparable and only the
+ * smoothness differs. */
+#define TICK_DEFAULT 1
+#define TICK_MIN     1          /* 60 visual steps/sec = 7.5 rows/sec */
+#define TICK_MAX     6          /* 10 visual steps/sec = 1.25 rows/sec */
+#define MAX_CATCHUP  8          /* visual steps per pass before we resync to now.
+                                 * A whole row's worth, so a slow frame can still
+                                 * complete the row it is partway through. */
 
 /* Steering reads the PIA's live key-state port once per tick, so movement is
  * exactly as smooth as the tick rate and firing is independent of it. This
@@ -123,19 +157,23 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define W_HOMING         3      /* H: shots drift toward the nearest target */
 #define W_MAXLEVEL       3
 
-/* Deep enough that a spread level 3 volley always fits, even while OVERCLOCKED:
- * five shots take ~12 ticks to cross the 24-row playfield and OC fires every 2, so
- * about six volleys are in the air at once. That is why this is 32 and not 10.
+/* One sprite per shot plus one for the craft, and the chip has 17 -- so 16. In play
+ * that is generous: the plain gun keeps about 3 in the air, spread level 2 about 9.
+ * Only spread level 3 under sustained OVERCLOCK wants more (~20), and reserving for
+ * that would have eaten nearly the whole I/O page for a case that barely happens.
  *
- * It matters more than a pool size usually would, because fire() spawns the
- * centre shot first and works outwards -- so a full pool drops the WINGS, and
- * level 3 spread quietly renders as level 1 at exactly the moment you overclocked
- * to get it. The fire rate is the balance dial here (FIRE_COOLDOWN_OC); shrinking
- * the pool does not limit the weapon, it deforms it. */
-#define MAX_SHOTS        32
+ * A full pool must never change the weapon's SHAPE, though, and this is the trap: fire()
+ * spawns the centre shot first and works outwards, so dropping individual shots eats the
+ * WINGS and level 3 spread quietly renders as level 1 at exactly the moment you
+ * overclocked to get it. So a volley is ALL OR NOTHING -- if the whole thing does not
+ * fit, nothing fires and the shot is retried next tick. Saturation costs you rate,
+ * which is legible, instead of silently narrowing the gun. */
+#define MAX_SHOTS        16
 #define SHOT_SPEED       2      /* screen rows per tick, substepped so it can't tunnel */
 #define FIRE_COOLDOWN    3      /* ticks between shots */
-#define FIRE_COOLDOWN_OC 1      /* ... while overclocked */
+#define FIRE_COOLDOWN_OC 2      /* ... while overclocked. 1 put ~27 shots in the air at
+                                 * spread level 3, which overflowed a 24 pool and ate
+                                 * the wings; 2 keeps the peak near 18. */
 
 /* ---- corruption (enemies) ----
  * Unlike nodes, these do not ride the terrain ring: they move independently of
@@ -190,14 +228,23 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 #define A_RECESS    0x40        /* dark gray -- the board seen in shadow, inside the
                                  * channel: same routing as outside, just recessed */
 #define A_CRAFT     0x43        /* bright yellow -- your trace process */
-#define A_FOE       0x41        /* bright red -- corruption */
-#define A_FOE2      0x45        /* bright magenta -- the weaving variety */
+#define A_FOE       0x41        /* bright red -- the diving daemon */
+#define A_FOE2      0x45        /* bright magenta -- the weaving worm */
+#define A_FOE3      0xC1        /* REVERSED bright red -- the emplaced sentinel: a solid
+                                 * red block with the diamond knocked out of it. All six
+                                 * bright hues were already spoken for, so the sentinel
+                                 * is distinguished by inverting rather than by another
+                                 * colour -- and inverted reads as "emplaced", which
+                                 * suits the one enemy that holds station and shoots. */
 #define A_NODE      0x42        /* bright green -- data node (matches the energy bar,
                                  * and stays clear of craft yellow / wall cyan) */
-#define A_FRAG      0xC4        /* bright blue, reverse video -- a weapon fragment.
-                                 * Reverse makes it read as a solid chip rather
-                                 * than a glyph, and blue was the one bright
-                                 * colour nothing else had claimed. */
+#define A_FRAG      0x67        /* bright white on BLUE -- a weapon fragment. Was
+                                 * reversed bright blue, which is near-black on this
+                                 * palette and effectively invisible: blue was "the one
+                                 * colour nothing had claimed" precisely because it is
+                                 * the one that does not read against a dark field.
+                                 * White ink on a blue tile is legible instead, and
+                                 * still nothing else on screen looks like it. */
 #define A_SHOT      0x47        /* bright white -- reserved for the fastest thing on
                                  * screen, so the eye tracks projectiles first */
 #define A_OK        0x42        /* energy bar: healthy */

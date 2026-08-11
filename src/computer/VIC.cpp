@@ -1,19 +1,56 @@
 #include "VIC.h"
+#include "Cp437Font.h"
+
+#include <algorithm>
 
 namespace Computer
 {
     VIC::VIC() : cursor_x_(0), cursor_y_(0), dirty_flag_(false)
     {
+        font_ram_.resize(kFontRamSize);
+        seedFontRam();
         clearScreen();
+    }
+
+    // Every set starts as a copy of the CP437 ROM, so a program that redefines a
+    // handful of glyphs keeps readable text everywhere else -- and cannot leave the
+    // shell with an unreadable font however badly it exits.
+    void VIC::seedFontRam()
+    {
+        for (uint8_t set = 0; set < kFontSets; ++set)
+        {
+            std::copy_n(kCp437Font, kFontSize,
+                        font_ram_.begin() + static_cast<size_t>(set) * kFontSize);
+        }
+    }
+
+    const uint8_t *VIC::glyphRows(const uint8_t glyph) const
+    {
+        if (!font_ram_active_)
+        {
+            return &kCp437Font[static_cast<size_t>(glyph) * kGlyphBytes];
+        }
+        return &font_ram_[static_cast<size_t>(font_set_) * kFontSize +
+                          static_cast<size_t>(glyph) * kGlyphBytes];
     }
 
     // ---------------------------------------------------------------------
     // Register port ($FE2D-$FE36) -- the real interface to the planes.
     // ---------------------------------------------------------------------
 
+    // Three ranges: the original port block, then the soft-font port and the sprite
+    // registers, which had to go above the RTC because $FE38 (the SID) sits
+    // immediately after the first block.
     bool VIC::isVideoRegAddress(const uint16_t address)
     {
-        return address >= kRegFirst && address <= kRegLast;
+        return (address >= kRegFirst && address <= kRegLast) ||
+               (address >= kRegFontFirst && address <= kRegFontLast) ||
+               (address >= kRegSpriteFirst && address <= kRegSpriteLast);
+    }
+
+    const VIC::Sprite &VIC::sprite(const uint8_t index) const
+    {
+        return sprites_[index < kSpriteCount ? index : 0];
     }
 
     void VIC::advanceIndex() const
@@ -47,7 +84,32 @@ namespace Computer
             return static_cast<uint8_t>(cell_index_ & 0xFF);
         case kRegAddrHi:
             return static_cast<uint8_t>((cell_index_ >> 8) & 0xFF);
+        case kRegFontData:
+        {
+            const uint8_t value = font_ram_[font_index_ % kFontRamSize];
+            font_index_ = (font_index_ + 1) % kFontRamSize;
+            return value;
+        }
+        case kRegFontLo:
+            return static_cast<uint8_t>(font_index_ & 0xFF);
+        case kRegFontHi:
+            return static_cast<uint8_t>((font_index_ >> 8) & 0xFF);
         default:
+            if (address >= kRegSpriteFirst && address <= kRegSpriteLast)
+            {
+                const uint8_t i = static_cast<uint8_t>((address - kRegSpriteFirst) / kSpriteStride);
+                const Sprite &sp = sprites_[i];
+                switch ((address - kRegSpriteFirst) % kSpriteStride)
+                {
+                case kSprXLo:  return static_cast<uint8_t>(sp.x & 0xFF);
+                case kSprXHi:  return static_cast<uint8_t>((sp.x >> 8) & 0x03);
+                case kSprYLo:  return static_cast<uint8_t>(sp.y & 0xFF);
+                case kSprYHi:  return static_cast<uint8_t>(((sp.y >> 8) & 0x03) |
+                                                           (sp.enabled ? kSprEnable : 0));
+                case kSprGlyph: return sp.glyph;
+                default:        return sp.attr;
+                }
+            }
             return 0x00; // write-only registers read as 0
         }
     }
@@ -91,6 +153,21 @@ namespace Computer
         case kRegScrollBot:
             scroll_bot_ = (value < kScreenHeight) ? value : (kScreenHeight - 1);
             break;
+        // Font index: unlike the cell index this wraps on each byte, because it has
+        // no equivalent of the low/high ordering hazard -- the data port is the only
+        // thing that consumes it.
+        case kRegFontLo:
+            font_index_ = (font_index_ & 0xFF00u) | value;
+            break;
+        case kRegFontHi:
+            font_index_ = ((font_index_ & 0x00FFu) |
+                           (static_cast<uint32_t>(value) << 8)) % kFontRamSize;
+            break;
+        case kRegFontData:
+            font_ram_[font_index_ % kFontRamSize] = value;
+            font_index_ = (font_index_ + 1) % kFontRamSize;
+            dirty_flag_ = true;
+            break;
         case kRegCmd:
             switch (value)
             {
@@ -102,6 +179,28 @@ namespace Computer
             case kCmdRowsNormal: row_double_ = 0; dirty_flag_ = true; break;
             case kCmdScrollTop:
                 scroll_top_ = (cmd_param_ < kScreenHeight) ? cmd_param_ : (kScreenHeight - 1);
+                break;
+            case kCmdFineY:
+                // Clamped rather than ignored: unlike a font set, an out-of-range
+                // offset has an obvious right answer (the furthest the region can
+                // slide), and a game computing it from a tick counter is the normal
+                // way to get one.
+                fine_y_ = (cmd_param_ < 32) ? cmd_param_ : 31;
+                fine_active_ = true;
+                dirty_flag_ = true;
+                break;
+            case kCmdFontRom: font_ram_active_ = false; dirty_flag_ = true; break;
+            case kCmdFontRam: font_ram_active_ = true;  dirty_flag_ = true; break;
+            case kCmdFontReset: seedFontRam(); dirty_flag_ = true; break;
+            case kCmdFontSet:
+                // Out-of-range is ignored rather than clamped: a wild value is a bug,
+                // and silently rendering someone else's set hides it worse than
+                // leaving the display alone does.
+                if (cmd_param_ < kFontSets)
+                {
+                    font_set_ = cmd_param_;
+                    dirty_flag_ = true;
+                }
                 break;
             default: break;
             }
@@ -117,6 +216,28 @@ namespace Computer
             dirty_flag_ = true;
             break;
         default:
+            // The sprite block is a run of six-byte records rather than named
+            // registers, so it is decoded here rather than as switch cases.
+            if (address >= kRegSpriteFirst && address <= kRegSpriteLast)
+            {
+                const uint8_t i = static_cast<uint8_t>((address - kRegSpriteFirst) / kSpriteStride);
+                Sprite &sp = sprites_[i];
+                switch ((address - kRegSpriteFirst) % kSpriteStride)
+                {
+                case kSprXLo: sp.x = static_cast<uint16_t>((sp.x & 0x0300) | value); break;
+                case kSprXHi: sp.x = static_cast<uint16_t>((sp.x & 0x00FF) |
+                                        (static_cast<uint16_t>(value & 0x03) << 8)); break;
+                case kSprYLo: sp.y = static_cast<uint16_t>((sp.y & 0x0300) | value); break;
+                case kSprYHi:
+                    sp.y = static_cast<uint16_t>((sp.y & 0x00FF) |
+                              (static_cast<uint16_t>(value & 0x03) << 8));
+                    sp.enabled = (value & kSprEnable) != 0;
+                    break;
+                case kSprGlyph: sp.glyph = value; break;
+                default:        sp.attr = value; break;
+                }
+                dirty_flag_ = true;
+            }
             break;
         }
     }
@@ -128,7 +249,16 @@ namespace Computer
         scroll_top_ = 0;                   // a clear also resets the scroll region
         scroll_bot_ = kScreenHeight - 1;
         row_double_ = 0;                   // ...and puts every row back to 8x16, so a
-        dirty_flag_ = true;                // program cannot strand the shell at 16x32
+                                           // program cannot strand the shell at 16x32
+        font_ram_active_ = false;          // ...and back to the ROM font, set 0, for
+        font_set_ = 0;                     // exactly the same reason
+        fine_y_ = 0;                       // ...and fine scrolling off, so the shell
+        fine_active_ = false;              // never loses a row to a staging row
+        for (Sprite &sp : sprites_)        // ...and every sprite off, so nothing is
+        {                                  // left stranded over the shell's screen
+            sp.enabled = false;
+        }
+        dirty_flag_ = true;
     }
 
     // Flag one row double or normal. The row comes in the low bits of the command
