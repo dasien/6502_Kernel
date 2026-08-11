@@ -79,7 +79,12 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * moving the dungeon underneath it. */
 #define SPRITES     ((volatile unsigned char *)0xFE65)
 #define SPR_STRIDE  6
-#define SPR_2X2     0x04     /* size-1 in bits 4-2 of each position high byte */
+/* Magnify, NOT size. Size (bits 4-2) composes adjacent glyph codes, so a 2x2 Winky
+ * came out as glyphs $01 $02 $03 $04 tiled together -- four different characters in
+ * one body. Magnify stretches the single pattern, which is exactly what a
+ * double-size row does to a character, so a magnified sprite is the same picture
+ * the cell plane was drawing before the movers were lifted out of it. */
+#define SPR_MAG     0x20     /* bit 5 of each position high byte */
 #define SPR_ENABLE  0x80
 
 #define SPR_WINKY   0
@@ -153,11 +158,11 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * diagonal, which moves you on both axes at once while it only ever moves on one,
  * buys the time to reach a doorway. */
 #define MAX_HALL      6
-#define HALL_BASE     1
+#define HALL_BASE     3      /* awake at level start; +1 per room looted */
 #define G_HALLMON     0xE8   /* a hooded figure */
 #define HALL_EVERY    4      /* hall: steps every Nth tick (slower than Winky) */
 #define HALL_ROOM_TICKS 170  /* room: ticks of dawdling before one comes in */
-#define HALL_IN_SKIP  3      /* room: the intruder steps on all but every Nth tick */
+#define HALL_IN_SKIP  2      /* room: the intruder steps on all but every Nth tick */
 
 /* ---- tiles (what is in a cell, independent of what is drawn) ------------ */
 #define T_FLOOR   0
@@ -216,6 +221,10 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define A_HUD     0x47   /* bright white */
 #define A_WINKY   0x43   /* bright yellow, as the arcade smiley was */
 #define A_MON     0x41   /* bright red */
+/* Once the treasure is yours the monsters are worth points, and the arcade tells you
+ * so by recolouring them. Before that a kill scores nothing, which is invisible
+ * otherwise -- you cannot see a rule you are being scored against. */
+#define A_MON_WORTH 0x45 /* bright magenta */
 #define A_CORPSE  0x40   /* bright black == dark grey */
 #define A_DOORWAY 0x47   /* bright white */
 #define A_ARROW   0x42   /* bright green */
@@ -252,6 +261,19 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * Nothing starts anywhere near a doorway: every layout is checked offline for at
  * least MIN_SPAWN_GAP tiles between each monster post and either arrival cell, so
  * walking into a room can never kill you before you have taken a step. */
+/* How much of Winky's step the slide uses. A mover that slides for its WHOLE span
+ * arrives at the new cell exactly as the next step is taken, so the picture runs a
+ * full step behind the simulation and a direction press takes a beat to bite.
+ * Arriving early buys most of that back.
+ *
+ * WINKY ONLY, and that is the point. He is the one you are steering, so latency is
+ * what matters and a pause after arriving is worth paying. Nothing else is
+ * input-driven: for a monster only continuity matters, and shortening ITS slide just
+ * makes it lurch and stop -- a room monster steps every third tick, so a half-length
+ * slide is nine jiffies of motion followed by nine of sitting still. Everything that
+ * is not Winky slides across its whole cadence. Larger = snappier, and choppier. */
+#define SLIDE_DEN   2
+
 #define MON_EVERY   3
 
 #define MAX_MON     6

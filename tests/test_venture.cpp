@@ -27,6 +27,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <map>
 #include <vector>
 
 #include "computer/Computer6502.h"
@@ -91,7 +92,7 @@ constexpr uint8_t kGlyphFaceL = 0x11, kGlyphFaceD = 0x1F;
 // The level-1 palette (venture.c's lvl_* tables): walls dim magenta, room blocks
 // bright magenta, Hallmonsters bright green.
 constexpr uint8_t kL1Wall = 0x05, kL1Room = 0x45, kL1Hall = 0x42;
-constexpr int kMaxHallPosts = 6, kHallBase = 1;
+constexpr int kMaxHallPosts = 6, kHallBase = 3;
 
 constexpr uint8_t kKsUp = 0x01, kKsDown = 0x02, kKsLeft = 0x04,
                   kKsRight = 0x08, kKsFire = 0x10;
@@ -934,6 +935,39 @@ TEST_F(VentureTest, TheDungeonUsesItsOwnGlyphsAndNotTheCharacterRom)
  * resets the font anyway, so the assertion passes with the restore removed. Verified
  * by deleting the call and watching the test still pass, which is why there is no
  * test here rather than a green one that checks nothing. */
+
+/* Hallmonsters must never stack. They all patrol the same hall and drift toward the
+ * same player, so without a rule against it they pile into one square and draw as a
+ * single figure -- the hall then looks emptier than it is, which matters when its
+ * filling up is the level's clock. Room monsters already refused to share a cell;
+ * Hallmonsters were never given the same rule.
+ *
+ * Checked in PIXELS rather than cells: overlapping is what you actually see, and a
+ * sprite mid-slide is between cells, so inferring a cell from its position would
+ * report overlaps that are not there. */
+TEST_F(VentureTest, HallmonstersNeverOverlap)
+{
+    int worst = 0, sampled = 0;
+    for (int t = 0; t < 300; t++) {
+        run(2);
+        std::vector<std::pair<int, int>> at;
+        const Computer::VIC *vic = c.getVideoChip();
+        for (uint8_t i = 0; i < Computer::VIC::kSpriteCount; ++i) {
+            const Computer::VIC::Sprite &sp = vic->sprite(i);
+            if (sp.enabled && sp.glyph == kGlyphHallmon) at.push_back({sp.x, sp.y});
+        }
+        if (at.size() < 2) continue;
+        sampled++;
+        for (size_t a = 0; a < at.size(); ++a)
+            for (size_t b = a + 1; b < at.size(); ++b) {
+                // a magnified sprite is 16 nominal px wide and 32 tall
+                if (abs(at[a].first - at[b].first) < 16 &&
+                    abs(at[a].second - at[b].second) < 32) worst++;
+            }
+    }
+    ASSERT_GT(sampled, 100) << "never saw two Hallmonsters at once";
+    EXPECT_EQ(worst, 0) << worst << " frames had two Hallmonsters drawn on top of each other";
+}
 
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {

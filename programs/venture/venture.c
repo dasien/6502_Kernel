@@ -664,14 +664,16 @@ static unsigned int glide_y(unsigned char prev, unsigned char cur, unsigned char
     return (unsigned int)(PLAY_ROW0 + ((gy0 + cur) << 1)) << 4;
 }
 
+/* mag: draw the pattern at 2x, which is what makes a sprite the size of a
+   double-row cell. Off gives a half-size marker -- see the facing pip. */
 static void spr_nom(unsigned char slot, unsigned int nx, unsigned int ny,
-                    unsigned char ch, unsigned char attr)
+                    unsigned char ch, unsigned char attr, unsigned char mag)
 {
     volatile unsigned char *r = SPRITES + (unsigned int)slot * SPR_STRIDE;
     r[0] = (unsigned char)nx;
-    r[1] = (unsigned char)(((nx >> 8) & 0x03) | SPR_2X2);
+    r[1] = (unsigned char)(((nx >> 8) & 0x03) | mag);
     r[2] = (unsigned char)ny;
-    r[3] = (unsigned char)(((ny >> 8) & 0x03) | SPR_2X2 | SPR_ENABLE);
+    r[3] = (unsigned char)(((ny >> 8) & 0x03) | mag | SPR_ENABLE);
     r[4] = ch;
     r[5] = attr;
 }
@@ -950,6 +952,44 @@ static void step_inward(unsigned char dx, unsigned char dy)
     else                   { wx = gw - 2;    face_dx = -1; }
 }
 
+/* Order the posts so the ones woken first are the ones furthest from the square the
+ * player starts a level on.
+ *
+ * They are numbered in the order they appear in the layout art, which is scan order
+ * and says nothing about where the player begins. With a single Hallmonster awake
+ * that did not matter. With three it does: level one's third post in scan order sits
+ * at (13,5), one cell from the start at (14,5), so the level would have opened with a
+ * Hallmonster already touching you. Sorting by distance makes the safe choice a rule
+ * rather than a property of how the art happens to be typed -- and the start square
+ * is the only place this has to hold, because enter_map() puts the player there only
+ * at level start, and beside the room entrance every other time. */
+/* Taxicab distance from the level-start square. */
+static unsigned int post_dist(unsigned char x, unsigned char y)
+{
+    return (unsigned int)(x > MAP_START_X ? x - MAP_START_X : MAP_START_X - x)
+         + (unsigned int)(y > MAP_START_Y ? y - MAP_START_Y : MAP_START_Y - y);
+}
+
+static void order_hall_posts(void)
+{
+    unsigned char i, j, n = 0, t;
+    unsigned int di, dj;
+
+    while (n < MAX_HALL && h_live[n]) n++;
+    for (i = 0; i + 1 < n; i++) {
+        for (j = (unsigned char)(i + 1); j < n; j++) {
+            di = post_dist(h_x[i], h_y[i]);
+            dj = post_dist(h_x[j], h_y[j]);
+            if (dj > di) {
+                t = h_x[i]; h_x[i] = h_x[j]; h_x[j] = t;
+                t = h_y[i]; h_y[i] = h_y[j]; h_y[j] = t;
+                t = h_ox[i]; h_ox[i] = h_ox[j]; h_ox[j] = t;
+                t = h_oy[i]; h_oy[i] = h_oy[j]; h_oy[j] = t;
+            }
+        }
+    }
+}
+
 /* Wake HALL_BASE Hallmonsters plus one per room already looted, and put the rest
  * back to sleep. The hall you cross for the fourth room is not the hall you
  * crossed for the first. */
@@ -966,6 +1006,7 @@ static void enter_map(void)
     mode = MODE_MAP;
     load_board(map_layout[hall_of_level], MAP_W, MAP_H, MAP_X, MAP_Y);
     cut_notches();
+    order_hall_posts();
     set_hall_count();
 
     /* Back beside the entrance we went in by, never on it: standing on it would
@@ -1136,7 +1177,8 @@ static void arrow_advance(void)
  * Room monsters and Hallmonsters share it. What differs is what stops them --
  * `solid`, below -- and that is the whole difference between a monster and a clock.
  */
-static unsigned char chase_self;    /* the monster taking this step, 0xFF for none */
+static unsigned char chase_self;    /* the room monster taking this step, 0xFF for none */
+static unsigned char hall_self = 0xFF;  /* the Hallmonster taking this step */
 static unsigned char back_x, back_y; /* the cell it came from, which it may not retake */
 
 static unsigned char chase_blocked(unsigned char rx, unsigned char ry,
@@ -1153,12 +1195,26 @@ static unsigned char chase_blocked(unsigned char rx, unsigned char ry,
      * this they converge into the same cell and draw as a single glyph -- you cannot
      * see how many are coming, and one arrow appears to kill two. Crowding is the
      * honest behaviour and it makes a doorway worth holding. */
-    if (rx == back_x && ry == back_y) return 1;
+    /* One cell of memory stops a monster oscillating against a long wall. The room
+       intruder walks THROUGH walls, so it has no wall to oscillate against -- and
+       refusing to double back only made it sidestep whenever you slipped past it,
+       which is precisely when it should be turning round and coming after you. */
+    if (!through_walls && rx == back_x && ry == back_y) return 1;
     if (avoid_bodies) {
         unsigned char i;
         if (grid[ry][rx] == T_CORPSE) return 1;
         for (i = 0; i < MAX_MON; i++)
             if (i != chase_self && m_live[i] && m_x[i] == rx && m_y[i] == ry) return 1;
+    }
+    /* Nor do Hallmonsters share a cell. They all patrol the same hall and drift
+       toward the same player, so without this they pile into one square and draw as a
+       single figure -- you cannot see how many are coming, and the hall looks emptier
+       than it is. Checked only while a Hallmonster is the one stepping, so it does not
+       change how a room monster moves around the one that follows you in. */
+    if (hall_self != 0xFF) {
+        unsigned char k;
+        for (k = 0; k < MAX_HALL; k++)
+            if (k != hall_self && h_live[k] && h_x[k] == rx && h_y[k] == ry) return 1;
     }
     if (through_walls) return 0;
     return pursuit_blocked(rx, ry);
@@ -1283,7 +1339,9 @@ static void hall_advance(void)
         if (!h_live[i]) continue;
         back_x = h_ox[i];
         back_y = h_oy[i];
+        hall_self = i;
         chase(&h_x[i], &h_y[i], phases, 0);
+        hall_self = 0xFF;
         h_ox[i] = back_x;
         h_oy[i] = back_y;
         if (h_x[i] == wx && h_y[i] == wy) dead = 1;
@@ -1335,40 +1393,64 @@ static void draw_facing(void)
  * is under a monster standing on him, which is the moment you most want to see. */
 static void draw_movers(unsigned char frac)
 {
-    unsigned char i, ow, om, oh;
-    unsigned int span;
+    unsigned char i, op, ow, om, oh;
+    unsigned int span, nx, ny;
 
+    /* Winky arrives early, so steering bites. Everything else slides across its
+       whole cadence, so it moves continuously instead of lurching and stopping. */
+    op = slide(frac, tickrate / SLIDE_DEN);
     ow = slide(frac, tickrate);
     om = slide((unsigned int)(tick_count - mon_at) * tickrate + frac,
                (unsigned int)MON_EVERY * tickrate);
     span = (mode == MODE_MAP) ? (unsigned int)HALL_EVERY * tickrate : tickrate;
     oh = slide((unsigned int)(tick_count - hall_at) * tickrate + frac, span);
 
-    /* The pip slides with Winky. It is a reticle rather than a body, so snapping it
-       to its cell was tempting -- but it sits one cell from him, and a pip that
-       snapped while he slid would visibly detach and rejoin every step. */
-    if (f_live) spr_nom(SPR_FACE, glide_x(pf_x0, f_x, ow), glide_y(pf_y0, f_y, ow),
-                        face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
-                        face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE);
-    else        spr_off(SPR_FACE);
+    /* Winky first: the pip is placed relative to where he is DRAWN, so it travels
+       with him for free and can never detach mid-slide. */
+    nx = glide_x(pw_x, wx, op);
+    ny = glide_y(pw_y, wy, op);
+    /* Half size out in the hall, as the arcade draws him: the hall is a maze of
+       corridors and a full-size body fills one, so you cannot see the gap you are
+       aiming for. Centred in the cell, since he is smaller than it. Note this is the
+       PICTURE only -- he still occupies the whole cell as far as anything he can walk
+       into is concerned. */
+    if (mode == MODE_MAP) spr_nom(SPR_WINKY, nx + 4, ny + 8, G_WINKY, A_WINKY, 0);
+    else                  spr_nom(SPR_WINKY, nx, ny, G_WINKY, A_WINKY, SPR_MAG);
 
-    spr_nom(SPR_WINKY, glide_x(pw_x, wx, ow), glide_y(pw_y, wy, ow), G_WINKY, A_WINKY);
+    /* The pip used to be a full-size body a whole cell away. A playfield cell is
+       twice as tall as it is wide, so up and down put it 32 pixels off and left and
+       right only 16 -- the aim read as lopsided, because it was. It is a reticle
+       rather than a body, so it is now half size and placed in PIXELS hard against
+       whichever edge of Winky he faces: touching on all four sides, and small enough
+       that it reads as an aim rather than as another thing in the room. */
+    if (f_live) {
+        unsigned int px, py;
+        if (face_dx > 0)      { px = nx + 16; py = ny + 8;  }
+        else if (face_dx < 0) { px = nx - 8;  py = ny + 8;  }
+        else if (face_dy > 0) { px = nx + 4;  py = ny + 32; }
+        else                  { px = nx + 4;  py = ny - 16; }
+        spr_nom(SPR_FACE, px, py,
+                face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
+                face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE, 0);
+    }
+    else spr_off(SPR_FACE);
 
     for (i = 0; i < MAX_MON; i++) {
         if (m_live[i]) spr_nom((unsigned char)(SPR_MON0 + i),
                                glide_x(pm_x[i], m_x[i], om), glide_y(pm_y[i], m_y[i], om),
-                               theme_monster[theme], A_MON);
+                               theme_monster[theme],
+                               have_treasure ? A_MON_WORTH : A_MON, SPR_MAG);
         else           spr_off((unsigned char)(SPR_MON0 + i));
     }
     for (i = 0; i < MAX_HALL; i++) {
         if (h_live[i]) spr_nom((unsigned char)(SPR_HALL0 + i),
                                glide_x(ph_x[i], h_x[i], oh), glide_y(ph_y[i], h_y[i], oh),
-                               G_HALLMON, a_hall);
+                               G_HALLMON, a_hall, SPR_MAG);
         else           spr_off((unsigned char)(SPR_HALL0 + i));
     }
     if (a_live) spr_nom(SPR_ARROW, glide_x(pa_x, a_x, ow), glide_y(pa_y, a_y, ow),
                         a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
-                        a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW);
+                        a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW, SPR_MAG);
     else        spr_off(SPR_ARROW);
 }
 
@@ -1419,10 +1501,12 @@ static void step(unsigned char ks)
             cue(SND_TREASURE);
             draw_hud();
         }
-        /* Either doorway is a way out, and only with the goods. Which one decides
-         * where in the hall we reappear: leave by the north door and you step out at
-         * the north of the room's block. */
-        if (have_treasure && grid[wy][wx] == T_EXIT) {
+        /* Either doorway is a way out, with or without the goods -- a room you have
+         * walked into and thought better of is not a trap. Which one you use decides
+         * where in the hall you reappear: leave by the north door and you step out at
+         * the north of the room's block. Whether the room counts as LOOTED is a
+         * separate question, settled by have_treasure where the room is closed out. */
+        if (grid[wy][wx] == T_EXIT) {
             exit_used = (rx_x[1] == wx && rx_y[1] == wy) ? 1 : 0;
             ret_x = sl_x[slot_entered][exit_used];
             ret_y = sl_y[slot_entered][exit_used];
@@ -1685,7 +1769,9 @@ int main(void)
         snd_left = 0;
 
         if (left_room) {
-            slot_done[slot_entered] = 1;
+            /* Only a looted room is done. Walking back out empty-handed leaves it
+               open in the hall, to be gone back into. */
+            if (have_treasure) slot_done[slot_entered] = 1;
 
             level_done = 1;
             for (i = 0; i < ROOMS_PER_LEVEL; i++)
