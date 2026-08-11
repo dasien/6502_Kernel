@@ -12,7 +12,8 @@
  * That division applies to sprite SIZE too. The chip owns the width and height in
  * cells, and those are pinned below. Which glyph lands in which cell -- consecutive
  * codes, row-major from the base, wrapping at 255 -- is the renderer's arithmetic and
- * is not covered here.
+ * is not covered here. The same goes for magnify: the bits are pinned below, the
+ * doubled destination rectangle is not.
  */
 
 #include <gtest/gtest.h>
@@ -207,6 +208,46 @@ TEST(VicSprites, MaximumSizeIsEightCells)
     EXPECT_EQ(v.sprite(1).h, VIC::kSprSizeMax);
 }
 
+/* Magnify is the OTHER way to be bigger, and confusing it with size is a real
+ * mistake with a visible symptom. Size composes adjacent glyph codes, so a 2x2 at
+ * code $01 draws $01 $02 $03 $04 -- four different characters tiled into one body,
+ * which is exactly what VENTURE's Winky came out as. Magnify stretches the one
+ * pattern, which is what a double-size row does to a character. They are independent
+ * and a sprite can have both. */
+TEST(VicSprites, MagnifyIsIndependentOfSize)
+{
+    VIC v;
+    EXPECT_FALSE(v.sprite(0).magx);
+    EXPECT_FALSE(v.sprite(0).magy);
+
+    place(v, 0, 600, 380, true);
+    v.write(reg(0, VIC::kSprXHi), static_cast<uint8_t>(((600 >> 8) & 0x03) | VIC::kSprMagX));
+    v.write(reg(0, VIC::kSprYHi), static_cast<uint8_t>(((380 >> 8) & 0x03) | VIC::kSprMagY |
+                                                       VIC::kSprEnable));
+    EXPECT_TRUE(v.sprite(0).magx);
+    EXPECT_TRUE(v.sprite(0).magy);
+    EXPECT_EQ(v.sprite(0).w, 1) << "magnifying must not imply a size";
+    EXPECT_EQ(v.sprite(0).h, 1);
+    EXPECT_EQ(v.sprite(0).x, 600) << "nor disturb the position it shares a byte with";
+    EXPECT_EQ(v.sprite(0).y, 380);
+    EXPECT_TRUE(v.sprite(0).enabled);
+
+    // ...and setting a size must not imply magnification.
+    resize(v, 0, 2, 2);
+    EXPECT_FALSE(v.sprite(0).magx) << "resizing dropped the magnify bit";
+    EXPECT_FALSE(v.sprite(0).magy);
+    EXPECT_EQ(v.sprite(0).w, 2);
+}
+
+// One axis at a time, since a program may want a wide sprite that is not tall.
+TEST(VicSprites, MagnifyAxesAreSeparate)
+{
+    VIC v;
+    v.write(reg(2, VIC::kSprXHi), VIC::kSprMagX);
+    EXPECT_TRUE(v.sprite(2).magx);
+    EXPECT_FALSE(v.sprite(2).magy);
+}
+
 // --- safety ---------------------------------------------------------------
 
 TEST(VicSprites, ClearDisablesEverySprite)
@@ -218,6 +259,7 @@ TEST(VicSprites, ClearDisablesEverySprite)
     for (uint8_t i = 0; i < VIC::kSpriteCount; ++i) ASSERT_TRUE(v.sprite(i).enabled);
 
     resize(v, 0, 4, 4);                 // and a big one, which must also be undone
+    v.write(reg(1, VIC::kSprXHi), VIC::kSprMagX);   // and a magnified one
 
     command(v, VIC::kCmdClear, ' ');
     for (uint8_t i = 0; i < VIC::kSpriteCount; ++i)
@@ -226,6 +268,7 @@ TEST(VicSprites, ClearDisablesEverySprite)
     }
     EXPECT_EQ(v.sprite(0).w, 1) << "a clear returns the size to one cell too";
     EXPECT_EQ(v.sprite(0).h, 1);
+    EXPECT_FALSE(v.sprite(1).magx) << "...and drops magnification";
 }
 
 TEST(VicSprites, DoNotDisturbTheCellPlane)

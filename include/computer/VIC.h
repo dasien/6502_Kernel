@@ -163,6 +163,16 @@ namespace Computer
         static constexpr uint8_t kSprSizeMask = 0x1C;   ///< bits 4-2
         static constexpr uint8_t kSprSizeMax = 8;       ///< 3 bits, stored as size-1
 
+        /// Magnify: draw each pixel of the pattern at double size on that axis.
+        /// The OTHER way to make a sprite bigger, and not interchangeable with size.
+        /// Size composes ADJACENT GLYPH CODES -- a 2x2 draws g, g+1, g+2, g+3 -- so it
+        /// buys detail but needs artwork drawn across four patterns. Magnify stretches
+        /// ONE pattern, so it buys no detail but matches what a double-size row does
+        /// to a character. A program replacing a double-row cell with a sprite wants
+        /// magnify; one drawing a large object from scratch wants size.
+        static constexpr uint8_t kSprMagX = 0x20;       ///< bit 5 of the X high byte
+        static constexpr uint8_t kSprMagY = 0x20;       ///< bit 5 of the Y high byte
+
         /// Glyphs per font, bytes per glyph, and how many complete fonts are held.
         /// 16 sets is enough for 2 px phase steps of a 32 px double-height cell; the
         /// whole thing is 64 KB of host memory and zero guest address space.
@@ -246,6 +256,8 @@ namespace Computer
             /// slots, and could shear apart if an update landed mid-frame.
             uint8_t w = 1;
             uint8_t h = 1;
+            bool magx = false;   ///< each pattern pixel drawn 2x wide
+            bool magy = false;   ///< ...and/or 2x tall
         };
         [[nodiscard]] const Sprite &sprite(uint8_t index) const;
 

@@ -103,10 +103,12 @@ namespace Computer
                 {
                 case kSprXLo:  return static_cast<uint8_t>(sp.x & 0xFF);
                 case kSprXHi:  return static_cast<uint8_t>(((sp.x >> 8) & 0x03) |
-                                   ((sp.w - 1) << kSprSizeShift));
+                                   ((sp.w - 1) << kSprSizeShift) |
+                                   (sp.magx ? kSprMagX : 0));
                 case kSprYLo:  return static_cast<uint8_t>(sp.y & 0xFF);
                 case kSprYHi:  return static_cast<uint8_t>(((sp.y >> 8) & 0x03) |
                                                            ((sp.h - 1) << kSprSizeShift) |
+                                                           (sp.magy ? kSprMagY : 0) |
                                                            (sp.enabled ? kSprEnable : 0));
                 case kSprGlyph: return sp.glyph;
                 default:        return sp.attr;
@@ -231,12 +233,14 @@ namespace Computer
                     sp.x = static_cast<uint16_t>((sp.x & 0x00FF) |
                               (static_cast<uint16_t>(value & 0x03) << 8));
                     sp.w = static_cast<uint8_t>(((value & kSprSizeMask) >> kSprSizeShift) + 1);
+                    sp.magx = (value & kSprMagX) != 0;
                     break;
                 case kSprYLo: sp.y = static_cast<uint16_t>((sp.y & 0x0300) | value); break;
                 case kSprYHi:
                     sp.y = static_cast<uint16_t>((sp.y & 0x00FF) |
                               (static_cast<uint16_t>(value & 0x03) << 8));
                     sp.h = static_cast<uint8_t>(((value & kSprSizeMask) >> kSprSizeShift) + 1);
+                    sp.magy = (value & kSprMagY) != 0;
                     sp.enabled = (value & kSprEnable) != 0;
                     break;
                 case kSprGlyph: sp.glyph = value; break;
@@ -265,6 +269,8 @@ namespace Computer
             sp.enabled = false;            // the shell's screen at any size
             sp.w = 1;
             sp.h = 1;
+            sp.magx = false;
+            sp.magy = false;
         }
         dirty_flag_ = true;
     }

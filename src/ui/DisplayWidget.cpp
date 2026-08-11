@@ -398,11 +398,14 @@ void DisplayWidget::drawSprites(QPainter& painter)
         resolveCellColors(sp.glyph, sp.attr, fg, bg);
         const QRgb fg_rgb = fg.rgb();
 
-        /* A sprite wider or taller than one cell is drawn from CONSECUTIVE glyph
-           codes, row-major from the base: a 2x2 at code g is g,g+1 across the top and
-           g+2,g+3 across the bottom. Composing real patterns rather than magnifying
-           one is what buys detail -- a 2x2 is 16x32 pixels of artwork, not an 8x16
-           pattern stretched. Codes wrap at 255. */
+        /* Two independent ways to be bigger, and they are not the same thing.
+           SIZE composes CONSECUTIVE glyph codes, row-major from the base: a 2x2 at
+           code g is g,g+1 across the top and g+2,g+3 across the bottom, so it buys
+           real detail but needs artwork spread over four patterns. MAGNIFY stretches
+           one pattern, buying no detail but reproducing exactly what a double-size
+           row does to a character. Codes wrap at 255. */
+        const int mx = sp.magx ? 2 : 1;
+        const int my = sp.magy ? 2 : 1;
         for (int cy = 0; cy < sp.h; ++cy)
         {
             for (int cx = 0; cx < sp.w; ++cx)
@@ -427,9 +430,9 @@ void DisplayWidget::drawSprites(QPainter& painter)
                 }
 
                 // Positions are nominal pixels on an 8x16 grid; scale to the zoom.
-                painter.drawImage(QRect(sp.x * char_width_ / 8 + cx * char_width_,
-                                        sp.y * char_height_ / 16 + cy * char_height_,
-                                        char_width_, char_height_), img);
+                painter.drawImage(QRect(sp.x * char_width_ / 8 + cx * char_width_ * mx,
+                                        sp.y * char_height_ / 16 + cy * char_height_ * my,
+                                        char_width_ * mx, char_height_ * my), img);
             }
         }
     }
