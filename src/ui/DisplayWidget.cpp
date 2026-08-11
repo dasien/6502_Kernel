@@ -397,26 +397,41 @@ void DisplayWidget::drawSprites(QPainter& painter)
         QColor fg, bg;
         resolveCellColors(sp.glyph, sp.attr, fg, bg);
         const QRgb fg_rgb = fg.rgb();
-        const uint8_t* rows = video_chip_->glyphRows(sp.glyph);
 
-        QImage img(8, 16, QImage::Format_ARGB32);
-        img.fill(Qt::transparent);
-        for (int r = 0; r < 16; ++r)
+        /* A sprite wider or taller than one cell is drawn from CONSECUTIVE glyph
+           codes, row-major from the base: a 2x2 at code g is g,g+1 across the top and
+           g+2,g+3 across the bottom. Composing real patterns rather than magnifying
+           one is what buys detail -- a 2x2 is 16x32 pixels of artwork, not an 8x16
+           pattern stretched. Codes wrap at 255. */
+        for (int cy = 0; cy < sp.h; ++cy)
         {
-            const uint8_t bits = rows[r];
-            QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(r));
-            for (int c = 0; c < 8; ++c)
+            for (int cx = 0; cx < sp.w; ++cx)
             {
-                if (bits & (0x80 >> c))
+                const uint8_t code =
+                    static_cast<uint8_t>(sp.glyph + cy * sp.w + cx);
+                const uint8_t* rows = video_chip_->glyphRows(code);
+
+                QImage img(8, 16, QImage::Format_ARGB32);
+                img.fill(Qt::transparent);
+                for (int r = 0; r < 16; ++r)
                 {
-                    line[c] = fg_rgb | 0xFF000000u;
+                    const uint8_t bits = rows[r];
+                    QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(r));
+                    for (int c = 0; c < 8; ++c)
+                    {
+                        if (bits & (0x80 >> c))
+                        {
+                            line[c] = fg_rgb | 0xFF000000u;
+                        }
+                    }
                 }
+
+                // Positions are nominal pixels on an 8x16 grid; scale to the zoom.
+                painter.drawImage(QRect(sp.x * char_width_ / 8 + cx * char_width_,
+                                        sp.y * char_height_ / 16 + cy * char_height_,
+                                        char_width_, char_height_), img);
             }
         }
-
-        // Positions are nominal pixels on an 8x16 grid; scale to the current zoom.
-        painter.drawImage(QRect(sp.x * char_width_ / 8, sp.y * char_height_ / 16,
-                                char_width_, char_height_), img);
     }
 }
 

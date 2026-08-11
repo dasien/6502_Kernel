@@ -146,12 +146,22 @@ namespace Computer
             kRegSpriteFirst + static_cast<uint16_t>(kSpriteCount) * kSpriteStride - 1;
         // Offsets within a sprite's block.
         static constexpr uint8_t kSprXLo = 0;
-        static constexpr uint8_t kSprXHi = 1;   ///< bits 1-0
+        static constexpr uint8_t kSprXHi = 1;   ///< bits 1-0 pos; bits 4-2 WIDTH-1
         static constexpr uint8_t kSprYLo = 2;
-        static constexpr uint8_t kSprYHi = 3;   ///< bits 1-0; bit 7 = ENABLE
+        static constexpr uint8_t kSprYHi = 3;   ///< bits 1-0 pos; bits 4-2 HEIGHT-1;
+                                                ///< bit 7 = ENABLE
         static constexpr uint8_t kSprGlyph = 4;
         static constexpr uint8_t kSprAttr = 5;  ///< fg/bright as in a cell attribute
         static constexpr uint8_t kSprEnable = 0x80;
+
+        /// Size in CELLS, held in the spare bits of the two position high bytes: a
+        /// position needs 10 bits of a 16-bit pair, so bits 4-2 of each were being
+        /// masked off and discarded. Stored as size-1, which is what makes this
+        /// backwards compatible -- code written before sizes existed leaves those bits
+        /// zero and still gets a 1x1 sprite.
+        static constexpr uint8_t kSprSizeShift = 2;
+        static constexpr uint8_t kSprSizeMask = 0x1C;   ///< bits 4-2
+        static constexpr uint8_t kSprSizeMax = 8;       ///< 3 bits, stored as size-1
 
         /// Glyphs per font, bytes per glyph, and how many complete fonts are held.
         /// 16 sets is enough for 2 px phase steps of a 32 px double-height cell; the
@@ -225,6 +235,17 @@ namespace Computer
             uint16_t y = 0;
             uint8_t glyph = 0;
             uint8_t attr = kDefaultAttr;
+            /// Size in cells. A sprite wider or taller than one cell draws CONSECUTIVE
+            /// glyph codes from the base, row-major: a 2x2 at code g is g,g+1 across
+            /// the top and g+2,g+3 across the bottom. Codes wrap at 255.
+            ///
+            /// Composing from adjacent codes rather than magnifying one glyph is the
+            /// difference between more size and more detail -- a 2x2 is 16x32 pixels of
+            /// real artwork. It also keeps a big object as ONE sprite: four separate
+            /// sprites would cost four position updates a frame, four of the seventeen
+            /// slots, and could shear apart if an update landed mid-frame.
+            uint8_t w = 1;
+            uint8_t h = 1;
         };
         [[nodiscard]] const Sprite &sprite(uint8_t index) const;
 

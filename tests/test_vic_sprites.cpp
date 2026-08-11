@@ -8,6 +8,11 @@
  * sawtooths by a whole cell on every scroll. The renderer geometry is verified by eye;
  * what is pinned here is the register contract and the safety default that stops a
  * program leaving something stranded over the shell.
+ *
+ * That division applies to sprite SIZE too. The chip owns the width and height in
+ * cells, and those are pinned below. Which glyph lands in which cell -- consecutive
+ * codes, row-major from the base, wrapping at 255 -- is the renderer's arithmetic and
+ * is not covered here.
  */
 
 #include <gtest/gtest.h>
@@ -31,6 +36,18 @@ namespace
         v.write(reg(s, VIC::kSprYLo), static_cast<uint8_t>(y & 0xFF));
         v.write(reg(s, VIC::kSprYHi), static_cast<uint8_t>(((y >> 8) & 0x03) |
                                                            (on ? VIC::kSprEnable : 0)));
+    }
+
+    // Size rides the spare bits of the two position high bytes, so setting it means
+    // rewriting those bytes with the position bits intact.
+    void resize(VIC &v, uint8_t s, uint8_t w, uint8_t h)
+    {
+        const VIC::Sprite &sp = v.sprite(s);
+        v.write(reg(s, VIC::kSprXHi),
+                static_cast<uint8_t>(((sp.x >> 8) & 0x03) | ((w - 1) << VIC::kSprSizeShift)));
+        v.write(reg(s, VIC::kSprYHi),
+                static_cast<uint8_t>(((sp.y >> 8) & 0x03) | ((h - 1) << VIC::kSprSizeShift) |
+                                     (sp.enabled ? VIC::kSprEnable : 0)));
     }
 
     void command(VIC &v, uint8_t cmd, uint8_t param = 0)
@@ -139,6 +156,57 @@ TEST(VicSprites, ShapeComesFromTheLiveFontSet)
     EXPECT_EQ(v.glyphRows('A')[0], 0xC3);
 }
 
+// --- size -----------------------------------------------------------------
+
+/* A sprite is one cell unless it says otherwise, and the size travels in bits that
+ * used to be masked off and thrown away. That is what makes this backwards
+ * compatible, and it is worth pinning: the nine tests around this one all place
+ * sprites with the pre-size encoding and must keep getting 1x1. */
+TEST(VicSprites, SizeDefaultsToOneCellAndRoundTrips)
+{
+    VIC v;
+    EXPECT_EQ(v.sprite(3).w, 1);
+    EXPECT_EQ(v.sprite(3).h, 1);
+
+    place(v, 3, 640 - 16, 400 - 32, true);
+    resize(v, 3, 2, 2);
+    EXPECT_EQ(v.sprite(3).w, 2);
+    EXPECT_EQ(v.sprite(3).h, 2);
+
+    // Reading the high bytes back gives position and size together.
+    EXPECT_EQ(v.read(reg(3, VIC::kSprXHi)),
+              static_cast<uint8_t>((((640 - 16) >> 8) & 0x03) | (1 << VIC::kSprSizeShift)));
+    EXPECT_EQ(v.read(reg(3, VIC::kSprYHi)),
+              static_cast<uint8_t>((((400 - 32) >> 8) & 0x03) | (1 << VIC::kSprSizeShift) |
+                                   VIC::kSprEnable));
+}
+
+// Position, size and enable share two bytes; none may clobber another.
+TEST(VicSprites, SizeAndPositionAndEnableAreIndependent)
+{
+    VIC v;
+    place(v, 0, 600, 380, true);           // both high bits in use
+    resize(v, 0, 4, 3);
+    EXPECT_EQ(v.sprite(0).x, 600);
+    EXPECT_EQ(v.sprite(0).y, 380);
+    EXPECT_TRUE(v.sprite(0).enabled) << "resizing must not switch the sprite off";
+    EXPECT_EQ(v.sprite(0).w, 4);
+    EXPECT_EQ(v.sprite(0).h, 3);
+
+    place(v, 0, 8, 16, true);              // repositioning with the old encoding...
+    EXPECT_EQ(v.sprite(0).w, 1) << "...writes zero size bits, which means 1x1";
+    EXPECT_EQ(v.sprite(0).h, 1);
+}
+
+// Three bits, stored as size-1, so eight cells is the ceiling in each direction.
+TEST(VicSprites, MaximumSizeIsEightCells)
+{
+    VIC v;
+    resize(v, 1, VIC::kSprSizeMax, VIC::kSprSizeMax);
+    EXPECT_EQ(v.sprite(1).w, VIC::kSprSizeMax);
+    EXPECT_EQ(v.sprite(1).h, VIC::kSprSizeMax);
+}
+
 // --- safety ---------------------------------------------------------------
 
 TEST(VicSprites, ClearDisablesEverySprite)
@@ -149,11 +217,15 @@ TEST(VicSprites, ClearDisablesEverySprite)
     for (uint8_t i = 0; i < VIC::kSpriteCount; ++i) place(v, i, 8 * i, 16, true);
     for (uint8_t i = 0; i < VIC::kSpriteCount; ++i) ASSERT_TRUE(v.sprite(i).enabled);
 
+    resize(v, 0, 4, 4);                 // and a big one, which must also be undone
+
     command(v, VIC::kCmdClear, ' ');
     for (uint8_t i = 0; i < VIC::kSpriteCount; ++i)
     {
         EXPECT_FALSE(v.sprite(i).enabled) << "sprite " << int(i);
     }
+    EXPECT_EQ(v.sprite(0).w, 1) << "a clear returns the size to one cell too";
+    EXPECT_EQ(v.sprite(0).h, 1);
 }
 
 TEST(VicSprites, DoNotDisturbTheCellPlane)

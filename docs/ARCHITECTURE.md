@@ -313,11 +313,22 @@ block ops so the CPU never copies the screen.
 | `$FE62` | `VREG_FONT_LO` | Font byte index low |
 | `$FE63` | `VREG_FONT_HI` | Font byte index high (spans all font sets) |
 | `$FE64` | `VREG_FONT_DATA` | Font data port; auto-increments |
-| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0), Y lo, Y hi (bits 1–0; **bit 7 = enable**), glyph, attribute |
+| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0 pos, bits 4–2 **width−1**), Y lo, Y hi (bits 1–0 pos, bits 4–2 **height−1**, **bit 7 = enable**), glyph, attribute |
 
 The soft-font port and the sprite block sit above the RTC rather than beside the
 rest because the port block ends at `$FE37` with the SID immediately after.
 `$FECB-$FEFF` is the remaining free space in the I/O page.
+
+A sprite is one cell (8×16 nominal pixels) unless its size bits say otherwise; up
+to 8×8 cells. A multi-cell sprite draws **consecutive glyph codes, row-major from
+the base** — a 2×2 at code *g* is *g*,*g*+1 across the top and *g*+2,*g*+3 across
+the bottom, wrapping at 255 — so it gains detail rather than just magnifying one
+pattern, and stays a single sprite with one position to update. Size is stored as
+*size−1* in bits that a position never uses, so code written before sizes existed
+leaves them zero and still gets 1×1. A clear returns every sprite to one cell and
+switches it off. Note that sprite positions are nominal pixels on an 8×16 grid and
+ignore row doubling: on a screen with double-size rows the cell and sprite planes
+do not agree about where a row is.
 
 The scroll region is rows *top*..*bottom* inclusive; scroll commands shift only
 those rows and leave everything outside them untouched, so an app can pin a
