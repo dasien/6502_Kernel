@@ -111,6 +111,10 @@ private:
                    const QColor& fg, const QColor& bg, int scale = 1, int y_offset = 0);
     void drawCharacterAt(QPainter& painter, int x, int y, uint8_t glyph, uint8_t attr,
                          int scale = 1, int y_offset = 0);
+    // Sprites: pixel-positioned, transparent background, drawn OVER the cell planes
+    // and deliberately outside the scroll region's offset and clip -- not moving with
+    // the region is the entire reason they exist.
+    void drawSprites(QPainter& painter);
     void drawCursor(QPainter& painter);
     uint8_t qtKeyToAscii(QKeyEvent* event) const;
     // Selection helpers.

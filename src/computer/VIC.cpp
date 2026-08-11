@@ -38,12 +38,19 @@ namespace Computer
     // Register port ($FE2D-$FE36) -- the real interface to the planes.
     // ---------------------------------------------------------------------
 
-    // Two ranges: the original port block, and the soft-font port that had to go
-    // above the RTC because $FE38 (the SID) sits immediately after the first.
+    // Three ranges: the original port block, then the soft-font port and the sprite
+    // registers, which had to go above the RTC because $FE38 (the SID) sits
+    // immediately after the first block.
     bool VIC::isVideoRegAddress(const uint16_t address)
     {
         return (address >= kRegFirst && address <= kRegLast) ||
-               (address >= kRegFontFirst && address <= kRegFontLast);
+               (address >= kRegFontFirst && address <= kRegFontLast) ||
+               (address >= kRegSpriteFirst && address <= kRegSpriteLast);
+    }
+
+    const VIC::Sprite &VIC::sprite(const uint8_t index) const
+    {
+        return sprites_[index < kSpriteCount ? index : 0];
     }
 
     void VIC::advanceIndex() const
@@ -88,6 +95,21 @@ namespace Computer
         case kRegFontHi:
             return static_cast<uint8_t>((font_index_ >> 8) & 0xFF);
         default:
+            if (address >= kRegSpriteFirst && address <= kRegSpriteLast)
+            {
+                const uint8_t i = static_cast<uint8_t>((address - kRegSpriteFirst) / kSpriteStride);
+                const Sprite &sp = sprites_[i];
+                switch ((address - kRegSpriteFirst) % kSpriteStride)
+                {
+                case kSprXLo:  return static_cast<uint8_t>(sp.x & 0xFF);
+                case kSprXHi:  return static_cast<uint8_t>((sp.x >> 8) & 0x03);
+                case kSprYLo:  return static_cast<uint8_t>(sp.y & 0xFF);
+                case kSprYHi:  return static_cast<uint8_t>(((sp.y >> 8) & 0x03) |
+                                                           (sp.enabled ? kSprEnable : 0));
+                case kSprGlyph: return sp.glyph;
+                default:        return sp.attr;
+                }
+            }
             return 0x00; // write-only registers read as 0
         }
     }
@@ -194,6 +216,28 @@ namespace Computer
             dirty_flag_ = true;
             break;
         default:
+            // The sprite block is a run of six-byte records rather than named
+            // registers, so it is decoded here rather than as switch cases.
+            if (address >= kRegSpriteFirst && address <= kRegSpriteLast)
+            {
+                const uint8_t i = static_cast<uint8_t>((address - kRegSpriteFirst) / kSpriteStride);
+                Sprite &sp = sprites_[i];
+                switch ((address - kRegSpriteFirst) % kSpriteStride)
+                {
+                case kSprXLo: sp.x = static_cast<uint16_t>((sp.x & 0x0300) | value); break;
+                case kSprXHi: sp.x = static_cast<uint16_t>((sp.x & 0x00FF) |
+                                        (static_cast<uint16_t>(value & 0x03) << 8)); break;
+                case kSprYLo: sp.y = static_cast<uint16_t>((sp.y & 0x0300) | value); break;
+                case kSprYHi:
+                    sp.y = static_cast<uint16_t>((sp.y & 0x00FF) |
+                              (static_cast<uint16_t>(value & 0x03) << 8));
+                    sp.enabled = (value & kSprEnable) != 0;
+                    break;
+                case kSprGlyph: sp.glyph = value; break;
+                default:        sp.attr = value; break;
+                }
+                dirty_flag_ = true;
+            }
             break;
         }
     }
@@ -210,6 +254,10 @@ namespace Computer
         font_set_ = 0;                     // exactly the same reason
         fine_y_ = 0;                       // ...and fine scrolling off, so the shell
         fine_active_ = false;              // never loses a row to a staging row
+        for (Sprite &sp : sprites_)        // ...and every sprite off, so nothing is
+        {                                  // left stranded over the shell's screen
+            sp.enabled = false;
+        }
         dirty_flag_ = true;
     }
 

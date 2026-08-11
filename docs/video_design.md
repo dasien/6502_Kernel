@@ -1,11 +1,17 @@
 # Video design — smooth scrolling on a character-cell chip
 
-Design notes for two proposed VIC features: a **redefinable character set** and a
-**fine vertical scroll**. The counterpart to `sound_design.md`; the chip as it stands
-today is documented in `BOARD.md` and `ARCHITECTURE.md`.
+Why the VIC scrolls in whole cells, and the three features added to fix it: a
+**redefinable character set**, a **fine vertical scroll** and **sprites**. The
+counterpart to `sound_design.md`; the register-level result is in `ARCHITECTURE.md`
+and `BOARD.md`.
 
 Written because KERNEL PANIC kept running into the same wall, and the wall turned out
 to be in the machine rather than the game.
+
+**All three are now implemented.** This document is kept because the reasoning is what
+is worth having: the order they were built in changed twice as evidence came in, and
+two of the three answers were not the obvious ones. Sections below are marked where
+they record a decision that was superseded.
 
 ## What the VIC is, and what it is missing
 
@@ -17,13 +23,15 @@ terminal side of the family tree.
 
 What the period *game* chips had that we do not:
 
-| Missing | C64 VIC-II | What it costs us |
+What the period *game* chips had that this one did not, and where each now stands:
+
+| Feature | C64 VIC-II | Status here |
 |---|---|---|
-| Hardware sprites | 8 x 24x21, collision registers in hardware | Every moving object is a character cell — grid-locked in both axes, cannot overlap, cannot be positioned to the pixel |
-| Fine scroll | `XSCROLL`/`YSCROLL`, 0-7 px | The scroll quantum is a whole cell |
-| Raster register + IRQ | `$D012` + compare interrupt | No idea where the beam is; no split screens, no mid-frame changes |
-| Redefinable character set | char base points anywhere in RAM | No custom tiles, and no sub-cell scrolling trick |
-| Bitmap mode | 320x200 hires | Text only |
+| Hardware sprites | 8 x 24x21, collision registers in hardware | **Added** — 17, one glyph each, pixel-positioned, transparent background. No collision registers: the games compute it, which they were doing anyway |
+| Fine scroll | `XSCROLL`/`YSCROLL`, 0-7 px | **Added** — pixel offset on the scroll region |
+| Redefinable character set | char base points anywhere in RAM | **Added** — 16 switchable 256-glyph sets in chip RAM |
+| Raster register + IRQ | `$D012` + compare interrupt | Still missing. No idea where the beam is; no split screens, no mid-frame changes |
+| Bitmap mode | 320x200 hires | Still missing. Text only — though unique glyph codes over a small region give a pixel framebuffer, the classic MSX/Amstrad trick |
 
 Things we have that no period chip did, for balance: per-cell **background** colour
 (the VIC-II and VDC had one global background), a scroll *command* with a settable
@@ -50,7 +58,8 @@ the cheap half of the fix. The rest needs the chip.
 Fine scroll shifts the **whole scroll region**, including anything the game drew into
 it — so a screen-fixed player craft bobs down with the terrain and snaps back one cell
 height on every hardware scroll. On a real machine the player is a sprite and is
-unaffected; we have no sprites.
+unaffected; at the time this was written, this machine had none. It does now, and that
+is exactly what they were added for.
 
 The soft font instead shifts **glyph patterns**: rephase the terrain glyphs, leave
 object glyphs alone, and nothing bobs. But a *solid* glyph is shift-invariant, so it
@@ -182,8 +191,8 @@ unreadable font.
 - `src/ui/DisplayWidget.cpp` — `blitGlyph` reads `video_chip_->glyphRows(glyph)`
   instead of `&Computer::kCp437Font[glyph * 16]`. One line; everything else already
   goes through it.
-- `docs/ARCHITECTURE.md` — I/O table, plus a note that `$FE65` becomes the first free
-  byte.
+- `docs/ARCHITECTURE.md` and `BOARD.md` — I/O table and the chip's description. (The
+  sprite block later took `$FE65-$FECA`, so `$FECB` is the first free byte now.)
 - While in `VIC.h`: its class comment still describes a "legacy memory-mapped window at
   `$0400-$07E7`" that no longer exists in the code. Delete it — it contradicts the
   private-plane architecture the font RAM is built on.
@@ -296,9 +305,12 @@ next person does not rediscover it in a play-test.
 
 ---
 
-## Effect on a future sprite implementation
+## Effect on a future sprite implementation — as it turned out
 
-Checked deliberately, because sprites are the likely next chip feature.
+Checked before sprites were built, because they were the likely next chip feature.
+Recorded because the prediction held: the address space was ample, the soft font did
+supply the pattern RAM and upload protocol, and the painter-translate hazard was real
+enough that avoiding it was the first thing written into the renderer.
 
 **Address space: no problem.** Nothing is mapped above `$FE61`, so `$FE62-$FEFF` (158
 bytes) is free; Part A takes three, leaving 155 contiguous. The VIC-II fitted 8 sprites
@@ -329,23 +341,47 @@ Two smaller notes:
 region. Either is fine given the 16-bit index, but choosing now avoids a layout worth
 redoing later.
 
-## Sequencing
+## Sequencing — as built
 
-1. **Part A host side** + the soft-font test. Self-contained, no game changes. DONE.
-2. **Part B — fine scroll.** Promoted ahead of the terrain rework by the prototype: it
-   smooths 5 of KERNEL PANIC's 7 moving parts against rephasing's 2.
-3. **A small sprite set** — enough for the craft and its shots, which are the two
-   things fine scroll cannot place correctly. This is what finishes the job.
-4. **KERNEL PANIC terrain rephasing** — demoted. Worth doing for tile art and
-   animation, not as a scrolling mechanism.
+1. **Soft font.** Self-contained, no game changes. Done.
+2. **Fine scroll.** Promoted ahead of the terrain rework by the prototype: it smooths 5
+   of KERNEL PANIC's 7 moving parts against rephasing's 2. Done.
+3. **Sprites.** 17 of them; KERNEL PANIC uses one for the craft and 16 for its shots,
+   which are the two things fine scroll cannot place correctly. Done.
+4. **KERNEL PANIC terrain rephasing** — demoted and not done. Worth doing for tile art
+   and animation, not as a scrolling mechanism.
 
-Not in scope, recorded so the ordering makes sense: sprites are what make Part B fully
-useful and what a Scramble-style side-scroller really wants. (A side-scroller is
-otherwise unattractive here: horizontal motion is inherently finer — a cell is wider
-than it is tall — but there is no hardware horizontal scroll, so every frame would mean
-rewriting the whole playfield.) With a soft font you can also give a small region unique
-glyph codes per cell and get a true pixel framebuffer — 256 glyphs is a 128x256 px
-window — which is the classic MSX/Amstrad trick and the horizon this opens up.
+What play-testing then found, in order, because each one only became visible once the
+one before it was fixed:
+
+- Fine scroll bounced the entire playfield. The chip scroll and the offset reset are
+  two halves of one step and must be issued back to back; the reset was happening after
+  ~13 ms of row generation, so the world sat a full cell low for several repaints.
+- Objects blinked. A cell-plane object is absent from the screen for the whole gap
+  between its erase and its redraw, and the host repaints several times inside it.
+  Deferring the 80-cell row paint to the next frame cut that window 4.5x; moving the
+  craft and shots to sprites removed it for them entirely.
+- The craft still sawtoothed, which was the predicted limitation rather than a bug, and
+  the toggle that proved it (fine scroll off -> steady) was worth more than any amount
+  of further reasoning. Sprites fixed it.
+
+**Sprite sizing.** 17 was chosen against the I/O page, not against a theoretical peak.
+25 fitted and left only 5 free bytes of the only address space new devices have; 17
+leaves 53. The shot pool is 16 to match, and a volley is all-or-nothing so that a full
+pool costs fire *rate* rather than silently narrowing the gun — `fire()` spawns the
+centre shot first and works outwards, so dropping individual shots eats the wings.
+
+A **side-scroller** came up as an alternative and was rejected. Horizontal motion is
+inherently finer — a cell is wider than it is tall, so a column step is half a row step
+— but there is no hardware horizontal scroll, so every frame would mean rewriting the
+whole playfield: 40x12 cells is roughly 50-60 ms, capping the frame rate near 16-20/sec
+with nothing left for objects. Smoother per step, slower per frame, and far more work.
+
+Still on the horizon: with a soft font you can give a small region unique glyph codes per
+cell and get a true pixel framebuffer — 256 glyphs is a 128x256 px window — which is the
+classic MSX/Amstrad trick. And a **raster register or vblank signal** remains the most
+obvious gap: three independent ~60 Hz timers run in the host with nothing locking them,
+so a program still cannot sync to the display.
 
 ## Risks
 

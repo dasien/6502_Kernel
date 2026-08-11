@@ -357,6 +357,23 @@ target_include_directories(vic_finescroll_tests PRIVATE
 
 target_compile_features(vic_finescroll_tests PRIVATE cxx_std_20)
 
+# VIC sprite unit test: the register block, and that sprites are off unless asked for.
+# Device-only, no Qt.
+add_executable(vic_sprite_tests
+    test_vic_sprites.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+)
+
+target_link_libraries(vic_sprite_tests gtest_main gtest)
+
+target_include_directories(vic_sprite_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(vic_sprite_tests PRIVATE cxx_std_20)
+
 # SID sound-chip unit test: register map + oscillator/ADSR synthesis. Self-
 # contained (Sid has no other device deps), like the VIC char-plane test.
 add_executable(sid_tests
@@ -679,6 +696,10 @@ add_test(NAME vic_softfont
 # Add the VIC fine-scroll unit test to CTest
 add_test(NAME vic_finescroll
     COMMAND vic_finescroll_tests)
+
+# Add the VIC sprite unit test to CTest
+add_test(NAME vic_sprites
+    COMMAND vic_sprite_tests)
 
 # Add the SID sound-chip unit test to CTest
 add_test(NAME sid

@@ -207,6 +207,8 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
                                      char_width_, char_height_, QColor(120, 160, 255, 96));
     }
 
+    drawSprites(painter);
+
     // Draw cursor if widget has focus
     if (has_focus_ && show_cursor_)
     {
@@ -362,7 +364,10 @@ void DisplayWidget::blitGlyph(QPainter& painter, const int x, const int y,
         for (int c = 0; c < 8; ++c)
             line[c] = (bits & (0x80 >> c)) ? fg_rgb : bg_rgb;
     }
-    painter.drawImage(QRect(x * char_width_ * scale, y * char_height_ + y_offset,
+    // y_offset is in NOMINAL pixels (an 8x16 cell), so it scales with the zoom just
+    // like the cell rect does -- otherwise a zoomed window slides by the wrong amount.
+    painter.drawImage(QRect(x * char_width_ * scale,
+                            y * char_height_ + y_offset * char_height_ / 16,
                             char_width_ * scale, char_height_ * scale), img);
 }
 
@@ -373,6 +378,46 @@ void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
     QColor fg, bg;
     resolveCellColors(glyph, attr, fg, bg);
     blitGlyph(painter, x, y, glyph, fg, bg, scale, y_offset);
+}
+
+// Sprites sit above the character planes at pixel positions, with the glyph's
+// background bits transparent so the terrain shows through. No clip and no fine
+// offset: a sprite must NOT move with the scroll region, which is what makes it the
+// right home for a screen-fixed object like a player's craft.
+void DisplayWidget::drawSprites(QPainter& painter)
+{
+    for (uint8_t i = 0; i < Computer::VIC::kSpriteCount; ++i)
+    {
+        const Computer::VIC::Sprite& sp = video_chip_->sprite(i);
+        if (!sp.enabled)
+        {
+            continue;
+        }
+
+        QColor fg, bg;
+        resolveCellColors(sp.glyph, sp.attr, fg, bg);
+        const QRgb fg_rgb = fg.rgb();
+        const uint8_t* rows = video_chip_->glyphRows(sp.glyph);
+
+        QImage img(8, 16, QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+        for (int r = 0; r < 16; ++r)
+        {
+            const uint8_t bits = rows[r];
+            QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(r));
+            for (int c = 0; c < 8; ++c)
+            {
+                if (bits & (0x80 >> c))
+                {
+                    line[c] = fg_rgb | 0xFF000000u;
+                }
+            }
+        }
+
+        // Positions are nominal pixels on an 8x16 grid; scale to the current zoom.
+        painter.drawImage(QRect(sp.x * char_width_ / 8, sp.y * char_height_ / 16,
+                                char_width_, char_height_), img);
+    }
 }
 
 void DisplayWidget::drawCursor(QPainter& painter)

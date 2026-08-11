@@ -81,6 +81,21 @@ namespace Computer
      * up -- will sawtooth by one cell per scroll, because it is in the plane being
      * slid. That is what sprites are for, and we do not have them yet.
      *
+     * SPRITES. A small set of glyphs positioned in PIXELS rather than cells, drawn
+     * over the character planes and unaffected by the scroll region -- neither by the
+     * row scroll nor by the fine offset. That last part is the whole reason they exist:
+     * anything a program draws into the cell plane rides the fine offset, so a
+     * screen-fixed object like a player's craft sawtooths by a cell on every scroll.
+     * A sprite does not, because it is not in the plane.
+     *
+     * Their shapes come from the same font storage the cells use, so a program that has
+     * already uploaded a glyph gets it for free, and a sprite can be re-shaped by
+     * pointing it at a different code. Colour comes from an attribute byte; the glyph's
+     * background bits are TRANSPARENT, which is the other thing a cell cannot do.
+     *
+     * kCmdClear disables all of them, for the same reason it resets row sizes and the
+     * font: no program can leave something stranded on the shell's screen.
+     *
      * @see Memory, BlockDevice, Computer6502
      */
     class VIC
@@ -117,6 +132,26 @@ namespace Computer
         static constexpr uint16_t kRegLast = kRegScrollBot;
         static constexpr uint16_t kRegFontFirst = kRegFontLo;
         static constexpr uint16_t kRegFontLast = kRegFontData;
+
+        /// Sprite registers, six per sprite, immediately after the font port.
+        /// Positions are in NOMINAL pixels on an 8x16 cell grid (so 0..639 x 0..399);
+        /// the renderer scales them by the window zoom.
+        /// 17 x 6 bytes ends at $FECA, leaving 53 bytes of the I/O page free. 25 fitted
+        /// too, but left only 5 -- a poor price for a shot count that only occurs at one
+        /// weapon's peak, and this page is the only address space new devices have.
+        static constexpr uint8_t kSpriteCount = 17;
+        static constexpr uint16_t kRegSpriteFirst = 0xFE65;
+        static constexpr uint8_t kSpriteStride = 6;
+        static constexpr uint16_t kRegSpriteLast =
+            kRegSpriteFirst + static_cast<uint16_t>(kSpriteCount) * kSpriteStride - 1;
+        // Offsets within a sprite's block.
+        static constexpr uint8_t kSprXLo = 0;
+        static constexpr uint8_t kSprXHi = 1;   ///< bits 1-0
+        static constexpr uint8_t kSprYLo = 2;
+        static constexpr uint8_t kSprYHi = 3;   ///< bits 1-0; bit 7 = ENABLE
+        static constexpr uint8_t kSprGlyph = 4;
+        static constexpr uint8_t kSprAttr = 5;  ///< fg/bright as in a cell attribute
+        static constexpr uint8_t kSprEnable = 0x80;
 
         /// Glyphs per font, bytes per glyph, and how many complete fonts are held.
         /// 16 sets is enough for 2 px phase steps of a 32 px double-height cell; the
@@ -182,6 +217,17 @@ namespace Computer
         /// last row can never be one -- there is nothing under it to cover.
         [[nodiscard]] bool isRowDouble(uint16_t row) const;
 
+        /// One sprite's state, for the renderer. Positions are nominal pixels.
+        struct Sprite
+        {
+            bool enabled = false;
+            uint16_t x = 0;
+            uint16_t y = 0;
+            uint8_t glyph = 0;
+            uint8_t attr = kDefaultAttr;
+        };
+        [[nodiscard]] const Sprite &sprite(uint8_t index) const;
+
         /// Pixel offset the scroll region is currently slid down by, and whether fine
         /// scrolling is on at all. Off means the renderer draws exactly as before --
         /// a program that never issues kCmdFineY is completely unaffected.
@@ -226,6 +272,8 @@ namespace Computer
         // Fine vertical scroll. See the class comment for the staging-row contract.
         uint8_t fine_y_ = 0;
         bool fine_active_ = false;
+
+        std::array<Sprite, kSpriteCount> sprites_{};
 
         // Soft font. Not in the 6502's address space -- see the class comment.
         std::vector<uint8_t> font_ram_;          ///< kFontSets x kFontSize
