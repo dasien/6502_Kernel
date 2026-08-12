@@ -146,6 +146,26 @@ $FE00-$FECA  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC fon
 See `Part 2 (Memory and zero-page map)` for the full zero-page allocation, the I/O
 register layout, and the `$FF00` kernel ABI jump table.
 
+### CPU clock
+
+The machine runs at **4 MHz** (`Computer6502::kDefaultClockHz`), and everything timed
+derives from it: `runCycles()` generates the 60 Hz interval-timer IRQ every
+`clockHz / 60` cycles, so a second of machine time contains sixty jiffies whatever the
+host is doing. `setClockHz()` changes it; the games' pacing constants are in
+jiffies-per-tick and so follow the clock automatically, but they were *tuned* at this
+speed, so a large change means retuning them.
+
+The classic home 6502 ran near 1 MHz (Apple II 1.023, PET/VIC-20/C64 ~1.0), but the
+era was not uniform — the Atari 800 and NES clocked theirs at 1.79 and the BBC Micro at
+2. The MFC is a WDC 65C02, a part sold at 1, 2, 4, 8 and 14 MHz, with an 80×25 soft-font
+display, sprites and a FAT16 disc; 4 MHz suits that machine.
+
+It is also what it has always run at. The GUI used to execute 1000 *instructions* per
+1 ms timer tick — at the 3.47 cycles/instruction the games average, 3.47 MHz — while a
+separate QTimer pulsed the jiffy. The speed was an accident of a loop bound, and the two
+clocks drifted apart under load. `run(int max_cycles)` counted instructions despite its
+name, which is how that went unnoticed.
+
 ### Data flow
 
 - **Keyboard:** host key → PIA input buffer → kernel `K_GET_KEYSTROKE` (`$FF09`) →

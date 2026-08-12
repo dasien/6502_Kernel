@@ -29,7 +29,6 @@ MainWindow::MainWindow(QWidget* parent)
     , computer_(new Computer::Computer6502())
     , modem_(nullptr)
     , execution_timer_(new QTimer(this))
-    , irq_timer_(new QTimer(this))
     , is_running_(false)
     , execution_cycle_count_(0)
 {
@@ -51,14 +50,13 @@ MainWindow::MainWindow(QWidget* parent)
     display_widget_->startRefresh();
     display_widget_->setFocus();
     is_running_ = true;
-    execution_timer_->start(1); // 1ms intervals for 1MHz operation
+    wall_clock_.start();
+    last_run_ns_ = 0;
+    execution_timer_->start(1);   // slice the clock finely; the budget is time-based
 
-    // Drive the PIA interval-timer IRQ at ~60 Hz (wall-clock), independent of
-    // emulation speed. This is the system "jiffy" tick behind BASIC's ON IRQ.
-    connect(irq_timer_, &QTimer::timeout, this, [this]() {
-        computer_->getPia()->pulseTimerIrq();
-    });
-    irq_timer_->start(16); // ~62.5 Hz
+    /* No separate jiffy timer. The interval-timer IRQ comes out of runCycles() at
+     * clockHz/60 cycles, so the 60Hz tick and the CPU speed cannot drift apart --
+     * which they did, being driven by two independent host timers. */
     
     // Initialize status
     updateStatus();
@@ -348,16 +346,32 @@ void MainWindow::connectSignals()
     // Reset/NMI are wired to the Control-menu actions in setupMenus().
     connect(status_timer_, &QTimer::timeout, this, &MainWindow::updateStatus);
     
-    // Connect execution timer to run computer cycles
+    /* Run the machine at its stated clock, measured against real elapsed time.
+     *
+     * This used to execute a fixed 1000 INSTRUCTIONS per timer tick, which made the
+     * clock speed an accident of that loop bound -- about 3.5MHz, at the 3.47 cycles
+     * an instruction the games average -- rather than anything anyone chose. Working
+     * from elapsed nanoseconds and the clock means the speed is what
+     * Computer6502::clockHz() says it is, and self-corrects when a timer fires late.
+     *
+     * The catch-up is capped: if the host stalls for a second, the machine should lose
+     * that second rather than sprint to make it up, which would look like the game
+     * fast-forwarding. Same reasoning as VENTURE's MAX_CATCHUP. */
     connect(execution_timer_, &QTimer::timeout, [this]() {
         if (is_running_ && computer_)
         {
-            // Run 1000 cycles per 1ms tick for 1MHz operation
-            for (int i = 0; i < 1000; ++i)
-            {
-                computer_->run(1);
-                execution_cycle_count_++;
-            }
+            const qint64 now_ns = wall_clock_.nsecsElapsed();
+            const qint64 delta_ns = now_ns - last_run_ns_;
+            last_run_ns_ = now_ns;
+
+            const uint64_t hz = computer_->clockHz();
+            uint64_t budget = static_cast<uint64_t>(
+                (static_cast<double>(delta_ns) * hz) / 1'000'000'000.0);
+            const uint64_t cap = hz / 20;          // at most 50ms of catch-up
+            if (budget > cap) budget = cap;
+
+            computer_->runCycles(budget);
+            execution_cycle_count_ += budget;
             // Pump the modem once per tick: drain the ACIA TX into the
             // protocol (inbound socket data arrives via Qt signals).
             if (modem_) modem_->poll();

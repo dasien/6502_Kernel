@@ -491,7 +491,7 @@ protected:
     {
         for (int i = 0; i < jiffy_count; i++) {
             const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
-            while (cpu->getCycles() < until) c.run(1);
+            while (cpu->getCycles() < until) c.runInstructions(1);
             pia->pulseTimerIrq();
         }
     }

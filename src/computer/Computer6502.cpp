@@ -265,10 +265,9 @@ namespace Computer
         reset_circuit.powerOnReset();
     }
 
-    void Computer6502::run(const int max_cycles)
+    void Computer6502::runInstructions(const int count)
     {
-        // Starting execution
-        for (int i = 0; i < max_cycles; ++i)
+        for (int i = 0; i < count; ++i)
         {
             if (!cpu.executeSingleInstruction())
             {
@@ -278,6 +277,37 @@ namespace Computer
 
             // Process any pending file operations
             pia.processFileOperations();
+        }
+    }
+
+    /* Run a slice of the machine's time, and generate the interval-timer IRQ from the
+     * emulated clock rather than from a host timer ticking alongside it.
+     *
+     * That separation is what let the two disagree. The GUI used to run a fixed number
+     * of INSTRUCTIONS per host millisecond and pulse the jiffy from its own 16ms
+     * QTimer, so the CPU speed was whatever that loop bound happened to work out to and
+     * the two drifted apart under load. Deriving the tick from cycles means a jiffy is
+     * always clockHz/60 cycles of work, whatever the host is doing. */
+    void Computer6502::runCycles(const uint64_t cycles)
+    {
+        const uint64_t cycles_per_jiffy = clock_hz_ / kJiffyHz;
+        const uint64_t until = cpu.getCycles() + cycles;
+
+        if (next_jiffy_ == 0) next_jiffy_ = cpu.getCycles() + cycles_per_jiffy;
+
+        while (cpu.getCycles() < until)
+        {
+            if (!cpu.executeSingleInstruction())
+            {
+                break;
+            }
+            pia.processFileOperations();
+
+            if (cpu.getCycles() >= next_jiffy_)
+            {
+                next_jiffy_ += cycles_per_jiffy;
+                pia.pulseTimerIrq();
+            }
         }
     }
 

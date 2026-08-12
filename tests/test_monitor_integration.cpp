@@ -61,7 +61,7 @@ public:
         // Allow kernel initialization. RESET zeroes the 12KB module window
         // (~90K cycles), then the DOS draws the sign-on splash; give boot ample
         // room to reach the command prompt before the first test runs.
-        computer.run(300000);
+        computer.runInstructions(300000);
 
         std::cout << "6502 Monitor Integration Test Suite" << std::endl;
         std::cout << "===================================" << std::endl;
@@ -563,7 +563,7 @@ public:
         sendCommand("CLS");
         for (char c : std::string("MORE LONG.TXT\r")) computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress(' ');   // resume past the single page break
-        computer.run(3000000);
+        computer.runInstructions(3000000);
         verifyResponse("L25", "MORE pages through a long file after a keypress");
     }
 
@@ -931,9 +931,9 @@ public:
         sendCommand("W:0901");
         for (char c : std::string("3C")) computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress('\r');
-        computer.run(5000);
+        computer.runInstructions(5000);
         computer.getPia()->addKeypress(27);          // ESC out of write mode
-        computer.run(3000);
+        computer.runInstructions(3000);
         computer.getMemory()->write(0x0940, 0x00);
         sendCommand("G:0900", 300000);
         verifyMemEquals(0x0940, 0x3C, "W: patch takes effect on the next G:");
@@ -994,7 +994,7 @@ private:
         computer.getPia()->addKeypress('\r');
 
         // Run cycles to process command
-        computer.run(cycles);
+        computer.runInstructions(cycles);
         return true;
     }
 
@@ -1101,7 +1101,7 @@ private:
         sendCommand("TYPE BIG.TXT", 2'000'000);        // fills a screen, then pauses
         verifyResponse("--MORE--", "TYPE pauses with the pager on a long file");
         computer.getPia()->addKeypress('\r');          // continue past the page break
-        computer.run(2'000'000);
+        computer.runInstructions(2'000'000);
         verifyResponse("LINE30", "TYPE completes after the pager continue");
     }
 
@@ -1226,7 +1226,7 @@ private:
     // isn't swallowed by the pending page break.
     void drainPaging() {
         computer.getPia()->addKeypress(27);  // ESC
-        computer.run(20000);
+        computer.runInstructions(20000);
     }
 
     void testClearScreen() {
@@ -1282,7 +1282,7 @@ private:
     // single-key selection prompt.
     void sendKey(uint8_t key, int cycles = 60000) {
         computer.getPia()->addKeypress(key);
-        computer.run(cycles);
+        computer.runInstructions(cycles);
     }
 
 
@@ -1327,7 +1327,7 @@ private:
         for (char c : std::string("D:0800"))
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress('\r');
-        computer.run(500000);
+        computer.runInstructions(500000);
 
         verifyResponse("LDA #$05",  "Disasm: immediate operand");
         verifyResponse("STA $0400", "Disasm: absolute operand");
@@ -1354,7 +1354,7 @@ private:
         for (char c : std::string("00"))
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress('\r');
-        computer.run(500000);
+        computer.runInstructions(500000);
 
         verifyResponse("0800: A9 05", "Disasm: backspace corrected the address");
 
@@ -1372,7 +1372,7 @@ private:
         for (char c : std::string("D:08"))            // partial address...
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress(0x1B);        // ...ESC cancels the line
-        computer.run(200000);
+        computer.runInstructions(200000);
 
         // The typed text is erased in place (not left on a stale line above).
         verifyAbsent("D08", "Disasm: ESC erases the typed line in place");
@@ -1381,7 +1381,7 @@ private:
         for (char c : std::string("D:0800"))
             computer.getPia()->addKeypress(c);
         computer.getPia()->addKeypress('\r');
-        computer.run(500000);
+        computer.runInstructions(500000);
         verifyResponse("0800: EA", "Disasm: usable after mid-line ESC cancel");
 
         sendKey(0x1B, 200000);
@@ -1886,9 +1886,9 @@ private:
             computer.getPia()->addKeypress(c);
         }
         computer.getPia()->addKeypress('\r');
-        computer.run(5000);
+        computer.runInstructions(5000);
         computer.getPia()->addKeypress(27);  // ESC out of write mode
-        computer.run(3000);
+        computer.runInstructions(3000);
 
         clearScreen();
         sendCommand("X:8100-81FF,DE AD");
@@ -1907,7 +1907,7 @@ private:
             computer.getPia()->addKeypress(c);
         }
         computer.getPia()->addKeypress('\r');  // Enter to confirm
-        computer.run(5000);
+        computer.runInstructions(5000);
 
         // After writing 4 bytes from $8050, the prompt advances to the next
         // address ($8054), not the last-written one.
@@ -1915,7 +1915,7 @@ private:
 
         // Exit write mode with ESC
         computer.getPia()->addKeypress(27);  // ESC
-        computer.run(3000);
+        computer.runInstructions(3000);
 
         // Verify the data was written straight from RAM (robust).
         verifyMemEquals(0x8050, 0xAB, "Write Data $8050 = AB");
@@ -2068,7 +2068,7 @@ private:
     void testShutdown() {
         Computer::Computer6502 box;
         box.power_on();
-        box.run(300000);                       // boot to the DOS prompt
+        box.runInstructions(300000);                       // boot to the DOS prompt
 
         verifyTrue(!box.isPoweredOff(), "the machine starts up powered on");
 
@@ -2084,7 +2084,7 @@ private:
 
         for (char c : std::string("SHUTDOWN")) box.getPia()->addKeypress(c);
         box.getPia()->addKeypress('\r');
-        box.run(200000);
+        box.runInstructions(200000);
 
         verifyTrue(box.isPoweredOff(), "SHUTDOWN switches the machine off");
         verifyTrue(box.getCpu()->isStopped(), "SHUTDOWN halts the CPU too");
@@ -2093,7 +2093,7 @@ private:
     void testEscAtPromptNoError() {
         clearScreen();
         computer.getPia()->addKeypress(27);   // ESC at an empty prompt
-        computer.run(20000);
+        computer.runInstructions(20000);
         verifyAbsent("ERROR", "ESC at prompt is a no-op (no ERROR?)");
     }
 

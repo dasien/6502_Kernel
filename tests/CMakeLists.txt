@@ -713,6 +713,38 @@ add_test(NAME rtc
 add_test(NAME pia_keystate
     COMMAND pia_keystate_tests)
 
+# The machine's clock: runCycles() must deliver the speed clockHz() advertises, and
+# the jiffy IRQ must come out of it. Same source list as pia_keystate_tests -- the
+# whole machine, no Qt.
+add_executable(clock_tests
+    test_clock.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(clock_tests gtest_main gtest)
+
+target_include_directories(clock_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+add_test(NAME clock
+    COMMAND clock_tests)
+
+
 # Add custom test for ROM validation
 add_test(NAME validate_kernel_rom
     COMMAND ${CMAKE_COMMAND}

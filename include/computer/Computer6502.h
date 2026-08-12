@@ -64,18 +64,54 @@ namespace Computer
          */
         void power_on();
 
+        /// The machine's clock. Everything timed derives from this, so it is a stated
+        /// number rather than a side effect of how often a host timer happens to fire.
+        ///
+        /// 4MHz. The classic home 6502 ran at about 1MHz -- Apple II at 1.023, PET and
+        /// VIC-20 and C64 all near 1.0 -- but that was never the only figure: the Atari
+        /// 800 and the NES clocked theirs at 1.79 and the BBC Micro at 2. The MFC is a
+        /// WDC 65C02, a part sold at 1, 2, 4, 8 and 14MHz, and it has an 80x25 soft-font
+        /// display with sprites and a FAT16 disc; 4MHz suits that machine better than
+        /// the 1977 figure does.
+        ///
+        /// It is also, to within measurement, the speed the machine has always run at.
+        /// The GUI used to execute 1000 INSTRUCTIONS per 1ms timer tick; at the 3.47
+        /// cycles an instruction this workload averages, that is 3.47MHz. Naming it
+        /// 4MHz changes nothing about how anything behaves -- it only makes the number
+        /// something we chose instead of something we inherited from a loop bound.
+        static constexpr uint32_t kDefaultClockHz = 4'000'000;
+
+        /// Interval-timer ("jiffy") rate. Derived from the clock, so emulated time is
+        /// internally consistent whether or not the host can keep up.
+        static constexpr uint32_t kJiffyHz = 60;
+
+        void setClockHz(uint32_t hz) { clock_hz_ = hz ? hz : kDefaultClockHz; }
+        [[nodiscard]] uint32_t clockHz() const { return clock_hz_; }
+
         /**
-         * @brief Execute CPU instructions for a specified number of cycles
+         * @brief Execute a number of CPU INSTRUCTIONS.
          *
-         * Runs the 6502 CPU for the specified number of instruction cycles.
-         * Each cycle represents one CPU instruction execution. File operations
-         * and other system tasks are processed between instruction executions.
+         * The raw primitive: no timing of any kind, and nothing is inferred about how
+         * long they take. Use runCycles() for anything that should run at the machine's
+         * speed.
          *
-         * @param max_cycles Maximum number of CPU instruction cycles to execute
-         *                   Default is 100 cycles
-         * @note Execution may stop early if an unknown instruction is encountered
+         * @param count How many instructions to execute
+         * @note Stops early on an unknown instruction
          */
-        void run(int max_cycles = 100);
+        void runInstructions(int count = 100);
+
+        /**
+         * @brief Run the machine for a number of CPU CYCLES, generating jiffy IRQs.
+         *
+         * The cycle-accurate entry point, and the one the GUI drives. Pulses the PIA's
+         * interval timer every clockHz/kJiffyHz cycles, so the 60Hz tick is a property
+         * of the emulated machine rather than of a host timer running alongside it --
+         * which is what let the two disagree. They cannot now.
+         *
+         * @param cycles How many CPU cycles of work to perform
+         * @note Stops early on an unknown instruction
+         */
+        void runCycles(uint64_t cycles);
 
         /**
          * @brief Reset the computer system
@@ -193,6 +229,8 @@ namespace Computer
 
         VIC video_chip; ///< VIC-II video chip for screen output
         PIA pia; ///< Peripheral Interface Adapter for I/O
+        uint32_t clock_hz_ = kDefaultClockHz;  ///< the machine's stated speed
+        uint64_t next_jiffy_ = 0;              ///< cycle count the next jiffy IRQ is due
         BlockDevice block_device; ///< Block device backing the FAT16 disk image
         Acia acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
         Sid sid; ///< SID sound chip ($FE38-$FE54)

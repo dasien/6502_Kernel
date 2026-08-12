@@ -50,7 +50,7 @@ namespace
         void SetUp() override
         {
             computer.power_on();
-            computer.run(200000); // reach the boot prompt
+            computer.runInstructions(200000); // reach the boot prompt
         }
 
         // Call a kernel subroutine via its $FF00 jump-table entry with the given

@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QElapsedTimer>
 #include <QTimer>
 #include "Computer6502.h"
 #include "DisplayWidget.h"
@@ -67,7 +68,10 @@ private:
     SidAudio* sid_audio_ = nullptr; ///< SID sound-chip audio output bridge
 #endif
     QTimer* execution_timer_;
-    QTimer* irq_timer_;   ///< drives the PIA interval-timer IRQ at ~60 Hz
+    /// Real time, so the emulated clock can be paced against it rather than against
+    /// however often Qt gets round to firing the execution timer.
+    QElapsedTimer wall_clock_;
+    qint64 last_run_ns_ = 0;
     
     bool is_running_;
     int execution_cycle_count_;
