@@ -274,6 +274,30 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * is not Winky slides across its whole cadence. Larger = snappier, and choppier. */
 #define SLIDE_DEN   2
 
+/* Jiffies between redraws. Drawing every jiffy is what a sprite makes POSSIBLE, not
+ * what the CPU can afford: fifteen sprites plus the slide arithmetic at 60 Hz ate
+ * about four fifths of the machine, the tick accumulator could not keep up, and
+ * step() started dropping ticks -- which showed up as monsters freezing mid-patrol,
+ * because a dropped tick is a move that never happens. The simulation runs at ten
+ * ticks a second, so three drawn positions per step is plenty. */
+#define DRAW_EVERY  1
+
+/* Motion classes. A mover's PICTURE is a pixel position advanced by a fixed step
+ * each frame -- the way a C64 game moves a sprite -- rather than re-derived from its
+ * grid cell every frame, which is what the first cut did and what made drawing cost
+ * four fifths of the machine. The step for a class is worked out once when the tick
+ * rate changes, so the frame loop is an add and no division at all. */
+#define CL_FAST 0            /* Winky: one tick, and arrives inside it */
+#define CL_TICK 1            /* the arrow and the room intruder: one tick */
+#define CL_MON  2            /* room monsters: MON_EVERY ticks */
+#define CL_HALL 3            /* Hallmonsters out in the hall: HALL_EVERY ticks */
+#define CL_COUNT 4
+
+/* Sub-pixel resolution of a mover's position: nominal pixels in 12.4 fixed point.
+ * A nominal x reaches 639, so twelve integer bits are enough and four fractional
+ * ones keep a step accurate to a sixteenth of a pixel. */
+#define SUB 4
+
 /* A room monster works a patch of floor rather than hunting you across the room.
  * MON_AGGRO is how close you have to come before it darts at you; MON_ORBIT is how
  * far it will drift from its post while nothing is happening. Aggro wants to be

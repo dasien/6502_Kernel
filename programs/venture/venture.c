@@ -254,6 +254,7 @@ unsigned char f_live, f_x, f_y;          /* the facing pip */
 
 unsigned char m_live[MAX_MON], m_x[MAX_MON], m_y[MAX_MON];
 static unsigned char m_hx[MAX_MON], m_hy[MAX_MON];   /* the post each one guards */
+static unsigned char m_wp[MAX_MON];                  /* which leg of its beat it is on */
 static unsigned char m_ox[MAX_MON], m_oy[MAX_MON];   /* the cell each came from */
 unsigned char h_live[MAX_HALL], h_x[MAX_HALL], h_y[MAX_HALL];
 static unsigned char h_ox[MAX_HALL], h_oy[MAX_HALL];
@@ -268,9 +269,19 @@ unsigned char a_x, a_y;
  * collision, lethal() and tile test still asks the grid. Only the picture moves
  * continuously, which is the only place the jump was ever visible. */
 static unsigned char pw_x, pw_y, pf_x0, pf_y0, pa_x, pa_y;
+
+/* Each sprite's drawn position, in 12.4 fixed-point nominal pixels, plus the step it
+   adds each frame and how many frames are left of it. */
+static unsigned int  sp_x[SPR_COUNT], sp_y[SPR_COUNT];
+static int           sp_vx[SPR_COUNT], sp_vy[SPR_COUNT];
+static unsigned char sp_n[SPR_COUNT];
+
+/* Frames a step takes and the distance covered per frame, per motion class. */
+static unsigned char cl_n[CL_COUNT];
+static unsigned int  cl_sx[CL_COUNT], cl_sy[CL_COUNT];
 static unsigned char pm_x[MAX_MON], pm_y[MAX_MON];
 static unsigned char ph_x[MAX_HALL], ph_y[MAX_HALL];
-static unsigned int  mon_at, hall_at;
+static unsigned char mon_at, hall_at;
 static signed char   a_dx, a_dy;
 
 /* ---- game state -------------------------------------------------------- */
@@ -285,7 +296,7 @@ static unsigned char treas_got;              /* bit per theme, for the roster */
 static unsigned int  dawdle;                 /* ticks spent in the current room */
 
 static unsigned int  rng;
-static unsigned char tick_count;
+unsigned char tick_count;
 static unsigned char snd_left;           /* ticks a sound cue still has to run */
 
 /* ---- RNG ---------------------------------------------------------------- */
@@ -642,38 +653,8 @@ static void clear_screen(void)
     vcmd(VCMD_FONTRAM);
 }
 
-/* How far through its step a class is, in sixteenths of a cell. One divide per
- * class per frame, not per mover -- every room monster shares a cadence. Clamped,
- * because a class can overrun its span while a room is being entered. */
-static unsigned char slide(unsigned int elapsed, unsigned int span)
-{
-    unsigned int o;
-    if (!span) return 16;
-    o = (elapsed << 4) / span;
-    return (unsigned char)(o > 16 ? 16 : o);
-}
 
-/* A cell's nominal-pixel position, `off` sixteenths of the way from prev to cur.
- * A step is one cell, so anything longer is a teleport -- a room change, a respawn
- * -- and snaps, or the mover would sail across the playfield. */
-static unsigned int glide_x(unsigned char prev, unsigned char cur, unsigned char off)
-{
-    unsigned int base = (unsigned int)(gx0 + prev) << 4;
-    if (cur == prev) return base;
-    if (cur == (unsigned char)(prev + 1)) return base + off;
-    if (prev == (unsigned char)(cur + 1)) return base - off;
-    return (unsigned int)(gx0 + cur) << 4;
-}
 
-/* Twice the offset per sixteenth: a playfield row is two character rows tall. */
-static unsigned int glide_y(unsigned char prev, unsigned char cur, unsigned char off)
-{
-    unsigned int base = (unsigned int)(PLAY_ROW0 + ((gy0 + prev) << 1)) << 4;
-    if (cur == prev) return base;
-    if (cur == (unsigned char)(prev + 1)) return base + (off << 1);
-    if (prev == (unsigned char)(cur + 1)) return base - (off << 1);
-    return (unsigned int)(PLAY_ROW0 + ((gy0 + cur) << 1)) << 4;
-}
 
 /* mag: draw the pattern at 2x, which is what makes a sprite the size of a
    double-row cell. Off gives a half-size marker -- see the facing pip. */
@@ -687,6 +668,48 @@ static void spr_nom(unsigned char slot, unsigned int nx, unsigned int ny,
     r[3] = (unsigned char)(((ny >> 8) & 0x03) | mag | SPR_ENABLE);
     r[4] = ch;
     r[5] = attr;
+}
+
+/* Work out each class's step once, not once a frame. tickrate is the difficulty
+   ramp, so this is redone whenever it changes. */
+static void calc_rates(void)
+{
+    unsigned char c;
+    unsigned int j;
+
+    for (c = 0; c < CL_COUNT; c++) {
+        j = (c == CL_FAST) ? (unsigned int)tickrate / SLIDE_DEN
+          : (c == CL_TICK) ? (unsigned int)tickrate
+          : (c == CL_MON)  ? (unsigned int)MON_EVERY * tickrate
+                           : (unsigned int)HALL_EVERY * tickrate;
+        j /= DRAW_EVERY;
+        if (!j) j = 1;
+        cl_n[c]  = (unsigned char)j;
+        cl_sx[c] = (unsigned int)(16u << SUB) / j;   /* a cell is 16 nominal px wide */
+        cl_sy[c] = (unsigned int)(32u << SUB) / j;   /* ...and 32 tall */
+    }
+}
+
+/* Aim a sprite from the cell it is leaving at the cell it is entering. Called on the
+   tick a mover actually steps, so the frame loop only ever has to add. */
+static void spr_launch(unsigned char slot, unsigned char cls,
+                       unsigned char ax, unsigned char ay,
+                       unsigned char bx, unsigned char by)
+{
+    sp_x[slot] = (unsigned int)((gx0 + ax) << 4) << SUB;
+    sp_y[slot] = (unsigned int)((PLAY_ROW0 + ((gy0 + ay) << 1)) << 4) << SUB;
+
+    /* One cell a step, so anything longer is a teleport -- a room change, a respawn
+       -- and lands rather than travels. */
+    if ((unsigned char)(bx - ax + 1) > 2 || (unsigned char)(by - ay + 1) > 2) {
+        sp_x[slot] = (unsigned int)((gx0 + bx) << 4) << SUB;
+        sp_y[slot] = (unsigned int)((PLAY_ROW0 + ((gy0 + by) << 1)) << 4) << SUB;
+        sp_vx[slot] = 0; sp_vy[slot] = 0; sp_n[slot] = 0;
+        return;
+    }
+    sp_vx[slot] = (bx > ax) ? (int)cl_sx[cls] : (bx < ax) ? -(int)cl_sx[cls] : 0;
+    sp_vy[slot] = (by > ay) ? (int)cl_sy[cls] : (by < ay) ? -(int)cl_sy[cls] : 0;
+    sp_n[slot]  = (sp_vx[slot] || sp_vy[slot]) ? cl_n[cls] : 0;
 }
 
 static void spr_off(unsigned char slot)
@@ -840,6 +863,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
                     if (nm < MAX_MON) {
                         m_live[nm] = 1; m_x[nm] = rx; m_y[nm] = ry;
                         m_hx[nm] = rx;  m_hy[nm] = ry;   /* where the art put it */
+                        m_wp[nm] = 0;
                         m_ox[nm] = 0xFF; m_oy[nm] = 0xFF;
                         nm++;
                     }
@@ -1306,10 +1330,21 @@ static void chase(unsigned char *px, unsigned char *py,
         /* Boxed in on all four sides -- possible once a room fills with bodies. Take
          * any open cell rather than freeze. */
         if (nx == cx && ny == cy) {
-            const unsigned char dir = rndn(4);
-            const unsigned char tx = (unsigned char)(cx + ((dir == 0) ? 1 : (dir == 1) ? -1 : 0));
-            const unsigned char ty = (unsigned char)(cy + ((dir == 2) ? 1 : (dir == 3) ? -1 : 0));
-            if (OPEN(tx, ty)) { nx = tx; ny = ty; }
+            /* Try all four from a random start, not one random pick and give up.
+             *
+             * One pick fails whenever it lands on the cell just left, a wall or a
+             * body -- and a monster that fails does not move for its WHOLE cadence,
+             * three ticks, which reads as a pause in the middle of its patrol. That
+             * was tolerable when this branch only caught a monster boxed in by
+             * corpses; now it is the ordinary way a monster on its post gets about,
+             * so it has to actually find the opening if there is one. */
+            unsigned char k, dir, tx, ty, d0 = rndn(4);
+            for (k = 0; k < 4; k++) {
+                dir = (unsigned char)((d0 + k) & 3);
+                tx = (unsigned char)(cx + ((dir == 0) ? 1 : (dir == 1) ? -1 : 0));
+                ty = (unsigned char)(cy + ((dir == 2) ? 1 : (dir == 3) ? -1 : 0));
+                if (OPEN(tx, ty)) { nx = tx; ny = ty; break; }
+            }
         }
 
         if (nx != cx || ny != cy) break;    /* moved */
@@ -1324,9 +1359,15 @@ static void chase(unsigned char *px, unsigned char *py,
     *py = ny;
 }
 
+/* The beat: four legs round the post. The vertical legs are shorter because a
+   playfield cell is twice as tall as it is wide, so this walks a square on screen
+   rather than a tall thin rectangle. */
+static const signed char wp_dx[4] = {  MON_ORBIT, 0, -MON_ORBIT, 0 };
+static const signed char wp_dy[4] = {  0, 1, 0, -1 };
+
 static void monsters_advance(void)
 {
-    unsigned char i;
+    unsigned char i, ox, oy;
     for (i = 0; i < MAX_MON; i++) {
         if (!m_live[i]) continue;
         chase_self = i;
@@ -1336,18 +1377,29 @@ static void monsters_advance(void)
         /* Guard a post rather than hunt you across the room.
          *
          * They used to walk straight at you from wherever they were, which made a
-         * room a chase: back away and the whole set followed in a line, and the way
-         * to clear one was to reverse down a corridor shooting. The arcade's do not
-         * do that. They work a patch of floor, dart at you when you come inside it,
-         * and drift back when you leave -- so the room is a set of places that are
-         * dangerous rather than a pack that is following you, and their bodies end up
-         * on the squares that were worth holding. */
+         * room a chase: back away and the whole set followed in a line. The arcade's
+         * work a patch of floor, dart at you when you come inside it, and go back to
+         * it when you leave -- so a room is a set of dangerous places rather than a
+         * pack that is following you, and their bodies end up on the squares that
+         * were worth holding.
+         *
+         * The beat is four waypoints round the post, walked in order, and NOT a fresh
+         * random direction each step. Re-rolling every step is a stagger: two steps
+         * out, one back, another reverse -- which reads as a monster hesitating
+         * rather than patrolling, and was the first thing anyone noticed about it.
+         * Walking a fixed loop looks like a creature with somewhere to be. */
+        ox = m_x[i]; oy = m_y[i];
         if (taxi(m_x[i], m_y[i], wx, wy) <= MON_AGGRO) {
-            tgt_x = wx; tgt_y = wy;                      /* inside its patch: dart */
-        } else if (taxi(m_x[i], m_y[i], m_hx[i], m_hy[i]) > MON_ORBIT) {
-            tgt_x = m_hx[i]; tgt_y = m_hy[i];            /* strayed: drift back */
+            tgt_x = wx; tgt_y = wy;                  /* inside its patch: dart */
         } else {
-            tgt_x = m_x[i]; tgt_y = m_y[i];              /* at home: mill about */
+            tgt_x = (unsigned char)(m_hx[i] + wp_dx[m_wp[i]]);
+            tgt_y = (unsigned char)(m_hy[i] + wp_dy[m_wp[i]]);
+            /* Reached this leg's end, or it is off the board: take the next one. */
+            if ((m_x[i] == tgt_x && m_y[i] == tgt_y) || tgt_x >= gw || tgt_y >= gh) {
+                m_wp[i] = (unsigned char)((m_wp[i] + 1) & 3);
+                tgt_x = (unsigned char)(m_hx[i] + wp_dx[m_wp[i]]);
+                tgt_y = (unsigned char)(m_hy[i] + wp_dy[m_wp[i]]);
+            }
         }
         chase(&m_x[i], &m_y[i], 0, 1);      /* walls, bodies and each other stop them */
         m_ox[i] = back_x;
@@ -1358,6 +1410,10 @@ static void monsters_advance(void)
          * monster's old cell earlier in this same tick, then the monster steps into
          * the arrow's new one and nothing looks again. It only happens on the ticks
          * monsters actually move, which is why it read as random. */
+        /* Blocked where it was going: take the next leg rather than push at a wall
+           until something moves, which is how it ends up standing still. */
+        if (m_x[i] == ox && m_y[i] == oy) m_wp[i] = (unsigned char)((m_wp[i] + 1) & 3);
+
         if (a_live && m_x[i] == a_x && m_y[i] == a_y) { kill_monster(i); continue; }
 
         if (m_x[i] == wx && m_y[i] == wy) dead = 1;
@@ -1448,39 +1504,41 @@ static void draw_facing(void)
  * Slot order is fixed rather than allocated, so a mover keeps the same sprite for
  * its whole life. Overlap is settled by slot number -- lower draws first, so Winky
  * is under a monster standing on him, which is the moment you most want to see. */
-static void draw_movers(unsigned char frac)
+/* Advance every mover a step and put it on its sprite.
+ *
+ * No division and no re-derivation from the grid: each sprite carries its own pixel
+ * position and adds a precomputed step, which is how a machine of this size moves a
+ * sprite. The first cut recomputed the position from the cell every frame, four
+ * divides and fifteen compare-chains a frame, and it cost about four fifths of the
+ * CPU -- the tick accumulator could not keep up and step() dropped ticks, which is
+ * what made monsters freeze in the middle of their patrols. */
+static void draw_movers(void)
 {
-    unsigned char i, op, ow, om, oh;
-    unsigned int span, nx, ny;
+    unsigned char i, s;
 
-    /* Winky arrives early, so steering bites. Everything else slides across its
-       whole cadence, so it moves continuously instead of lurching and stopping. */
-    op = slide(frac, tickrate / SLIDE_DEN);
-    ow = slide(frac, tickrate);
-    om = slide((unsigned int)(tick_count - mon_at) * tickrate + frac,
-               (unsigned int)MON_EVERY * tickrate);
-    span = (mode == MODE_MAP) ? (unsigned int)HALL_EVERY * tickrate : tickrate;
-    oh = slide((unsigned int)(tick_count - hall_at) * tickrate + frac, span);
+    for (s = 0; s < SPR_COUNT; s++) {
+        if (!sp_n[s]) continue;
+        sp_x[s] = (unsigned int)(sp_x[s] + sp_vx[s]);
+        sp_y[s] = (unsigned int)(sp_y[s] + sp_vy[s]);
+        sp_n[s]--;
+    }
 
-    /* Winky first: the pip is placed relative to where he is DRAWN, so it travels
-       with him for free and can never detach mid-slide. */
-    nx = glide_x(pw_x, wx, op);
-    ny = glide_y(pw_y, wy, op);
-    /* Half size out in the hall, as the arcade draws him: the hall is a maze of
-       corridors and a full-size body fills one, so you cannot see the gap you are
-       aiming for. Centred in the cell, since he is smaller than it. Note this is the
-       PICTURE only -- he still occupies the whole cell as far as anything he can walk
-       into is concerned. */
-    if (mode == MODE_MAP) spr_nom(SPR_WINKY, nx + 4, ny + 8, G_WINKY, A_WINKY, 0);
-    else                  spr_nom(SPR_WINKY, nx, ny, G_WINKY, A_WINKY, SPR_MAG);
+    /* Winky first: the pip hangs off where he is DRAWN, so it can never detach. */
+    spr_nom(SPR_WINKY, sp_x[SPR_WINKY] >> SUB, sp_y[SPR_WINKY] >> SUB,
+            G_WINKY, A_WINKY, (mode == MODE_MAP) ? 0 : SPR_MAG);
 
-    /* The pip used to be a full-size body a whole cell away. A playfield cell is
-       twice as tall as it is wide, so up and down put it 32 pixels off and left and
-       right only 16 -- the aim read as lopsided, because it was. It is a reticle
-       rather than a body, so it is now half size and placed in PIXELS hard against
-       whichever edge of Winky he faces: touching on all four sides, and small enough
-       that it reads as an aim rather than as another thing in the room. */
+    /* Half size out in the hall, as the arcade draws him, and centred in the cell
+       since he is smaller than it. The picture only -- he still occupies the whole
+       cell as far as anything he can walk into is concerned. */
+    if (mode == MODE_MAP)
+        spr_nom(SPR_WINKY, (sp_x[SPR_WINKY] >> SUB) + 4, (sp_y[SPR_WINKY] >> SUB) + 8,
+                G_WINKY, A_WINKY, 0);
+
+    /* The pip is half size and sits hard against whichever edge of Winky he faces.
+       A playfield cell is twice as tall as it is wide, so a whole cell up or down put
+       it visibly further off than a whole cell left or right. */
     if (f_live) {
+        const unsigned int nx = sp_x[SPR_WINKY] >> SUB, ny = sp_y[SPR_WINKY] >> SUB;
         unsigned int px, py;
         if (face_dx > 0)      { px = nx + 16; py = ny + 8;  }
         else if (face_dx < 0) { px = nx - 8;  py = ny + 8;  }
@@ -1493,19 +1551,18 @@ static void draw_movers(unsigned char frac)
     else spr_off(SPR_FACE);
 
     for (i = 0; i < MAX_MON; i++) {
-        if (m_live[i]) spr_nom((unsigned char)(SPR_MON0 + i),
-                               glide_x(pm_x[i], m_x[i], om), glide_y(pm_y[i], m_y[i], om),
-                               theme_monster[theme],
+        s = (unsigned char)(SPR_MON0 + i);
+        if (m_live[i]) spr_nom(s, sp_x[s] >> SUB, sp_y[s] >> SUB, theme_monster[theme],
                                have_treasure ? A_MON_WORTH : A_MON, SPR_MAG);
-        else           spr_off((unsigned char)(SPR_MON0 + i));
+        else           spr_off(s);
     }
     for (i = 0; i < MAX_HALL; i++) {
-        if (h_live[i]) spr_nom((unsigned char)(SPR_HALL0 + i),
-                               glide_x(ph_x[i], h_x[i], oh), glide_y(ph_y[i], h_y[i], oh),
-                               G_HALLMON, a_hall, SPR_MAG);
-        else           spr_off((unsigned char)(SPR_HALL0 + i));
+        s = (unsigned char)(SPR_HALL0 + i);
+        if (h_live[i]) spr_nom(s, sp_x[s] >> SUB, sp_y[s] >> SUB, G_HALLMON, a_hall,
+                               SPR_MAG);
+        else           spr_off(s);
     }
-    if (a_live) spr_nom(SPR_ARROW, glide_x(pa_x, a_x, ow), glide_y(pa_y, a_y, ow),
+    if (a_live) spr_nom(SPR_ARROW, sp_x[SPR_ARROW] >> SUB, sp_y[SPR_ARROW] >> SUB,
                         a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
                         a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW, SPR_MAG);
     else        spr_off(SPR_ARROW);
@@ -1532,6 +1589,7 @@ static void step(unsigned char ks)
     pa_x = a_x; pa_y = a_y;
 
     winky_move(ks);
+    spr_launch(SPR_WINKY, CL_FAST, pw_x, pw_y, wx, wy);
 
     if (mode == MODE_MAP) {
         /* Walking onto an entrance is the commitment. enter_room() rebuilds the
@@ -1547,6 +1605,9 @@ static void step(unsigned char ks)
             for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
             hall_at = tick_count;
             hall_advance();
+            for (i = 0; i < MAX_HALL; i++)
+                spr_launch((unsigned char)(SPR_HALL0 + i), CL_HALL,
+                           ph_x[i], ph_y[i], h_x[i], h_y[i]);
         }
     } else {
         if (grid[wy][wx] == T_TREAS) {
@@ -1573,10 +1634,14 @@ static void step(unsigned char ks)
 
         if (ks & KS_FIRE) fire();
         arrow_advance();
+        spr_launch(SPR_ARROW, CL_TICK, pa_x, pa_y, a_x, a_y);
         if (!(tick_count % MON_EVERY)) {
             for (i = 0; i < MAX_MON; i++) { pm_x[i] = m_x[i]; pm_y[i] = m_y[i]; }
             mon_at = tick_count;
             monsters_advance();
+            for (i = 0; i < MAX_MON; i++)
+                spr_launch((unsigned char)(SPR_MON0 + i), CL_MON,
+                           pm_x[i], pm_y[i], m_x[i], m_y[i]);
         }
         if (++dawdle > HALL_ROOM_TICKS) hall_intrude();
         /* Note the sense: every tick EXCEPT every HALL_IN_SKIP'th, so the intruder
@@ -1585,6 +1650,9 @@ static void step(unsigned char ks)
             for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
             hall_at = tick_count;
             hall_advance(); hall_arrow_check();
+            for (i = 0; i < MAX_HALL; i++)
+                spr_launch((unsigned char)(SPR_HALL0 + i), CL_TICK,
+                           ph_x[i], ph_y[i], h_x[i], h_y[i]);
         }
     }
 
@@ -1749,6 +1817,7 @@ static void new_game(void)
     lives = LIVES_START;
     level = 1;
     tickrate = TICK_RATE;
+    calc_rates();
     treas_got = 0;
     start_level();
     roster_screen();
@@ -1800,9 +1869,13 @@ int main(void)
                fraction of its step that has elapsed. This is the whole point of
                putting the movers on sprites: the simulation still runs at tickrate
                and still thinks in whole cells, but the picture no longer has to. */
-            if (now != lastdraw) {
-                draw_movers((unsigned char)(now - last));
-                lastdraw = now;
+            /* Advance lastdraw BY the interval, not TO now: snapping it to now means
+               that once the loop falls behind, a full interval has always elapsed and
+               the throttle stops throttling exactly when it is needed. */
+            if ((unsigned int)(now - lastdraw) >= DRAW_EVERY) {
+                draw_movers();
+                lastdraw += DRAW_EVERY;
+                if ((unsigned int)(now - lastdraw) >= DRAW_EVERY) lastdraw = now;
             }
 
             /* The FIFO carries the commands that are not movement. Drained a few
@@ -1850,6 +1923,7 @@ int main(void)
                 if (level > LEVELS) {
                     level = 1;
                     if (tickrate > 1) tickrate--;
+                    calc_rates();   /* the steps are derived from it */
                 }
                 start_level();
                 roster_screen();
