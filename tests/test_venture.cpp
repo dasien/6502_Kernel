@@ -797,8 +797,16 @@ protected:
             walkOnMapTo(5, 1);           // west to above the entrance
             hold(kKsDown, 2);            // down onto it at (5,2)
         } else {
-            walkOnMapTo(5, 5);           // row 5 is open; west to below the entrance
-            hold(kKsUp, 2);              // up onto it at (5,4)
+            /* Slot 2's south entrance at (7,8), reached along row 9.
+             *
+             * NOT room 0's, which is what this used to do. Its south entrance is at
+             * the far end of the row-5 corridor, and with three Hallmonsters awake
+             * level one posts one at (1,3) -- the west mouth of that corridor. Winky
+             * reaches the cell below the door and is caught standing on it. Row 9 is
+             * the quiet lane: the nearest woken post is seventeen cells east. */
+            walkOnMapTo(14, 9);
+            walkOnMapTo(7, 9);
+            hold(kKsUp, 2);              // up onto the entrance at (7,8)
         }
         /* Entered is not the same as drawn. enter_room() flips the mode and then
            paints the whole board inside the same step, so a check that fires the
@@ -1126,22 +1134,12 @@ TEST_F(VentureTest, TheEntranceYouUseDecidesWhichDoorwayYouArriveAt)
 
 class VentureSouthTest : public VentureTest {};
 
-/* KNOWN FAILING, and it is the game telling us something rather than the test being
- * wrong. With HALL_BASE at 3, level one wakes a Hallmonster at (1,3) -- the west end
- * of the only corridor to room 0's south entrance -- and this route walks the length
- * of that corridor. Winky reaches (5,5), the cell below the door, and is caught
- * there. The retries then do nothing: each death costs a life, and after three the
- * game is over, so every later attempt walks a board that no longer responds.
- *
- * A player would react; a scripted route cannot. The fix is either a route that does
- * not traverse that corridor (room 1's south entrance is reached from the east, away
- * from every woken post) or fewer Hallmonsters at level start -- a gameplay call,
- * not a test one. */
 TEST_F(VentureSouthTest, TheSouthEntranceArrivesAtTheSouthDoorway)
 {
     // The other half of the same rule, and the half that was visibly broken: entering
     // from one side and being put down on a completely different one.
-    ASSERT_TRUE(enterSlot(false)) << "never got into the room by the south entrance";
+    ASSERT_TRUE(enterSlot(false, kGlyphRing))
+        << "never got into the room by the south entrance";
     int wx, wy;
     ASSERT_TRUE(findWinky(&wx, &wy));
     EXPECT_GE(wy, kRoomH - 3) << "came in the south entrance and arrived at row " << wy;
