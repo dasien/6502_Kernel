@@ -1031,6 +1031,44 @@ TEST_F(VentureTest, HallmonstersNeverOverlap)
     EXPECT_EQ(worst, 0) << worst << " frames had two Hallmonsters drawn on top of each other";
 }
 
+/* Room monsters guard a patch of floor; they do not hunt you across the room.
+ *
+ * They used to walk straight at you from wherever they were, so backing away pulled
+ * the whole set after you in a line and the way to clear a room was to reverse down a
+ * corridor shooting. The arcade's work a patch, dart at you when you come inside it,
+ * and drift back when you leave -- the room becomes a set of dangerous places rather
+ * than a pack that follows you, and their bodies end up on the squares worth holding.
+ *
+ * Asserted on the SUM of the distances, which is what tells the two apart: hunters
+ * all converge on you and the sum collapses towards nothing, guards stay spread out
+ * wherever they are. */
+TEST_F(VentureTest, MonstersGuardTheirGroundUntilYouComeClose)
+{
+    ASSERT_TRUE(enterRoomZero());
+    int wx, wy;
+    ASSERT_TRUE(findWinky(&wx, &wy));
+
+    int worst = 9999;                      // the tightest they ever drew in
+    for (int t = 0; t < 8; t++) {          // well short of the Hallmonster's cue
+        run(30);
+        ASSERT_TRUE(findWinky(&wx, &wy)) << "died standing still, well clear of them";
+        int sum = 0;
+        for (const Ent &m : liveMonsters()) sum += abs(m.x - wx) + abs(m.y - wy);
+        if (sum < worst) worst = sum;
+    }
+    EXPECT_GT(worst, 15) << "they closed on a stationary player from across the room";
+
+    // ...but walk into one's patch and it comes for you.
+    int nearest = 99;
+    for (int t = 0; t < 8; t++) {
+        walkInRoom(kKsRight, 1);
+        if (!findWinky(&wx, &wy)) return;  // caught: it certainly came
+        for (const Ent &m : liveMonsters())
+            nearest = std::min(nearest, abs(m.x - wx) + abs(m.y - wy));
+    }
+    EXPECT_LE(nearest, 3) << "walked into a monster's patch and it ignored me";
+}
+
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;

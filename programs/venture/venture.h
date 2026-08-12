@@ -274,6 +274,14 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * is not Winky slides across its whole cadence. Larger = snappier, and choppier. */
 #define SLIDE_DEN   2
 
+/* A room monster works a patch of floor rather than hunting you across the room.
+ * MON_AGGRO is how close you have to come before it darts at you; MON_ORBIT is how
+ * far it will drift from its post while nothing is happening. Aggro wants to be
+ * short enough that crossing a room is a matter of picking a line between patches,
+ * and long enough that a patch is genuinely dangerous to stand in. */
+#define MON_AGGRO   5
+#define MON_ORBIT   2
+
 #define MON_EVERY   3
 
 #define MAX_MON     6

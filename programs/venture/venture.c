@@ -253,6 +253,7 @@ signed char          face_dx, face_dy;   /* last direction held; arrows use it *
 unsigned char f_live, f_x, f_y;          /* the facing pip */
 
 unsigned char m_live[MAX_MON], m_x[MAX_MON], m_y[MAX_MON];
+static unsigned char m_hx[MAX_MON], m_hy[MAX_MON];   /* the post each one guards */
 static unsigned char m_ox[MAX_MON], m_oy[MAX_MON];   /* the cell each came from */
 unsigned char h_live[MAX_HALL], h_x[MAX_HALL], h_y[MAX_HALL];
 static unsigned char h_ox[MAX_HALL], h_oy[MAX_HALL];
@@ -838,6 +839,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
                     grid[ry][rx] = T_FLOOR;
                     if (nm < MAX_MON) {
                         m_live[nm] = 1; m_x[nm] = rx; m_y[nm] = ry;
+                        m_hx[nm] = rx;  m_hy[nm] = ry;   /* where the art put it */
                         m_ox[nm] = 0xFF; m_oy[nm] = 0xFF;
                         nm++;
                     }
@@ -960,6 +962,13 @@ static void step_inward(unsigned char dx, unsigned char dy)
     else if (dy == gh - 1) { wy = gh - 2;    face_dy = -1; }
     else if (dx == 0)      { wx = 1;         face_dx =  1; }
     else                   { wx = gw - 2;    face_dx = -1; }
+}
+
+static unsigned char taxi(unsigned char ax, unsigned char ay,
+                          unsigned char bx, unsigned char by)
+{
+    return (unsigned char)((ax > bx ? ax - bx : bx - ax) +
+                           (ay > by ? ay - by : by - ay));
 }
 
 /* Taxicab distance from the level-start square. */
@@ -1198,6 +1207,10 @@ static void arrow_advance(void)
  * Room monsters and Hallmonsters share it. What differs is what stops them --
  * `solid`, below -- and that is the whole difference between a monster and a clock.
  */
+/* Where the current chase() is heading. Winky, usually -- but a room monster
+   holding its ground aims at its post instead, and one that is already there aims at
+   itself, which makes chase() fall through to its wander. */
+static unsigned char tgt_x, tgt_y;
 static unsigned char chase_self;    /* the room monster taking this step, 0xFF for none */
 static unsigned char hall_self = 0xFF;  /* the Hallmonster taking this step */
 static unsigned char back_x, back_y; /* the cell it came from, which it may not retake */
@@ -1246,11 +1259,11 @@ static void chase(unsigned char *px, unsigned char *py,
 {
     const unsigned char cx = *px, cy = *py;
     unsigned char nx, ny, adx, ady, pass;
-    const signed char dx = (wx > cx) ? 1 : (wx < cx) ? -1 : 0;
-    const signed char dy = (wy > cy) ? 1 : (wy < cy) ? -1 : 0;
+    const signed char dx = (tgt_x > cx) ? 1 : (tgt_x < cx) ? -1 : 0;
+    const signed char dy = (tgt_y > cy) ? 1 : (tgt_y < cy) ? -1 : 0;
 
-    adx = (unsigned char)(wx > cx ? wx - cx : cx - wx);
-    ady = (unsigned char)(wy > cy ? wy - cy : cy - wy);
+    adx = (unsigned char)(tgt_x > cx ? tgt_x - cx : cx - tgt_x);
+    ady = (unsigned char)(tgt_y > cy ? tgt_y - cy : cy - tgt_y);
 
 #define OPEN(X, Y) ((X) < gw && (Y) < gh && \
                     !chase_blocked((X), (Y), through_walls, avoid_bodies))
@@ -1319,6 +1332,23 @@ static void monsters_advance(void)
         chase_self = i;
         back_x = m_ox[i];
         back_y = m_oy[i];
+
+        /* Guard a post rather than hunt you across the room.
+         *
+         * They used to walk straight at you from wherever they were, which made a
+         * room a chase: back away and the whole set followed in a line, and the way
+         * to clear one was to reverse down a corridor shooting. The arcade's do not
+         * do that. They work a patch of floor, dart at you when you come inside it,
+         * and drift back when you leave -- so the room is a set of places that are
+         * dangerous rather than a pack that is following you, and their bodies end up
+         * on the squares that were worth holding. */
+        if (taxi(m_x[i], m_y[i], wx, wy) <= MON_AGGRO) {
+            tgt_x = wx; tgt_y = wy;                      /* inside its patch: dart */
+        } else if (taxi(m_x[i], m_y[i], m_hx[i], m_hy[i]) > MON_ORBIT) {
+            tgt_x = m_hx[i]; tgt_y = m_hy[i];            /* strayed: drift back */
+        } else {
+            tgt_x = m_x[i]; tgt_y = m_y[i];              /* at home: mill about */
+        }
         chase(&m_x[i], &m_y[i], 0, 1);      /* walls, bodies and each other stop them */
         m_ox[i] = back_x;
         m_oy[i] = back_y;
@@ -1361,6 +1391,7 @@ static void hall_advance(void)
         back_x = h_ox[i];
         back_y = h_oy[i];
         hall_self = i;
+        tgt_x = wx; tgt_y = wy;
         chase(&h_x[i], &h_y[i], phases, 0);
         hall_self = 0xFF;
         h_ox[i] = back_x;
