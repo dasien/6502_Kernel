@@ -229,26 +229,36 @@ static unsigned char sl_y[ROOMS_PER_LEVEL][2];
 static unsigned char rx_side[2], rx_x[2], rx_y[2];  /* the current room's doorways */
 static unsigned char exit_used;                     /* which one we walked out of */
 
-static unsigned char mode;                 /* MODE_MAP / MODE_ROOM */
+unsigned char mode;                                         /* MODE_MAP / MODE_ROOM */
 static unsigned char theme;                /* which of the six rooms we are in */
 static unsigned char room_of_slot[ROOMS_PER_LEVEL];
 static unsigned char slot_done[ROOMS_PER_LEVEL];
 static unsigned char slot_entered = 0xFF;  /* the room we last went into */
 static unsigned char ret_x, ret_y;         /* the hall cell we went in from */
 
-/* ---- entities ---------------------------------------------------------- */
-static unsigned char wx, wy;             /* Winky, in board coordinates */
-static signed char   face_dx, face_dy;   /* last direction held; arrows use it */
+/* ---- entities ----------------------------------------------------------
+ * Deliberately NOT static, and it costs nothing: dropping the keyword exports the
+ * symbol to the linker's label file without changing a byte of the binary. The test
+ * harness reads these addresses to learn where things ARE.
+ *
+ * It used to find them by scanning the screen, which stopped working the moment the
+ * movers began sliding between cells: a sprite in flight is drawn between two of
+ * them and its position does not carry direction -- three sixteenths right and
+ * thirteen sixteenths left land on the same pixel -- so the cell it occupies is not
+ * recoverable from the picture. Asking the game is not a workaround for that; it is
+ * the right question. The screen is still what the drawing tests assert on. */
+unsigned char wx, wy;                    /* Winky, in board coordinates */
+signed char          face_dx, face_dy;   /* last direction held; arrows use it */
 
-static unsigned char f_live, f_x, f_y;   /* the facing pip, so it can be erased */
+unsigned char f_live, f_x, f_y;          /* the facing pip */
 
-static unsigned char m_live[MAX_MON], m_x[MAX_MON], m_y[MAX_MON];
+unsigned char m_live[MAX_MON], m_x[MAX_MON], m_y[MAX_MON];
 static unsigned char m_ox[MAX_MON], m_oy[MAX_MON];   /* the cell each came from */
-static unsigned char h_live[MAX_HALL], h_x[MAX_HALL], h_y[MAX_HALL];
+unsigned char h_live[MAX_HALL], h_x[MAX_HALL], h_y[MAX_HALL];
 static unsigned char h_ox[MAX_HALL], h_oy[MAX_HALL];
 
-static unsigned char a_live;             /* one arrow in flight, as the original */
-static unsigned char a_x, a_y;
+unsigned char a_live;                    /* one arrow in flight, as the original */
+unsigned char a_x, a_y;
 
 /* Where every mover was at its last step, and when the slower classes took it.
  * Drawing slides between the previous cell and the current one, so a mover crosses
@@ -952,17 +962,6 @@ static void step_inward(unsigned char dx, unsigned char dy)
     else                   { wx = gw - 2;    face_dx = -1; }
 }
 
-/* Order the posts so the ones woken first are the ones furthest from the square the
- * player starts a level on.
- *
- * They are numbered in the order they appear in the layout art, which is scan order
- * and says nothing about where the player begins. With a single Hallmonster awake
- * that did not matter. With three it does: level one's third post in scan order sits
- * at (13,5), one cell from the start at (14,5), so the level would have opened with a
- * Hallmonster already touching you. Sorting by distance makes the safe choice a rule
- * rather than a property of how the art happens to be typed -- and the start square
- * is the only place this has to hold, because enter_map() puts the player there only
- * at level start, and beside the room entrance every other time. */
 /* Taxicab distance from the level-start square. */
 static unsigned int post_dist(unsigned char x, unsigned char y)
 {
@@ -970,22 +969,44 @@ static unsigned int post_dist(unsigned char x, unsigned char y)
          + (unsigned int)(y > MAP_START_Y ? y - MAP_START_Y : MAP_START_Y - y);
 }
 
+/* Order the posts so the ones woken first are clear of the square the player starts
+ * a level on AND spread across the hall.
+ *
+ * They are numbered in the order they appear in the layout art, which is scan order
+ * and says nothing about either. With one Hallmonster awake that did not matter.
+ * With three it matters twice: level one's third post in scan order sits one cell
+ * from the start at (14,5), so the level would have opened with one already touching
+ * you -- and simply taking the three FURTHEST from the start instead put two of them
+ * together at the west wall, straight across the first room's south approach, which
+ * made that entrance close to unreachable.
+ *
+ * So: farthest-point ordering seeded with the start square. Each post in turn is the
+ * one whose nearest neighbour -- among the start and everything already chosen -- is
+ * as far off as possible. That keeps them off the player at level start and spread
+ * over the hall rather than bunched in one corner, and it stays a rule rather than a
+ * property of how the art happens to be typed. */
 static void order_hall_posts(void)
 {
-    unsigned char i, j, n = 0, t;
-    unsigned int di, dj;
+    unsigned char n = 0, i, j, k, best, t;
+    unsigned int bestd, d, dd;
 
     while (n < MAX_HALL && h_live[n]) n++;
-    for (i = 0; i + 1 < n; i++) {
-        for (j = (unsigned char)(i + 1); j < n; j++) {
-            di = post_dist(h_x[i], h_y[i]);
-            dj = post_dist(h_x[j], h_y[j]);
-            if (dj > di) {
-                t = h_x[i]; h_x[i] = h_x[j]; h_x[j] = t;
-                t = h_y[i]; h_y[i] = h_y[j]; h_y[j] = t;
-                t = h_ox[i]; h_ox[i] = h_ox[j]; h_ox[j] = t;
-                t = h_oy[i]; h_oy[i] = h_oy[j]; h_oy[j] = t;
+    for (i = 0; i < n; i++) {
+        best = i; bestd = 0;
+        for (j = i; j < n; j++) {
+            d = post_dist(h_x[j], h_y[j]);
+            for (k = 0; k < i; k++) {
+                dd = (unsigned int)(h_x[j] > h_x[k] ? h_x[j] - h_x[k] : h_x[k] - h_x[j])
+                   + (unsigned int)(h_y[j] > h_y[k] ? h_y[j] - h_y[k] : h_y[k] - h_y[j]);
+                if (dd < d) d = dd;
             }
+            if (d > bestd) { bestd = d; best = j; }
+        }
+        if (best != i) {
+            t = h_x[i];  h_x[i]  = h_x[best];  h_x[best]  = t;
+            t = h_y[i];  h_y[i]  = h_y[best];  h_y[best]  = t;
+            t = h_ox[i]; h_ox[i] = h_ox[best]; h_ox[best] = t;
+            t = h_oy[i]; h_oy[i] = h_oy[best]; h_oy[best] = t;
         }
     }
 }
@@ -1370,14 +1391,19 @@ static void draw_facing(void)
 {
     const unsigned char tx = (unsigned char)(wx + face_dx);
     const unsigned char ty = (unsigned char)(wy + face_dy);
+    unsigned char live = 0;
 
-    f_live = 0;
-    if (mode != MODE_ROOM) return;                 /* the bow is for rooms */
-    if (tx >= gw || ty >= gh) return;
-    if (grid[ty][tx] != T_FLOOR) return;           /* never over a wall or a body */
-    if (lethal(tx, ty)) return;                    /* let the danger show instead */
-
-    f_live = 1; f_x = tx; f_y = ty;
+    if (mode == MODE_ROOM &&                       /* the bow is for rooms */
+        tx < gw && ty < gh &&
+        grid[ty][tx] == T_FLOOR &&                 /* never over a wall or a body */
+        !lethal(tx, ty)) {                         /* let the danger show instead */
+        live = 1; f_x = tx; f_y = ty;
+    }
+    /* Assigned once, at the end. Clearing it first and setting it later leaves a
+       window in which the pip does not exist, and anything sampling the game inside
+       that window -- a test, or the draw called from the main loop -- sees it flicker
+       off. The same shape of bug as erasing a mover before redrawing it. */
+    f_live = live;
 }
 
 /* Put every mover on its sprite.
@@ -1465,7 +1491,6 @@ static void step(unsigned char ks)
     if (a_live) restore(a_x, a_y);
     for (i = 0; i < MAX_MON; i++)  if (m_live[i]) restore(m_x[i], m_y[i]);
     for (i = 0; i < MAX_HALL; i++) if (h_live[i]) restore(h_x[i], h_y[i]);
-    f_live = 0;
 
     tick_count++;
     cue_tick();

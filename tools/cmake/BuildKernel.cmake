@@ -182,8 +182,11 @@ if(CA65_FOUND AND LD65_FOUND)
         set(VENTURE_DIR ${CMAKE_SOURCE_DIR}/programs/venture)
         set(VENTURE_BIN ${CMAKE_BINARY_DIR}/kernel/venture.bin)
         add_custom_target(venture_bin ALL
+            # -Ln emits the label file the test harness reads the game's own
+            # coordinates from, instead of inferring them from the screen.
             COMMAND cl65 -t none --signed-chars -O -C ${VENTURE_DIR}/venture.cfg
                     ${VENTURE_DIR}/venture.c ${VENTURE_DIR}/glue.s -o ${VENTURE_BIN}
+                    -Ln ${CMAKE_BINARY_DIR}/kernel/venture.lbl
             COMMAND ${CMAKE_COMMAND} -E echo "VENTURE blob built ($0800)"
             COMMENT "Building VENTURE blob"
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel

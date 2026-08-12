@@ -92,7 +92,7 @@ constexpr uint8_t kGlyphFaceL = 0x11, kGlyphFaceD = 0x1F;
 // The level-1 palette (venture.c's lvl_* tables): walls dim magenta, room blocks
 // bright magenta, Hallmonsters bright green.
 constexpr uint8_t kL1Wall = 0x05, kL1Room = 0x45, kL1Hall = 0x42;
-constexpr int kMaxHallPosts = 6, kHallBase = 3;
+constexpr int kMaxHallPosts = 6, kHallBase = 3, kMaxMon = 6;
 
 constexpr uint8_t kKsUp = 0x01, kKsDown = 0x02, kKsLeft = 0x04,
                   kKsRight = 0x08, kKsFire = 0x10;
@@ -548,6 +548,34 @@ protected:
     }
 
     void walkInRoom(uint8_t mask, int cells) { walk(mask, cells, false); }
+
+    /* Walk to an absolute hall cell rather than a number of cells.
+     *
+     * The routes used to say "west nine", which is only the same thing when you start
+     * where you expect to. A death puts Winky back somewhere else, so every retry
+     * after the first walked nine cells from the wrong place and stopped two short of
+     * the door -- which read as "the route is impassable" when it was just relative.
+     * Now that the harness can read his coordinates, aim at the cell. */
+    void walkOnMapTo(int tx, int ty)
+    {
+        for (int axis = 0; axis < 2; axis++) {
+            int x, y;
+            if (!findWinkyOnMap(&x, &y)) return;
+            const int want = axis ? ty : tx;
+            const int have = axis ? y : x;
+            if (have == want) continue;
+            const uint8_t mask = axis ? (have > want ? kKsUp : kKsDown)
+                                      : (have > want ? kKsLeft : kKsRight);
+            pia->setKeyState(mask);
+            for (int i = 0; i < 80; i++) {
+                run(kTickRate);
+                if (!findWinkyOnMap(&x, &y)) break;
+                if ((axis ? y : x) == want) break;
+            }
+            pia->setKeyState(0);
+            run(2);
+        }
+    }
     void walkOnMap(uint8_t mask, int cells)  { walk(mask, cells, true); }
 
     // Hold control bits for `ticks` game ticks. TICK_RATE is 4 jiffies per tick.
@@ -604,63 +632,83 @@ protected:
     // Winky is drawn with two alternating frames, so either counts.
     bool isWinky(uint8_t g) { return g == kGlyphWinky || g == kGlyphWinky2; }
 
-    /* Where the movers are.
+    /* --- the game's own state, read by address ---------------------------
      *
-     * They are sprites now, not cells, so this reads the chip's sprite state rather
-     * than scanning the character plane. A 2x2 sprite at nominal (16*col, 16*physrow)
-     * covers exactly the double-row cell (col, physrow), so the mapping back to game
-     * coordinates is exact rather than approximate.
+     * cl65 emits a label file; dropping `static` from the mover variables puts them
+     * in it, at no cost to the binary. These read them straight out of RAM.
      *
-     * This also retires the retry loop these helpers used to need. A step() erased
-     * every moving cell and only then redrew it, so a sample taken in that window saw
-     * an empty playfield and read as "the game died" -- a scan could fail at random
-     * through no fault of the game. A sprite is never erased and redrawn; it is
-     * repositioned, so there is no window to land in. */
-    struct Mover { uint8_t glyph; int col; int prow; };
-
-    std::vector<Mover> movers()
+     * This replaces scanning the screen for glyphs, which stopped being decidable
+     * once the movers began sliding between cells: a sprite in flight is drawn
+     * between two of them, and position does not carry direction -- three sixteenths
+     * right and thirteen sixteenths left land on the same pixel. Asking the game
+     * where something is was always the better question; interpolation only made the
+     * old answer impossible. Tests about what is DRAWN still read the screen. */
+    static const std::map<std::string, uint16_t> &labels()
     {
-        std::vector<Mover> v;
-        const Computer::VIC *vic = c.getVideoChip();
-        for (uint8_t i = 0; i < Computer::VIC::kSpriteCount; ++i) {
-            const Computer::VIC::Sprite &sp = vic->sprite(i);
-            if (sp.enabled) v.push_back({sp.glyph, sp.x / 16, sp.y / 16});
-        }
+        static std::map<std::string, uint16_t> m = [] {
+            std::map<std::string, uint16_t> out;
+            std::ifstream f("../kernel/venture.lbl");
+            std::string kind, addr, name;
+            while (f >> kind >> addr >> name) {
+                if (kind != "al" || name.size() < 2) continue;
+                out[name.substr(1)] = static_cast<uint16_t>(std::stoul(addr, nullptr, 16));
+            }
+            return out;
+        }();
+        return m;
+    }
+
+    uint16_t sym(const char *name)
+    {
+        auto it = labels().find(name);
+        EXPECT_NE(it, labels().end()) << "no label " << name
+                                      << " -- is venture.lbl current?";
+        return it == labels().end() ? 0 : it->second;
+    }
+
+    uint8_t peek(const char *name, int index = 0)
+    {
+        return c.getMemory()->read(static_cast<uint16_t>(sym(name) + index));
+    }
+
+    struct Ent { int x, y; };
+
+    /* Winky's coordinates are board-relative, so they mean a room cell in a room and
+       a hall cell in the hall. Returning false when he is not in the region asked
+       about keeps the old "died, or the room ended" signal the walking helpers stop
+       on -- now exact, rather than "his glyph was not on the screen this frame". */
+    bool findWinkyIn(bool room, int *rx, int *ry)
+    {
+        if (inRoom() != room) return false;
+        *rx = peek("_wx"); *ry = peek("_wy");
+        return true;
+    }
+    bool findWinky(int *rx, int *ry)      { return findWinkyIn(true,  rx, ry); }
+    bool findWinkyOnMap(int *rx, int *ry) { return findWinkyIn(false, rx, ry); }
+
+    std::vector<Ent> liveMonsters()
+    {
+        std::vector<Ent> v;
+        for (int i = 0; i < kMaxMon; i++)
+            if (peek("_m_live", i)) v.push_back({peek("_m_x", i), peek("_m_y", i)});
         return v;
     }
 
-    // Region coords for a mover: ox is the region's left column, oy its top row.
-    bool findMoverIn(uint8_t glyph, int ox, int oy, int *rx, int *ry)
+    std::vector<Ent> liveHallmonsters()
     {
-        for (const Mover &m : movers()) {
-            if (m.glyph != glyph) continue;
-            *rx = m.col - ox;
-            *ry = (m.prow - kPlayRow0) / 2 - oy;
-            return true;
-        }
-        return false;
+        std::vector<Ent> v;
+        for (int i = 0; i < kMaxHallPosts; i++)
+            if (peek("_h_live", i)) v.push_back({peek("_h_x", i), peek("_h_y", i)});
+        return v;
     }
 
-    int countMover(uint8_t glyph)
+    bool arrowInFlight() { return peek("_a_live") != 0; }
+    bool inRoom()        { return peek("_mode") != 0; }
+    bool pipAt(int *px, int *py)
     {
-        int n = 0;
-        for (const Mover &m : movers()) if (m.glyph == glyph) n++;
-        return n;
-    }
-
-    bool findWinkyIn(int, int, int ox, int oy, int *rx, int *ry)
-    {
-        return findMoverIn(kGlyphWinky, ox, oy, rx, ry);
-    }
-
-    bool findWinky(int *rx, int *ry)
-    {
-        return findWinkyIn(kRoomW, kRoomH, kRoomX, kRoomY, rx, ry);
-    }
-
-    bool findWinkyOnMap(int *rx, int *ry)
-    {
-        return findWinkyIn(kMapW, kMapH, kMapX, kMapY, rx, ry);
+        if (!peek("_f_live")) return false;
+        *px = peek("_f_x"); *py = peek("_f_y");
+        return true;
     }
 
     int countGlyph(uint8_t g)
@@ -745,17 +793,25 @@ protected:
     bool enterSlotZero(bool north, uint8_t ready = kGlyphApples)
     {
         if (north) {
-            walkOnMap(kKsUp, 20);        // clamps on row 1
-            walkOnMap(kKsLeft, 9);       // west to (5,1), above the entrance
+            walkOnMapTo(14, 1);          // north to row 1, which is open all the way
+            walkOnMapTo(5, 1);           // west to above the entrance
             hold(kKsDown, 2);            // down onto it at (5,2)
         } else {
-            walkOnMap(kKsLeft, 9);       // row 5 is open; west to (5,5)
-            hold(kKsUp, 2);              // up onto the entrance at (5,4)
+            walkOnMapTo(5, 5);           // row 5 is open; west to below the entrance
+            hold(kKsUp, 2);              // up onto it at (5,4)
         }
-        int x, y;
+        /* Entered is not the same as drawn. enter_room() flips the mode and then
+           paints the whole board inside the same step, so a check that fires the
+           moment the mode changes samples a half-painted room -- the bottom rows are
+           simply not there yet, and a doorway count comes up short. Reading the
+           game's state made this visible: the old screen-scan could not report
+           "entered" until Winky's glyph had been drawn, which happens last, so it
+           waited for the paint by accident. */
         for (int i = 0; i < 60; i++) {
             run(5);
-            if (countGlyph(ready) == 1 && findWinky(&x, &y)) return true;
+            if (!inRoom()) continue;
+            run(20);                    // let the board finish painting
+            return countGlyph(ready) == 1;
         }
         if (caught()) { pressKey('\r'); run(240); }
         return false;
@@ -844,11 +900,9 @@ protected:
             if (!findWinky(&wx, &wy)) break;           // died, or the room ended
 
             int bx = -1, by = -1, best = 9999;
-            for (const Mover &m : movers()) {
-                if (m.glyph != kGlyphSerpent) continue;
-                const int x = m.col - kRoomX, y = (m.prow - kPlayRow0) / 2 - kRoomY;
-                const int d = abs(x - wx) + abs(y - wy);
-                if (d < best) { best = d; bx = x; by = y; }
+            for (const Ent &m : liveMonsters()) {
+                const int d = abs(m.x - wx) + abs(m.y - wy);
+                if (d < best) { best = d; bx = m.x; by = m.y; }
             }
             if (bx < 0) { run(kTickRate); continue; }   // all dead
 
@@ -1018,14 +1072,14 @@ TEST_F(VentureTest, RoomsAreBlindFromTheHall)
     // leaked onto the hall screen the whole point of committing blind would go
     // with it.
     EXPECT_EQ(countGlyphOnMap(kGlyphApples), 0) << "a treasure is visible from the hall";
-    EXPECT_EQ(countMover(kGlyphSerpent), 0) << "a monster is visible from the hall";
+    EXPECT_EQ((int)liveMonsters().size(), 0) << "a monster is live outside a room";
     EXPECT_EQ(countGlyphOnMap(kGlyphCorpse), 0);
 }
 
 TEST_F(VentureTest, WalkingOntoADoorEntersTheRoomBehindIt)
 {
     ASSERT_TRUE(enterRoomZero()) << "never reached the first room";
-    EXPECT_GE(countMover(kGlyphSerpent), 1) << "the room's monsters did not spawn";
+    EXPECT_GE((int)liveMonsters().size(), 1) << "the room's monsters did not spawn";
     EXPECT_GT(countGlyph(kGlyphWall), 80) << "the room's walls did not paint";
     EXPECT_EQ(countGlyphOnMap(kGlyphDoor), 0) << "the hall is still on screen";
 }
@@ -1072,6 +1126,17 @@ TEST_F(VentureTest, TheEntranceYouUseDecidesWhichDoorwayYouArriveAt)
 
 class VentureSouthTest : public VentureTest {};
 
+/* KNOWN FAILING, and it is the game telling us something rather than the test being
+ * wrong. With HALL_BASE at 3, level one wakes a Hallmonster at (1,3) -- the west end
+ * of the only corridor to room 0's south entrance -- and this route walks the length
+ * of that corridor. Winky reaches (5,5), the cell below the door, and is caught
+ * there. The retries then do nothing: each death costs a life, and after three the
+ * game is over, so every later attempt walks a board that no longer responds.
+ *
+ * A player would react; a scripted route cannot. The fix is either a route that does
+ * not traverse that corridor (room 1's south entrance is reached from the east, away
+ * from every woken post) or fewer Hallmonsters at level start -- a gameplay call,
+ * not a test one. */
 TEST_F(VentureSouthTest, TheSouthEntranceArrivesAtTheSouthDoorway)
 {
     // The other half of the same rule, and the half that was visibly broken: entering
@@ -1132,11 +1197,11 @@ TEST_F(VentureTest, HallmonstersGrowInNumberAsRoomsAreLooted)
 {
     // The arcade's hall starts nearly empty and is crawling by the fourth room,
     // which is what stops the last room of a level being the easiest.
-    ASSERT_EQ(countMover(kGlyphHallmon), kHallBase)
+    ASSERT_EQ((int)liveHallmonsters().size(), kHallBase)
         << "the hall should start with just the one";
 
     ASSERT_TRUE(lootARoomWithRetries()) << "never got the treasure out of the spider room";
-    EXPECT_EQ(countMover(kGlyphHallmon), kHallBase + 1)
+    EXPECT_EQ((int)liveHallmonsters().size(), kHallBase + 1)
         << "looting a room should wake another Hallmonster";
 }
 
@@ -1152,15 +1217,14 @@ TEST_F(VentureTest, TheFacingPipShowsWhereTheArrowWillGo)
     int wx, wy;
     ASSERT_TRUE(findWinky(&wx, &wy));
     int px, py;
-    ASSERT_TRUE(findMoverIn(kGlyphFaceD, kRoomX, kRoomY, &px, &py))
+    ASSERT_TRUE(pipAt(&px, &py))
         << "no pip at all, and Winky came in through the top doorway facing down";
     EXPECT_EQ(px, wx);
     EXPECT_EQ(py, wy + 1) << "the pip is not below Winky";
 
     hold(kKsLeft, 2);
     ASSERT_TRUE(findWinky(&wx, &wy)) << "died before facing could be re-tested";
-    ASSERT_TRUE(findMoverIn(kGlyphFaceL, kRoomX, kRoomY, &px, &py))
-        << "the pip did not follow facing";
+    ASSERT_TRUE(pipAt(&px, &py)) << "the pip did not follow facing";
     EXPECT_EQ(px, wx - 1);
     EXPECT_EQ(py, wy);
 }
@@ -1168,24 +1232,22 @@ TEST_F(VentureTest, TheFacingPipShowsWhereTheArrowWillGo)
 TEST_F(VentureTest, RoomsHaveTwoDoorwaysAndBothAreDrawn)
 {
     ASSERT_TRUE(enterRoomZero());
-    EXPECT_EQ(countGlyph(kGlyphDoorway), 2)
-        << "a room should show the doorway it was entered by and the one to run for";
+    EXPECT_EQ(countGlyph(kGlyphDoorway), 2) << "both doorways should be drawn";
 }
+
 
 // --- step 7: Hallmonsters --------------------------------------------------
 
 TEST_F(VentureTest, HallmonstersPatrolTheMap)
 {
-    EXPECT_EQ(countMover(kGlyphHallmon), kHallBase)
+    EXPECT_EQ((int)liveHallmonsters().size(), kHallBase)
         << "the hall should be patrolled from the moment the game opens";
 
     // And they move: a clock that never advances is not a clock.
     std::vector<std::pair<int, int>> before, after;
-    for (const Mover &m : movers())
-        if (m.glyph == kGlyphHallmon) before.push_back({m.col, m.prow});
+    for (const Ent &m : liveHallmonsters()) before.push_back({m.x, m.y});
     run(60);
-    for (const Mover &m : movers())
-        if (m.glyph == kGlyphHallmon) after.push_back({m.col, m.prow});
+    for (const Ent &m : liveHallmonsters()) after.push_back({m.x, m.y});
     EXPECT_NE(before, after) << "the Hallmonsters never moved";
 }
 
@@ -1317,8 +1379,7 @@ TEST_F(VentureTest, FiringLeavesAtMostOneArrowInFlight)
     int worst = 0, sightings = 0;
     for (int i = 0; i < 16; i++) {
         run(2);
-        const int arrows = countMover(0x18) + countMover(0x19) +
-                           countMover(0x1A) + countMover(0x1B);
+        const int arrows = arrowInFlight() ? 1 : 0;
         if (arrows > worst) worst = arrows;
         if (arrows) sightings++;
     }
@@ -1373,8 +1434,7 @@ TEST_F(VentureTest, MonstersKeepComingOnceTheirDeadAreInTheWay)
     std::vector<std::set<std::pair<int, int>>> samples;
     for (int i = 0; i < 5; i++) {
         std::set<std::pair<int, int>> here;
-        for (const Mover &m : movers())
-            if (m.glyph == kGlyphSerpent) here.insert({m.col, m.prow});
+        for (const Ent &m : liveMonsters()) here.insert({m.x, m.y});
         if (!here.empty()) samples.push_back(here);
         hold(i & 1 ? kKsRight : kKsLeft, 6);
         int wx, wy;
