@@ -346,7 +346,14 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define MON_EVERY   3
 
 #define MAX_MON     6
-#define ARROW_STEP  2    /* cells per tick: an arrow outruns what it is shot at */
+#define ARROW_STEP  2    /* cells per tick across: an arrow outruns what it is shot at */
+
+/* ...but only one cell per tick up or down, so that it travels the same distance on
+ * SCREEN in every direction. A playfield cell is 16 nominal pixels wide and 32 tall,
+ * so two cells sideways is 32 pixels while two cells vertically is 64 -- firing up
+ * genuinely moved twice as fast as firing left, because the grid is not square. One
+ * vertical cell a tick is 32 pixels, matching. */
+#define ARROW_STEP_V 1
 
 #define LIVES_START 3
 

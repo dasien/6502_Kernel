@@ -608,6 +608,79 @@ static const unsigned char FONT_ART[] = {
         0x00,   /* |        | */
         0x00,   /* |        | */
         0x00,   /* |        | */
+    /* The four arrows. CP437's are a TEXT font's: its vertical arrows run 26 ink
+       pixels over ten rows and its horizontal ones 15 over five, so firing up looked
+       like a different, larger object than firing sideways. These are matched -- the
+       vertical pair occupy 16x16 on screen and the horizontal pair 16x12 -- so all
+       four read as the same arrow pointed four ways. */
+    /* G_ARROW_U  0x18 */ 0x18,
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x18,   /* |   ##   | */
+        0x3C,   /* |  ####  | */
+        0x7E,   /* | ###### | */
+        0xDB,   /* |## ## ##| */
+        0x18,   /* |   ##   | */
+        0x18,   /* |   ##   | */
+        0x18,   /* |   ##   | */
+        0x18,   /* |   ##   | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* G_ARROW_D  0x19 */ 0x19,
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x18,   /* |   ##   | */
+        0x18,   /* |   ##   | */
+        0x18,   /* |   ##   | */
+        0x18,   /* |   ##   | */
+        0xDB,   /* |## ## ##| */
+        0x7E,   /* | ###### | */
+        0x3C,   /* |  ####  | */
+        0x18,   /* |   ##   | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* G_ARROW_R  0x1A */ 0x1A,
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x08,   /* |    #   | */
+        0x06,   /* |     ## | */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0x06,   /* |     ## | */
+        0x08,   /* |    #   | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+    /* G_ARROW_L  0x1B */ 0x1B,
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x10,   /* |   #    | */
+        0x60,   /* | ##     | */
+        0xFF,   /* |########| */
+        0xFF,   /* |########| */
+        0x60,   /* | ##     | */
+        0x10,   /* |   #    | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
+        0x00,   /* |        | */
     0x00        /* terminator: a code of 0 ends the table */
 };
 
@@ -1204,10 +1277,11 @@ static void kill_monster(unsigned char i)
 static void arrow_advance(void)
 {
     unsigned char step, i, nx, ny;
+    const unsigned char steps = a_dy ? ARROW_STEP_V : ARROW_STEP;
 
     if (!a_live) return;
 
-    for (step = 0; step < ARROW_STEP; step++) {
+    for (step = 0; step < steps; step++) {
         nx = (unsigned char)(a_x + a_dx);
         ny = (unsigned char)(a_y + a_dy);
 

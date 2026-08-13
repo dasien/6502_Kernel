@@ -1285,6 +1285,63 @@ TEST_F(VentureTest, TheIntruderComesAtYouDiagonally)
         << " steps were diagonal -- it is still walking one axis at a time";
 }
 
+/* An arrow is the same arrow, and the same speed, whichever way it is fired.
+ *
+ * Two separate faults, both visible at once. The glyphs were still CP437's, and CP437
+ * is a TEXT font: its vertical arrows run 26 ink pixels over ten rows and its
+ * horizontal ones 15 over five, so firing up drew a visibly larger object than firing
+ * left. And a playfield cell is 16 nominal pixels wide but 32 tall, so ARROW_STEP of
+ * two cells was 32 pixels sideways and 64 vertically -- firing up really was twice as
+ * fast, because the grid is not square.
+ *
+ * Speed is measured per frame, not as total travel: the four directions have different
+ * amounts of clear floor in front of them, so how far an arrow gets says more about
+ * the room than about the arrow. */
+TEST_F(VentureTest, AnArrowLooksAndMovesTheSameInEveryDirection)
+{
+    ASSERT_TRUE(enterRoomZero());
+
+    // The shapes are ours, and matched: 16x16 on screen vertically, 16x12 across.
+    const uint8_t up_art[16] = {0, 0, 0, 0x18, 0x3C, 0x7E, 0xDB,
+                                0x18, 0x18, 0x18, 0x18, 0, 0, 0, 0, 0};
+    EXPECT_EQ(liveGlyph(0x18), std::vector<uint8_t>(up_art, up_art + 16))
+        << "the up arrow is not the one venture.c uploads";
+    int ink_up = 0, ink_right = 0;
+    for (uint8_t b : liveGlyph(0x18)) ink_up += __builtin_popcount(b);
+    for (uint8_t b : liveGlyph(0x1A)) ink_right += __builtin_popcount(b);
+    EXPECT_LE(abs(ink_up - ink_right), 8)
+        << "up has " << ink_up << " ink pixels and right " << ink_right
+        << " -- they will not read as the same object";
+
+    // ...and it covers the same ground per frame across as it does down.
+    int speed[2] = {0, 0};
+    const uint8_t dirs[2] = {kKsRight, kKsDown};
+    for (int k = 0; k < 2; k++) {
+        hold(dirs[k], 1);
+        pia->setKeyState((uint8_t)(dirs[k] | kKsFire));
+        int prev = -1, sum = 0, n = 0;
+        for (int i = 0; i < 20; i++) {
+            const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
+            while (cpu->getCycles() < until) c.runInstructions(1);
+            pia->pulseTimerIrq();
+            const Computer::VIC::Sprite &a = c.getVideoChip()->sprite(1);
+            if (!a.enabled) { prev = -1; continue; }
+            const int v = k ? a.y : a.x;
+            if (prev >= 0 && v != prev) { sum += abs(v - prev); n++; }
+            prev = v;
+        }
+        pia->setKeyState(0);
+        run(20);
+        ASSERT_GE(n, 5) << "too few frames of flight " << (k ? "downward" : "across")
+                        << " to measure -- at double speed it hits the wall first";
+        speed[k] = sum / n;
+    }
+    fprintf(stderr, "[ arrow    ] across %d px/frame, down %d px/frame\n",
+            speed[0], speed[1]);
+    EXPECT_LE(abs(speed[0] - speed[1]), 2)
+        << "across " << speed[0] << " px/frame but down " << speed[1];
+}
+
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;
