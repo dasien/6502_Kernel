@@ -1251,6 +1251,40 @@ TEST_F(VentureTest, TheIntruderComesInByTheFarDoorway)
     EXPECT_GT(d, 5) << "it materialised on top of a player who had not moved";
 }
 
+/* The intruder comes at you diagonally, not along one axis then the other.
+ *
+ * It walks through walls, so there is nothing to path around -- but chase() moved it
+ * on the larger axis first and only sidestepped when blocked, which is the right rule
+ * for everything that CAN be blocked and wrong for this. An L-shaped approach was
+ * slower and read as indecision rather than menace.
+ *
+ * It also gives up a trade worth recording: the one-axis approach made a diagonal the
+ * player's advantage, moving him on two axes while it moved on one, and that is what
+ * bought the time to reach a doorway. HALL_IN_SKIP is now the only thing holding it
+ * back. */
+TEST_F(VentureTest, TheIntruderComesAtYouDiagonally)
+{
+    ASSERT_TRUE(enterRoomZero());
+    for (int i = 0; i < 2000 && !peek("_h_live"); i++) run(1);
+    ASSERT_TRUE(peek("_h_live")) << "no intruder ever arrived";
+
+    // Stand still and watch it close: a diagonal approach moves on both axes at once.
+    int px = peek("_h_x"), py = peek("_h_y"), diag = 0, steps = 0;
+    for (int i = 0; i < 400; i++) {
+        run(1);
+        const int x = peek("_h_x"), y = peek("_h_y");
+        if (x == px && y == py) continue;
+        if (x != px && y != py) diag++;
+        steps++; px = x; py = y;
+    }
+
+    ASSERT_GE(steps, 4) << "it never got moving";
+    fprintf(stderr, "[ intruder ] %d of %d steps moved on both axes\n", diag, steps);
+    EXPECT_GE(diag * 2, steps)
+        << "only " << diag << " of " << steps
+        << " steps were diagonal -- it is still walking one axis at a time";
+}
+
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;

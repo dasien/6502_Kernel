@@ -167,11 +167,16 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * HALL_BASE of them are awake at the start of a level and one more wakes per room
  * looted.
  *
- * The one that comes into a room WALKS THROUGH THE WALLS, and it moves at very nearly
- * your own speed. It does not path round the layout, it does not get stuck on
- * anything, and nothing you can build between you and it helps: it comes straight at
- * you until you leave. That is the whole point of it, and it is why the room's second
- * doorway matters.
+ * The one that comes into a room WALKS THROUGH THE WALLS. It does not path round the
+ * layout, it does not get stuck on anything, and nothing you can build between you and
+ * it helps: it comes straight at you -- diagonally, both axes at once -- until you
+ * leave. That is the whole point of it, and it is why the room's second doorway
+ * matters.
+ *
+ * It used to approach on one axis at a time, which made a diagonal the player's
+ * advantage: he moved on two axes while it moved on one, and that bought the time to
+ * reach a door. It reads as indecision rather than menace, so it goes diagonally now
+ * and HALL_IN_SKIP is the only thing holding it back.
  *
  * Its speed is set the other way round from everything else here. The rest step every
  * Nth tick, which cannot express anything between "half your speed" and "all of it";

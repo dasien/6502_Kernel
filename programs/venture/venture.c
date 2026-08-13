@@ -1302,6 +1302,28 @@ static void chase(unsigned char *px, unsigned char *py,
 #define OPEN(X, Y) ((X) < gw && (Y) < gh && \
                     !chase_blocked((X), (Y), through_walls, avoid_bodies))
 
+    /* A wall-phasing intruder comes straight at you, both axes at once.
+     *
+     * Everything else steps on one axis at a time -- the larger difference first,
+     * sidestepping when that is blocked -- because it has walls and bodies to get
+     * round, and the two-pass search below exists to stop it oscillating against
+     * them. The intruder has neither: nothing can block it, so there is nothing to
+     * path around, and an L-shaped approach was slower and read as indecision.
+     *
+     * The trade this gives up: a diagonal used to be the player's advantage, moving
+     * him on two axes while this moved on one, which is what bought the time to reach
+     * a doorway. It does not any more, so HALL_IN_SKIP is now the only thing holding
+     * it back. */
+    if (through_walls) {
+        nx = (dx && (unsigned char)(cx + dx) < gw) ? (unsigned char)(cx + dx) : cx;
+        ny = (dy && (unsigned char)(cy + dy) < gh) ? (unsigned char)(cy + dy) : cy;
+        back_x = cx;
+        back_y = cy;
+        *px = nx;
+        *py = ny;
+        return;
+    }
+
     /* Twice: first refusing to step back where it came from, then -- only if that
      * left it with nowhere at all -- allowing it.
      *
