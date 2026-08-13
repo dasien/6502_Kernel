@@ -427,7 +427,15 @@ protected:
     /* Cycles per 60 Hz tick on a nominal 1 MHz machine. The CPU's cycle counts are
      * datasheet-exact, so pumping the timer off the counter gives a true 60 Hz
      * rather than an instruction-count guess. */
-    static constexpr uint64_t kCyclesPerJiffy = 1000000 / 60;
+    /* One jiffy of the MACHINE's time, taken from its own clock rather than assumed.
+     *
+     * This was hardcoded to a 1MHz machine while the GUI ran 1000 instructions per
+     * millisecond -- about 3.5MHz, now stated as 4 -- so every timing-sensitive test
+     * measured something a quarter the speed of the thing being shipped. That cost a
+     * misdiagnosed performance "bug", a wrongly withdrawn clock figure, and an arrow
+     * that appeared to stutter when it did not. Derived, so it cannot drift again. */
+    static constexpr uint64_t kCyclesPerJiffy =
+        Computer::Computer6502::kDefaultClockHz / Computer::Computer6502::kJiffyHz;
 
     /* How far into the game's opening screens to boot. Budgets are in jiffies:
      * painting 840 hall cells through the register port takes the better part of
@@ -795,7 +803,11 @@ protected:
         if (north) {
             walkOnMapTo(14, 1);          // north to row 1, which is open all the way
             walkOnMapTo(5, 1);           // west to above the entrance
-            hold(kKsDown, 2);            // down onto it at (5,2)
+            /* One tick, one cell. This used to ask for two, because at the harness's
+               old quarter-speed clock a hold of two ticks produced about one cell of
+               movement -- the fixtures had been calibrated against the wrong clock
+               without anyone deciding to. */
+            hold(kKsDown, 1);            // down onto it at (5,2)
         } else {
             /* Slot 2's south entrance at (7,8), reached along row 9.
              *
@@ -806,7 +818,7 @@ protected:
              * the quiet lane: the nearest woken post is seventeen cells east. */
             walkOnMapTo(14, 9);
             walkOnMapTo(7, 9);
-            hold(kKsUp, 2);              // up onto the entrance at (7,8)
+            hold(kKsUp, 1);              // up onto the entrance at (7,8)
         }
         /* Entered is not the same as drawn. enter_room() flips the mode and then
            paints the whole board inside the same step, so a check that fires the
@@ -855,7 +867,7 @@ protected:
          * quietest lane in the hall. */
         walkOnMap(kKsDown, 20);     // clamps on row 9, the quietest lane in the hall
         walkOnMap(kKsLeft, 7);      // west to (7,9), below the entrance
-        hold(kKsUp, 2);             // up onto it at (7,8)
+        hold(kKsUp, 1);             // up onto it at (7,8)
 
         int x, y;
         bool inside = false;
@@ -880,7 +892,7 @@ protected:
         walkInRoom(kKsDown, 3);     // (14,4), the ring
         walkInRoom(kKsUp, 3);       // back to (14,1)
         walkInRoom(kKsLeft, 4);     // (10,1), under the north doorway
-        hold(kKsUp, 3);             // and out
+        hold(kKsUp, 2);             // and out
         return waitForHall();
     }
 
@@ -1009,8 +1021,13 @@ TEST_F(VentureTest, TheDungeonUsesItsOwnGlyphsAndNotTheCharacterRom)
  * report overlaps that are not there. */
 TEST_F(VentureTest, HallmonstersNeverOverlap)
 {
+    /* Three seconds, not ten. At the machine's real clock the Hallmonsters cross the
+       hall at their intended speed, so a Winky who stands still for ten of them is
+       dead well before the window closes -- and then there is nothing left to sample.
+       They start at least fourteen cells off and cover about two and a half a second,
+       so three seconds watches them move without getting him killed. */
     int worst = 0, sampled = 0;
-    for (int t = 0; t < 300; t++) {
+    for (int t = 0; t < 90; t++) {
         run(2);
         std::vector<std::pair<int, int>> at;
         const Computer::VIC *vic = c.getVideoChip();
@@ -1027,7 +1044,7 @@ TEST_F(VentureTest, HallmonstersNeverOverlap)
                     abs(at[a].second - at[b].second) < 32) worst++;
             }
     }
-    ASSERT_GT(sampled, 100) << "never saw two Hallmonsters at once";
+    ASSERT_GT(sampled, 40) << "never saw two Hallmonsters at once";
     EXPECT_EQ(worst, 0) << worst << " frames had two Hallmonsters drawn on top of each other";
 }
 
@@ -1121,7 +1138,7 @@ TEST_F(VentureTest, ATickStaysWithinItsBudget)
     ASSERT_TRUE(enterRoomZero());
 
     uint64_t total = 0, calls = 0, nextj = cpu->getCycles() + kCyclesPerJiffy;
-    for (int i = 0; i < 4000000 && calls < 100; ++i) {
+    for (int i = 0; i < 16000000 && calls < 100; ++i) {
         const bool at = (cpu->reg.PC == entry);
         const uint8_t sp0 = cpu->reg.SP;
         const uint64_t c0 = cpu->getCycles();
@@ -1149,17 +1166,17 @@ TEST_F(VentureTest, ATickStaysWithinItsBudget)
  * it. So a shot jumped 32 pixels ten times a second instead of moving, which is what
  * "the shot motion is choppy" turned out to mean.
  *
- * Sampled at the MACHINE's clock rather than the harness's 1MHz. At a quarter speed a
- * tick stretches while the glide still finishes in its allotted frames, so the arrow
- * appears to hold for several frames -- an artifact of the instrument, not of the
- * game, and one I nearly took for the bug. */
+ * Sampled a frame at a time. When the harness ran a quarter of the machine's clock a
+ * tick stretched while the glide still finished in its allotted frames, so the arrow
+ * appeared to hold for several frames -- an artifact of the instrument, not of the
+ * game, and one I nearly took for the bug. The harness runs the real clock now. */
 TEST_F(VentureTest, AShotFliesRatherThanJumps)
 {
     ASSERT_TRUE(enterRoomZero());
     hold(kKsRight, 1);                     // face east: room 0's row 1 is clear
     pia->setKeyState(kKsFire);
 
-    const uint64_t real_jiffy = 4000000ull / 60;   // Computer6502::kDefaultClockHz / 60
+    const uint64_t real_jiffy = kCyclesPerJiffy;
     int between = 0, seen = 0;
     for (int i = 0; i < 60; i++) {
         const uint64_t until = cpu->getCycles() + real_jiffy;

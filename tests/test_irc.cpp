@@ -69,7 +69,15 @@ protected:
      * loop that runs the CPU goes through here, or the jiffy counter stalls wherever
      * that loop happens to be. Driven off the cycle counter, so it is a true 60 Hz
      * rather than an instruction-count guess. */
-    static constexpr uint64_t kCyclesPerJiffy = 1000000 / 60;
+    /* One jiffy of the MACHINE's time, taken from its own clock rather than assumed.
+     *
+     * This was hardcoded to a 1MHz machine while the GUI ran 1000 instructions per
+     * millisecond -- about 3.5MHz, now stated as 4 -- so every timing-sensitive test
+     * measured something a quarter the speed of the thing being shipped. That cost a
+     * misdiagnosed performance "bug", a wrongly withdrawn clock figure, and an arrow
+     * that appeared to stutter when it did not. Derived, so it cannot drift again. */
+    static constexpr uint64_t kCyclesPerJiffy =
+        Computer::Computer6502::kDefaultClockHz / Computer::Computer6502::kJiffyHz;
     uint64_t next_jiffy_ = kCyclesPerJiffy;
 
     bool cycle()

@@ -63,14 +63,39 @@ protected:
 
         // Let the cc65 startup run and the terminal reach its poll loop
         // (it prints a local banner, then idles reading the ACIA/keyboard).
-        step(2'000'000);
+        runJiffies(240);        // past the title card (180 jiffies) and settled
     }
 
     /* One instruction, plus the interval timer if enough cycles have gone by --
      * on the machine the GUI pulses it, and a harness driving the CPU directly has to
      * do it itself or nothing that waits on elapsed time ever finishes. */
-    static constexpr uint64_t kCyclesPerJiffy = 1000000 / 60;
+    /* One jiffy of the MACHINE's time, taken from its own clock rather than assumed.
+     *
+     * This was hardcoded to a 1MHz machine while the GUI ran 1000 instructions per
+     * millisecond -- about 3.5MHz, now stated as 4 -- so every timing-sensitive test
+     * measured something a quarter the speed of the thing being shipped. That cost a
+     * misdiagnosed performance "bug", a wrongly withdrawn clock figure, and an arrow
+     * that appeared to stutter when it did not. Derived, so it cannot drift again. */
+    static constexpr uint64_t kCyclesPerJiffy =
+        Computer::Computer6502::kDefaultClockHz / Computer::Computer6502::kJiffyHz;
     uint64_t next_jiffy_ = kCyclesPerJiffy;
+
+    /* Let a number of JIFFIES of machine time pass.
+     *
+     * Use this, not step(), whenever the intent is "wait for something": step() counts
+     * instructions, and how much time an instruction buys depends on the clock. When
+     * the harness clock was corrected from 1MHz to the machine's 4MHz, every
+     * instruction-counted wait silently became a quarter as long, and TERM was still
+     * showing its three-second title card when the tests started typing at it. */
+    void runJiffies(long n)
+    {
+        for (long i = 0; i < n; ++i) {
+            const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
+            while (cpu->getCycles() < until)
+                if (!cpu->executeSingleInstruction()) return;
+            c.getPia()->pulseTimerIrq();
+        }
+    }
 
     void step(long n)
     {
@@ -87,7 +112,7 @@ protected:
     void feed(const std::string &s)
     {
         for (char ch : s) acia->hostSend(static_cast<uint8_t>(ch));
-        step(1'000'000);
+        runJiffies(60);         // a second: plenty to render what was fed
     }
 
     uint8_t charAt(int x, int y) { return c.getVideoChip()->getCharacterAt(x, y); }
@@ -213,7 +238,7 @@ TEST_F(TermAnsiTest, ClearScreenKeepsTheScrollingRegion)
 TEST_F(TermAnsiTest, KeyboardForwardsToSerial)
 {
     c.getPia()->addKeypress('k');
-    step(500'000);
+    runJiffies(30);
 
     bool sawK = false;
     while (acia->hostHasTx())
@@ -235,7 +260,7 @@ TEST_F(TermAnsiTest, ScrollbackPageUpRecallsScrolledLines)
     };
     auto press = [&](const std::string &keys) {
         for (char ch : keys) c.getPia()->addKeypress(static_cast<uint8_t>(ch));
-        step(3'000'000);
+        runJiffies(120);
     };
 
     feed("\x1b[2J\x1b[H");
@@ -245,7 +270,7 @@ TEST_F(TermAnsiTest, ScrollbackPageUpRecallsScrolledLines)
         lines += std::string("L") + b + "\r\n";
     }
     feed(lines);
-    step(3'000'000);
+    runJiffies(120);
 
     ASSERT_TRUE(onScreen("L40"));         // a late line is live on screen
     ASSERT_FALSE(onScreen("L05"));        // an early line has scrolled off
