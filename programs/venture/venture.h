@@ -94,6 +94,29 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define SPR_HALL0   (SPR_MON0 + MAX_MON)     /* MAX_HALL slots */
 #define SPR_COUNT   (SPR_HALL0 + MAX_HALL)   /* 15 of the chip's 17 */
 
+/* Byte offset of each sprite's register block, so nothing has to work out slot*6 at
+ * run time. The 6502 has no multiply, so that product was a call into cc65's mulax6
+ * on every register access -- fifteen sprites, sixty times a second. The whole block
+ * lives inside page $FE, so an offset is a byte and the base is a constant. */
+#define SPR_OFFSETS { 0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84 }
+
+/* Write one sprite's six registers, with no function call and no multiply.
+ *
+ * A macro rather than a function on purpose: the six values were arguments, and cc65
+ * pushes every argument onto a software stack one byte at a time -- a quarter of the
+ * machine went on pusha/pushax/ldaxysp with the actual stores lost in the noise. */
+#define SPR_WRITE(off, nx, ny, ch, attr, mag)                                  \
+    do {                                                                       \
+        volatile unsigned char *r_ = SPRITES + (off);                          \
+        const unsigned int nx_ = (nx), ny_ = (ny);                             \
+        r_[0] = (unsigned char)nx_;                                            \
+        r_[1] = (unsigned char)(((nx_ >> 8) & 0x03) | (mag));                  \
+        r_[2] = (unsigned char)ny_;                                            \
+        r_[3] = (unsigned char)(((ny_ >> 8) & 0x03) | (mag) | SPR_ENABLE);     \
+        r_[4] = (ch);                                                          \
+        r_[5] = (attr);                                                        \
+    } while (0)
+
 #define VCMD_FONTROM  8      /* render from the CP437 ROM */
 #define VCMD_FONTRAM  9      /* render from font RAM (our glyphs) */
 #define VCMD_ROWSIZE  5

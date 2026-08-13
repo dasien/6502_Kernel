@@ -1069,6 +1069,41 @@ TEST_F(VentureTest, MonstersGuardTheirGroundUntilYouComeClose)
     EXPECT_LE(nearest, 3) << "walked into a monster's patch and it ignored me";
 }
 
+/* What a frame of sprite drawing costs, inclusive of everything it calls.
+ *
+ * A budget, not a benchmark: the point is that adding to the draw path shows up here
+ * rather than as stutter no one can attribute. Measured 9,919 cycles before the write
+ * path was flattened and 7,726 after; at 60 frames a second and a 4MHz clock, 7,726 is
+ * about 11% of the machine. The ceiling leaves room to breathe without leaving room to
+ * put the multiply and the six-argument call back. */
+TEST_F(VentureTest, AFrameOfDrawingStaysWithinItsBudget)
+{
+    const uint16_t entry = sym("_draw_movers");
+    ASSERT_TRUE(enterRoomZero());
+
+    uint64_t total = 0, calls = 0, nextj = cpu->getCycles() + kCyclesPerJiffy;
+    for (int i = 0; i < 2000000 && calls < 200; ++i) {
+        const bool at_entry = (cpu->reg.PC == entry);
+        const uint8_t sp0 = cpu->reg.SP;
+        const uint64_t c0 = cpu->getCycles();
+        if (!cpu->executeSingleInstruction()) break;
+        if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+        if (!at_entry) continue;
+        for (int g = 0; g < 200000; ++g) {          // run to the matching RTS
+            if (cpu->reg.SP > sp0) break;
+            if (!cpu->executeSingleInstruction()) break;
+            if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+        }
+        total += cpu->getCycles() - c0;
+        calls++;
+    }
+    ASSERT_GT(calls, 100u) << "never saw enough frames to measure";
+    const uint64_t per = total / calls;
+    fprintf(stderr, "[ cost     ] draw_movers: %llu cycles/frame\n",
+            (unsigned long long)per);
+    EXPECT_LT(per, 9000u) << "a frame of drawing costs " << per << " cycles";
+}
+
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;

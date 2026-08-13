@@ -277,6 +277,8 @@ static int           sp_vx[SPR_COUNT], sp_vy[SPR_COUNT];
 static unsigned char sp_n[SPR_COUNT];
 
 /* Frames a step takes and the distance covered per frame, per motion class. */
+static const unsigned char SPR_OFF[SPR_COUNT] = SPR_OFFSETS;
+static unsigned char sp_on[SPR_COUNT];      /* is the chip's enable bit set? */
 static unsigned char cl_n[CL_COUNT];
 static unsigned int  cl_sx[CL_COUNT], cl_sy[CL_COUNT];
 static unsigned char pm_x[MAX_MON], pm_y[MAX_MON];
@@ -656,19 +658,6 @@ static void clear_screen(void)
 
 
 
-/* mag: draw the pattern at 2x, which is what makes a sprite the size of a
-   double-row cell. Off gives a half-size marker -- see the facing pip. */
-static void spr_nom(unsigned char slot, unsigned int nx, unsigned int ny,
-                    unsigned char ch, unsigned char attr, unsigned char mag)
-{
-    volatile unsigned char *r = SPRITES + (unsigned int)slot * SPR_STRIDE;
-    r[0] = (unsigned char)nx;
-    r[1] = (unsigned char)(((nx >> 8) & 0x03) | mag);
-    r[2] = (unsigned char)ny;
-    r[3] = (unsigned char)(((ny >> 8) & 0x03) | mag | SPR_ENABLE);
-    r[4] = ch;
-    r[5] = attr;
-}
 
 /* Work out each class's step once, not once a frame. tickrate is the difficulty
    ramp, so this is redone whenever it changes. */
@@ -712,9 +701,17 @@ static void spr_launch(unsigned char slot, unsigned char cls,
     sp_n[slot]  = (sp_vx[slot] || sp_vy[slot]) ? cl_n[cls] : 0;
 }
 
+/* Switch a sprite off, and only bother if it is currently on.
+ *
+ * This used to fire every frame for every dead slot -- six monster slots and six
+ * Hallmonster slots sit empty most of the time -- and it worked out its own register
+ * address with a multiply while it was at it. A sprite holds its state, so a register
+ * that already says "off" does not need telling again. */
 static void spr_off(unsigned char slot)
 {
-    SPRITES[(unsigned int)slot * SPR_STRIDE + 3] = 0;   /* clears the enable bit */
+    if (!sp_on[slot]) return;
+    SPRITES[SPR_OFF[slot] + 3] = 0;                     /* clears the enable bit */
+    sp_on[slot] = 0;
 }
 
 static void put_at(unsigned char rx, unsigned char ry, unsigned char ch,
@@ -1512,9 +1509,12 @@ static void draw_facing(void)
  * divides and fifteen compare-chains a frame, and it cost about four fifths of the
  * CPU -- the tick accumulator could not keep up and step() dropped ticks, which is
  * what made monsters freeze in the middle of their patrols. */
-static void draw_movers(void)
+/* Not static: the test harness measures the cost of a frame by watching this
+   function's entry and return, and a static symbol is not in the label file. */
+void draw_movers(void)
 {
-    unsigned char i, s;
+    unsigned char i, s, o;
+    unsigned int nx, ny;
 
     for (s = 0; s < SPR_COUNT; s++) {
         if (!sp_n[s]) continue;
@@ -1523,49 +1523,54 @@ static void draw_movers(void)
         sp_n[s]--;
     }
 
-    /* Winky first: the pip hangs off where he is DRAWN, so it can never detach. */
-    spr_nom(SPR_WINKY, sp_x[SPR_WINKY] >> SUB, sp_y[SPR_WINKY] >> SUB,
-            G_WINKY, A_WINKY, (mode == MODE_MAP) ? 0 : SPR_MAG);
+    /* Winky first: the pip hangs off where he is DRAWN, so it can never detach. Half
+       size out in the hall, as the arcade draws him, and centred in the cell since he
+       is smaller than it -- the picture only, he still occupies the whole cell for
+       anything he can walk into. */
+    nx = sp_x[SPR_WINKY] >> SUB;
+    ny = sp_y[SPR_WINKY] >> SUB;
+    if (mode == MODE_MAP) SPR_WRITE(SPR_OFF[SPR_WINKY], nx + 4, ny + 8, G_WINKY, A_WINKY, 0);
+    else                  SPR_WRITE(SPR_OFF[SPR_WINKY], nx, ny, G_WINKY, A_WINKY, SPR_MAG);
+    sp_on[SPR_WINKY] = 1;
 
-    /* Half size out in the hall, as the arcade draws him, and centred in the cell
-       since he is smaller than it. The picture only -- he still occupies the whole
-       cell as far as anything he can walk into is concerned. */
-    if (mode == MODE_MAP)
-        spr_nom(SPR_WINKY, (sp_x[SPR_WINKY] >> SUB) + 4, (sp_y[SPR_WINKY] >> SUB) + 8,
-                G_WINKY, A_WINKY, 0);
-
-    /* The pip is half size and sits hard against whichever edge of Winky he faces.
-       A playfield cell is twice as tall as it is wide, so a whole cell up or down put
-       it visibly further off than a whole cell left or right. */
+    /* The pip is half size and sits hard against whichever edge of Winky he faces. A
+       playfield cell is twice as tall as it is wide, so a whole cell up or down put it
+       visibly further off than a whole cell left or right. */
     if (f_live) {
-        const unsigned int nx = sp_x[SPR_WINKY] >> SUB, ny = sp_y[SPR_WINKY] >> SUB;
         unsigned int px, py;
         if (face_dx > 0)      { px = nx + 16; py = ny + 8;  }
         else if (face_dx < 0) { px = nx - 8;  py = ny + 8;  }
         else if (face_dy > 0) { px = nx + 4;  py = ny + 32; }
         else                  { px = nx + 4;  py = ny - 16; }
-        spr_nom(SPR_FACE, px, py,
-                face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
-                face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE, 0);
+        SPR_WRITE(SPR_OFF[SPR_FACE], px, py,
+                  face_dy < 0 ? G_FACE_U : face_dy > 0 ? G_FACE_D :
+                  face_dx < 0 ? G_FACE_L : G_FACE_R, A_FACE, 0);
+        sp_on[SPR_FACE] = 1;
     }
     else spr_off(SPR_FACE);
 
     for (i = 0; i < MAX_MON; i++) {
         s = (unsigned char)(SPR_MON0 + i);
-        if (m_live[i]) spr_nom(s, sp_x[s] >> SUB, sp_y[s] >> SUB, theme_monster[theme],
-                               have_treasure ? A_MON_WORTH : A_MON, SPR_MAG);
-        else           spr_off(s);
+        if (!m_live[i]) { spr_off(s); continue; }
+        o = SPR_OFF[s];
+        SPR_WRITE(o, sp_x[s] >> SUB, sp_y[s] >> SUB, theme_monster[theme],
+                  have_treasure ? A_MON_WORTH : A_MON, SPR_MAG);
+        sp_on[s] = 1;
     }
     for (i = 0; i < MAX_HALL; i++) {
         s = (unsigned char)(SPR_HALL0 + i);
-        if (h_live[i]) spr_nom(s, sp_x[s] >> SUB, sp_y[s] >> SUB, G_HALLMON, a_hall,
-                               SPR_MAG);
-        else           spr_off(s);
+        if (!h_live[i]) { spr_off(s); continue; }
+        o = SPR_OFF[s];
+        SPR_WRITE(o, sp_x[s] >> SUB, sp_y[s] >> SUB, G_HALLMON, a_hall, SPR_MAG);
+        sp_on[s] = 1;
     }
-    if (a_live) spr_nom(SPR_ARROW, sp_x[SPR_ARROW] >> SUB, sp_y[SPR_ARROW] >> SUB,
-                        a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
-                        a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW, SPR_MAG);
-    else        spr_off(SPR_ARROW);
+    if (a_live) {
+        SPR_WRITE(SPR_OFF[SPR_ARROW], sp_x[SPR_ARROW] >> SUB, sp_y[SPR_ARROW] >> SUB,
+                  a_dy < 0 ? G_ARROW_U : a_dy > 0 ? G_ARROW_D :
+                  a_dx < 0 ? G_ARROW_L : G_ARROW_R, A_ARROW, SPR_MAG);
+        sp_on[SPR_ARROW] = 1;
+    }
+    else spr_off(SPR_ARROW);
 }
 
 /* ---- one simulation step ---------------------------------------------- */
