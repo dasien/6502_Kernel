@@ -169,8 +169,9 @@ extern void          sound_off(void);                /* SID voice 1 off */
  *
  * The one that comes into a room WALKS THROUGH THE WALLS. It does not path round the
  * layout, it does not get stuck on anything, and nothing you can build between you and
- * it helps: it comes straight at you -- diagonally, both axes at once -- until you
- * leave. That is the whole point of it, and it is why the room's second doorway
+ * it helps: it comes straight at you until you leave, on both axes at once whenever a
+ * vertical step is due -- two cells across to one down, which is a straight line on
+ * screen because a cell is twice as tall as it is wide. That is the whole point of it, and it is why the room's second doorway
  * matters.
  *
  * It used to approach on one axis at a time, which made a diagonal the player's

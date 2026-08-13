@@ -93,6 +93,7 @@ constexpr uint8_t kGlyphFaceL = 0x11, kGlyphFaceD = 0x1F;
 // bright magenta, Hallmonsters bright green.
 constexpr uint8_t kL1Wall = 0x05, kL1Room = 0x45, kL1Hall = 0x42;
 constexpr int kMaxHallPosts = 6, kHallBase = 3, kMaxMon = 6;
+constexpr int kHallRoomTicks = 170;   // HALL_ROOM_TICKS: the intruder's clock
 
 constexpr uint8_t kKsUp = 0x01, kKsDown = 0x02, kKsLeft = 0x04,
                   kKsRight = 0x08, kKsFire = 0x10;
@@ -710,6 +711,30 @@ protected:
         return v;
     }
 
+    /* Wait in a room for the intruder, pacing rather than standing still.
+     *
+     * Standing still no longer survives it: a room monster may wander MON_ORBIT off
+     * its post and then find a stationary player inside MON_AGGRO, and 170 ticks is
+     * long enough for that to happen -- Winky was dying at tick 90 and the game sat on
+     * a CAUGHT screen with the clock stopped. Pacing keeps him alive without resetting
+     * dawdle, which counts ticks in the room however he spends them. */
+    bool dawdleUntilIntruder()
+    {
+        /* West end of row 1 first. Room 0's monsters post at (25,2), (5,3) and (20,4),
+           and MON_AGGRO is 5 with MON_ORBIT 2 -- so anywhere within seven of a post is
+           somewhere one of them can find you. (12,1) is nine or more from all three.
+           Pacing where he arrives, around x=17, sits inside the (20,4) monster's reach
+           and he was dying at tick 87, well short of HALL_ROOM_TICKS at 170. */
+        walkInRoom(kKsLeft, 4);
+
+        for (int i = 0; i < 150; i++) {     /* 300 ticks, comfortably past 170 */
+            if (peek("_h_live")) return true;
+            if (!inRoom()) return false;
+            hold(i & 1 ? kKsLeft : kKsRight, 1);
+        }
+        return peek("_h_live") != 0;
+    }
+
     bool arrowInFlight() { return peek("_a_live") != 0; }
     bool inRoom()        { return peek("_mode") != 0; }
     bool pipAt(int *px, int *py)
@@ -1241,8 +1266,7 @@ TEST_F(VentureTest, TheIntruderComesInByTheFarDoorway)
     ASSERT_TRUE(findWinky(&wx, &wy));
 
     // Stand still until one arrives (HALL_ROOM_TICKS ticks of dawdling).
-    for (int i = 0; i < 2000 && !peek("_h_live"); i++) run(1);
-    ASSERT_TRUE(peek("_h_live")) << "no intruder ever arrived";
+    ASSERT_TRUE(dawdleUntilIntruder()) << "no intruder ever arrived";
 
     const int hx = peek("_h_x"), hy = peek("_h_y");
     const int d = abs(hx - wx) + abs(hy - wy);
@@ -1258,6 +1282,13 @@ TEST_F(VentureTest, TheIntruderComesInByTheFarDoorway)
  * for everything that CAN be blocked and wrong for this. An L-shaped approach was
  * slower and read as indecision rather than menace.
  *
+ * Not EVERY step is diagonal, and that is deliberate. A vertical step is allowed only
+ * every other step of a class, because a cell is 16 nominal pixels wide and 32 tall --
+ * so a step on both axes covers 16 across and 32 down, which on screen is 63 degrees,
+ * not 45, and not "straight at you" either. Two across to one down is a true screen
+ * diagonal. The path is a staircase in cells and a straight line in pixels, and pixels
+ * are what the player sees.
+ *
  * It also gives up a trade worth recording: the one-axis approach made a diagonal the
  * player's advantage, moving him on two axes while it moved on one, and that is what
  * bought the time to reach a doorway. HALL_IN_SKIP is now the only thing holding it
@@ -1265,8 +1296,7 @@ TEST_F(VentureTest, TheIntruderComesInByTheFarDoorway)
 TEST_F(VentureTest, TheIntruderComesAtYouDiagonally)
 {
     ASSERT_TRUE(enterRoomZero());
-    for (int i = 0; i < 2000 && !peek("_h_live"); i++) run(1);
-    ASSERT_TRUE(peek("_h_live")) << "no intruder ever arrived";
+    ASSERT_TRUE(dawdleUntilIntruder()) << "no intruder ever arrived";
 
     // Stand still and watch it close: a diagonal approach moves on both axes at once.
     int px = peek("_h_x"), py = peek("_h_y"), diag = 0, steps = 0;
@@ -1280,7 +1310,9 @@ TEST_F(VentureTest, TheIntruderComesAtYouDiagonally)
 
     ASSERT_GE(steps, 4) << "it never got moving";
     fprintf(stderr, "[ intruder ] %d of %d steps moved on both axes\n", diag, steps);
-    EXPECT_GE(diag * 2, steps)
+    // A quarter is the floor: the vertical gate means roughly a third are diagonal,
+    // and the old one-axis approach gave none at all.
+    EXPECT_GE(diag * 4, steps)
         << "only " << diag << " of " << steps
         << " steps were diagonal -- it is still walking one axis at a time";
 }
@@ -1317,8 +1349,12 @@ TEST_F(VentureTest, AnArrowLooksAndMovesTheSameInEveryDirection)
     int speed[2] = {0, 0};
     const uint8_t dirs[2] = {kKsRight, kKsDown};
     for (int k = 0; k < 2; k++) {
+        /* Face, then fire WITHOUT the direction still held. Holding it walks Winky
+           along behind his own arrow, and down the column he is in that means he
+           follows it into the wall that stops it -- so the flight is over before it
+           can be sampled. */
         hold(dirs[k], 1);
-        pia->setKeyState((uint8_t)(dirs[k] | kKsFire));
+        pia->setKeyState(kKsFire);
         int prev = -1, sum = 0, n = 0;
         for (int i = 0; i < 20; i++) {
             const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
@@ -1340,6 +1376,59 @@ TEST_F(VentureTest, AnArrowLooksAndMovesTheSameInEveryDirection)
             speed[0], speed[1]);
     EXPECT_LE(abs(speed[0] - speed[1]), 2)
         << "across " << speed[0] << " px/frame but down " << speed[1];
+}
+
+TEST_F(VentureTest, DbgWinkyAxisSpeed)
+{
+    ASSERT_TRUE(enterRoomZero());
+    const uint8_t dirs[2] = {kKsRight, kKsDown};
+    const char *nm[2] = {"across", "down  "};
+    for (int k = 0; k < 2; k++) {
+        pia->setKeyState(dirs[k]);
+        int prev = -1, sum = 0, n = 0;
+        for (int i = 0; i < 30; i++) {
+            const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
+            while (cpu->getCycles() < until) c.runInstructions(1);
+            pia->pulseTimerIrq();
+            const auto &w = c.getVideoChip()->sprite(0);
+            const int v = k ? w.y : w.x;
+            if (prev >= 0) { sum += abs(v - prev); n++; }
+            prev = v;
+        }
+        pia->setKeyState(0);
+        run(20);
+        fprintf(stderr, "  winky %s: %d nominal px over %d frames (%d px/frame)\n",
+                nm[k], sum, n, n ? sum / n : 0);
+    }
+}
+
+/* A room must give the player longer than its own clock.
+ *
+ * HALL_ROOM_TICKS is 170: dawdle that long and a Hallmonster comes in after you. That
+ * only works if the room does not kill you first, and this pins it -- an idle player in
+ * room 0 should outlast the clock, so the intruder mechanic is reachable rather than
+ * dead content.
+ *
+ * It caught a real interaction. Gating vertical steps to even up pixel speed made
+ * chase() fall through to its random wander whenever the suppressed step was the only
+ * progress available, turning half of every monster's beat into a random walk. Idle
+ * survival went from 227 ticks to 90 -- below the clock -- and two other tests started
+ * failing for what looked like unrelated reasons. */
+TEST_F(VentureTest, ARoomOutlastsItsOwnIntruderClock)
+{
+    ASSERT_TRUE(enterRoomZero());
+
+    int last = peek("_tick_count"), stuck = 0;
+    for (int i = 0; i < 3000; i++) {
+        run(1);
+        const int t = peek("_tick_count");
+        if (t == last) { if (++stuck > 200) break; }   // the clock stopped: he died
+        else           { stuck = 0; last = t; }
+    }
+    fprintf(stderr, "[ room     ] an idle player lasted to tick %d\n", last);
+    EXPECT_GT(last, kHallRoomTicks)
+        << "an idle player died at tick " << last << ", before the intruder clock at "
+        << kHallRoomTicks << " -- the mechanic can never fire";
 }
 
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
