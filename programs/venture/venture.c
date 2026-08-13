@@ -685,19 +685,31 @@ static void spr_launch(unsigned char slot, unsigned char cls,
                        unsigned char ax, unsigned char ay,
                        unsigned char bx, unsigned char by)
 {
+    unsigned char mx, my;
+
     sp_x[slot] = (unsigned int)((gx0 + ax) << 4) << SUB;
     sp_y[slot] = (unsigned int)((PLAY_ROW0 + ((gy0 + ay) << 1)) << 4) << SUB;
 
-    /* One cell a step, so anything longer is a teleport -- a room change, a respawn
-       -- and lands rather than travels. */
-    if ((unsigned char)(bx - ax + 1) > 2 || (unsigned char)(by - ay + 1) > 2) {
+    /* How far this step actually goes.
+     *
+     * Most movers cover one cell, but an arrow covers ARROW_STEP of them a tick -- it
+     * is meant to outrun what it is shot at. This used to treat anything longer than
+     * one cell as a teleport and land it, so every arrow step was a jump and a shot
+     * strobed across the room instead of flying. Scale the per-frame step by the
+     * distance instead, and keep the teleport case for what it was written for: a
+     * room change or a respawn, which move a mover much further than any step. */
+    mx = (bx > ax) ? (unsigned char)(bx - ax) : (unsigned char)(ax - bx);
+    my = (by > ay) ? (unsigned char)(by - ay) : (unsigned char)(ay - by);
+    if (mx > ARROW_STEP || my > ARROW_STEP) {
         sp_x[slot] = (unsigned int)((gx0 + bx) << 4) << SUB;
         sp_y[slot] = (unsigned int)((PLAY_ROW0 + ((gy0 + by) << 1)) << 4) << SUB;
         sp_vx[slot] = 0; sp_vy[slot] = 0; sp_n[slot] = 0;
         return;
     }
-    sp_vx[slot] = (bx > ax) ? (int)cl_sx[cls] : (bx < ax) ? -(int)cl_sx[cls] : 0;
-    sp_vy[slot] = (by > ay) ? (int)cl_sy[cls] : (by < ay) ? -(int)cl_sy[cls] : 0;
+    sp_vx[slot] = (bx > ax) ? (int)(cl_sx[cls] * mx)
+                : (bx < ax) ? -(int)(cl_sx[cls] * mx) : 0;
+    sp_vy[slot] = (by > ay) ? (int)(cl_sy[cls] * my)
+                : (by < ay) ? -(int)(cl_sy[cls] * my) : 0;
     sp_n[slot]  = (sp_vx[slot] || sp_vy[slot]) ? cl_n[cls] : 0;
 }
 

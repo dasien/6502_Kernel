@@ -1142,6 +1142,43 @@ TEST_F(VentureTest, ATickStaysWithinItsBudget)
     EXPECT_LT(per, 30000u) << "a tick costs " << per << " cycles";
 }
 
+/* A shot flies; it does not strobe across the room.
+ *
+ * An arrow covers ARROW_STEP cells a tick -- it is meant to outrun what it is shot at
+ * -- and spr_launch() treated any step longer than one cell as a teleport and landed
+ * it. So a shot jumped 32 pixels ten times a second instead of moving, which is what
+ * "the shot motion is choppy" turned out to mean.
+ *
+ * Sampled at the MACHINE's clock rather than the harness's 1MHz. At a quarter speed a
+ * tick stretches while the glide still finishes in its allotted frames, so the arrow
+ * appears to hold for several frames -- an artifact of the instrument, not of the
+ * game, and one I nearly took for the bug. */
+TEST_F(VentureTest, AShotFliesRatherThanJumps)
+{
+    ASSERT_TRUE(enterRoomZero());
+    hold(kKsRight, 1);                     // face east: room 0's row 1 is clear
+    pia->setKeyState(kKsFire);
+
+    const uint64_t real_jiffy = 4000000ull / 60;   // Computer6502::kDefaultClockHz / 60
+    int between = 0, seen = 0;
+    for (int i = 0; i < 60; i++) {
+        const uint64_t until = cpu->getCycles() + real_jiffy;
+        while (cpu->getCycles() < until) c.runInstructions(1);
+        pia->pulseTimerIrq();
+        const Computer::VIC::Sprite &a = c.getVideoChip()->sprite(1);
+        if (!a.enabled) continue;
+        seen++;
+        if (a.x % 16) between++;           // a cell is 16 nominal px: not on a boundary
+    }
+    pia->setKeyState(0);
+
+    ASSERT_GT(seen, 20) << "never saw an arrow in flight";
+    // Snapping puts it only ever on cell boundaries; gliding spends most frames between.
+    EXPECT_GT(between * 2, seen)
+        << "only " << between << " of " << seen
+        << " frames had the arrow between cells -- it is jumping, not flying";
+}
+
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;
