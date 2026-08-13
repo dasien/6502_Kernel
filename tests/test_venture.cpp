@@ -1104,6 +1104,44 @@ TEST_F(VentureTest, AFrameOfDrawingStaysWithinItsBudget)
     EXPECT_LT(per, 9000u) << "a frame of drawing costs " << per << " cycles";
 }
 
+/* What a simulation tick costs, inclusive of everything it calls.
+ *
+ * The companion to the frame budget, and the two together are the machine's real
+ * load: ten ticks and sixty frames a second is 10*24,042 + 60*7,726 = about 704,000
+ * cycles, a shade over 0.7MHz of productive work. At the 4MHz clock that is 18% of
+ * the machine; the rest is absorbed by the main loop's busy-wait, which is what a
+ * game loop is for.
+ *
+ * Worth knowing which half is which: a tick costs three times a frame, so the AI is
+ * not free -- it only looked free in a profile, where its cost is spread across
+ * chase(), chase_blocked() and monsters_advance() and no single symbol stands out. */
+TEST_F(VentureTest, ATickStaysWithinItsBudget)
+{
+    const uint16_t entry = sym("_step");
+    ASSERT_TRUE(enterRoomZero());
+
+    uint64_t total = 0, calls = 0, nextj = cpu->getCycles() + kCyclesPerJiffy;
+    for (int i = 0; i < 4000000 && calls < 100; ++i) {
+        const bool at = (cpu->reg.PC == entry);
+        const uint8_t sp0 = cpu->reg.SP;
+        const uint64_t c0 = cpu->getCycles();
+        if (!cpu->executeSingleInstruction()) break;
+        if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+        if (!at) continue;
+        for (int g = 0; g < 400000; ++g) {          // run to the matching RTS
+            if (cpu->reg.SP > sp0) break;
+            if (!cpu->executeSingleInstruction()) break;
+            if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+        }
+        total += cpu->getCycles() - c0;
+        calls++;
+    }
+    ASSERT_GT(calls, 50u) << "never saw enough ticks to measure";
+    const uint64_t per = total / calls;
+    fprintf(stderr, "[ cost     ] step: %llu cycles/tick\n", (unsigned long long)per);
+    EXPECT_LT(per, 30000u) << "a tick costs " << per << " cycles";
+}
+
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;

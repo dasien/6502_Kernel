@@ -1573,8 +1573,11 @@ void draw_movers(void)
     else spr_off(SPR_ARROW);
 }
 
-/* ---- one simulation step ---------------------------------------------- */
-static void step(unsigned char ks)
+/* ---- one simulation step ----------------------------------------------
+ * Not static, for the same reason as draw_movers: the harness measures what a tick
+ * costs by watching this function's entry and return, and a static symbol never
+ * reaches the label file. */
+void step(unsigned char ks)
 {
     unsigned char i, slot;
 

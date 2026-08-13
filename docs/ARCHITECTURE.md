@@ -166,6 +166,22 @@ separate QTimer pulsed the jiffy. The speed was an accident of a loop bound, and
 clocks drifted apart under load. `run(int max_cycles)` counted instructions despite its
 name, which is how that went unnoticed.
 
+**Measured load.** VENTURE is the most demanding thing on the disc, and its cost is
+pinned by two tests (`ATickStaysWithinItsBudget`, `AFrameOfDrawingStaysWithinItsBudget`):
+
+| | cycles | per second |
+|---|---|---|
+| simulation tick | 24,000 | × 10 = 240,000 |
+| frame of sprite drawing | 7,700 | × 60 = 464,000 |
+| | | **≈ 704,000 (0.7 MHz)** |
+
+So productive work is about **18% of the 4 MHz clock**; the remainder is absorbed by
+the game loop's busy-wait, which is what a game loop is for. The floor is *not* 0.7 MHz
+though — the loop only tests for a due tick once per pass, and a pass can contain a
+whole frame, so a machine with little slack starts servicing ticks late and the
+accumulator discards the backlog. Measured at a true 1 MHz, VENTURE managed a third of
+its intended pace. **~2 MHz is the realistic floor; 4 MHz is comfortable.**
+
 ### Data flow
 
 - **Keyboard:** host key → PIA input buffer → kernel `K_GET_KEYSTROKE` (`$FF09`) →
