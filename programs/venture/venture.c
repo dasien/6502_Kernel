@@ -667,10 +667,11 @@ static void calc_rates(void)
     unsigned int j;
 
     for (c = 0; c < CL_COUNT; c++) {
-        j = (c == CL_FAST) ? (unsigned int)tickrate / SLIDE_DEN
-          : (c == CL_TICK) ? (unsigned int)tickrate
-          : (c == CL_MON)  ? (unsigned int)MON_EVERY * tickrate
-                           : (unsigned int)HALL_EVERY * tickrate;
+        j = (c == CL_FAST)    ? (unsigned int)tickrate / SLIDE_DEN
+          : (c == CL_TICK)    ? (unsigned int)tickrate
+          : (c == CL_MON)     ? (unsigned int)MON_EVERY * tickrate
+          : (c == CL_INTRUDE) ? (unsigned int)HALL_IN_SKIP * tickrate
+                              : (unsigned int)HALL_EVERY * tickrate;
         j /= DRAW_EVERY;
         if (!j) j = 1;
         cl_n[c]  = (unsigned char)j;
@@ -1472,14 +1473,28 @@ static void hall_intrude(void)
 {
     unsigned char rx, ry;
 
+    unsigned char bx = 0xFF, by = 0xFF, best = 0, d;
+
     if (h_live[0]) return;
+
+    /* Come in by the doorway FURTHEST from Winky, not the first one in scan order.
+     *
+     * Scan order is the doorway he walked in through, and if he has not moved since --
+     * which is exactly what dawdling means -- it is the cell next to him. So the clock
+     * that is supposed to hurry him along instead materialised on top of him and
+     * killed him on its first step, with nothing he could have done about it. It is
+     * meant to be a reason to leave, not an ambush. */
     for (ry = 0; ry < ROOM_H; ry++)
         for (rx = 0; rx < ROOM_W; rx++)
             if (grid[ry][rx] == T_EXIT) {
-                h_live[0] = 1; h_x[0] = rx; h_y[0] = ry;
-                cue(SND_HALL);
-                return;
+                d = taxi(rx, ry, wx, wy);
+                if (bx == 0xFF || d > best) { best = d; bx = rx; by = ry; }
             }
+    if (bx == 0xFF) return;
+
+    h_live[0] = 1; h_x[0] = bx; h_y[0] = by;
+    h_ox[0] = 0xFF; h_oy[0] = 0xFF;
+    cue(SND_HALL);
 }
 
 /* ---- the facing pip ---------------------------------------------------- */
@@ -1670,8 +1685,15 @@ void step(unsigned char ks)
             for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
             hall_at = tick_count;
             hall_advance(); hall_arrow_check();
+            /* CL_INTRUDE, not CL_TICK: it steps on all but every HALL_IN_SKIP'th
+               tick, so the gap between its steps is HALL_IN_SKIP ticks, not one. Given
+               a one-tick glide it crossed a cell in six frames and then held for six --
+               the same 50% stutter, and the reason it looked choppy in a room while the
+               identical creature looked smooth out in the hall, where its class gets
+               the full HALL_EVERY ticks. The arrow keeps CL_TICK; it really does move
+               every tick, which is why it measured smooth. */
             for (i = 0; i < MAX_HALL; i++)
-                spr_launch((unsigned char)(SPR_HALL0 + i), CL_TICK,
+                spr_launch((unsigned char)(SPR_HALL0 + i), CL_INTRUDE,
                            ph_x[i], ph_y[i], h_x[i], h_y[i]);
         }
     }

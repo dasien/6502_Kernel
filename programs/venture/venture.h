@@ -295,7 +295,15 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * makes it lurch and stop -- a room monster steps every third tick, so a half-length
  * slide is nine jiffies of motion followed by nine of sitting still. Everything that
  * is not Winky slides across its whole cadence. Larger = snappier, and choppier. */
-#define SLIDE_DEN   2
+/* Fraction of Winky's step the slide uses. 1 means it fills the whole step.
+ *
+ * It was 2, meaning he crossed a cell in three frames of a six-frame tick and then
+ * stood still for the other three -- a 50% duty cycle, which reads as choppy however
+ * fast the motion is. That was an attempt to cut input lag, and it was aimed at the
+ * wrong thing: the delay before a press is felt is the keystate being sampled once a
+ * tick, and arriving early does nothing about that. If the lag wants fixing it wants
+ * fixing where it is. */
+#define SLIDE_DEN   1
 
 /* Jiffies between redraws. Drawing every jiffy is what a sprite makes POSSIBLE, not
  * what the CPU can afford: fifteen sprites plus the slide arithmetic at 60 Hz ate
@@ -314,7 +322,8 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define CL_TICK 1            /* the arrow and the room intruder: one tick */
 #define CL_MON  2            /* room monsters: MON_EVERY ticks */
 #define CL_HALL 3            /* Hallmonsters out in the hall: HALL_EVERY ticks */
-#define CL_COUNT 4
+#define CL_INTRUDE 4         /* the one that follows you in: HALL_IN_SKIP ticks */
+#define CL_COUNT 5
 
 /* Sub-pixel resolution of a mover's position: nominal pixels in 12.4 fixed point.
  * A nominal x reaches 639, so twelve integer bits are enough and four fractional

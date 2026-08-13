@@ -1196,6 +1196,61 @@ TEST_F(VentureTest, AShotFliesRatherThanJumps)
         << " frames had the arrow between cells -- it is jumping, not flying";
 }
 
+/* Winky moves every frame while a direction is held.
+ *
+ * SLIDE_DEN used to be 2, which crossed a cell in three frames of a six-frame tick and
+ * then stood still for the other three. Continuous or not, a 50% duty cycle reads as
+ * choppy. It was meant to cut input lag and was aimed at the wrong thing: the delay
+ * before a press is felt is the keystate being sampled once a tick, and arriving early
+ * does nothing about that. */
+TEST_F(VentureTest, WinkyMovesEveryFrameWhileWalking)
+{
+    ASSERT_TRUE(enterRoomZero());
+    pia->setKeyState(kKsRight);
+
+    int held = 0, frames = 0;
+    unsigned prev = 0xFFFF;
+    for (int i = 0; i < 24; i++) {
+        const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
+        while (cpu->getCycles() < until) c.runInstructions(1);
+        pia->pulseTimerIrq();
+        const unsigned x = c.getVideoChip()->sprite(0).x;
+        if (prev != 0xFFFF) { frames++; if (x == prev) held++; }
+        prev = x;
+    }
+    pia->setKeyState(0);
+
+    ASSERT_GT(frames, 20);
+    EXPECT_LE(held, 3) << held << " of " << frames
+                       << " frames drew Winky in the same place -- he is stuttering";
+}
+
+/* The intruder comes in by the doorway FURTHEST from Winky.
+ *
+ * It used to take the first exit in scan order, which is the doorway he walked in
+ * through -- and if he has not moved since, which is exactly what dawdling means, that
+ * is the cell next to him. So the clock meant to hurry him along materialised on top of
+ * him and killed him on its first step. It is a reason to leave, not an ambush.
+ *
+ * Found while measuring something else: the intruder's sprite appeared frozen, which
+ * turned out to be Winky already dead behind a CAUGHT screen. */
+TEST_F(VentureTest, TheIntruderComesInByTheFarDoorway)
+{
+    ASSERT_TRUE(enterRoomZero());
+    int wx, wy;
+    ASSERT_TRUE(findWinky(&wx, &wy));
+
+    // Stand still until one arrives (HALL_ROOM_TICKS ticks of dawdling).
+    for (int i = 0; i < 2000 && !peek("_h_live"); i++) run(1);
+    ASSERT_TRUE(peek("_h_live")) << "no intruder ever arrived";
+
+    const int hx = peek("_h_x"), hy = peek("_h_y");
+    const int d = abs(hx - wx) + abs(hy - wy);
+    fprintf(stderr, "[ intruder ] came in at (%d,%d), %d cells from Winky at (%d,%d)\n",
+            hx, hy, d, wx, wy);
+    EXPECT_GT(d, 5) << "it materialised on top of a player who had not moved";
+}
+
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
 {
     int wx = -1, wy = -1;
