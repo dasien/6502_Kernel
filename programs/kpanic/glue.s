@@ -15,7 +15,7 @@
 .export _INCH_NB, _QUITDOS, _keystate
 .export _vaddr, _vputc, _vattr
 .export _vfill, _vcmd, _vscrollbot, _vhidecur
-.export _spr_sel, _spr_x, _spr_y, _spr_glyph, _spr_attr, _spr_on
+.export _spr_sel, _spr_x, _spr_y, _spr_y_px, _spr_glyph, _spr_attr, _spr_on
 .export _rng_seed, _rtc_sec, _jiffies
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
@@ -137,6 +137,15 @@ SPR_ATTR        = SPR0+5
         sta     SPR_X_LO,x
         lda     spr_tmp
         and     #$03
+        sta     spr_tmp
+        ; Read-modify-write: bits 4-2 of this byte are the sprite's WIDTH and bit 5 is
+        ; its X magnify. Storing the position alone would zero them. They read as 1x1
+        ; unmagnified when zero, so KPANIC happens not to care -- but clobbering another
+        ; program's size on a position write is the kind of thing that is very hard to
+        ; find later.
+        lda     SPR_X_HI,x
+        and     #$FC
+        ora     spr_tmp
         sta     SPR_X_HI,x
         rts
 .endproc
@@ -158,10 +167,29 @@ SPR_ATTR        = SPR0+5
         asl     a
         rol     spr_tmp
         sta     SPR_Y_LO,x
+        lda     spr_tmp
+        and     #$03
+        sta     spr_tmp
         lda     SPR_Y_HI,x
-        and     #$80            ; keep enable
+        and     #$FC            ; keep enable, Y magnify and HEIGHT
         ora     spr_tmp
         sta     SPR_Y_HI,x
+        rts
+.endproc
+
+; void spr_y_px(unsigned int py) -- Y straight in nominal pixels, for an object that
+; sits BETWEEN rows. cc65 passes a lone unsigned int in A/X. Uses Y as the register
+; index because X carries the argument's high byte.
+.proc _spr_y_px
+        ldy     spr_off
+        sta     SPR_Y_LO,y
+        txa
+        and     #$03
+        sta     spr_tmp
+        lda     SPR_Y_HI,y
+        and     #$FC            ; keep enable, Y magnify and HEIGHT
+        ora     spr_tmp
+        sta     SPR_Y_HI,y
         rts
 .endproc
 

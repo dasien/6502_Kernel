@@ -546,7 +546,38 @@ static unsigned char p_x[MAX_PELLETS], p_y[MAX_PELLETS];
 
 static unsigned char spawn_timer = SPAWN_MIN;
 
-static unsigned char fine_phase;
+/* Sub-cell offset in pixels, 0..CELL_H-1, and how many pixels a frame advances it.
+ * speed_px is the difficulty dial: sectors raise it, the arrows nudge it.
+ *
+ * An accumulator rather than a phase counter, because the old "frames per step" dial
+ * was already at its floor of 1 with nowhere left to go for later sectors -- and an
+ * accumulator frees the step size from having to divide CELL_H, so speed is a smooth
+ * dial (2, 3, 4, 5...) instead of the three usable values a divisor allowed.
+ *
+ * Spawn interval floor for the current sector; SPAWN_VAR still rides on top.
+ * Sector tempo, and the label. Nothing else differs between sectors -- the terrain
+ * generator, the enemies and the weapons are identical, which is why this is cheap. */
+static unsigned char fine_off;
+static unsigned char speed_px = 2;
+static unsigned char spawn_base = SPAWN_MIN;
+
+static const char *const sector_name[NSECTORS] = { "KERNEL", "HEAP", "STACK", "I/O" };
+static const unsigned char sector_px[NSECTORS]    = {  2,  3,  4,  5 };
+static const unsigned char sector_spawn[NSECTORS] = { 18, 15, 12, 10 };
+
+static unsigned char sector;            /* 0-based */
+static unsigned int  sector_next;       /* row count at which the next one begins */
+
+static void sector_apply(void) {
+    unsigned char i = (sector < NSECTORS) ? sector : (unsigned char)(NSECTORS - 1);
+    speed_px   = sector_px[i];
+    spawn_base = sector_spawn[i];
+    /* Past the table the tempo keeps tightening rather than stopping; the name repeats. */
+    if (sector >= NSECTORS) {
+        unsigned char extra = (unsigned char)(sector - NSECTORS + 1);
+        if ((unsigned int)speed_px + extra <= SPEED_MAX) speed_px += extra;
+    }
+}
 
 /* Rows generated but not yet painted. draw_row() is 80 cells -- by far the most
  * expensive thing in a step -- and it used to run in the same frame that erases and
@@ -570,7 +601,7 @@ static unsigned char rows_pending;
 static unsigned char fine_on = 1;
 
 static void fine_apply(void) {
-    vfill((unsigned char)(fine_on ? fine_phase * FINE_PX : 0));
+    vfill(fine_on ? fine_off : 0);
     vcmd(VCMD_FINEY);
 }
 
@@ -584,6 +615,42 @@ static void fine_apply(void) {
  * should be perfectly smooth. They still exist -- steering, firing and collision all
  * run as normal, only the drawing is skipped. */
 static unsigned char show_player = 1;
+
+/* Shots are sprites 1..MAX_SHOTS, and because a sprite is pixel-positioned they can be
+ * drawn BETWEEN rows. Their logical position only changes at a step boundary, but the
+ * eye sees FINE_STEPS frames per step -- so without interpolation a shot hops
+ * SHOT_SPEED whole rows at once, which is what remained after the blink was fixed.
+ *
+ * The bias is centred on the shot's logical row rather than trailing from its previous
+ * one: trailing is smooth too, but leaves the shot drawn up to SHOT_SPEED rows behind
+ * where collision has already been resolved, so a kill would register while the shot was
+ * still visibly short of the target. Centred halves that error in both directions.
+ *
+ * Called every frame, not just on step boundaries -- that is the whole point. A dead
+ * slot must be switched OFF explicitly or its sprite lingers where the shot died. */
+static void draw_shots(void) {
+    unsigned char i;
+    /* Centred on the shot's logical row: at fine_off 0 it is drawn SHOT_SPEED*CELL_H/2
+     * below, at CELL_H-1 the same above, so the visual error stays under a row either
+     * way instead of trailing the collision by a full SHOT_SPEED rows. */
+    int bias = ((int)(CELL_H / 2) - (int)fine_off) * SHOT_SPEED;
+
+    for (i = 0; i < MAX_SHOTS; i++) {
+        spr_sel((unsigned char)(i + 1));
+        if (s_live[i] && show_player) {
+            int py = (int)s_y[i] * CELL_H + bias;
+            if (py < 0) py = 0;         /* a shot near row 0 must not wrap negative */
+            spr_x(s_x[i]);
+            spr_y_px((unsigned int)py);
+            spr_glyph(G_SHOT);
+            spr_attr(A_SHOT);
+            spr_on(1);
+        } else {
+            spr_on(0);
+        }
+    }
+}
+
 
 /* Short-lived impact markers, so a hit has a visible signature. A kill used to
  * just stop drawing the target, which is indistinguishable from the shot having
@@ -868,13 +935,32 @@ static void scroll_world(void) {
      * still held its old value, leaving the world 16 px low for several host repaints
      * before it snapped back. Down, hold, up, once per row. Both writes now land in the
      * same host time slice, so no repaint can ever see them apart. */
-    fine_phase = 0;
+    fine_off = 0;
     fine_apply();
 
     head = head ? (unsigned char)(head - 1) : (unsigned char)(PLAY_H - 1);
     rows++;
     gen_row();
     if (rows_pending < PLAY_H) rows_pending++;   /* painted on the next frame */
+
+    /* Sector change. The banner is written straight into the new row and then rides the
+     * scroll down the screen with everything else -- no timer, no overlay, and it reads
+     * as a message drifting past rather than a modal interruption. */
+    if (rows >= sector_next) {
+        const char *nm;
+        unsigned char lx, rx, w = 0, at;
+        sector++;
+        sector_next += SECTOR_ROWS;
+        sector_apply();
+        nm = sector_name[(sector < NSECTORS) ? sector : (NSECTORS - 1)];
+        lx = r_lx[head]; rx = r_rx[head];
+        while (nm[w]) w++;
+        /* Only if the channel is wide enough to hold it clear of both walls. */
+        if ((unsigned char)(rx - lx) > (unsigned char)(w + 2)) {
+            at = (unsigned char)(lx + ((rx - lx - w) >> 1));
+            put_str(at, 0, nm, A_CRAFT);
+        }
+    }
 }
 
 /* One fixed simulation step: the single place anything moves, so world speed is
@@ -931,7 +1017,7 @@ static void step_world(void) {
 
     if (--spawn_timer == 0) {
         spawn_enemy();
-        spawn_timer = SPAWN_MIN + rndn(SPAWN_VAR);
+        spawn_timer = spawn_base + rndn(SPAWN_VAR);
     }
 
     /* Collisions with corruption and pellets are resolved inside their own
@@ -986,20 +1072,7 @@ static void step_world(void) {
             last_attr = 0xFF;
             put_cell(frag_glyph(f_kind[i]), A_FRAG);
         }
-    /* Shots are sprites 1..MAX_SHOTS. A dead slot must be switched OFF explicitly or
-     * its sprite lingers where the shot died. */
-    for (i = 0; i < MAX_SHOTS; i++) {
-        spr_sel((unsigned char)(i + 1));
-        if (s_live[i] && show_player) {
-            spr_x(s_x[i]);
-            spr_y(s_y[i]);
-            spr_glyph(G_SHOT);
-            spr_attr(A_SHOT);
-            spr_on(1);
-        } else {
-            spr_on(0);
-        }
-    }
+    draw_shots();
     draw_craft();                       /* a sprite: cheap, and never leaves a hole */
 }
 
@@ -1032,7 +1105,7 @@ static unsigned char hud_wpn = 0xFF, hud_wlev = 0xFF;
  * loop is not keeping up and the accumulator is advancing several phases per pass --
  * which looks like the world jumping a row at a time, and no amount of sprite work
  * would fix it. Green at target, red below. */
-static unsigned char hud_sps = 0xFF;
+static unsigned char hud_sector = 0xFF;
 
 /* Padded to a common width so the field is fixed-size and the diff never has to
  * blank a leftover tail. Indexed by W_PLAIN/W_SPREAD/W_BEAM/W_HOMING. */
@@ -1058,11 +1131,14 @@ static void draw_energy_bar(void) {
     }
 }
 
-static void draw_hud_live(unsigned char sps) {
+static void draw_hud_live(void) {
     draw_energy_bar();
-    if (sps != hud_sps) {
-        hud_sps = sps;
-        put_num(78, HUD_ROW, sps, 2, (sps + 3u >= 60u / tickrate) ? A_NODE : A_WARN);
+    /* Sector number. This replaced a steps-per-second diagnostic, which had served its
+     * purpose -- it confirmed the loop holds 60+ and is not the source of any judder. */
+    if (sector != hud_sector) {
+        hud_sector = sector;
+        put_str(78, HUD_ROW, "S", A_HUD);
+        put_num(79, HUD_ROW, (unsigned int)(sector + 1), 1, A_CRAFT);
     }
     if (score != hud_score) { hud_score = score; put_num(36, HUD_ROW, score, 5, A_TEXT); }
     if (rows  != hud_rows)  { hud_rows  = rows;  put_num(47, HUD_ROW, rows,  5, A_TEXT); }
@@ -1152,13 +1228,13 @@ static unsigned char handle_key(int k) {
          * letting go of something. getkey() decodes the arrow escape sequences to
          * h/j/k/l; left and right are ignored here because steering comes from the
          * control port, not the keystroke stream. */
-        case 'k':                       /* up: smaller divisor = faster world */
+        case 'k':                       /* up: more pixels per frame = faster world */
         case '+': case '=':
-            if (tickrate > TICK_MIN) tickrate--;
+            if (speed_px < SPEED_MAX) speed_px++;
             break;
         case 'j':                       /* down: slower */
         case '-': case '_':
-            if (tickrate < TICK_MAX) tickrate++;
+            if (speed_px > SPEED_MIN) speed_px--;
             break;
         default:
             break;
@@ -1227,6 +1303,8 @@ static unsigned char game_over(void) {
 
     put_str(30, 9,  "*** KERNEL PANIC ***", A_WARN);
     put_str(28, 11, "ENERGY DEPLETED", A_TEXT);
+    put_str(28, 10, "SECTOR", A_HUD);
+    put_str(38, 10, sector_name[(sector < NSECTORS) ? sector : (NSECTORS - 1)], A_CRAFT);
     put_str(28, 12, "SCORE", A_HUD);
     put_num(38, 12, score, 5, A_TEXT);
     put_str(28, 13, "DIST", A_HUD);
@@ -1245,7 +1323,6 @@ static unsigned char game_over(void) {
 static unsigned char play_run(void) {
     unsigned int  last, now;
     unsigned char catchup, hud_dirty = 1, r, quit;
-    unsigned char sec, persec = 0, measured = 0;
     int k;
 
     /* Every run starts from the same state, because R on the end screen replays
@@ -1268,7 +1345,7 @@ static unsigned char play_run(void) {
     for (r = 0; r < MAX_FRAGS; r++)   f_live[r] = 0;
     /* Force every HUD field to repaint on the first frame of the run. */
     hud_score = 0xFFFF; hud_rows = 0xFFFF; hud_energy = 0xFFFF;
-    hud_filled = 0xFF; hud_oc = 0xFF; hud_pause = 0xFF; hud_sps = 0xFF;
+    hud_filled = 0xFF; hud_oc = 0xFF; hud_pause = 0xFF; hud_sector = 0xFF;
     hud_wpn = 0xFF; hud_wlev = 0xFF;
 
     vhidecur();
@@ -1286,9 +1363,11 @@ static unsigned char play_run(void) {
 
     craft_x = (unsigned char)((r_lx[slot(CRAFT_ROW)] + r_rx[slot(CRAFT_ROW)]) >> 1);
 
-    fine_phase = 0;
+    sector = 0;
+    sector_next = SECTOR_ROWS;
+    sector_apply();
+    fine_off = 0;
     fine_apply();                       /* AFTER the clear -- a clear turns fine off */
-    sec = rtc_sec();
 
     draw_hud_static();
     draw_craft();
@@ -1308,13 +1387,17 @@ static unsigned char play_run(void) {
                 /* Advance the sub-cell offset; a full cell's worth of it is one row
                  * of world, at which point the chip does the real scroll and the
                  * simulation takes its step. */
-                if (++fine_phase >= FINE_STEPS) {
+                fine_off = (unsigned char)(fine_off + speed_px);
+                if (fine_off >= CELL_H) {
                     /* step_world() resets the offset itself, right next to the chip
                      * scroll -- see scroll_world(). Applying it again here would be
                      * harmless, but doing it ONLY there keeps the invariant obvious. */
                     step_world();
                 } else {
                     fine_apply();
+                    /* Shots slide between rows, so their sprites are repositioned every
+                     * frame rather than once a step -- see draw_shots(). */
+                    draw_shots();
                     /* The expensive terrain paint, on a frame that is otherwise idle.
                      * Newest row last, so the ring's slot order is respected. */
                     while (rows_pending) {
@@ -1323,7 +1406,6 @@ static unsigned char play_run(void) {
                     }
                 }
                 last += tickrate;
-                persec++;
                 catchup++;
                 if (dead) break;
             }
@@ -1333,16 +1415,9 @@ static unsigned char play_run(void) {
             hud_dirty = 1;
         }
 
-        if (dead) { draw_hud_live(measured); return 1; }
+        if (dead) { draw_hud_live(); return 1; }
 
-        if (rtc_sec() != sec) {         /* one-second window off the RTC */
-            sec = rtc_sec();
-            measured = persec;
-            persec = 0;
-            hud_dirty = 1;
-        }
-
-        if (hud_dirty) { draw_hud_live(measured); hud_dirty = 0; }
+        if (hud_dirty) { draw_hud_live(); hud_dirty = 0; }
 
         /* Poll input every pass, not just on tick boundaries, so steering and
          * firing stay responsive independently of the world's scroll cadence.

@@ -29,6 +29,7 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
 extern void          spr_sel(unsigned char index);
 extern void          spr_x(unsigned char cell_col);
 extern void          spr_y(unsigned char cell_row);
+extern void          spr_y_px(unsigned int pixel_row);
 extern void          spr_glyph(unsigned char glyph);
 extern void          spr_attr(unsigned char attr);
 extern void          spr_on(unsigned char enable);
@@ -63,8 +64,17 @@ extern void          spr_on(unsigned char enable);
  * screen-referenced and will sawtooth by one cell per row. Fixing those two needs
  * sprites. Press F to hide just those two and confirm the conduit itself is smooth. */
 #define CELL_H          16      /* pixel height of an ordinary row */
-#define FINE_PX         2       /* pixels per visual step */
-#define FINE_STEPS      (CELL_H / FINE_PX)
+
+/* World speed is PIXELS PER FRAME, accumulated: each frame adds it to a sub-cell
+ * offset, and when the offset passes a cell height the chip scrolls a row and the
+ * simulation takes its step.
+ *
+ * This replaced "frames per step", which had run out of room -- it was already at 1,
+ * its floor, so there was no way to make later sectors faster. An accumulator also
+ * frees the step from having to divide 16, so speed is a smooth dial (2, 3, 4, 5...)
+ * rather than the three usable values a divisor gave. */
+#define SPEED_MIN       1       /* 3.75 rows/sec */
+#define SPEED_MAX       8       /* 30 rows/sec */
 
 /* ---- screen geometry ----
  * Ordinary single-size rows: 80 columns, playfield rows 0..PLAY_LAST, HUD pinned on
@@ -114,13 +124,12 @@ extern void          spr_on(unsigned char enable);
  * TICK_* are jiffies-per-simulation-step at 60 Hz. Difficulty scales by shrinking
  * this divisor, never by fractional speeds (cc65 has no float).
  *
- * NOTE this now paces a VISUAL step (FINE_PX pixels), not a whole row: a row of world
- * takes FINE_STEPS of them. 1 jiffy per step = 60 steps/sec = 7.5 rows/sec, near the
- * 8.5 rows/sec the whole-cell version ran at, so speed is comparable and only the
- * smoothness differs. */
+ * This paces the VISUAL FRAME, not a step: one jiffy per frame = 60 frames/sec, and
+ * how far the world moves in each is SPEED_* above. It is left adjustable only because
+ * a slower frame rate is occasionally useful for watching a bug. */
 #define TICK_DEFAULT 1
-#define TICK_MIN     1          /* 60 visual steps/sec = 7.5 rows/sec */
-#define TICK_MAX     6          /* 10 visual steps/sec = 1.25 rows/sec */
+#define TICK_MIN     1
+#define TICK_MAX     6
 #define MAX_CATCHUP  8          /* visual steps per pass before we resync to now.
                                  * A whole row's worth, so a slow frame can still
                                  * complete the row it is partway through. */
@@ -208,6 +217,13 @@ extern void          spr_on(unsigned char enable);
 
 #define ENERGY_HIT      120     /* flying into corruption */
 #define ENERGY_PELLET   60      /* taking a pellet */
+
+/* ---- sectors ----
+ * Same engine, new name and tempo. The design calls this the cheapest way to make
+ * progress feel like progress, and it is: the only per-sector state is a speed, a
+ * spawn rate and a label. */
+#define NSECTORS        4
+#define SECTOR_ROWS     240     /* rows of conduit before the next sector */
 
 /* ---- scoring ----
  * unsigned int caps at 65535; step 7 widens this to two words if bosses and long
