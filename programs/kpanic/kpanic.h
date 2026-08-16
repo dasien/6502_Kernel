@@ -41,7 +41,9 @@ extern void          spr_on(unsigned char enable);
 #define KS_LEFT     0x04
 #define KS_RIGHT    0x08
 #define KS_FIRE     0x10        /* Space */
-#define KS_BOOST    0x20        /* Left Shift -- hold to OVERCLOCK */
+#define KS_BOOST    0x20        /* Left Shift. Unused by this game -- kept because it
+                                 * documents the control port's bit 5, which exists
+                                 * whether or not a program reads it. */
 
 /* ---- VIC command codes ---- */
 #define VCMD_CLEAR      0x01
@@ -70,11 +72,16 @@ extern void          spr_on(unsigned char enable);
  * simulation takes its step.
  *
  * This replaced "frames per step", which had run out of room -- it was already at 1,
- * its floor, so there was no way to make later sectors faster. An accumulator also
- * frees the step from having to divide 16, so speed is a smooth dial (2, 3, 4, 5...)
- * rather than the three usable values a divisor gave. */
+ * its floor, so there was no way to move it. An accumulator also frees the step from
+ * having to divide 16, so speed is a smooth dial (2, 3, 4, 5...) rather than the three
+ * usable values a divisor gave.
+ *
+ * The dial belongs to the PLAYER and nothing else may write it. It is a throttle, in the
+ * River Raid sense: faster covers more rows for the same energy (drain is per row) and
+ * so scores faster, at the cost of reaction time. That trade is the reason to touch it. */
 #define SPEED_MIN       1       /* 3.75 rows/sec */
 #define SPEED_MAX       8       /* 30 rows/sec */
+#define SPEED_DEFAULT   2       /* 7.5 rows/sec -- where a run starts */
 
 /* ---- screen geometry ----
  * Ordinary single-size rows: 80 columns, playfield rows 0..PLAY_LAST, HUD pinned on
@@ -120,6 +127,22 @@ extern void          spr_on(unsigned char enable);
 #define HW_MAX      21          /* half-width ceiling -> 41 open columns */
 #define ISL_MIN_HW  12          /* islands only appear in a channel this wide */
 
+/* Most islands are short pillars to weave around. Now and then the generator builds a
+ * BIG one instead: wide and long enough to split the conduit into two committed lanes.
+ * It is the one terrain feature that makes you pick a side and live with it for several
+ * seconds, and the original's big mid-river land masses are exactly that -- so this is
+ * variety with a purpose rather than variety for its own sake.
+ *
+ * A big one needs a wider channel than a pillar does, because it has to leave a real
+ * lane either side rather than a gap. */
+#define ISL_BIG_HW    15        /* big islands need at least this much half-width */
+#define ISL_BIG_ONE_IN 2        /* 1-in-N islands go big, where the channel allows.
+                                 * 2 lands one big island per ~330 rows -- a bit over
+                                 * one a sector, so it is a set piece you remember
+                                 * rather than the shape of the terrain. */
+#define ISL_BIG_W     5         /* big island: W + rnd(4) columns wide */
+#define ISL_BIG_ROWS  10        /* big island: ROWS + rnd(8) rows long */
+
 /* ---- timing ----
  * TICK_* are jiffies-per-simulation-step at 60 Hz. Difficulty scales by shrinking
  * this divisor, never by fractional speeds (cc65 has no float).
@@ -143,14 +166,26 @@ extern void          spr_on(unsigned char enable);
 #define MOVE_PER_TICK 1         /* columns per tick while a direction is held */
 
 /* ---- the shared ENERGY pool (the signature mechanic; see DESIGN.md) ----
- * One number is simultaneously your fuel, your clock, and your ammo budget: it
- * drains on its own so idling is never safe, refills only from data nodes, and
- * OVERCLOCK spends it hard. Every aggressive choice is bought with lifespan. */
+ * One number is simultaneously your fuel, your clock and your distance budget: it
+ * drains as you travel, and refills only from data nodes.
+ *
+ * ENERGY_DRAIN is charged once per ROW, not once per jiffy -- energy_spend() lives in
+ * step_world(), which the fine-scroll accumulator invokes exactly once per cell of
+ * travel. So energy is a DISTANCE budget and speed does not enter into it: a full tank
+ * is ENERGY_MAX/ENERGY_DRAIN = 500 rows however fast you cover them.
+ *
+ * The prices below were retuned once it was clear the merge of "damage" into "fuel"
+ * had not been costed. River Raid keeps them apart -- a crash there takes a LIFE, not
+ * fuel -- and we deliberately fused them, but at the old prices a crash cost 150
+ * against a baseline of 2/row, so ONE crash ate the entire surplus of one node taken.
+ * A player claiming 70% of nodes and crashing once per 150 rows netted -41 per 150
+ * rows: a competent player bled to death by arithmetic. Mistakes are the dominant
+ * consumer of this pool, so they are now priced as setbacks rather than as thirds of
+ * a tank, and nodes are considerably less scarce -- see sector_node[]. */
 #define ENERGY_MAX      1000
-#define ENERGY_DRAIN    2       /* per tick, unconditionally */
-#define ENERGY_OC_DRAIN 8       /* additional per tick while overclocked */
+#define ENERGY_DRAIN    2       /* per ROW travelled, unconditionally */
 #define ENERGY_NODE     350     /* refill for taking a node instead of shooting it */
-#define ENERGY_CRASH    150     /* cost of hitting the conduit */
+#define ENERGY_CRASH    70      /* cost of hitting the conduit */
 #define ENERGY_LOW      250     /* below this the bar goes red and the HUD warns */
 #define NODE_W          2       /* node width in cells -- one cell was too fine a
                                  * target to line up on while dodging */
@@ -168,21 +203,16 @@ extern void          spr_on(unsigned char enable);
 
 /* One sprite per shot plus one for the craft, and the chip has 17 -- so 16. In play
  * that is generous: the plain gun keeps about 3 in the air, spread level 2 about 9.
- * Only spread level 3 under sustained OVERCLOCK wants more (~20), and reserving for
- * that would have eaten nearly the whole I/O page for a case that barely happens.
  *
  * A full pool must never change the weapon's SHAPE, though, and this is the trap: fire()
  * spawns the centre shot first and works outwards, so dropping individual shots eats the
- * WINGS and level 3 spread quietly renders as level 1 at exactly the moment you
- * overclocked to get it. So a volley is ALL OR NOTHING -- if the whole thing does not
- * fit, nothing fires and the shot is retried next tick. Saturation costs you rate,
- * which is legible, instead of silently narrowing the gun. */
+ * WINGS and level 3 spread quietly renders as level 1 at exactly the moment you earned
+ * it. So a volley is ALL OR NOTHING -- if the whole thing does not fit, nothing fires
+ * and the shot is retried next tick. Saturation costs you rate, which is legible,
+ * instead of silently narrowing the gun. */
 #define MAX_SHOTS        16
 #define SHOT_SPEED       2      /* screen rows per tick, substepped so it can't tunnel */
 #define FIRE_COOLDOWN    3      /* ticks between shots */
-#define FIRE_COOLDOWN_OC 2      /* ... while overclocked. 1 put ~27 shots in the air at
-                                 * spread level 3, which overflowed a 24 pool and ate
-                                 * the wings; 2 keeps the peak near 18. */
 
 /* ---- corruption (enemies) ----
  * Unlike nodes, these do not ride the terrain ring: they move independently of
@@ -197,26 +227,45 @@ extern void          spr_on(unsigned char enable);
  * Every test against an enemy has to cover e_x AND e_x+1. */
 #define ENEMY_W         2
 
-/* Kill/impact markers. Without these a hit had no signature at all -- the target
- * simply stopped being drawn, which reads as the shot having passed through it. */
-#define MAX_POPS        6
-#define POP_TICKS       2
+/* Kill/impact debris. Without these a hit had no signature at all -- the target simply
+ * stopped being drawn, which reads as the shot having passed through it.
+ *
+ * One hit seeds a SCATTER of cells rather than a single marker. The 2600 original draws
+ * its explosions as a loose spray of dots spread over an area, and that reads far better
+ * than a symbol sitting in one cell: a spray says the thing came apart, a symbol just
+ * says something is here. Each cell fades through three glyph/colour stages as it ages,
+ * and the outer cells are seeded already part-faded, so the spray collapses inward
+ * instead of every cell blinking off together. */
+#define POP_CELLS       6       /* debris cells one hit throws */
+#define POP_TICKS       3       /* life of the innermost cell, in ticks */
+#define MAX_DEBRIS      24      /* pool: 4 concurrent hits, and a firewall throws 3 */
 
 #define E_NONE          0
 #define E_DAEMON        1       /* closes on you faster than the world scrolls */
 #define E_WORM          2       /* rides the world, weaving across the channel */
 #define E_SENTINEL      3       /* rides the world, fires aimed pellets */
 
-#define SPAWN_MIN       18      /* ticks between spawns: MIN + rnd(VAR) */
+#define SPAWN_MIN       18      /* ROWS between spawns: MIN + rnd(VAR) */
 #define SPAWN_VAR       22
+#define SPAWN_FLOOR     6       /* tightest interval past the sector table. Below this,
+                                 * MAX_ENEMIES saturates and spawn_enemy() starts
+                                 * returning early -- difficulty would stop rising while
+                                 * appearing to, which is the worst kind of dial. */
 #define SENTINEL_FIRE   14      /* ticks between a sentinel's shots */
 
+/* Everything dies to one shot, as in the original. Tiered health was the single
+ * biggest thing making the game feel unresponsive: a 3-shot sentinel closing on you
+ * needs three hits landed inside the time it takes to arrive, and when the third does
+ * not land in time the two that did are indistinguishable from shots that passed
+ * straight through. Targets are differentiated by BEHAVIOUR and by what they are worth,
+ * not by how much punishment they soak -- so a sentinel is dangerous because it shoots
+ * back and gets faster every sector, not because it is a tank. */
 #define HP_DAEMON       1
-#define HP_WORM         2
-#define HP_SENTINEL     3
+#define HP_WORM         1
+#define HP_SENTINEL     1
 
-#define ENERGY_HIT      120     /* flying into corruption */
-#define ENERGY_PELLET   60      /* taking a pellet */
+#define ENERGY_HIT      60      /* flying into corruption */
+#define ENERGY_PELLET   30      /* taking a pellet */
 
 /* ---- sectors ----
  * Same engine, new name and tempo. The design calls this the cheapest way to make
@@ -224,6 +273,53 @@ extern void          spr_on(unsigned char enable);
  * spawn rate and a label. */
 #define NSECTORS        4
 #define SECTOR_ROWS     240     /* rows of conduit before the next sector */
+
+/* A sector escalates on FOUR axes, not just tempo -- because tempo alone turned out not
+ * to escalate the thing it appeared to. Nodes are placed once every N ROWS, so a faster
+ * sector delivers them faster in TIME as well, and the share of nodes you must take to
+ * stay alive works out to DRAIN * rows / ENERGY_NODE, which has no tempo term in it at
+ * all: a flat 51% in every sector. The world got harder to dodge and no harder to fuel.
+ *
+ * So node scarcity is its own dial, and the sentinels' rate of fire is another -- an axis
+ * that is not speed. Sector 1 also gets a floor under the channel width and no gauntlets,
+ * because a conduit that squeezes shut in the first ten rows teaches nothing. */
+#define HW_MIN_EASY     7       /* sector 1's half-width floor, against HW_MIN's 4 */
+
+/* ---- the firewall ----
+ * River Raid's bridge: a barrier across the conduit with a single PORT in it. Shoot the
+ * port and the whole thing goes; fly into it and you pay for it.
+ *
+ * It is TERRAIN, not an object -- one flagged row in the same ring the walls live in. So
+ * it rides the hardware scroll for free, needs no erase/redraw of its own, and blocked()
+ * already stops the craft on it. That is the entire implementation, and it is why this
+ * replaced a phased boss that had to stop the world to avoid sawtoothing against the
+ * fine offset: there is nothing here that is not already solved.
+ *
+ * There is no gate and no checkpoint. The game is how far you can go, so a firewall is a
+ * toll rather than a door: open it for score, or take the hit and carry on. */
+/* Firewalls are paced on their OWN counter, not on the sector boundary. Tying them to
+ * sectors put the first one at row 240, and since it is generated at the top of the band
+ * it is not MET until row ~264 -- so a run that ended earlier never saw the signature
+ * obstacle even once, which is exactly what happened.
+ *
+ * 80 rows is the original's cadence rather than a guess. A River Raid section is
+ * SECTION_BLOCKS(16) * BLOCK_SIZE(32) = 512 scanlines and its main display is 160, so a
+ * bridge arrives every ~3.2 screens. Our band is PLAY_H rows, and 3.2 * 24 = 77. */
+#define FW_ROWS         80      /* rows of conduit between firewalls */
+/* The port is TWO cells and dies to ONE shot.
+ *
+ * It was one cell and three shots, and both halves were wrong for reasons already
+ * written down elsewhere in this file. NODE_W is 2 because "one cell was too fine a
+ * target to line up on while dodging" -- the port is the same problem with a hard
+ * deadline attached. And every enemy became one-shot; a barrier needing three made the
+ * only mandatory target in the game the toughest thing in it.
+ *
+ * Note this was NOT why the port seemed to ignore damage -- that was shot tunnelling,
+ * see shots_advance(). Fixing the feel and fixing the bug were separate jobs. */
+#define FW_PORT_W       2
+#define FW_PORT_HP      1       /* shots to blow the port, and with it the barrier */
+#define FW_SCORE        150
+#define FW_CRASH        120     /* energy for flying into one -- worse than a wall */
 
 /* ---- scoring ----
  * unsigned int caps at 65535; step 7 widens this to two words if bosses and long
@@ -261,6 +357,11 @@ extern void          spr_on(unsigned char enable);
                                  * the one that does not read against a dark field.
                                  * White ink on a blue tile is legible instead, and
                                  * still nothing else on screen looks like it. */
+#define A_FIRE      0x01        /* DIM red -- the firewall barrier. Deliberately not
+                                 * bright: it does not move and it is not the thing you
+                                 * aim at, so it must not compete with the port. */
+#define A_PORT      0xC7        /* REVERSED bright white -- the port. Inverted so it
+                                 * reads as a target rather than more barrier. */
 #define A_SHOT      0x47        /* bright white -- reserved for the fastest thing on
                                  * screen, so the eye tracks projectiles first */
 #define A_OK        0x42        /* energy bar: healthy */
@@ -287,7 +388,13 @@ extern void          spr_on(unsigned char enable);
 #define G_BAR_FULL  219         /* energy bar: filled cell */
 #define G_BAR_EMPTY 176         /* energy bar: empty cell */
 #define G_CRAFT     30          /* solid up triangle */
-#define G_BOOM      15          /* sun -- placeholder impact pop (real juice: step 7) */
+/* Debris fades BLAST -> EMBER -> DUST as a cell ages. Three glyphs of decreasing
+ * density, so the spray visibly thins rather than switching colour in place. */
+#define G_BLAST     15          /* sun -- the dense heart of the burst */
+#define G_EMBER     249         /* small bullet -- a cooling fragment */
+#define G_DUST      250         /* middle dot -- the last of it */
+#define G_FIRE      177         /* dark shade -- the barrier itself */
+#define G_PORT      254         /* small solid square -- the port to shoot */
 #define G_HBAR      196         /* single horizontal -- HUD rule */
 
 /* ---- kpanic.c ---- */
