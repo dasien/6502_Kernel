@@ -1114,14 +1114,20 @@ static void enemies_advance(void) {
          * for. Resolved here, across the span it just travelled, and BEFORE the
          * off-bottom test, or a daemon moving three rows could step over the
          * craft and out of the world in the same tick. */
-        /* WIDTH 1, NOT ENEMY_W -- deliberately, for now. An enemy body is two cells and
-         * enemy_at() (the shot side) correctly covers both, so your shots hit either
-         * half while flying into the RIGHT half passes clean through. That is a real gap
-         * and this file's own note says "Every test against an enemy has to cover e_x AND
-         * e_x+1". Closing it doubles the enemy hitbox and so makes the game meaningfully
-         * harder, which is a balance call to take deliberately rather than fold into a
-         * bug fix -- change the 1 to ENEMY_W to close it. */
-        if (swept_craft(e_y[i], ny, e_x[i], 1)) {
+        /* ENEMY_W, so the hitbox is the body you can SEE. This was 1 for a long time,
+         * which meant flying into an enemy's left cell killed you and flying into its
+         * right cell passed clean through -- while enemy_at() (the shot side) covered
+         * both, so your shots hit either half. Half of every enemy was intangible to the
+         * craft and solid to its guns.
+         *
+         * Taken deliberately as a balance change, not slipped in with a bug fix: it is
+         * exactly twice the collision surface, so expect to crash about twice as often
+         * per enemy passed. The alternative -- narrowing the drawn body to one cell to
+         * match the old hitbox -- was rejected outright, because a two-cell body is what
+         * made the game hittable in the first place (a one-cell enemy needs the craft on
+         * exactly the right column, and at that precision a miss is indistinguishable
+         * from a bug). Collision matches the image; the image does not shrink. */
+        if (swept_craft(e_y[i], ny, e_x[i], ENEMY_W)) {
             e_type[i] = E_NONE;
             flash = 3;
             energy_spend(ENERGY_HIT);
