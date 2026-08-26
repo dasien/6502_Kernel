@@ -15,8 +15,9 @@
 .export _INCH_NB, _QUITDOS, _keystate
 .export _vaddr, _vputc, _vattr
 .export _vfill, _vcmd, _vscrollbot, _vhidecur
-.export _spr_sel, _spr_x, _spr_y, _spr_y_px, _spr_glyph, _spr_attr, _spr_on
+.export _spr_sel, _spr_x, _spr_x_px, _spr_y, _spr_y_px, _spr_glyph, _spr_attr, _spr_on
 .export _rng_seed, _rtc_sec, _jiffies
+.export _vfseek, _vfread, _vfwrite
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
 K_CLEAR_SCREEN  = $FF0C         ; clear + home (also resets the kernel cursor)
@@ -38,6 +39,15 @@ VREG_CMD        = $FE32         ; 1=clear 2=scroll-up 3=scroll-down 4=fill-row
 VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 VREG_CMD_PARAM  = $FE36         ; fill char for clear / fill-row / scroll
 VREG_SCROLL_BOT = $FE37         ; scroll-region bottom row (scroll/fill hit rows 0..this)
+
+; Soft font: the glyph shapes are RAM, not a fixed ROM. A 16-bit index selects a byte
+; across every font set (set N starts at N*4096), and the data port auto-increments, so
+; a glyph is one seek plus 16 sequential accesses. Readable as well as writable, which is
+; what lets a program lift a CP437 shape out and build on top of it instead of shipping
+; hand-drawn artwork for something the font already has.
+VREG_FONT_LO    = $FE62         ; font byte index low
+VREG_FONT_HI    = $FE63         ; font byte index high
+VREG_FONT_DATA  = $FE64         ; font data, auto-increments
 
 ; RTC (real-time clock) -- entropy source and a 1 Hz tick for the rate readout.
 RTC_LATCH       = $FE55         ; write snapshots the live clock into the read regs
@@ -85,6 +95,26 @@ RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
 ; void vcmd(unsigned char cmd) -- run a chip-side block op (clear/scroll/fill-row).
 .proc _vcmd
         sta     VREG_CMD
+        rts
+.endproc
+
+; void vfseek(unsigned int index) -- point the font data port at a byte (A=lo, X=hi).
+.proc _vfseek
+        sta     VREG_FONT_LO
+        stx     VREG_FONT_HI
+        rts
+.endproc
+
+; unsigned char vfread(void) -- read a font byte; the port then advances.
+.proc _vfread
+        lda     VREG_FONT_DATA
+        ldx     #$00
+        rts
+.endproc
+
+; void vfwrite(unsigned char b) -- write a font byte; the port then advances.
+.proc _vfwrite
+        sta     VREG_FONT_DATA
         rts
 .endproc
 
@@ -147,6 +177,23 @@ SPR_ATTR        = SPR0+5
         and     #$FC
         ora     spr_tmp
         sta     SPR_X_HI,x
+        rts
+.endproc
+
+; void spr_x_px(unsigned int px) -- X straight in nominal pixels, for an object that
+; sits BETWEEN columns. cc65 passes a lone unsigned int in A/X, so Y is the register
+; index here because X carries the argument's high byte. Same read-modify-write on the
+; high byte as _spr_x: bits 4-2 are WIDTH and bit 5 is X magnify.
+.proc _spr_x_px
+        ldy     spr_off
+        sta     SPR_X_LO,y
+        txa
+        and     #$03
+        sta     spr_tmp
+        lda     SPR_X_HI,y
+        and     #$FC            ; keep WIDTH and X magnify
+        ora     spr_tmp
+        sta     SPR_X_HI,y
         rts
 .endproc
 

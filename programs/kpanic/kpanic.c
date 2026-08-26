@@ -98,6 +98,15 @@ static unsigned char r_rx[PLAY_H];      /* right wall column */
 static unsigned char r_ix[PLAY_H];      /* island start column */
 static unsigned char r_iw[PLAY_H];      /* island width; 0 = no island */
 static unsigned char r_nx[PLAY_H];      /* data node column; 0 = none */
+/* The board colour this row was generated under -- see A_BOARD. Stored PER ROW rather
+ * than read from a global at paint time, because a sector's colour has to ride the ring
+ * exactly like its walls do. With a global, restore_cell() would repaint an erased
+ * object's cell in the CURRENT sector's colour, speckling the new colour across the
+ * two dozen older rows still on screen during the changeover. */
+static unsigned char r_ba[PLAY_H];
+/* The colour gen_row() stamps onto new rows. Declared here, above the generator that
+ * reads it, rather than down with the other sector dials. */
+static unsigned char board_attr = A_BOARD;
 /* Firewall: the port's column, or 0 for an ordinary row. Column 0 is always outside the
  * channel, so 0 is a safe "none" and this needs no second array. r_fh is the port's
  * remaining health; when it reaches zero the whole row reverts to open lane, which is
@@ -187,6 +196,7 @@ static void gen_row(void) {
     rx = gen_cx + gen_hw;
     r_lx[head] = lx;
     r_rx[head] = rx;
+    r_ba[head] = board_attr;
 
     /* --- islands: mid-channel obstacles, only where there's room to pass on
      * both sides, persisting a few rows so they read as a solid pillar. --- */
@@ -367,14 +377,14 @@ static void row_cell(unsigned char i, unsigned char x,
         } else if (r_iw[i] && x >= r_ix[i] &&
                    x < (unsigned char)(r_ix[i] + r_iw[i])) {
             if (isl_shore(r_ix[i], r_iw[i], x)) { *g = G_WALL;  *a = A_WALL; }
-            else                                { board_glyph(x, g); *a = A_BOARD; }
+            else                                { board_glyph(x, g); *a = r_ba[i]; }
         } else if (on_node(i, x)) {
             *g = G_NODE; *a = A_NODE;
         } else {
             board_glyph(x, g); *a = A_RECESS;   /* recessed board in the channel */
         }
     } else {
-        board_glyph(x, g); *a = A_BOARD;        /* board outside the conduit */
+        board_glyph(x, g); *a = r_ba[i];        /* board outside the conduit */
     }
 }
 
@@ -404,7 +414,17 @@ static void draw_row(unsigned char r) {
     }
 }
 
-/* ---- world state ---- */
+/* ---- world state ----
+ * The craft's position is carried in PIXELS and its column is DERIVED. craft_px is what
+ * the sprite is drawn at; craft_x is what every collision, node take and shot spawn uses,
+ * so all of that logic stays on the cell grid and is unchanged.
+ *
+ * The column comes off the craft's CENTRE rather than its left edge. The sprite is CELL_W
+ * wide, so a centre-derived column means you must be more than half overlapping something
+ * before it counts against you -- the forgiving reading, and the right one for the object
+ * the player is dodging with. Deriving from the left edge would make a wall on your right
+ * lethal a half-cell before it looked lethal. */
+static unsigned int  craft_px = 39 * CELL_W;
 static unsigned char craft_x = 39;
 static unsigned char tickrate = TICK_DEFAULT;
 static unsigned char paused;
@@ -421,11 +441,17 @@ static unsigned char s_x[MAX_SHOTS], s_y[MAX_SHOTS], s_live[MAX_SHOTS];
 static unsigned char s_from[MAX_SHOTS];     /* row this shot started the tick on */
 static unsigned char s_pierce[MAX_SHOTS];   /* hits left before the shot dies */
 static unsigned char s_home[MAX_SHOTS];     /* 1 = drifts toward a target */
+/* Per-shot, because the beam bolt travels at its own speed and draws as a bar rather
+ * than an arrow -- and because `weapon` can change while a shot is still in the air,
+ * so neither can be re-derived at draw time. */
+static unsigned char s_speed[MAX_SHOTS];
+static unsigned char s_glyph[MAX_SHOTS];
 
 /* The gun: a kind and a level. Collecting the same fragment again deepens it;
  * a different one swaps you to that kind at level 1 -- so a pickup is a real
  * decision when you are already deep in something else. */
 static unsigned char weapon = W_PLAIN;
+static unsigned char wammo;             /* rounds left; meaningless while W_PLAIN */
 static unsigned char wlevel = 1;
 
 /* Fragments drift down with the world like a node, but they are objects rather
@@ -433,11 +459,65 @@ static unsigned char wlevel = 1;
 static unsigned char f_live[MAX_FRAGS];
 static unsigned char f_x[MAX_FRAGS], f_y[MAX_FRAGS], f_kind[MAX_FRAGS];
 
-static unsigned char frag_glyph(unsigned char k) {
-    if (k == W_SPREAD) return 'S';
-    if (k == W_BEAM)   return 'B';
-    return 'H';
+/* Build the six fragment glyphs into font RAM, then switch the chip to it.
+ *
+ * The letter is LIFTED from the font rather than drawn: font RAM is readable and comes
+ * up seeded with CP437, so row r of 'S' is just a read at 'S'*FRAG_ROWS + r. Shifting it
+ * four pixels right puts the 8-pixel letter across columns 4-11 of the 16-pixel pair,
+ * which leaves columns 0-3 and 12-15 for the frame -- so the letter lands centred on the
+ * seam between the two cells and neither half is a whole letter on its own. That is what
+ * stops it reading as text.
+ *
+ * The frame is a component outline: pins, a top rail, side walls down the outer edges,
+ * a bottom rail, pins. The walls live in bit 7 of the left glyph and bit 0 of the right,
+ * which the shifted letter can never reach, so frame and letter can simply be OR'd
+ * together with no masking.
+ *
+ * letter[r - 1], not letter[r]: CP437's capitals occupy scanlines 2..11 of 16, so taken
+ * straight they sit hard against the top rail with a two-row gap under them. Down one
+ * row centres them in the frame's 2..13 interior. Verified by rendering the composed
+ * glyphs from the real font data rather than by eye -- nothing here is visible until it
+ * is on screen.
+ *
+ * Called after the clear, because a clear puts the chip back on the ROM font. The font
+ * DATA survives a clear, so only the mode has to be re-armed. */
+static void frag_font_init(void) {
+    static const char kind_ch[3] = { 'S', 'B', 'H' };
+    unsigned char k, r, lo, hi, letter[FRAG_ROWS];
+
+    for (k = 0; k < 3; k++) {
+        /* lift the CP437 letter */
+        vfseek((unsigned int)(unsigned char)kind_ch[k] * FRAG_ROWS);
+        for (r = 0; r < FRAG_ROWS; r++) letter[r] = vfread();
+
+        /* compose and store the left half, then the right */
+        vfseek((unsigned int)(GL_FRAG_FIRST + k * 2) * FRAG_ROWS);
+        for (r = 0; r < FRAG_ROWS; r++) {
+            if (r == 0 || r == 15)      lo = 0x24;      /* pins:  ..#..#.. */
+            else if (r == 1 || r == 14) lo = 0xFF;      /* rail:  ######## */
+            else                        lo = (unsigned char)(0x80 | (letter[r - 1] >> 4));
+            vfwrite(lo);
+        }
+        vfseek((unsigned int)(GL_FRAG_FIRST + k * 2 + 1) * FRAG_ROWS);
+        for (r = 0; r < FRAG_ROWS; r++) {
+            if (r == 0 || r == 15)      hi = 0x24;
+            else if (r == 1 || r == 14) hi = 0xFF;
+            else                        hi = (unsigned char)(0x01 | (letter[r - 1] << 4));
+            vfwrite(hi);
+        }
+    }
+
+    vfill(FONT_SET); vcmd(VCMD_FONTSET);
+    vcmd(VCMD_FONTRAM);
 }
+
+/* Left cell of the chip for weapon kind k; the right cell is the next code. */
+static unsigned char frag_cell(unsigned char k) {
+    if (k == W_SPREAD) return GL_FRAG_FIRST;
+    if (k == W_BEAM)   return GL_FRAG_FIRST + 2;
+    return GL_FRAG_FIRST + 4;
+}
+
 
 /* A LOGICAL row. It used to be derived from the band's physical bottom, which was
  * the same number back when the playfield was 22 single rows -- with an 11-row
@@ -457,11 +537,14 @@ static unsigned char frag_glyph(unsigned char k) {
  * landing row.
  *
  * Still required with overclock gone: a pellet moves two rows a step and a daemon
- * two, so the one-row cases are the exception rather than the rule. */
+ * two, so the one-row cases are the exception rather than the rule.
+ *
+ * `w` is the object's width in cells. It used to be implicitly 1, which is wrong for
+ * anything wider and is a live gap for ENEMIES -- see the note at their call site. */
 static unsigned char swept_craft(unsigned char from, unsigned char to,
-                                 unsigned char x) {
+                                 unsigned char x, unsigned char w) {
     return (unsigned char)(from <= CRAFT_ROW && to >= CRAFT_ROW &&
-                           x == craft_x);
+                           craft_x >= x && craft_x < (unsigned char)(x + w));
 }
 
 /* The craft is SPRITE 0, not a cell.
@@ -471,12 +554,45 @@ static unsigned char swept_craft(unsigned char from, unsigned char to,
  * craft slid down with the terrain and snapped back a full cell on every row -- the one
  * object on screen that is supposed to hold its row. A sprite is outside the region and
  * outside the offset, so it simply stays where it is put. */
+/* Both writers of the craft's position. Nothing else may touch craft_px or craft_x --
+ * they have to move together or the sprite and the collision column drift apart. */
+#pragma warn(const-comparison, push, off)
+typedef char cell_w_is_8[1 - 2 * (CELL_W != 8)];    /* the shifts below assume it */
+#pragma warn(const-comparison, pop)
+
+static void craft_move(signed char dpx) {
+    int px = (int)craft_px + dpx;
+    if (px < 0) px = 0;
+    if (px > (int)(PLAY_COLS - 1) * CELL_W) px = (int)(PLAY_COLS - 1) * CELL_W;
+    craft_px = (unsigned int)px;
+    craft_x  = (unsigned char)((craft_px + CELL_W / 2) >> 3);
+}
+
+static void craft_set_col(unsigned char col) {
+    craft_px = (unsigned int)col << 3;
+    craft_x  = col;
+}
+
 static void draw_craft(void) {
     spr_sel(0);
-    spr_x(craft_x);
+    spr_x_px(craft_px);
     spr_y(CRAFT_ROW);
     if (flash) { spr_glyph(G_BLAST); spr_attr((unsigned char)(A_WARN | 0x80)); }
     else       { spr_glyph(G_CRAFT); spr_attr(A_CRAFT); }
+}
+
+/* Sample the held-key port and move the craft. Called once per FRAME from the main loop,
+ * not from step_world() -- see the note on STEER_PX.
+ *
+ * It redraws immediately because the position it just changed is sub-cell: waiting for
+ * the next world step to repaint would quantise the motion straight back to one column
+ * per row, which is exactly what this replaced. A sprite reposition is five register
+ * writes, so paying it every frame is nothing. */
+static void steer(void) {
+    unsigned char ks = keystate();
+    if (ks & KS_LEFT)  craft_move(-STEER_PX);
+    if (ks & KS_RIGHT) craft_move(STEER_PX);
+    draw_craft();
 }
 
 /* ---- energy ---- */
@@ -495,7 +611,7 @@ static void crash(void) {
     unsigned char i = slot(CRAFT_ROW);
     crashes++;
     flash = 3;
-    craft_x = (unsigned char)((r_lx[i] + r_rx[i]) >> 1);
+    craft_set_col((unsigned char)((r_lx[i] + r_rx[i]) >> 1));
     energy_spend(ENERGY_CRASH);
     /* The impact shakes the gun down a level. Energy is the obvious cost of a
      * crash; losing hard-won firepower is the one that actually stings. */
@@ -504,17 +620,20 @@ static void crash(void) {
 
 /* ---- weapon ---- */
 /* Put one shot in the air at column x, if a slot is free. */
-static void shot_spawn(unsigned char x) {
+/* Takes the row explicitly: a beam bolt is a stack of these at one column. */
+static void shot_spawn(unsigned char x, unsigned char y) {
     unsigned char i;
     for (i = 0; i < MAX_SHOTS; i++) {
         if (!s_live[i]) {
             s_live[i] = 1;
             s_x[i] = x;
-            s_y[i] = CRAFT_ROW - 1;
+            s_y[i] = y;
             /* Beam punches through one extra target per level; everything else
              * is consumed by the first thing it hits. */
             s_pierce[i] = (weapon == W_BEAM) ? (unsigned char)(wlevel + 1) : 1;
             s_home[i]   = (weapon == W_HOMING) ? 1 : 0;
+            if (weapon == W_BEAM) { s_speed[i] = BEAM_SPEED; s_glyph[i] = G_BEAM; }
+            else                  { s_speed[i] = SHOT_SPEED; s_glyph[i] = G_SHOT; }
             return;
         }
     }
@@ -536,23 +655,40 @@ static void fire(void) {
      * outermost shots and narrow the gun rather than slow it. */
     want = 1;
     if (weapon == W_SPREAD) want = (wlevel >= 3) ? 5 : 3;
+    if (weapon == W_BEAM)   want = BEAM_CELLS;
     if (shots_free() < want) return;    /* no cooldown: retried next tick */
 
     cooldown = FIRE_COOLDOWN;
 
-    shot_spawn(craft_x);
-    if (weapon == W_SPREAD) {
-        /* Level 1-2 covers three columns, level 3 covers five. Width is the
-         * clearest way to show a level on a character grid -- you can see it. */
-        if (craft_x > 1)          shot_spawn(craft_x - 1);
-        if (craft_x < PLAY_COLS - 2)  shot_spawn(craft_x + 1);
-        if (wlevel >= 3) {
-            if (craft_x > 2)         shot_spawn(craft_x - 2);
-            if (craft_x < PLAY_COLS - 3) shot_spawn(craft_x + 2);
+    if (weapon == W_BEAM) {
+        /* One bolt, BEAM_CELLS tall: the same column, stacked upward from the muzzle.
+         * CRAFT_ROW is fixed near the bottom of a 24-row band, so the topmost cell
+         * cannot underflow. */
+        unsigned char c;
+        for (c = 0; c < BEAM_CELLS; c++)
+            shot_spawn(craft_x, (unsigned char)(CRAFT_ROW - 1 - c));
+    } else {
+        shot_spawn(craft_x, CRAFT_ROW - 1);
+        if (weapon == W_SPREAD) {
+            /* Level 1-2 covers three columns, level 3 covers five. Width is the
+             * clearest way to show a level on a character grid -- you can see it. */
+            if (craft_x > 1)              shot_spawn(craft_x - 1, CRAFT_ROW - 1);
+            if (craft_x < PLAY_COLS - 2)  shot_spawn(craft_x + 1, CRAFT_ROW - 1);
+            if (wlevel >= 3) {
+                if (craft_x > 2)              shot_spawn(craft_x - 2, CRAFT_ROW - 1);
+                if (craft_x < PLAY_COLS - 3)  shot_spawn(craft_x + 2, CRAFT_ROW - 1);
+            }
         }
     }
-    /* Deeper levels of the other kinds fire faster instead of wider. */
+    /* Deeper levels of the non-spread kinds fire faster instead of wider. */
     if (weapon != W_SPREAD && wlevel > 1 && cooldown > 1) cooldown--;
+
+    /* Spend one round. Single exit so this cannot be skipped by a branch above -- the
+     * beam used to return early, which is exactly how an ammo leak gets written. */
+    if (weapon != W_PLAIN && --wammo == 0) {
+        weapon = W_PLAIN;
+        wlevel = 1;
+    }
 }
 
 /* Resolve a shot arriving at one cell. Returns 1 if the shot is consumed.
@@ -743,6 +879,10 @@ static const unsigned char sector_spawn[NSECTORS] = { 18, 14, 11,  8 };
  * enemy that shoots back, and meeting one before you can hold a lane teaches nothing
  * except that you died -- the same reason planes are held back to level 3. */
 static const unsigned char sector_roster[NSECTORS] = {  2,  3,  3,  3 };
+/* Board colour per sector. Not a difficulty dial -- a legibility one: it is how you can
+ * see at a glance that the zone changed, without reading anything. */
+static const unsigned char sector_board[NSECTORS]  = { A_BOARD, A_BOARD2,
+                                                       A_BOARD3, A_BOARD4 };
 /* Node scarcity, as a 1-in-N chance per row. The share of nodes you have to take just to
  * break even works out to ENERGY_DRAIN * N / ENERGY_NODE -- no tempo term, because drain
  * is charged per row -- so these are chosen straight off that: 31%, 40%, 49%, 57%.
@@ -775,6 +915,7 @@ static void sector_apply(void) {
     node_rate    = sector_node[i];
     fire_base    = sector_fire[i];
     enemy_roster = sector_roster[i];
+    board_attr   = sector_board[i];
     /* The first sector teaches: a wider floor under the channel and no gauntlets. This
      * is our valleyWidth -- a minimum width that gets UNLOCKED with depth rather than a
      * channel that narrows progressively, which is how the original does it too. */
@@ -814,11 +955,13 @@ static void fine_apply(void) {
 
 /* Shots are sprites 1..MAX_SHOTS, and because a sprite is pixel-positioned they can be
  * drawn BETWEEN rows. Their logical position only changes at a step boundary, but the
- * eye sees FINE_STEPS frames per step -- so without interpolation a shot hops
- * SHOT_SPEED whole rows at once, which is what remained after the blink was fixed.
+ * eye sees FINE_STEPS frames per step -- so without interpolation a shot hops its whole
+ * per-step distance at once, which is what remained after the blink was fixed. That is
+ * SHOT_SPEED rows for a plain shot and BEAM_SPEED for a beam bolt, so the interpolation
+ * matters most to the fastest thing on screen.
  *
  * The bias is centred on the shot's logical row rather than trailing from its previous
- * one: trailing is smooth too, but leaves the shot drawn up to SHOT_SPEED rows behind
+ * one: trailing is smooth too, but leaves the shot drawn up to its full step behind
  * where collision has already been resolved, so a kill would register while the shot was
  * still visibly short of the target. Centred halves that error in both directions.
  *
@@ -826,19 +969,21 @@ static void fine_apply(void) {
  * slot must be switched OFF explicitly or its sprite lingers where the shot died. */
 static void draw_shots(void) {
     unsigned char i;
-    /* Centred on the shot's logical row: at fine_off 0 it is drawn SHOT_SPEED*CELL_H/2
-     * below, at CELL_H-1 the same above, so the visual error stays under a row either
-     * way instead of trailing the collision by a full SHOT_SPEED rows. */
-    int bias = ((int)(CELL_H / 2) - (int)fine_off) * SHOT_SPEED;
+    /* Centred on the shot's logical row: at fine_off 0 it is drawn speed*CELL_H/2 below,
+     * at CELL_H-1 the same above, so the visual error stays under a row either way
+     * instead of trailing the collision by a full `speed` rows. Scaled per shot, because
+     * a beam bolt covers BEAM_SPEED rows a step and a plain shot SHOT_SPEED -- one shared
+     * bias would over-lead the slow shots or under-lead the fast ones. */
+    int half = (int)(CELL_H / 2) - (int)fine_off;
 
     for (i = 0; i < MAX_SHOTS; i++) {
         spr_sel((unsigned char)(i + 1));
         if (s_live[i]) {
-            int py = (int)s_y[i] * CELL_H + bias;
+            int py = (int)s_y[i] * CELL_H + half * (int)s_speed[i];
             if (py < 0) py = 0;         /* a shot near row 0 must not wrap negative */
             spr_x(s_x[i]);
             spr_y_px((unsigned int)py);
-            spr_glyph(G_SHOT);
+            spr_glyph(s_glyph[i]);
             spr_attr(A_SHOT);
             spr_on(1);
         } else {
@@ -969,7 +1114,14 @@ static void enemies_advance(void) {
          * for. Resolved here, across the span it just travelled, and BEFORE the
          * off-bottom test, or a daemon moving three rows could step over the
          * craft and out of the world in the same tick. */
-        if (swept_craft(e_y[i], ny, e_x[i])) {
+        /* WIDTH 1, NOT ENEMY_W -- deliberately, for now. An enemy body is two cells and
+         * enemy_at() (the shot side) correctly covers both, so your shots hit either
+         * half while flying into the RIGHT half passes clean through. That is a real gap
+         * and this file's own note says "Every test against an enemy has to cover e_x AND
+         * e_x+1". Closing it doubles the enemy hitbox and so makes the game meaningfully
+         * harder, which is a balance call to take deliberately rather than fold into a
+         * bug fix -- change the 1 to ENEMY_W to close it. */
+        if (swept_craft(e_y[i], ny, e_x[i], 1)) {
             e_type[i] = E_NONE;
             flash = 3;
             energy_spend(ENERGY_HIT);
@@ -1054,13 +1206,14 @@ static void frags_step(void) {
         if (!f_live[f]) continue;
         ny = f_y[f] + WORLD_STEP;
 
-        if (swept_craft(f_y[f], ny, f_x[f])) {
+        if (swept_craft(f_y[f], ny, f_x[f], FRAG_W)) {
             if (f_kind[f] == weapon) {
-                if (wlevel < W_MAXLEVEL) wlevel++;
+                if (wlevel < W_MAXLEVEL) wlevel++;   /* same kind: deepen... */
             } else {
-                weapon = f_kind[f];
+                weapon = f_kind[f];                  /* ...different kind: swap, level 1 */
                 wlevel = 1;
             }
+            wammo = W_AMMO;                          /* either way, a full magazine */
             f_live[f] = 0;
             continue;
         }
@@ -1078,7 +1231,7 @@ static void pellets_advance(void) {
         /* A pellet is the fastest thing coming at you -- two rows a step, the world's
          * one plus its own -- so it is the one that most needs resolving across its
          * span rather than at its landing row. */
-        if (swept_craft(p_y[i], ny, p_x[i])) {
+        if (swept_craft(p_y[i], ny, p_x[i], 1)) {   /* a pellet really is one cell */
             p_live[i] = 0;
             flash = 3;
             energy_spend(ENERGY_PELLET);
@@ -1095,39 +1248,75 @@ static void shots_advance(void) {
         if (!s_live[i]) continue;
         s_from[i] = s_y[i];             /* remembered for the span test below */
 
-        /* Homing: nudge one column toward the nearest target ahead. One column
-         * per tick, so it curves rather than snapping -- a snap would make the
-         * shot look like it teleported. */
+        /* Homing: nudge one column toward the nearest target ahead. One column per tick,
+         * so it curves rather than snapping -- a snap would look like a teleport.
+         *
+         * Distance is MANHATTAN, dy + |dx|. It used to be dy alone, which meant an enemy
+         * two thirds of the way across the channel beat something dead ahead as long as
+         * it was one row nearer, and the shot would veer off across the screen chasing
+         * it. Counting columns too makes "nearest" mean what it looks like it means.
+         *
+         * The FIREWALL PORT is a candidate. It was not, and that made homing actively
+         * worse than the plain gun at the one target you are obliged to hit: any enemy on
+         * screen would capture the shot and drag it off the port. A port is also the only
+         * target that cannot be avoided, so leaving it out of the one weapon that aims
+         * itself was backwards.
+         *
+         * Data nodes are deliberately NOT candidates -- shooting one forfeits its refill,
+         * so steering your shots into nodes is the opposite of a favour.
+         *
+         * FW_ROWS is wider than the band, so at most one barrier row can be on screen at
+         * a time: scanning up from the shot and stopping at the first hit finds it. */
         if (s_home[i]) {
-            unsigned char e, best = 255, bestd = 255, d;
+            unsigned char e, tx = 255, bestd = 255, d, dx, r, sl, px;
+
             for (e = 0; e < MAX_ENEMIES; e++) {
                 if (!e_type[e] || e_y[e] > s_y[i]) continue;
-                d = (unsigned char)(s_y[i] - e_y[e]);
-                if (d < bestd) { bestd = d; best = e; }
+                dx = (e_x[e] > s_x[i]) ? (unsigned char)(e_x[e] - s_x[i])
+                                       : (unsigned char)(s_x[i] - e_x[e]);
+                d  = (unsigned char)((s_y[i] - e_y[e]) + dx);
+                if (d < bestd) { bestd = d; tx = e_x[e]; }
             }
-            if (best != 255) {
-                if (e_x[best] < s_x[i]) s_x[i]--;
-                else if (e_x[best] > s_x[i]) s_x[i]++;
+
+            r = s_y[i];
+            for (;;) {
+                sl = slot(r);
+                if (r_fw[sl]) {
+                    px = r_fw[sl];              /* the port's left cell; either damages */
+                    dx = (px > s_x[i]) ? (unsigned char)(px - s_x[i])
+                                       : (unsigned char)(s_x[i] - px);
+                    d  = (unsigned char)((s_y[i] - r) + dx);
+                    if (d < bestd) { bestd = d; tx = px; }
+                    break;
+                }
+                if (r == 0) break;
+                r--;
+            }
+
+            if (tx != 255) {
+                if (tx < s_x[i])      s_x[i]--;
+                else if (tx > s_x[i]) s_x[i]++;
             }
         }
 
-        /* SHOT_SPEED + 1 tests, SHOT_SPEED movements: substep 0 tests the row the shot
-         * ALREADY occupies, without moving it.
+        /* speed + 1 tests, speed movements: substep 0 tests the row the shot ALREADY
+         * occupies, without moving it.
          *
          * That extra test is not belt-and-braces, it is the difference between the
          * firewall working and not. scroll_world() has already run by the time this does,
          * so terrain moved one row DOWN onto the shot. Relative to the world the shot
-         * therefore crosses SHOT_SPEED + WORLD_STEP = 3 rows per step while only testing
-         * the 2 it entered, and the row it skips is the one the terrain moved into. A
-         * barrier and a shot could swap places without ever being compared -- so whether
-         * a port took a hit depended on the parity of the closing gap, and on 1 of every
-         * 3 approach alignments every shot passed clean through. Simulated: a craft
-         * already sitting on the port column landed ZERO of its shots.
+         * therefore crosses speed + WORLD_STEP rows per step -- 3 for a plain shot, 5 for
+         * a beam bolt -- while only testing the ones it entered, and the row it skips is
+         * the one the terrain moved into. A barrier and a shot could swap places without
+         * ever being compared, so whether a port took a hit depended on the parity of the
+         * closing gap, and on 1 of every 3 approach alignments every shot passed clean
+         * through. Simulated: a craft already sitting on the port column landed ZERO of
+         * its shots. The bound is s_speed[i], so this scales with any future speed.
          *
          * Same tunnelling class as swept_craft() and shots_enemies_resolve(), but for
          * terrain that moves rather than objects that do -- and it applies to walls,
          * islands and nodes just as much as to the barrier. */
-        for (step = 0; step <= SHOT_SPEED; step++) {
+        for (step = 0; step <= s_speed[i]; step++) {
             if (step) {                                 /* substep 0 tests in place */
                 if (s_y[i] == 0) { s_live[i] = 0; break; }   /* off the top */
                 s_y[i]--;
@@ -1147,8 +1336,8 @@ static void shots_advance(void) {
 /* Advance the world one row: chip-side scroll, then paint the freshly opened
  * top row. Terrain rides the scroll; moving objects are handled by the caller. */
 static void scroll_world(void) {
-    vattr(A_BOARD);
-    last_attr = A_BOARD;
+    vattr(board_attr);
+    last_attr = board_attr;
     vfill(' ');
     vcmd(VCMD_SCROLLDOWN);
 
@@ -1226,7 +1415,10 @@ static void step_world(void) {
     for (i = 0; i < MAX_PELLETS; i++)
         if (p_live[i]) restore_cell(p_y[i], p_x[i]);
     for (i = 0; i < MAX_FRAGS; i++)
-        if (f_live[i]) restore_cell(f_y[i], f_x[i]);
+        if (f_live[i]) {
+            restore_cell(f_y[i], f_x[i]);
+            restore_cell(f_y[i], (unsigned char)(f_x[i] + 1));
+        }
 
     /* Sample the live control port ONCE per tick and act on every bit that is
      * set. Movement is therefore exactly as smooth as the tick rate, and steering
@@ -1241,8 +1433,9 @@ static void step_world(void) {
     for (i = 0; i < MAX_DEBRIS; i++) if (pop_t[i]) pop_t[i]--;
     for (i = 0; i < MAX_ENEMIES; i++) if (e_flash[i]) e_flash[i]--;
 
-    if (ks & KS_LEFT)  craft_x -= MOVE_PER_TICK;
-    if (ks & KS_RIGHT) craft_x += MOVE_PER_TICK;
+    /* Steering is NOT here -- it runs per frame in steer(), so lateral speed is not
+     * welded to the scroll rate. Firing stays on the world step: FIRE_COOLDOWN is a
+     * per-row count and moving it would retune every weapon. */
     if (ks & KS_FIRE)  fire();          /* cooldown paces it; holding is fine */
 
     shots_advance();
@@ -1318,7 +1511,12 @@ static void step_world(void) {
         if (f_live[i]) {
             vaddr(PROW(f_y[i]) * SCR_W + f_x[i]);
             last_attr = 0xFF;
-            put_cell(frag_glyph(f_kind[i]), A_FRAG);
+            {   /* Two halves of one soft-font chip -- see frag_font_init(). The letter
+                 * straddles the seam, so neither cell is a letter by itself. */
+                unsigned char g = frag_cell(f_kind[i]);
+                put_cell(g, A_FRAG);
+                put_cell((unsigned char)(g + 1), A_FRAG);
+            }
         }
     draw_shots();
     draw_craft();                       /* a sprite: cheap, and never leaves a hole */
@@ -1346,7 +1544,7 @@ static void draw_hud_static(void) {
 static unsigned int  hud_score = 0xFFFF, hud_rows = 0xFFFF, hud_energy = 0xFFFF;
 static unsigned char hud_filled = 0xFF;
 static unsigned char hud_pause = 0xFF;
-static unsigned char hud_wpn = 0xFF, hud_wlev = 0xFF;
+static unsigned char hud_wpn = 0xFF, hud_wlev = 0xFF, hud_wammo = 0xFF;
 
 static unsigned char hud_sector = 0xFF;
 
@@ -1394,6 +1592,18 @@ static void draw_hud_live(void) {
         put_str(57, HUD_ROW, wname[weapon], A_CRAFT);
         put_str(63, HUD_ROW, " Lv", A_HUD);
         put_num(66, HUD_ROW, wlevel, 1, A_CRAFT);
+    }
+    /* Rounds left, in the two cells the overclock tag used to hold. Without this the
+     * gun reverting mid-fight would read as the weapon breaking. Red near empty. */
+    if (wammo != hud_wammo) {
+        hud_wammo = wammo;
+        if (weapon == W_PLAIN) {
+            put_str(68, HUD_ROW, "   ", A_HUD);
+        } else {
+            put_str(68, HUD_ROW, "x", A_HUD);
+            put_num(69, HUD_ROW, wammo, 2,
+                    (wammo <= W_AMMO_LOW) ? A_WARN : A_CRAFT);
+        }
     }
 }
 
@@ -1566,7 +1776,7 @@ static unsigned char play_run(void) {
     spawn_timer = SPAWN_MIN;
     fine_off = 0;
     fw_due = 0;                     /* fw_next is set with sector_next, further down */
-    weapon = W_PLAIN; wlevel = 1;
+    weapon = W_PLAIN; wlevel = 1; wammo = 0;
     head = 0;
     gen_cx = 19; gen_hw = HW_MAX; gen_target = HW_MAX; gen_gaunt = 0;
     isl_left = 0; isl_x = 0; isl_w = 0;
@@ -1578,12 +1788,25 @@ static unsigned char play_run(void) {
     /* Force every HUD field to repaint on the first frame of the run. */
     hud_score = 0xFFFF; hud_rows = 0xFFFF; hud_energy = 0xFFFF;
     hud_filled = 0xFF; hud_pause = 0xFF; hud_sector = 0xFF;
-    hud_wpn = 0xFF; hud_wlev = 0xFF;
+    hud_wpn = 0xFF; hud_wlev = 0xFF; hud_wammo = 0xFF;
 
     vhidecur();
     vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
     vscrollbot(BAND_BOT);               /* AFTER the clear -- a clear resets this */
+    frag_font_init();                   /* AFTER the clear -- a clear reverts to ROM */
     board_init();                       /* fixed trace routing for the whole run */
+
+    /* BEFORE the pre-fill, not after. sector_apply() is what sets the generator's dials
+     * -- board colour, width floor, gauntlets, node scarcity -- and the pre-fill runs
+     * gen_row() two dozen times. Applied afterwards, a second run in the same LOAD built
+     * its whole opening screen with the PREVIOUS run's sector settings: I/O's grey board
+     * and I/O's terrain, scrolling away under a banner that said KERNEL. Same family as
+     * the throttle and debris-pool leaks -- statics outliving the run that set them. */
+    sector = 0;
+    sector_next = SECTOR_ROWS;
+    fw_next = FW_ROWS;
+    speed_px = SPEED_DEFAULT;           /* sector_apply() must not touch this: see there */
+    sector_apply();
 
     /* Fill the playfield so the run opens inside a conduit rather than a void. */
     for (r = 0; r < PLAY_H; r++) {
@@ -1593,15 +1816,9 @@ static unsigned char play_run(void) {
     }
     for (r = 0; r < PLAY_H; r++) draw_row(r);
 
-    craft_x = (unsigned char)((r_lx[slot(CRAFT_ROW)] + r_rx[slot(CRAFT_ROW)]) >> 1);
+    craft_set_col((unsigned char)((r_lx[slot(CRAFT_ROW)] +
+                                  r_rx[slot(CRAFT_ROW)]) >> 1));
 
-    sector = 0;
-    sector_next = SECTOR_ROWS;
-    fw_next = FW_ROWS;
-    /* Explicit now that sector_apply() no longer touches it: a second run in the same
-     * LOAD would otherwise open at whatever throttle the last one ended on. */
-    speed_px = SPEED_DEFAULT;
-    sector_apply();
     fine_off = 0;
     fine_apply();                       /* AFTER the clear -- a clear turns fine off */
 
@@ -1623,6 +1840,10 @@ static unsigned char play_run(void) {
                 /* Advance the sub-cell offset; a full cell's worth of it is one row
                  * of world, at which point the chip does the real scroll and the
                  * simulation takes its step. */
+                /* Steer FIRST and every frame, whether or not this frame also happens to
+                 * advance the world a row. That is the whole point: lateral speed is now
+                 * independent of the throttle instead of being one column per row. */
+                steer();
                 fine_off = (unsigned char)(fine_off + speed_px);
                 if (fine_off >= CELL_H) {
                     /* step_world() resets the offset itself, right next to the chip
@@ -1689,6 +1910,8 @@ void main(void) {
     /* Hand the machine back the way we found it: no sprite, full-screen scroll
      * region. A clear would do it too, but being explicit costs nothing. */
     for (i = 0; i <= MAX_SHOTS; i++) { spr_sel(i); spr_on(0); }
+    vcmd(VCMD_FONTROM);                 /* our six glyphs must not follow us into DOS */
+    vcmd(VCMD_FONTRESET);
     vscrollbot(SCR_H - 1);
     QUITDOS();
 }

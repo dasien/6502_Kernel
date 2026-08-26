@@ -39,20 +39,46 @@ second cost centre on the energy bar. Removing it also made "one step = one row"
 structural invariant instead of a variable (`WORLD_STEP`).
 
 ## Controls
-`←`/`→` steer · `Space` fire · `↑`/`↓` speed · `P` pause · `Q` quit.
+`←`/`→` steer (≈22.5 columns/sec, sub-cell) · `Space` fire · `↑`/`↓` speed · `P` pause ·
+`Q` quit.
 Steering and firing are read from the PIA key-state port (`$FE0F`), not the keystroke
 buffer, so they are simultaneous and have no auto-repeat stall. Non-blocking read,
 drain the key queue each frame, **bare ESC never acts** (held-arrow desync — see the
 repo's arrow-key note).
 
 ## Power-up chain (chosen element)
-Primary forward gun always available. Full-wave clears drop **color-coded
-fragments**:
-- **red** = spread (3 columns) · **blue** = piercing beam (full column) · **green** = homing tracer.
+Primary forward gun always available and unlimited. A kill has a `1-in-FRAG_CHANCE`
+chance of dropping a **fragment** (`FRAG_W` cells wide, the footprint of the body that
+dropped it):
+- `S` = spread (3 columns, 5 at Lv3) · `B` = beam (a `BEAM_CELLS`-tall bolt at double
+  speed, piercing) · `H` = homing tracer.
+  Homing picks the nearest target by **Manhattan** distance (`dy + |dx|`) and counts the
+  **firewall port** as a target. It used to rank by row distance alone and ignore ports
+  entirely, which made it *worse* than the plain gun at the one target you are obliged to
+  hit: any enemy on screen captured the shot and dragged it off the port, often chasing
+  something too far to the side to ever reach. Data nodes are deliberately not targets —
+  shooting one forfeits its refill.
 
-Same color **deepens** (Lv1→3: wider/faster/stronger); a different color **swaps**.
-Death drops you to Lv1 of the current color. Color *is* the identity — nearly free
-in the attribute engine.
+The **letter** carries the identity, not the colour. Colour was the original plan and it
+was wrong: red already means corruption and green already means a data node, so a third
+colour-coded meaning is one more than the eye can hold mid-dodge. All three fragments
+share `A_FRAG`.
+
+The beam was a plain shot that merely didn't die on impact — mechanically distinct,
+visually identical, so it read as a bug. It is now a tall bolt built from a stack of
+ordinary pool shots in one column, needing no new object kind: the pool's
+all-or-nothing volley rule already refuses a partial bolt exactly as it refuses a
+partial spread.
+
+**A special weapon is a magazine of `W_AMMO` rounds, not a permanent upgrade.** One
+trigger pull spends one round whatever the volley's shape, so a five-shot spread and a
+four-cell bolt cost the same as a single plain shot — counting projectiles instead
+would tax the weapon whose whole point is being wide. Empty reverts to the plain gun.
+Without a limit, collecting homing once meant never firing anything else again, which
+collapsed the entire chain into one decision made in the first thirty seconds.
+
+Same kind **refills and deepens** (Lv1→3: wider/faster); a different kind **swaps** to
+it at Lv1 with a full magazine. A crash drops you one level, not to Lv1.
 
 ## Firewalls (River Raid's bridge)
 A barrier across the full channel with a single **port** in it, every `FW_ROWS` (80) rows
@@ -67,6 +93,15 @@ A toll, not a gate.
 ## Sectors — density, never tempo
 `KERNEL → HEAP → STACK → I/O → …`, every `SECTOR_ROWS` rows. Escalation is **entirely
 density-shaped**, matching what the original actually does:
+
+The **board outside the conduit is the sector's colour** — green, amber, magenta, grey.
+That is the zone cue: the banner names the sector but scrolls past in three seconds,
+after which every zone looked identical. The colour is stamped onto each row as it is
+generated and rides the ring with it, so a new zone *sweeps down* the screen over the
+band's depth rather than snapping, and erasing an object on an older row repaints it in
+that row's own colour rather than speckling the new one across the transition. The
+channel's recessed board deliberately does not change — the lane you fly in should read
+the same everywhere.
 
 | dial | sector 1 → 4 |
 |---|---|
@@ -88,10 +123,13 @@ Nothing but the arrow keys may write `speed_px`.
 - `♦` sentinel — fixed to the wall, fires an aimed pellet on a timer.
 - `•` enemy pellet.
 
-## HUD (pinned rows 22–24; playfield rows 0–21)
-`ENERGY` bar · `SCORE` · `WEAPON`+level · `SECTOR` · `LIVES`. Full-width 80-col
-conduit; cyan `▓` walls meander (bounded ±1/row random walk) and narrow into
-gauntlets.
+## HUD (ONE pinned row, 24; playfield rows 0–23)
+`PWR` bar + number · `SCORE` · `DIST` · `WPN` + level + rounds left · `PAUSE` · `S`ector.
+No lives — there is only the energy pool, so there is nothing to count. It was three
+rows once, which pushed the craft five physical rows off the bottom and made it look like
+it was flying mid-screen; the key legend those rows carried lives on the title screen now.
+Full-width 80-col conduit; cyan `█` walls meander (bounded ±1/row random walk) and narrow
+into gauntlets.
 
 ## Palette (CP437 decimal / MFC attr; `0x40`=bright)
 | Element | Glyph | Code | Attr |
@@ -108,6 +146,7 @@ gauntlets.
 | Board traces | `─│┼○` | 196/179/197/9 | `0x02` green, `0x40` grey recessed |
 | Island | cyan shores + board interior | — | `0x46` + `0x02` green |
 | Debris | `☼→∙→·` | 15/249/250 | white→red→grey, by remaining ticks |
+| Weapon fragment | framed chip, letter across the seam | 16–21 (**soft font**) | `0x67` white on blue |
 
 ## Engine (clone VAULT)
 - RAM world model + **shadow-buffer diff renderer** (`vault/draw.c` pattern; attr-latch cache).
@@ -115,7 +154,11 @@ gauntlets.
 - **Fixed integer tick loop** off a 60 Hz jiffy counter (see prerequisite), no floats. Difficulty is *density*, not tick divisors — see Sectors.
 - **Structure-of-arrays** object pools, `unsigned char` coords, inline `rnd16()` xorshift (RTC seed), direct 3-voice SID writes for SFX, honor `SOUND_ENABLE`.
 - Collision: `ent[]` occupancy grid (O(1)); **substep** fast bullets cell-by-cell to avoid tunneling.
-- Smoothness: half-blocks `▀▄▌▐` for sub-cell edges; **decouple scroll cadence from player-move cadence**.
+- Smoothness: **scroll cadence and player-move cadence are decoupled** — done. The world
+  advances on the fine-scroll accumulator (a row when it wraps a cell); the craft steers
+  every frame in pixels via `spr_x_px`, so lateral speed is independent of the throttle
+  instead of being one column per row. Collision still resolves on the cell grid, with
+  the craft's column derived from its sprite *centre*.
 - Budget: ~30–40 moving objects, ~6 KB working set — comfortable.
 
 ## Prerequisite (kernel) — build step 0

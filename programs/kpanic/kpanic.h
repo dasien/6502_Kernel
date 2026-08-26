@@ -15,20 +15,26 @@ extern void          vfill(unsigned char ch);
 extern void          vcmd(unsigned char cmd);
 extern void          vscrollbot(unsigned char row);   /* set AFTER a clear, not before */
 extern void          vhidecur(void);
+extern void          vfseek(unsigned int index);      /* soft-font byte index */
+extern unsigned char vfread(void);                    /* ...read, auto-increments */
+extern void          vfwrite(unsigned char b);        /* ...write, auto-increments */
 extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy */
 extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for change */
 extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick counter */
 extern unsigned char keystate(void);                  /* live held-key bitmask ($FE0F) */
 /* Sprites. Pixel-positioned and, crucially, NOT riding the scroll region -- the only
  * place a screen-fixed object can live once the world scrolls in sub-cell steps.
- * Select a sprite, then set its fields; positions are given in CELLS and the glue
- * converts to the chip's nominal pixels.
+ * Select a sprite, then set its fields. spr_x/spr_y take CELLS and the glue converts;
+ * spr_x_px/spr_y_px take the chip's nominal pixels directly, for an object that sits
+ * BETWEEN cells. The craft takes pixel X (it steers sub-column) and cell Y (its row never
+ * moves); the shots are the mirror image -- cell X, pixel Y as they slide between rows.
  *
  * Sprite 0 is the craft; 1..MAX_SHOTS are the shots. Both were juddering in the cell
  * plane for the same reason, and both are cured the same way. */
 extern void          spr_sel(unsigned char index);
 extern void          spr_x(unsigned char cell_col);
 extern void          spr_y(unsigned char cell_row);
+extern void          spr_x_px(unsigned int pixel_col);
 extern void          spr_y_px(unsigned int pixel_row);
 extern void          spr_glyph(unsigned char glyph);
 extern void          spr_attr(unsigned char attr);
@@ -51,6 +57,29 @@ extern void          spr_on(unsigned char enable);
 #define VCMD_SCROLLDOWN 0x03    /* content moves down; row 0 opens (filled) */
 #define VCMD_FILLROW    0x04
 #define VCMD_FINEY      0x0C    /* param = pixels to slide the scroll region down */
+#define VCMD_FONTROM    0x08    /* render from the CP437 ROM (the default) */
+#define VCMD_FONTRAM    0x09    /* render from font RAM */
+#define VCMD_FONTRESET  0x0A    /* reload CP437 into every font set */
+#define VCMD_FONTSET    0x0B    /* param = which set is live */
+
+/* ---- the soft font, used for exactly one thing ----
+ * A fragment is drawn as a two-cell CHIP: a framed component with the weapon's letter
+ * centred across the cell boundary. It was a bare letter, then a letter on a dim navy
+ * tile, and neither read as an OBJECT -- they read as text that happened to be in the
+ * playfield, which is the wrong signal for the one thing you chase.
+ *
+ * The six glyphs are BUILT AT RUNTIME rather than shipped as artwork: font RAM is
+ * readable and seeded with CP437, so the program lifts the real 'S'/'B'/'H' shapes out
+ * of it, shifts each four pixels right so the letter straddles both cells, and ORs a
+ * frame around it. No hand-drawn letters to keep in sync with the font, and the letter
+ * is exactly the one the rest of the game uses.
+ *
+ * Codes 16-21 are chosen because nothing else in this game draws them, and font RAM is
+ * CP437-seeded so all 250 other glyphs are untouched. The font is put back to ROM on the
+ * way out -- see main() -- so DOS never inherits them. */
+#define FONT_SET        0       /* set 0: CP437 everywhere except our six codes */
+#define GL_FRAG_FIRST   16      /* 16/17 = S, 18/19 = B, 20/21 = H (left/right) */
+#define FRAG_ROWS       16      /* scanlines per glyph */
 
 /* ---- fine scroll ----
  * The chip can slide the scroll region down by a pixel count, so the world moves in
@@ -62,9 +91,10 @@ extern void          spr_on(unsigned char enable);
  * That fits this game exactly; nothing had to be restructured for it.
  *
  * Known cost: the offset moves EVERYTHING in the region, so the terrain, the nodes,
- * the enemies and the pellets all ride it correctly -- but the craft and your shots are
- * screen-referenced and will sawtooth by one cell per row. Fixing those two needs
- * sprites. Press F to hide just those two and confirm the conduit itself is smooth. */
+ * the enemies and the pellets all ride it correctly -- but anything screen-referenced
+ * sawtooths by one cell per row. That is why the craft and the shots are sprites: a
+ * sprite does not ride the region, and it is pixel-positioned so it can sit between
+ * cells in both axes. */
 #define CELL_H          16      /* pixel height of an ordinary row */
 
 /* World speed is PIXELS PER FRAME, accumulated: each frame adds it to a sub-cell
@@ -157,13 +187,26 @@ extern void          spr_on(unsigned char enable);
                                  * A whole row's worth, so a slow frame can still
                                  * complete the row it is partway through. */
 
-/* Steering reads the PIA's live key-state port once per tick, so movement is
- * exactly as smooth as the tick rate and firing is independent of it. This
- * replaces a pile of heuristics that tried to infer "key still held" from the
- * keystroke stream -- impossible, because that stream has no key-up and the host
- * only auto-repeats the most recent key, which is why you could never move and
- * fire at the same time. */
-#define MOVE_PER_TICK 1         /* columns per tick while a direction is held */
+/* Steering reads the PIA's live key-state port, which replaced a pile of heuristics that
+ * tried to infer "key still held" from the keystroke stream -- impossible, because that
+ * stream has no key-up and the host only auto-repeats the most recent key, which is why
+ * you could never move and fire at the same time.
+ *
+ * It is sampled and applied once per FRAME, and the craft's position is carried in PIXELS
+ * rather than columns. Both of those are deliberate:
+ *
+ *  - Per frame, not per world step. Steering used to live in step_world(), which the
+ *    fine-scroll accumulator invokes once per ROW -- so lateral speed was welded to
+ *    scroll speed at 7.5 columns/sec, and the craft was at its least manoeuvrable in the
+ *    slowest sector, the one meant to be teaching. It is now independent of the throttle.
+ *  - In pixels, because the craft is a hardware sprite and a sprite is pixel-positioned.
+ *    Moving it a whole cell at a time threw away resolution the chip already had. Same
+ *    trick draw_shots() uses for Y: draw at pixel precision, resolve collision on the
+ *    cell grid.
+ *
+ * Columns per second = 60 * STEER_PX / CELL_W. */
+#define CELL_W          8       /* pixel width of a cell */
+#define STEER_PX        3       /* pixels per frame held -> 22.5 columns/sec */
 
 /* ---- the shared ENERGY pool (the signature mechanic; see DESIGN.md) ----
  * One number is simultaneously your fuel, your clock and your distance budget: it
@@ -197,9 +240,24 @@ extern void          spr_on(unsigned char enable);
  * a third colour-coded meaning would be one too many for the eye to hold. */
 #define W_PLAIN          0      /* one shot up the column */
 #define W_SPREAD         1      /* S: fires into adjacent columns too */
-#define W_BEAM           2      /* B: shots punch through what they hit */
+#define W_BEAM           2      /* B: a tall fast bolt that punches through */
 #define W_HOMING         3      /* H: shots drift toward the nearest target */
 #define W_MAXLEVEL       3
+
+/* A special weapon is a MAGAZINE, not a permanent upgrade. Picking one up used to be
+ * forever: collect homing once and you never fired anything else for the rest of the
+ * run, which flattened the whole pickup chain into a single decision made in the first
+ * thirty seconds. A magazine makes a fragment a resource to spend and re-earn.
+ *
+ * One trigger pull spends ONE round whatever the volley's shape -- a five-shot spread
+ * and a four-cell beam bolt each cost the same as a single plain shot. Counting
+ * projectiles instead would make spread burn five times faster than beam for the same
+ * press, which is a tax on the weapon that is supposed to be wide.
+ *
+ * Collecting the same kind again refills AND deepens; a different kind swaps you to it
+ * at level 1 with a full magazine. Empty reverts to W_PLAIN, which is unlimited. */
+#define W_AMMO          10      /* rounds a fragment grants */
+#define W_AMMO_LOW       3      /* at or below this the HUD count turns red */
 
 /* One sprite per shot plus one for the craft, and the chip has 17 -- so 16. In play
  * that is generous: the plain gun keeps about 3 in the air, spread level 2 about 9.
@@ -213,6 +271,25 @@ extern void          spr_on(unsigned char enable);
 #define MAX_SHOTS        16
 #define SHOT_SPEED       2      /* screen rows per tick, substepped so it can't tunnel */
 #define FIRE_COOLDOWN    3      /* ticks between shots */
+
+/* ---- the beam ----
+ * The beam used to be a plain shot that simply didn't die on impact -- mechanically
+ * distinct, visually identical, so it read as a bug rather than a weapon. It is now a
+ * BOLT: a stack of BEAM_CELLS cells in one column, travelling together and fast.
+ *
+ * The stack is ordinary pool shots, not a new object kind. Four cells of one column
+ * moving at one speed ARE a tall bolt, and the pool already enforces all-or-nothing
+ * volleys, so nothing new was needed -- a partial bolt is refused the same way a partial
+ * spread is. Each cell still pierces, which costs nothing in practice: whatever the
+ * leading cell kills is gone before the next arrives, so the tail only matters if
+ * something moves into the column behind it. Against a wall the cells arrive one after
+ * another and the bolt visibly crumples into it instead of vanishing.
+ *
+ * BEAM_CELLS * bolts-in-flight must stay inside MAX_SHOTS. At BEAM_SPEED a bolt clears
+ * the band in ~6 steps against FIRE_COOLDOWN's 3, so two are typically up and the pool's
+ * four-bolt ceiling is never the thing you notice. */
+#define BEAM_CELLS       4      /* rows tall */
+#define BEAM_SPEED       4      /* rows per tick -- twice a plain shot */
 
 /* ---- corruption (enemies) ----
  * Unlike nodes, these do not ride the terrain ring: they move independently of
@@ -331,12 +408,39 @@ extern void          spr_on(unsigned char enable);
 
 /* ---- fragments (weapon pickups) ---- */
 #define MAX_FRAGS       3
-#define FRAG_CHANCE     6       /* 1-in-N chance a kill drops one */
+/* 1-in-N chance a kill drops one. Briefly 12, on the theory that one-shot kills had
+ * doubled the kill rate so the drop rate should halve. That was reasoning about the wrong
+ * quantity: what the player experiences is the drop CADENCE, and at 12 it works out to
+ * one every ~29 seconds in sector 1 against runs that often last 60-90. Power-ups stopped
+ * appearing at all. 6 puts it at ~14 s in sector 1, tightening to ~6 s by sector 4 as the
+ * spawn interval closes -- often enough to be part of the game. */
+#define FRAG_CHANCE     6
+/* Two cells wide, and for the reason already written down for NODE_W: "one cell was too
+ * fine a target to line up on while dodging". A fragment is the one pickup you actively
+ * chase, so it is the worst thing in the game to make hard to line up on. Two cells is
+ * also exactly an enemy's footprint, so a fragment covers the body that dropped it. */
+#define FRAG_W          2
 
 /* ---- attributes: [R][BR][bg:3][fg:3]; 0x40 = bright ---- */
 #define A_WALL      0x46        /* bright cyan -- conduit wall (the lethal edge) */
 #define A_BEVEL     0x06        /* cyan -- the wall's outer bevel cell */
-#define A_BOARD     0x02        /* green -- circuit-board traces outside the conduit */
+/* The board outside the conduit is the SECTOR's colour -- the peripheral cue that you
+ * have crossed into a new zone. The banner names the sector, but a banner scrolls past
+ * in three seconds and then the screen looks identical to the one before it.
+ *
+ * All four are non-bright, because the board is background: thin traces that must not
+ * compete with anything you have to react to. That rules out most of the palette --
+ * 0x01 red is the firewall barrier, 0x06 cyan is the wall's bevel and would sit directly
+ * against the board and destroy the shaped-lip reading, and 0x04 blue renders near-black
+ * here (the same trap A_FRAG fell into). Green, amber, magenta and grey are what is left,
+ * and grey last suits I/O.
+ *
+ * The channel's recessed board (A_RECESS) deliberately does NOT change: the lane you fly
+ * in should read the same everywhere, or every sector becomes a re-learn. */
+#define A_BOARD     0x02        /* green  -- KERNEL, and the default */
+#define A_BOARD2    0x03        /* amber  -- HEAP */
+#define A_BOARD3    0x05        /* magenta-- STACK */
+#define A_BOARD4    0x07        /* grey   -- I/O */
 #define A_RECESS    0x40        /* dark gray -- the board seen in shadow, inside the
                                  * channel: same routing as outside, just recessed */
 #define A_CRAFT     0x43        /* bright yellow -- your trace process */
@@ -381,6 +485,10 @@ extern void          spr_on(unsigned char enable);
 #define G_PAD       9           /* board: solder pad */
 #define G_NODE      8           /* data node -- fly over to refill, or shoot for score */
 #define G_SHOT      24          /* your projectile (up arrow: unambiguous direction) */
+#define G_BEAM      186         /* double vertical -- one cell of a beam bolt. A bar,
+                                 * not an arrow: stacked bars join into a continuous
+                                 * column, where stacked arrows would read as four
+                                 * separate shots flying in formation. */
 #define G_DAEMON    31          /* solid down triangle -- coming at you */
 #define G_WORM      215         /* weaving corruption */
 #define G_SENTINEL  4           /* diamond -- emplaced, shoots */
