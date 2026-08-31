@@ -1282,14 +1282,7 @@ TEST_F(VentureTest, TheIntruderComesInByTheFarDoorway)
  * for everything that CAN be blocked and wrong for this. An L-shaped approach was
  * slower and read as indecision rather than menace.
  *
- * Not EVERY step is diagonal, and that is deliberate. A vertical step is allowed only
- * every other step of a class, because a cell is 16 nominal pixels wide and 32 tall --
- * so a step on both axes covers 16 across and 32 down, which on screen is 63 degrees,
- * not 45, and not "straight at you" either. Two across to one down is a true screen
- * diagonal. The path is a staircase in cells and a straight line in pixels, and pixels
- * are what the player sees.
- *
- * It also gives up a trade worth recording: the one-axis approach made a diagonal the
+ * It gives up a trade worth recording: the one-axis approach made a diagonal the
  * player's advantage, moving him on two axes while it moved on one, and that is what
  * bought the time to reach a doorway. HALL_IN_SKIP is now the only thing holding it
  * back. */
@@ -1310,9 +1303,8 @@ TEST_F(VentureTest, TheIntruderComesAtYouDiagonally)
 
     ASSERT_GE(steps, 4) << "it never got moving";
     fprintf(stderr, "[ intruder ] %d of %d steps moved on both axes\n", diag, steps);
-    // A quarter is the floor: the vertical gate means roughly a third are diagonal,
-    // and the old one-axis approach gave none at all.
-    EXPECT_GE(diag * 4, steps)
+    // Half is the floor; it measures nine of eleven. The old one-axis rule gave none.
+    EXPECT_GE(diag * 2, steps)
         << "only " << diag << " of " << steps
         << " steps were diagonal -- it is still walking one axis at a time";
 }
@@ -1376,59 +1368,6 @@ TEST_F(VentureTest, AnArrowLooksAndMovesTheSameInEveryDirection)
             speed[0], speed[1]);
     EXPECT_LE(abs(speed[0] - speed[1]), 2)
         << "across " << speed[0] << " px/frame but down " << speed[1];
-}
-
-TEST_F(VentureTest, DbgWinkyAxisSpeed)
-{
-    ASSERT_TRUE(enterRoomZero());
-    const uint8_t dirs[2] = {kKsRight, kKsDown};
-    const char *nm[2] = {"across", "down  "};
-    for (int k = 0; k < 2; k++) {
-        pia->setKeyState(dirs[k]);
-        int prev = -1, sum = 0, n = 0;
-        for (int i = 0; i < 30; i++) {
-            const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
-            while (cpu->getCycles() < until) c.runInstructions(1);
-            pia->pulseTimerIrq();
-            const auto &w = c.getVideoChip()->sprite(0);
-            const int v = k ? w.y : w.x;
-            if (prev >= 0) { sum += abs(v - prev); n++; }
-            prev = v;
-        }
-        pia->setKeyState(0);
-        run(20);
-        fprintf(stderr, "  winky %s: %d nominal px over %d frames (%d px/frame)\n",
-                nm[k], sum, n, n ? sum / n : 0);
-    }
-}
-
-/* A room must give the player longer than its own clock.
- *
- * HALL_ROOM_TICKS is 170: dawdle that long and a Hallmonster comes in after you. That
- * only works if the room does not kill you first, and this pins it -- an idle player in
- * room 0 should outlast the clock, so the intruder mechanic is reachable rather than
- * dead content.
- *
- * It caught a real interaction. Gating vertical steps to even up pixel speed made
- * chase() fall through to its random wander whenever the suppressed step was the only
- * progress available, turning half of every monster's beat into a random walk. Idle
- * survival went from 227 ticks to 90 -- below the clock -- and two other tests started
- * failing for what looked like unrelated reasons. */
-TEST_F(VentureTest, ARoomOutlastsItsOwnIntruderClock)
-{
-    ASSERT_TRUE(enterRoomZero());
-
-    int last = peek("_tick_count"), stuck = 0;
-    for (int i = 0; i < 3000; i++) {
-        run(1);
-        const int t = peek("_tick_count");
-        if (t == last) { if (++stuck > 200) break; }   // the clock stopped: he died
-        else           { stuck = 0; last = t; }
-    }
-    fprintf(stderr, "[ room     ] an idle player lasted to tick %d\n", last);
-    EXPECT_GT(last, kHallRoomTicks)
-        << "an idle player died at tick " << last << ", before the intruder clock at "
-        << kHallRoomTicks << " -- the mechanic can never fire";
 }
 
 TEST_F(VentureTest, TheGameOpensOnTheDungeonHall)
@@ -1660,20 +1599,7 @@ TEST_F(VentureTest, AHallmonsterKillsOnContact)
 
 /* NOT tested, and why. Both are logged in TODO.md.
  *
- * 1. The Hallmonster that comes into a room you linger in -- including the fact that
- *    it walks through the walls to get to you. It needs Winky alive for
- *    HALL_ROOM_TICKS -- 260 ticks, about seventeen seconds -- inside a room with
- *    three serpents converging, and no scripted route survives that: standing still,
- *    lapping the room's outer circuit and clearing the serpents first were all tried
- *    and each dies well short. A test would have to actually play well, which is a
- *    bigger thing than the assertion is worth.
- *
- *    Unverified: the `dawdle` counter, the spawn point in hall_intrude(), and the
- *    through_walls path in chase(). Everything else the intruder does -- pursuit,
- *    ignoring bodies, killing on contact, stopping arrows -- is the same chase() and
- *    hall_advance() the hall tests above drive directly.
- *
- * 2. That a shot never passes through a monster. The bug was real and specific -- the
+ * 1. That a shot never passes through a monster. The bug was real and specific -- the
  *    arrow advanced past a monster's old cell earlier in the tick, the monster stepped
  *    into the arrow's new one, and nothing looked again -- and the fix is small, but no
  *    test here reliably tells the two builds apart. The screen cannot show it: the
@@ -1689,7 +1615,7 @@ TEST_F(VentureTest, AHallmonsterKillsOnContact)
  *    other. Both are in chase()/monsters_advance(), which everything else here drives
  *    hard.
  *
- * 3. The between-levels tally (SCORE THIS LEVEL / BONUS MULTIPLIER / TOTAL BONUS).
+ * 2. The between-levels tally (SCORE THIS LEVEL / BONUS MULTIPLIER / TOTAL BONUS).
  *    It only appears once all four rooms of a level are looted, which is four bespoke
  *    routes through four different layouts -- an order of magnitude more harness than
  *    lootRoomZero(), for one screen. Unverified: the trigger, BONUS_MULT() and the

@@ -298,26 +298,6 @@ static unsigned char treas_got;              /* bit per theme, for the roster */
 static unsigned int  dawdle;                 /* ticks spent in the current room */
 
 static unsigned int  rng;
-/* May the step being taken move vertically?
- *
- * A playfield cell is 16 nominal pixels wide and 32 tall, so one cell up covers twice
- * the screen distance of one cell across. Everything therefore moved up and down at
- * twice the speed it moved sideways, and a diagonal came out steep rather than at 45
- * degrees. Allowing a vertical step only every OTHER step of a class halves the
- * vertical cell rate, which evens up the pixel rate -- the one the player sees. Cells
- * are the game's unit; pixels are the player's.
- *
- * Per class, not global: the classes step on different cadences, and a single parity
- * would come out always-even for one of them and always-odd for another. */
-static unsigned char vmove = 1;
-static unsigned char vturn[CL_COUNT];
-
-static unsigned char vstep_due(unsigned char cls)
-{
-    vturn[cls] ^= 1;
-    return vturn[cls];
-}
-
 unsigned char tick_count;
 static unsigned char snd_left;           /* ticks a sound cue still has to run */
 
@@ -1261,7 +1241,7 @@ static void winky_move(unsigned char ks)
     n = (unsigned char)(wx + dx);
     if (dx && n < gw && !blocked(n, wy)) wx = n;
     n = (unsigned char)(wy + dy);
-    if (dy && vmove && n < gh && !blocked(wx, n)) wy = n;
+    if (dy && n < gh && !blocked(wx, n)) wy = n;
 }
 
 /* ---- arrow ------------------------------------------------------------- */
@@ -1388,26 +1368,13 @@ static void chase(unsigned char *px, unsigned char *py,
     const unsigned char cx = *px, cy = *py;
     unsigned char nx, ny, adx, ady, pass;
     const signed char dx = (tgt_x > cx) ? 1 : (tgt_x < cx) ? -1 : 0;
-    const signed char rawdy = (tgt_y > cy) ? 1 : (tgt_y < cy) ? -1 : 0;
-    const signed char dy = vmove ? rawdy : 0;
+    const signed char dy = (tgt_y > cy) ? 1 : (tgt_y < cy) ? -1 : 0;
 
     adx = (unsigned char)(tgt_x > cx ? tgt_x - cx : cx - tgt_x);
     ady = (unsigned char)(tgt_y > cy ? tgt_y - cy : cy - tgt_y);
 
 #define OPEN(X, Y) ((X) < gw && (Y) < gh && \
                     !chase_blocked((X), (Y), through_walls, avoid_bodies))
-
-    /* Wanted to move vertically, and this is the off step, and there is nothing to do
-     * horizontally: WAIT. Falling through to the wander below instead would turn half
-     * of every monster's beat into a random walk, which is not a smaller version of
-     * guarding a post -- it is a different, and much more dangerous, behaviour.
-     * Measured: an idle Winky in room 0 survived to tick 90 with monsters wandering on
-     * the off step, against 227 with them holding position. */
-    if (!dx && rawdy && !dy) {
-        back_x = cx;
-        back_y = cy;
-        return;
-    }
 
     /* A wall-phasing intruder comes straight at you, both axes at once.
      *
@@ -1507,8 +1474,6 @@ static const signed char wp_dy[4] = {  0, 1, 0, -1 };
 static void monsters_advance(void)
 {
     unsigned char i, ox, oy;
-
-    vmove = vstep_due(CL_MON);
     for (i = 0; i < MAX_MON; i++) {
         if (!m_live[i]) continue;
         chase_self = i;
@@ -1582,8 +1547,6 @@ static void hall_advance(void)
 {
     const unsigned char phases = (mode == MODE_ROOM);
     unsigned char i;
-
-    vmove = vstep_due(phases ? CL_INTRUDE : CL_HALL);
     chase_self = 0xFF;
     for (i = 0; i < MAX_HALL; i++) {
         if (!h_live[i]) continue;
@@ -1756,7 +1719,6 @@ void step(unsigned char ks)
     pf_x0 = f_x; pf_y0 = f_y;
     pa_x = a_x; pa_y = a_y;
 
-    vmove = vstep_due(CL_FAST);
     winky_move(ks);
     spr_launch(SPR_WINKY, CL_FAST, pw_x, pw_y, wx, wy);
 
