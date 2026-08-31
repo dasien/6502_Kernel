@@ -186,6 +186,89 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     a test that passes on the broken build is worse than none. All three are written up
     in `test_venture.cpp` with what they leave unverified, including the wall-phasing
     path, which rides on the same untested trigger as the room intruder.
+- [ ] **KERNEL PANIC** (`programs/kpanic/`, `KPANIC.PRG` 13,679 bytes) — original
+  real-time vertical scroller; design in `programs/kpanic/DESIGN.md`. Build steps 1-6
+  done and play-tested good, plus a full weapon/feel rework. Steps 7-8 open (below).
+  It is the program the VIC's **soft font, fine vertical scroll and sprites** were added
+  for — see `docs/video_design.md`; every one of those exists because a character-cell
+  chip scrolling in whole 16 px quanta reads as a strobe rather than motion.
+  - **Read the original's source, not summaries of it.** `riverraid.asm` for the 2600
+    settled three questions that guesswork and screenshots had got wrong:
+    - **Speed is not a difficulty dial.** `speedY` is written only by the joystick
+      (`+2` up, `-2` down, clamped) and `level` never touches it. We had made scroll
+      rate our primary escalation AND given the player up/down for it, so two controls
+      wrote one variable and the sector stomped whatever had been chosen. All four of
+      the original's real dials are density-shaped: enemy share ~48%->88% while fuel
+      falls ~24%->6%, planes withheld to level 3, `valleyWidth` unlocking narrow river
+      only from level 5, geometry alternating on level parity.
+    - **Fuel is the DEFAULT object, not a lottery win.** `LDY #ID_FUEL` loads first and
+      the code branches *away* to enemy or house: ~24% of object slots at level 1. We
+      were rolling *for* a node at 1-in-90 per row, ~1.1%.
+    - **Bridge cadence is measurable**: `SECTION_BLOCKS(16) * BLOCK_SIZE(32)` = 512
+      scanlines against a 160-line display, so ~3.2 screens. Ours is `FW_ROWS` = 80
+      because 3.2 * `PLAY_H` = 77. Not a guess.
+    - Also: their refuelling is *gradual*, `fuelHi += 1` per frame of contact, which is
+      what the throttle is FOR — you slow down over a depot. Ours grants a flat refill.
+      A real difference, deliberately not copied.
+  - **The boss was cut** for that bridge: a barrier with one port, built as *terrain*
+    (one flagged row in the same ring the walls live in) so it rides the hardware scroll
+    for free and `blocked()` already stops the craft on it. A boss has to stop the world
+    to avoid sawtoothing against the fine-scroll offset, which turns a scrolling game
+    into a set-piece fight it is not shaped for. **Overclock was cut** too — it bought
+    speed you do not want in a game about precision, and its absence made "one step is
+    one row" a structural invariant (`WORLD_STEP`) instead of a threaded variable.
+  - **Two bug families accounted for nearly every real defect.** Worth checking first
+    in any similar program:
+    1. *Span collision.* Anything moving more than one row per step must resolve across
+       the span it swept, not at its landing row — and check WIDTH too, not just rows.
+       Instances: pellets/daemons over the craft (`swept_craft`), shots vs enemies
+       (`shots_enemies_resolve`), shots vs *terrain* (`scroll_world()` runs first, so
+       terrain moves onto the shot and it crosses `speed + WORLD_STEP` rows while
+       testing fewer — this is why a firewall port ignored damage on 1 in 3 approach
+       alignments, and a craft sitting *on* the port landed zero shots), and the craft
+       vs a two-cell enemy body, which tested one column for months while the shot side
+       correctly tested both.
+    2. *Statics outliving the run that set them.* `speed_px`, `pop_t`, `fw_next`, and
+       `sector_apply()` running *after* the playfield pre-fill — so a second run built
+       its whole opening screen with the previous run's sector. **None are reachable
+       without playing twice without reloading.** Always test a second run.
+  - **A comment asserting an invariant is not an invariant.** `terrain_cell()` and
+    `draw_row()` were duplicate copies of one cell ladder, both carrying notes saying
+    they must agree, and had diverged so far that `draw_row()` had no firewall branch at
+    all: barriers were solid, damaging and completely invisible. One definition now
+    (`row_cell()`), with the board phase hoisted into file scope so the duplicate's real
+    justification — 80 16-bit modulos a row — survives. Removing the duplication made
+    the binary 572 bytes *smaller*.
+  - **The `.PRG` programs have no test harness** (the 30 `ctest` targets cover the
+    kernel ROM and host devices). So decisions here were made by replicating the logic
+    in throwaway host C and measuring — see the note in `~/.claude` memory. That caught
+    things reading could not: a generator guard leaving a 2-wide lane where it promised
+    3 (608 rows per million), an economy where a competent player bled to death by
+    arithmetic, and a composed soft-font glyph sitting hard against its frame because
+    CP437 capitals occupy scanlines 2..11 of 16.
+  - **Rejected alternatives, with the numbers, so they are not re-proposed:**
+    - *Node minimum spacing* — kills the luck-death tail, but even a floor as loose as
+      4N doubled a good player's distance and pushed perfect play toward never dying,
+      which breaks "how far can you go" as a score. The scarcity cut subsumed it.
+    - *A fixed cooldown for spread Lv3* — 150 volleys against the broken version's 164.
+      It fires *less* while looking like a fix, because refuse-and-retry is already a
+      more generous self-pacing limiter than any constant.
+    - *Enlarging the chip's sprite block* — works, but pool 20 is the threshold (19
+      refuses exactly as much as 16) and it spends 24 of the 53 remaining I/O-page
+      bytes on one weapon's peak. Spread became short-ranged instead, which fits by
+      construction and buys a weapon role rather than a compromise.
+    - *Per-sector palette re-skin* — proposed from a screenshot that turned out to be
+      the one frame of a bridge explosion. The original runs one palette throughout.
+      What shipped is a per-sector *board* colour, which is our own idea, not theirs.
+  - **Tuning lesson:** `FRAG_CHANCE` was halved to 12 reasoning that one-shot kills had
+    doubled the kill rate. Wrong quantity — what a player feels is the drop *cadence*,
+    which at 12 was ~29 s against runs of 60-90 s, so power-ups stopped appearing at
+    all. Reason about the cadence the player experiences, not the rate the mechanic
+    fires at.
+  - **Remaining (steps 7-8):** juice — explosions beyond the debris scatter, cell-offset
+    screen shake, SID cues; a 2-word/BCD score (`unsigned int` caps at 65,535); a proper
+    outcome screen; a final balance pass; and a companion `KPANIC.TXT` manual shipped on
+    the disk beside the game the way VAULT ships `STORY.TXT` — not a `docs/*.md`.
 - [ ] **OPCODE** — set aside, recorded so it is not lost. A puzzle game where each
   level is a spec plus a byte/cycle budget and you write real 65C02 to satisfy it,
   scored on size and speed. Extremely on-brand for "My First Computer", and four
