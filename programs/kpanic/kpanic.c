@@ -446,6 +446,8 @@ static unsigned char s_home[MAX_SHOTS];     /* 1 = drifts toward a target */
  * so neither can be re-derived at draw time. */
 static unsigned char s_speed[MAX_SHOTS];
 static unsigned char s_glyph[MAX_SHOTS];
+/* The row this shot burns out at -- 0 for everything except spread. See SPREAD_FLOOR. */
+static unsigned char s_floor[MAX_SHOTS];
 
 /* The gun: a kind and a level. Collecting the same fragment again deepens it;
  * a different one swaps you to that kind at level 1 -- so a pickup is a real
@@ -634,6 +636,7 @@ static void shot_spawn(unsigned char x, unsigned char y) {
             s_home[i]   = (weapon == W_HOMING) ? 1 : 0;
             if (weapon == W_BEAM) { s_speed[i] = BEAM_SPEED; s_glyph[i] = G_BEAM; }
             else                  { s_speed[i] = SHOT_SPEED; s_glyph[i] = G_SHOT; }
+            s_floor[i] = (weapon == W_SPREAD) ? SPREAD_FLOOR : 0;
             return;
         }
     }
@@ -984,7 +987,10 @@ static void draw_shots(void) {
             spr_x(s_x[i]);
             spr_y_px((unsigned int)py);
             spr_glyph(s_glyph[i]);
-            spr_attr(A_SHOT);
+            /* Dim for the last two rows of a short-ranged shot, so burning out reads as
+             * running out of reach rather than as the shot blinking out of existence. */
+            spr_attr((s_floor[i] && s_y[i] <= (unsigned char)(s_floor[i] + 2))
+                     ? A_SPENT : A_SHOT);
             spr_on(1);
         } else {
             spr_on(0);
@@ -1324,7 +1330,11 @@ static void shots_advance(void) {
          * islands and nodes just as much as to the barrier. */
         for (step = 0; step <= s_speed[i]; step++) {
             if (step) {                                 /* substep 0 tests in place */
-                if (s_y[i] == 0) { s_live[i] = 0; break; }   /* off the top */
+                /* Burn out. s_floor is 0 for everything but spread, so for those this is
+                 * the old "off the top" test unchanged. The row AT the floor is still
+                 * tested for a hit before the shot dies -- it expires on the substep that
+                 * would carry it past, not on arrival. */
+                if (s_y[i] <= s_floor[i]) { s_live[i] = 0; break; }
                 s_y[i]--;
             }
             h = shot_hits(s_y[i], s_x[i]);

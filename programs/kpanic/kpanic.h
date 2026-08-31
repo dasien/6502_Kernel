@@ -291,6 +291,29 @@ extern void          spr_on(unsigned char enable);
 #define BEAM_CELLS       4      /* rows tall */
 #define BEAM_SPEED       4      /* rows per tick -- twice a plain shot */
 
+/* ---- spread is the CLOSE-RANGE gun ----
+ * Spread shots burn out at SPREAD_FLOOR instead of running to the top of the band. This
+ * started as a pool problem and turned into the weapon's identity.
+ *
+ * The problem: one sprite per shot, 16 for shots after the craft takes one, and Lv3 puts
+ * five shots up every FIRE_COOLDOWN steps with an 11-step flight. That is 5 * 11/3 = 18
+ * in flight against a pool of 16, so the volley check refused about one press in five.
+ * Not lost shots -- a refused volley retries next tick -- so the gun already self-paced
+ * to roughly cooldown 3.7. The defect was that the limit was IRREGULAR (it depended on
+ * when earlier shots happened to expire, so the gun stuttered) and invisible to both the
+ * player and the next person to read MAX_SHOTS' claim that 16 was "generous".
+ *
+ * A fixed cooldown of 4 was measured and rejected: 150 volleys against the broken
+ * version's 164, so it fired LESS while looking like a fix. Enlarging the chip's sprite
+ * block would have worked (20 is the threshold; 19 buys nothing) but spends half the
+ * remaining I/O page on one weapon's peak.
+ *
+ * Short range fits the pool BY CONSTRUCTION and buys a real trade-off instead of a
+ * compromise: spread clears crowds close in, the beam reaches, homing tracks. Applied at
+ * every spread level, because it is what the weapon IS rather than a penalty on Lv3.
+ * Measured at floor 6: peak 15 of 16, 200 volleys, nothing refused. */
+#define SPREAD_FLOOR     6      /* spread shots expire at this row (0 = top of band) */
+
 /* ---- corruption (enemies) ----
  * Unlike nodes, these do not ride the terrain ring: they move independently of
  * the world, so they need their own pools and explicit erase/redraw. */
@@ -466,6 +489,10 @@ extern void          spr_on(unsigned char enable);
                                  * aim at, so it must not compete with the port. */
 #define A_PORT      0xC7        /* REVERSED bright white -- the port. Inverted so it
                                  * reads as a target rather than more barrier. */
+#define A_SPENT     0x07        /* dim white -- a spread shot in its last rows before it
+                                 * burns out. Without this the shots simply vanish in mid
+                                 * air, which reads as a rendering fault rather than as
+                                 * the weapon running out of reach. */
 #define A_SHOT      0x47        /* bright white -- reserved for the fastest thing on
                                  * screen, so the eye tracks projectiles first */
 #define A_OK        0x42        /* energy bar: healthy */

@@ -50,7 +50,9 @@ repo's arrow-key note).
 Primary forward gun always available and unlimited. A kill has a `1-in-FRAG_CHANCE`
 chance of dropping a **fragment** (`FRAG_W` cells wide, the footprint of the body that
 dropped it):
-- `S` = spread (3 columns, 5 at Lv3) · `B` = beam (a `BEAM_CELLS`-tall bolt at double
+- `S` = spread (3 columns, 5 at Lv3) — **close range**: its shots burn out at
+  `SPREAD_FLOOR` instead of crossing the whole band, dimming for their last two rows so
+  it reads as running out of reach rather than blinking out · `B` = beam (a `BEAM_CELLS`-tall bolt at double
   speed, piercing) · `H` = homing tracer.
   Homing picks the nearest target by **Manhattan** distance (`dy + |dx|`) and counts the
   **firewall port** as a target. It used to rank by row distance alone and ignore ports
@@ -69,6 +71,18 @@ visually identical, so it read as a bug. It is now a tall bolt built from a stac
 ordinary pool shots in one column, needing no new object kind: the pool's
 all-or-nothing volley rule already refuses a partial bolt exactly as it refuses a
 partial spread.
+
+Spread's short range began as a sprite-pool problem and became the weapon's identity.
+One sprite per shot leaves 16 after the craft, and Lv3 put five up every 3 steps with an
+11-step flight — 18 in flight against a pool of 16, so about one press in five was
+refused. Not lost shots (a refused volley retries next tick) so the gun already self-paced
+to ~cooldown 3.7; the defect was that the cap was *irregular*, so it stuttered, and
+invisible to player and reader alike. A fixed cooldown of 4 was measured and rejected —
+150 volleys against the broken version's 164, firing *less* while looking like a fix.
+Enlarging the chip's sprite block would also have worked (20 is the threshold; 19 buys
+nothing) at half the remaining I/O page. Short range fits by construction and buys a real
+trade-off instead of a compromise: spread clears crowds close in, the beam reaches, homing
+tracks. Measured at floor 6: peak 15 of 16, 200 volleys, none refused.
 
 **A special weapon is a magazine of `W_AMMO` rounds, not a permanent upgrade.** One
 trigger pull spends one round whatever the volley's shape, so a five-shot spread and a
