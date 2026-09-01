@@ -41,11 +41,12 @@ kernel.map
 kernel.rom
 kernel.o
 
-# Disk-program build intermediates. programs/<x>/build.sh (and the term_bin /
-# irc_bin ninja targets) run ca65/cl65 with the source dir as cwd, so the object
-# files land next to the sources. Anchored to programs/ so the committed .PRG
-# deliverables -- and any .bin tracked elsewhere in the tree -- are untouched.
-# This supersedes the per-program .gitignore files and covers new programs too.
+# Build intermediates that land next to the sources. The disk programs no longer
+# do -- CMake gives each object an explicit home in the build tree -- but the test
+# blob targets (term_bin, irc_bin, edit_bin, venture_bin) still run cl65 one-shot,
+# and cc65 writes objects beside their sources unless told otherwise. Anchored to
+# programs/ so any .bin tracked elsewhere in the tree is untouched. This supersedes
+# the per-program .gitignore files and covers new programs too.
 programs/**/*.o
 programs/**/*.bin
 programs/**/*.map

@@ -6,7 +6,9 @@
  *
  *  The game database is NOT parsed on the 6502. Instead the host tool
  *  `dat2c` pre-parses a Scott Adams TRS-80 .dat into C initializers (see
- *  build.sh); this header declares the tables both sides share.
+ *  programs/scottfree/build.sh, the one build script left in the tree because
+ *  nothing in a normal build runs it); this header declares the tables both
+ *  sides share.
  */
 #ifndef SCOTT_H
 #define SCOTT_H

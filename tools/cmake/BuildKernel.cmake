@@ -144,7 +144,7 @@ if(CA65_FOUND AND LD65_FOUND)
     # The serial ANSI terminal (programs/term), built with cl65 (C + glue) as a
     # flat $0800 image and staged in the kernel build dir so the headless ANSI
     # test loads it at ../kernel/term.bin. (TERM.PRG for the disk is produced by
-    # programs/term/build.sh.)
+    # the catalog build.)
     find_program(CL65_FOUND cl65)
     if(CL65_FOUND)
         set(TERM_DIR ${CMAKE_SOURCE_DIR}/programs/term)
@@ -162,7 +162,7 @@ if(CA65_FOUND AND LD65_FOUND)
         )
         # IRC chat client blob (programs/irc), same toolchain as TERM. Staged at
         # ../kernel/irc.bin for the headless test; IRC.PRG for the disk is made
-        # by programs/irc/build.sh.
+        # by the catalog build.
         set(IRC_DIR ${CMAKE_SOURCE_DIR}/programs/irc)
         set(COMMON_DIR ${CMAKE_SOURCE_DIR}/programs/common)
         set(IRC_BIN ${CMAKE_BINARY_DIR}/kernel/irc.bin)
@@ -178,7 +178,7 @@ if(CA65_FOUND AND LD65_FOUND)
         )
         # VENTURE blob (programs/venture). Staged at ../kernel/venture.bin so the
         # headless test can load it at $0800 and drive it through the control port;
-        # VENTURE.PRG for the disk is made by programs/venture/build.sh.
+        # VENTURE.PRG for the disk is made by the catalog build.
         set(VENTURE_DIR ${CMAKE_SOURCE_DIR}/programs/venture)
         set(VENTURE_BIN ${CMAKE_BINARY_DIR}/kernel/venture.bin)
         add_custom_target(venture_bin ALL
@@ -195,7 +195,7 @@ if(CA65_FOUND AND LD65_FOUND)
             VERBATIM
         )
         # EDIT blob (programs/edit). Same idea as the others: the tests load a raw
-        # $0800 image, while EDIT.PRG for the disk comes from programs/edit/build.sh.
+        # $0800 image, while EDIT.PRG for the disk comes from the catalog build.
         set(EDIT_DIR ${CMAKE_SOURCE_DIR}/programs/edit)
         set(EDIT_BIN ${CMAKE_BINARY_DIR}/kernel/edit.bin)
         add_custom_target(edit_bin ALL

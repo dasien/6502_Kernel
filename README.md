@@ -261,8 +261,10 @@ catalog records that TERM reads and writes it.
 
 The build derives both the staging commands and the `diskmap.txt` that `mkdisk`
 consumes, so adding a program is one catalog entry rather than three edits that fail
-silently if you miss one. CMake refuses to configure if a `programs/*/build.sh` has no
-catalog entry. Drawers grow across as many FAT16 clusters as they need, so a drawer is
+silently if you miss one. A catalog entry also carries the build recipe — its
+`sources`, its `config`, and an optional `include` — so CMake compiles and links the
+program itself; there are no per-program build scripts. CMake refuses to configure if
+a `programs/*/` directory has an `ld65` config but no catalog entry. Drawers grow across as many FAT16 clusters as they need, so a drawer is
 not capped at one cluster of files.
 
 ```bash

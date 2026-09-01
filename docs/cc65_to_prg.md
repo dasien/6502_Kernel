@@ -16,13 +16,16 @@ runs at `$0800` in user RAM. A 2-byte little-endian load-address header is
 prepended afterward to make the `.PRG`.
 
 ```
-cl65 -t none --signed-chars -O -C <prog>.cfg <sources...> glue.s -o <prog>.bin
-printf '\000\010' > NAME.PRG          # $0800 load header, little-endian
-cat <prog>.bin >> NAME.PRG
+cl65 -t none --signed-chars -O -c -o <src>.o <src>.c    # once per source
+cl65 -t none -C <prog>.cfg <objects...> -o <prog>.bin   # link
+mkprg 0800 <prog>.bin NAME.PRG                          # 2-byte load header
 ```
 
-Each program ships a `build.sh` that runs exactly this. The built `.PRG` is
-copied onto a FAT16 image with `tools` → `mkfat16 disk.img NAME.PRG`.
+CMake does this for you, from the program's entry in `programs/catalog.txt` — see
+tools/cmake/Programs.cmake. There is no per-program build script: `ninja programs`
+builds every `.PRG`, `ninja <name>_prg` builds one, and `ninja disk` puts them on an
+image. The load address in the header is read out of the `.cfg`'s `STARTADDRESS`, so
+the two cannot drift apart.
 
 ## The four pieces
 
@@ -31,8 +34,10 @@ copied onto a FAT16 image with `tools` → `mkfat16 disk.img NAME.PRG`.
    `OUTCH`/`INCH`/`CLS`; add `RND`, a quit path, and file calls as needed.
    Exports use a leading underscore (cc65 calling convention): `_OUTCH`, etc.
    Char arg arrives in `A`; char/int results return in `A` / `A:X`.
-3. **`<prog>.cfg`** — `ld65` memory map (below).
-4. **`build.sh`** — the three commands above.
+3. **`<prog>.cfg`** — `ld65` memory map (below). Its `STARTADDRESS` is also where
+   the `.PRG` load header comes from.
+4. **A `programs/catalog.txt` entry** — `sources`, `config`, and the `program` line
+   naming the `.PRG`. That is the whole build definition.
 
 ### Kernel / DOS ABI used by glue
 
@@ -75,7 +80,7 @@ configured.
 ## Two data patterns
 
 ### Self-contained (chess)
-Everything is in the C/asm. `build.sh` just compiles and prepends the header.
+Everything is in the C/asm. The build just compiles, links and prepends the header.
 
 ### Host-pre-parsed data (Scott Adams)
 The game database is **parsed on the host at build time**, not on the 6502.
@@ -114,8 +119,8 @@ cc65's weaker `scanf`/heap support entirely.
 ## Build & test loop
 
 ```
-cd programs/<prog> && ./build.sh [args]          # -> NAME.PRG
-cd cmake-build-debug && ./bin/mkfat16 disk.img ../programs/<prog>/NAME.PRG
+cd cmake-build-debug && ninja <prog>_prg         # -> programs/<prog>/NAME.PRG
+ninja disk                                       # ...or rebuild the whole image
 # then relaunch the GUI, or drive it headlessly from a temp test in
 # tests/test_monitor_integration.cpp (mountDisk + addKeypress + screen dump)
 ```

@@ -8,8 +8,19 @@
 #
 #   [name]       the handle used to refer to this item
 #   dir   =      where its files live, relative to the repo root
-#   build =      script that produces them; OMIT for committed content
 #   desc  =      one line, for humans
+#
+# An entry the build compiles adds a recipe. OMIT all three for committed content:
+# that is what marks an entry as staged-as-is rather than built.
+#
+#   sources =    what cl65 compiles, relative to dir (.c and .s, space separated)
+#   config  =    the ld65 config, relative to dir
+#   include =    optional -I directory, relative to dir
+#
+# The .PRG comes out of that recipe -- its name is the `program` source below, and
+# it lands in the build tree, never here. There is no build script: CMake compiles
+# each source to its own object and links them, so editing a header rebuilds only
+# what included it.
 #
 # Files are declared by what they ARE, because the difference matters:
 #
@@ -23,20 +34,25 @@
 
 [edit]
 dir     = programs/edit
-build   = build.sh
+sources = edit.c glue.s
+config  = edit.cfg
 program = EDIT.PRG -> EDIT.PRG
 desc    = full-screen text editor
 
 [term]
 dir     = programs/term
-build   = build.sh
+sources = term.c ../common/scrollback.c glue.s
+config  = term.cfg
+include = ../common
 program = TERM.PRG -> TERM.PRG
 data    = DIAL.LST -> SYSTEM/DIAL.LST
 desc    = ANSI/telnet terminal with XMODEM
 
 [irc]
 dir     = programs/irc
-build   = build.sh
+sources = irc.c ../common/scrollback.c glue.s
+config  = irc.cfg
+include = ../common
 program = IRC.PRG -> IRC.PRG
 data    = IRC.LST -> SYSTEM/IRC.LST
 desc    = IRC chat client
@@ -45,40 +61,47 @@ desc    = IRC chat client
 
 [vault]
 dir     = programs/vault
-build   = build.sh
+sources = vault.c map.c draw.c player.c monster.c combat.c item.c spell.c data.c glue.s
+config  = vault.cfg
 program = VAULT.PRG -> SVAULT/VAULT.PRG
 doc     = STORY.TXT -> SVAULT/STORY.TXT
 desc    = The Sunless Vault, a roguelike
 
 [chess]
 dir     = programs/micromax
-build   = build.sh
+sources = umax_mfc.c glue.s
+config  = micromax.cfg
 program = CHESS.PRG -> GAMES/CHESS.PRG
 desc    = micro-Max chess
 
 [kpanic]
 dir     = programs/kpanic
-build   = build.sh
+sources = kpanic.c glue.s
+config  = kpanic.cfg
 program = KPANIC.PRG -> GAMES/KPANIC.PRG
 desc    = KERNEL PANIC, a vertical scroller
 
 [venture]
 dir     = programs/venture
-build   = build.sh
+sources = venture.c glue.s
+config  = venture.cfg
 program = VENTURE.PRG -> GAMES/VENTURE.PRG
 desc    = Venture (Exidy 1981) port
 
 [frontier]
 dir     = programs/frontier
-build   = build.sh
+sources = frontier.c glue.s
+config  = frontier.cfg
 program = FRONTIER.PRG -> GAMES/FRONTIER.PRG
 doc     = FRONTIER.TXT -> GAMES/FRONTIER.TXT
 desc    = Frontier Fortune, a Wild-West trading game
 
 # ---- Scott Adams adventures ------------------------------------------------
-# Committed rather than built: programs/scottfree/build.sh is a generator taking a
-# .dat game file and an output name, and the .dat files are not ours to ship. Run it
-# by hand to regenerate one; the .PRG it writes is what lives here.
+# Committed rather than built: programs/scottfree/build.sh is a generator, not a
+# program -- it takes a .dat game file and an output name, and the .dat files are not
+# ours to ship. Run it by hand to regenerate one; the .PRG it writes is what lives
+# here. It is the one build script left in the tree, and it stays a script because
+# nothing in a normal build runs it.
 
 [advland]
 dir     = disk/GAMES
