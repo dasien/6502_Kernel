@@ -403,8 +403,13 @@ public:
     // ERASE actually recovered those 3 clusters.
     void testDosSaveDiskFullReclaims() {
         std::string a = "hi\r\n";
+        // Explicitly 128 clusters: this test is ABOUT running out of room, so it
+        // needs a volume it can nearly fill. It rode the suite default until that
+        // became the host cluster count, at which point 124 clusters left 3,971
+        // free and the SAVE below simply succeeded.
         mountDisk({{"FILL.DAT", std::vector<uint8_t>(124 * 512, 'F')},   // 124 clusters
-                   {"A.TXT", std::vector<uint8_t>(a.begin(), a.end())}}); // 1 cluster
+                   {"A.TXT", std::vector<uint8_t>(a.begin(), a.end())}}, // 1 cluster
+                  /*dataClusters=*/128);
 
         clearScreen();                                   // DOS mode -> CLS
         sendCommand("SAVE BIG.DAT,0800-0FFF", 900000);   // needs 5 clusters, 3 free

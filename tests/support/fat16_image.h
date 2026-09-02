@@ -45,10 +45,30 @@ public:
     // busy root hit "DIR FULL" with the data area nearly empty. Tests that
     // deliberately fill the root pass a small value instead of paying for 512.
     static constexpr uint16_t kRootEntries = 512;
-    static constexpr uint32_t kDefaultDataClusters = 128; // small + fast for tests
     // A genuine FAT16 volume needs >= 4085 clusters, or host OSes treat it as
-    // FAT12. The mkfat16 tool uses this so the image is host-mountable.
+    // FAT12. The mkfat16 and mkdisk tools use this so the image is host-mountable.
     static constexpr uint32_t kHostFat16Clusters = 4096;
+
+    // The default is the host count, so a test image is the same kind of volume
+    // the machine actually runs on.
+    //
+    // It used to be 128 for speed -- 83 KB an image against 2.1 MB -- and that
+    // bought two blind spots. FAT type is DERIVED from the cluster count, not
+    // declared (the "FAT16   " string in the BPB is informational and the spec
+    // says not to trust it), so under 4085 clusters every host tool parses the
+    // 16-bit table as 12-bit: fsck.fat reports phantom corruption on a perfectly
+    // good image and would "repair" it into a broken one. And the arithmetic
+    // stays trivial -- at 128 clusters the whole FAT is one sector, so
+    // _DOS_FAT_SEEK's sector index is always zero, and cluster numbers all fit
+    // in a byte, so the high byte is always zero. At 4096 the FAT spans 17
+    // sectors and both go live, which is what a real disk.img does on every
+    // LOAD and SAVE. The saving turned out to be 0.4 s across the suite.
+    //
+    // Tests that need a nearly-full disk must still say so: pass an explicit
+    // small count, as DiskFullWriteIsFinalizedAndReclaimable and
+    // testDosSaveDiskFullReclaims do. Filling a 4096-cluster volume by accident
+    // is not something a test should try.
+    static constexpr uint32_t kDefaultDataClusters = kHostFat16Clusters;
 
     // Build the image bytes for the given files. Files are placed in directory
     // order, each in contiguous clusters starting at cluster 2. dataClusters
