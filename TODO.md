@@ -123,7 +123,7 @@ anything today; all four are recorded so they are not rediscovered the hard way.
   again. `testLineNumbersCountBlankLines` pins the line numbering.
 
 ### Games
-- [x] **VENTURE** (`programs/venture/`, 9,359 bytes) — a port of Exidy's Venture
+- [x] **VENTURE** (`programs/venture/`, `VENTURE.PRG` 18,227 bytes) — a port of Exidy's Venture
   (1981); design in `programs/venture/DESIGN.md`, manual in `docs/VENTURE.md`. All ten
   build steps done: the dungeon hall, six themed rooms dealt four at a time per level,
   Hallmonsters patrolling the hall and coming through room doors if you dawdle, the
@@ -135,7 +135,7 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     machinery: it is a chaser that ignores bodies and cannot be shot.
   - Greedy pursuit needed a wander fallback — pressed against the hall's long wall
     bands with no second axis to try, a chaser stood still forever.
-  - `tests/test_venture.cpp` (16 tests) reads the room pictures back out of
+  - `tests/test_venture.cpp` reads the room pictures back out of
     `venture.c` and flood-fills them, so a one-character typo that seals a treasure
     off fails the build instead of shipping an unwinnable room. Two turned up that
     way. It also has to retry when looking for Winky: `step()` erases before it
@@ -174,18 +174,54 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     is why it read as bad luck. Monsters also no longer stack on each other. The
     entrances now get cut at runtime on the sides matching whichever room a slot holds.
     26 tests, `VENTURE.PRG` 12,152 bytes.
-  - **Three gaps, deliberate.** The Hallmonster that walks into a room you linger in
-    needs Winky alive for `HALL_ROOM_TICKS` (260 ticks, ~17 s) with three serpents
-    converging; standing still, lapping the room's outer circuit and clearing the
-    serpents first were all tried and all die short. The between-levels tally needs
-    all four rooms of a level looted, i.e. four bespoke routes through four layouts.
-    The third is the arrow-swap fix, which has no signature on screen: the arrow is
-    drawn over the monster it is sitting on, so provoking the one observable frame needs
-    a monster to step onto a live arrow, on a tick monsters move, with Winky alive to
-    watch — every setup tried passed on the broken build as often as the fixed one, and
-    a test that passes on the broken build is worse than none. All three are written up
-    in `test_venture.cpp` with what they leave unverified, including the wall-phasing
-    path, which rides on the same untested trigger as the room intruder.
+  - A **fifth pass** onto the upgraded VIC — soft font, sprites and fine scroll — and
+    then onto movement, which took most of it. The dungeon now draws in **its own
+    hand-drawn glyphs** rather than borrowing CP437 shapes, and every mover is a
+    **sprite** instead of a character cell: 2x2 composed and magnified, which lands
+    exactly on a double-size cell, so the playfield geometry did not have to change.
+    Sprites also buy **sub-cell motion** — a mover glides between grid steps instead
+    of jumping a whole cell — and that is what let the tick slow from 15 to 10 a
+    second without reading as a strobe. `HALL_ROOM_TICKS` went 260 -> 170 to keep the
+    dawdle deadline at the same ~17 s across that change.
+    - Room monsters stopped hunting and now **hold strategic ground**, darting only
+      once you come inside `MON_AGGRO`, which is what the arcade does and reads as
+      guarding rather than chasing. The hall starts at `HALL_BASE` 3 and Hallmonsters
+      no longer share a cell. The intruder **comes at you diagonally**; an L-shaped
+      approach was slower and read as indecision. And an arrow is now the same shape
+      and the same pixel speed in **every direction** — `ARROW_STEP` 2 across against
+      `ARROW_STEP_V` 1 down, because a playfield cell is 16 px wide and 32 tall.
+    - Most of this pass came from **playing it, not measuring it**. Every genuine
+      diagnosis started from something seen on screen; a whole turn spent
+      instrumenting sprite positions frame by frame produced nothing. Two standing
+      budget tests came out of it — a frame of drawing under 9,000 cycles, a tick
+      under 30,000 — because those are facts a harness can settle and smoothness is
+      not. 37 tests, `VENTURE.PRG` 18,227 bytes.
+  - **Two gaps, deliberate** — down from three. The between-levels tally needs all
+    four rooms of a level looted, i.e. four bespoke routes through four layouts. The
+    other is the arrow-swap fix, which has no signature on screen: the arrow is drawn
+    over the monster it is sitting on, so provoking the one observable frame needs a
+    monster to step onto a live arrow, on a tick monsters move, with Winky alive to
+    watch — every setup tried passed on the broken build as often as the fixed one,
+    and a test that passes on the broken build is worse than none. Both are written up
+    in `test_venture.cpp` with what they leave unverified.
+    - **Closed since:** the room intruder. Outlasting `HALL_ROOM_TICKS` with serpents
+      converging was the blocker, and a `dawdleUntilIntruder()` helper now gets there
+      reliably; two tests ride on it, covering the far-doorway arrival and the
+      diagonal approach. The wall-phasing path came along for free — the intruder in
+      those tests is walking through walls to reach Winky.
+  - **Open: vertical motion covers twice the screen distance of horizontal.** A
+    playfield cell is 16 nominal pixels wide and 32 tall, so one cell up is two cells'
+    worth of travel across. Gating vertical to every other step evens the average and
+    reads as start/stop; spreading the glide over both ticks removed the hold but left
+    a periodic snap of about +19 then -13 px every six frames, cause never found. Both
+    attempts were reverted, so what ships is smooth and asymmetric. It was only ever
+    noticed on the arrow, which `ARROW_STEP_V` already fixes. Recommendation: leave it.
+  - **Open: the loot-route tests are not reproducible.** `rng_seed()` is RTC-derived,
+    so no two runs see the same monster rolls and a route can land a cell short of its
+    treasure. They were noted as failing about one run in seven; 10 consecutive runs
+    on 2026-09-02 all passed, so treat that rate as unverified rather than current.
+    Making the seed injectable is the fix either way — it removes the question instead
+    of re-measuring it.
 - [ ] **KERNEL PANIC** (`programs/kpanic/`, `KPANIC.PRG` 13,679 bytes) — original
   real-time vertical scroller; design in `programs/kpanic/DESIGN.md`. Build steps 1-6
   done and play-tested good, plus a full weapon/feel rework. Steps 7-8 open (below).
