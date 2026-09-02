@@ -166,6 +166,12 @@ target_include_directories(block_device_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include/computer
 )
 
+# The image-claim test spawns the real mkdisk, because whether the tool honours a
+# running machine's claim is the whole point and cannot be checked in-process.
+add_dependencies(block_device_tests mkdisk)
+target_compile_definitions(block_device_tests PRIVATE
+    MFC_MKDISK="$<TARGET_FILE:mkdisk>")
+
 target_compile_features(block_device_tests PRIVATE cxx_std_20)
 
 # Create test executable for the DOS block-device primitives (runs the real

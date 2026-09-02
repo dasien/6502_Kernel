@@ -29,6 +29,16 @@
 
 #include "computer/BlockDevice.h"
 #include "computer/Memory.h"
+#include "host/ImageLock.h"
+
+#include <cstdlib>
+#include <fstream>
+
+// Path to the mkdisk binary, passed in by CMake so the claim can be tested
+// end-to-end against the tool that has to honour it.
+#ifndef MFC_MKDISK
+#define MFC_MKDISK ""
+#endif
 
 using Computer::BlockDevice;
 using Computer::Memory;
@@ -216,6 +226,108 @@ TEST_F(BlockDeviceTest, ErrorStatusOnUnwritablePath) {
     const auto pattern = makeSector(0x99);
     writeSector(mem, 1, pattern);
     EXPECT_EQ(mem.read(BlockDevice::kRegStatus), BlockDevice::kStatusError);
+}
+
+/* ---- the advisory claim on the backing image --------------------------------
+ *
+ * `ninja disk` rewrites disk.img in place, and the device re-opens it by path on
+ * every sector access, so a rebuild while a machine is running is adopted
+ * mid-session -- with the DOS still holding cluster state allocated against the
+ * old FAT. The device therefore claims the image; mkdisk refuses to overwrite a
+ * claimed one.
+ *
+ * flock attaches to the open file description rather than the process, so a
+ * second open of the same path conflicts even from inside this test. That is
+ * what lets these run without a second process.
+ *
+ * The fixture starts with no image on purpose, so these tests create one first:
+ * there is nothing to claim on a file that does not exist, which is itself the
+ * subject of one of them.
+ */
+
+// Put a real file at image_path_ so there is something to claim.
+static void touchImage(const std::string &path) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.put('\0');
+}
+
+// The running machine's claim is what a would-be writer trips over.
+TEST_F(BlockDeviceTest, ARunningDeviceClaimsItsImage) {
+    touchImage(image_path_);
+    BlockDevice dev{image_path_};
+    EXPECT_TRUE(dev.holdsImageClaim()) << "the device did not claim its image";
+
+    Host::ImageLock writer;
+    EXPECT_FALSE(writer.tryAcquire(image_path_, Host::LockMode::Exclusive))
+        << "a writer got exclusive access to an image a device is using";
+}
+
+// ...and releasing it lets the writer straight in, so this cannot wedge a build.
+TEST_F(BlockDeviceTest, TheClaimEndsWithTheDevice) {
+    touchImage(image_path_);
+    {
+        BlockDevice dev{image_path_};
+        ASSERT_TRUE(dev.holdsImageClaim());
+    }
+    Host::ImageLock writer;
+    EXPECT_TRUE(writer.tryAcquire(image_path_, Host::LockMode::Exclusive))
+        << "the claim outlived the device that took it";
+}
+
+// Two machines on one image are fine: the claim is shared, not exclusive.
+TEST_F(BlockDeviceTest, TwoDevicesCanShareAnImage) {
+    touchImage(image_path_);
+    BlockDevice a{image_path_};
+    BlockDevice b{image_path_};
+    EXPECT_TRUE(a.holdsImageClaim());
+    EXPECT_TRUE(b.holdsImageClaim());
+}
+
+// An image that does not exist yet claims trivially and holds nothing. This is
+// the normal first-boot path -- a missing disk.img reads as an all-zero disk --
+// and it must not report an error.
+TEST_F(BlockDeviceTest, AMissingImageIsNotAFailedClaim) {
+    const std::string absent = image_path_ + ".nonexistent";
+    std::filesystem::remove(absent);
+
+    BlockDevice dev{absent};
+    EXPECT_FALSE(dev.holdsImageClaim());
+
+    Host::ImageLock writer;
+    EXPECT_TRUE(writer.tryAcquire(absent, Host::LockMode::Exclusive))
+        << "a file that does not exist cannot be in use by anything";
+}
+
+// End-to-end: mkdisk must actually honour the claim, and must say so clearly
+// enough that a failed `ninja disk` explains itself.
+TEST_F(BlockDeviceTest, MkdiskRefusesToOverwriteAClaimedImage) {
+    const std::string mkdisk = MFC_MKDISK;
+    if (mkdisk.empty()) GTEST_SKIP() << "mkdisk path not provided by CMake";
+
+    // A one-file bundle for mkdisk to build from.
+    const std::filesystem::path bundle =
+        std::filesystem::path(image_path_).parent_path() / "claimbundle";
+    touchImage(image_path_);
+    std::filesystem::create_directories(bundle);
+    { std::ofstream f(bundle / "HELLO.PRG", std::ios::binary); f << "hi"; }
+    { std::ofstream f(bundle / "diskmap.txt"); f << "HELLO.PRG\n"; }
+
+    const std::string cmd = "\"" + mkdisk + "\" create \"" + image_path_ + "\" \"" +
+                            (bundle / "diskmap.txt").string() + "\" >" +
+                            (bundle / "out.log").string() + " 2>&1";
+
+    {
+        BlockDevice dev{image_path_};
+        ASSERT_TRUE(dev.holdsImageClaim());
+        EXPECT_NE(std::system(cmd.c_str()), 0)
+            << "mkdisk overwrote an image a running machine had claimed";
+    }
+
+    // With the machine gone it must succeed, or the guard is an obstruction.
+    EXPECT_EQ(std::system(cmd.c_str()), 0)
+        << "mkdisk still refused once nothing held the image";
+
+    std::filesystem::remove_all(bundle);
 }
 
 } // namespace

@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <string>
 
+#include "host/ImageLock.h"
+
 namespace Computer
 {
     /**
@@ -40,6 +42,13 @@ namespace Computer
      * The host image is opened lazily and created if absent (a fresh image reads
      * back as zeros and grows on write), so a missing disk.img is not an error.
      * Only a genuine open/I/O failure raises the error status.
+     *
+     * Because the image is re-opened by path on every sector access, a host-side
+     * rebuild of it is adopted mid-session with nothing to signal the change. The
+     * device therefore takes a shared advisory claim on the image (see
+     * host/ImageLock.h) so `mkdisk` refuses to overwrite it while this machine is
+     * running. The claim is best-effort: failing to get one never stops the device
+     * working, because a machine that will not boot is worse than the hazard.
      *
      * @see Memory, Computer6502
      */
@@ -77,6 +86,14 @@ namespace Computer
         void setImagePath(const std::string &image_path);
 
         /**
+         * @brief Whether a shared advisory claim on the image is currently held.
+         *
+         * False is normal and not an error: the image may not exist yet, or the
+         * filesystem may not implement advisory locks.
+         */
+        [[nodiscard]] bool holdsImageClaim() const { return image_claim_.held(); }
+
+        /**
          * @brief Whether an address falls within the block-device registers.
          * @param address 16-bit address to test ($FE24-$FE28).
          */
@@ -108,6 +125,10 @@ namespace Computer
         uint16_t lba_ = 0;                         ///< selected sector number
         size_t index_ = 0;                         ///< data-port index (0..511)
         uint8_t status_ = kStatusReady;            ///< last-operation status
+        Host::ImageLock image_claim_;              ///< shared claim on image_path_
+
+        /// Re-stake the claim on image_path_. Best-effort; a failure is not an error.
+        void claimImage();
     };
 } // namespace Computer
 

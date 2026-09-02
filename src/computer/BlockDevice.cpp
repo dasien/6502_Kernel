@@ -7,11 +7,22 @@ namespace Computer
     BlockDevice::BlockDevice(std::string image_path)
         : image_path_(std::move(image_path))
     {
+        claimImage();
     }
 
     void BlockDevice::setImagePath(const std::string &image_path)
     {
         image_path_ = image_path;
+        claimImage();
+    }
+
+    void BlockDevice::claimImage()
+    {
+        // Deliberately unchecked. The claim exists to stop the host build
+        // overwriting an image this machine is using; not getting one (no image
+        // yet, or a filesystem without working advisory locks) leaves the hazard
+        // exactly as it was and must not keep the machine from running.
+        image_claim_.tryAcquire(image_path_, Host::LockMode::Shared);
     }
 
     bool BlockDevice::isBlockAddress(const uint16_t address)
@@ -118,6 +129,8 @@ namespace Computer
         {
             std::ofstream create(image_path_, std::ios::binary | std::ios::app);
             create.close();
+            // The image exists now, so there is finally something to claim.
+            claimImage();
             image.open(image_path_,
                        std::ios::binary | std::ios::in | std::ios::out);
             if (!image.is_open())

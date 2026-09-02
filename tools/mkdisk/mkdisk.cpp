@@ -6,6 +6,10 @@
 //   mkdisk read   <image> <outdir>        extract files + write outdir/diskmap.txt
 //   mkdisk update <image> <diskmap.txt>   replace/add the listed files, keep the rest
 //
+// create/update refuse to write an image a running machine has claimed, because
+// the write lands in place and the machine adopts it mid-session; --force
+// overrides. See host/ImageLock.h for what goes wrong without this.
+//
 // A diskmap line is one disk path ("EDIT.PRG", "SYSTEM/DIAL.LST"); a leading
 // DRAWER/ names a one-level drawer. '#' comments and blank lines are ignored.
 // For create/update, each path's bytes come from <diskmap-dir>/<path> (the tool
@@ -13,6 +17,7 @@
 // tool produces is the same FAT16 the resident driver reads; see fat16_image.h.
 
 #include "fat16_image.h"
+#include "host/ImageLock.h"
 
 #include <cctype>
 #include <cstdint>
@@ -44,7 +49,32 @@ bool readFileBytes(const fs::path &p, std::vector<uint8_t> &out) {
     return true;
 }
 
-bool writeImage(const std::string &path, const std::vector<Fat16File> &files) {
+// Refuse to rewrite an image a running machine is using.
+//
+// Checked before the build rather than after, so a refusal costs nothing and
+// leaves the existing image untouched. A missing image acquires trivially --
+// nothing can be using a file that is not there.
+bool claimForWrite(const std::string &path, bool force, Host::ImageLock &lock) {
+    if (lock.tryAcquire(path, Host::LockMode::Exclusive)) return true;
+    if (force) {
+        std::cerr << "mkdisk: " << path << " is in use by a running machine; "
+                  << "overwriting anyway (--force)\n";
+        return true;
+    }
+    std::cerr << "mkdisk: " << path << " is in use by a running machine, so it was "
+                 "NOT rewritten.\n"
+                 "        Quit the emulator and run this again, or pass --force to "
+                 "overwrite it anyway\n"
+                 "        (a machine still holding it can then corrupt the new "
+                 "image).\n";
+    return false;
+}
+
+bool writeImage(const std::string &path, const std::vector<Fat16File> &files,
+                bool force) {
+    Host::ImageLock lock;
+    if (!claimForWrite(path, force, lock)) return false;
+
     const std::vector<uint8_t> img =
         Fat16ImageBuilder::build(files, Fat16ImageBuilder::kHostFat16Clusters);
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -95,10 +125,10 @@ bool loadBundle(const fs::path &mapPath, std::vector<Fat16File> &files) {
     return true;
 }
 
-int doCreate(const std::string &image, const std::string &mapPath) {
+int doCreate(const std::string &image, const std::string &mapPath, bool force) {
     std::vector<Fat16File> files;
     if (!loadBundle(mapPath, files)) return 1;
-    if (!writeImage(image, files)) { std::cerr << "mkdisk: cannot write " << image << "\n"; return 1; }
+    if (!writeImage(image, files, force)) return 1;
     std::cout << "Created " << image << " (" << files.size() << " files)\n";
     return 0;
 }
@@ -126,7 +156,7 @@ int doRead(const std::string &image, const std::string &outdir) {
     return 0;
 }
 
-int doUpdate(const std::string &image, const std::string &mapPath) {
+int doUpdate(const std::string &image, const std::string &mapPath, bool force) {
     std::vector<uint8_t> bytes;
     if (!loadReader(image, bytes)) { std::cerr << "mkdisk: cannot read " << image << "\n"; return 1; }
     Fat16ImageReader reader(std::move(bytes));
@@ -142,7 +172,7 @@ int doUpdate(const std::string &image, const std::string &mapPath) {
         }
         if (!found) files.push_back(nf);                    // new file
     }
-    if (!writeImage(image, files)) { std::cerr << "mkdisk: cannot write " << image << "\n"; return 1; }
+    if (!writeImage(image, files, force)) return 1;
     std::cout << "Updated " << image << " (" << repl.size() << " file(s))\n";
     return 0;
 }
@@ -150,16 +180,27 @@ int doUpdate(const std::string &image, const std::string &mapPath) {
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc == 4) {
-        const std::string cmd = argv[1];
-        if (cmd == "create") return doCreate(argv[2], argv[3]);
-        if (cmd == "read")   return doRead(argv[2], argv[3]);
-        if (cmd == "update") return doUpdate(argv[2], argv[3]);
+    // --force may sit anywhere; everything else is positional.
+    bool force = false;
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--force") force = true;
+        else args.push_back(a);
+    }
+
+    if (args.size() == 3) {
+        const std::string &cmd = args[0];
+        if (cmd == "create") return doCreate(args[1], args[2], force);
+        if (cmd == "read")   return doRead(args[1], args[2]);
+        if (cmd == "update") return doUpdate(args[1], args[2], force);
     }
     std::cerr <<
         "usage:\n"
         "  mkdisk create <image> <diskmap.txt>   build a fresh image from the bundle\n"
         "  mkdisk read   <image> <outdir>        extract files + write outdir/diskmap.txt\n"
-        "  mkdisk update <image> <diskmap.txt>   replace/add listed files, keep the rest\n";
+        "  mkdisk update <image> <diskmap.txt>   replace/add listed files, keep the rest\n"
+        "\n"
+        "  --force   rewrite the image even if a running machine has it open\n";
     return 2;
 }

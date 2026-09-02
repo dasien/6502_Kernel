@@ -71,7 +71,8 @@ target_compile_features(mkfat16 PRIVATE cxx_std_20)
 #   ./bin/mkdisk update <image> <diskmap.txt>
 # ----------------------------------------------------------------
 add_executable(mkdisk tools/mkdisk/mkdisk.cpp)
-target_include_directories(mkdisk PRIVATE ${CMAKE_SOURCE_DIR}/tests/support)
+target_include_directories(mkdisk PRIVATE ${CMAKE_SOURCE_DIR}/tests/support
+                                          ${CMAKE_SOURCE_DIR}/include)
 target_compile_features(mkdisk PRIVATE cxx_std_20)
 
 # ----------------------------------------------------------------
