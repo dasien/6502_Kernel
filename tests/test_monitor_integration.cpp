@@ -18,7 +18,11 @@
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
+#if defined(_WIN32)
+#include <process.h>    // _popen/_pclose
+#else
 #include <sys/wait.h>   // WIFEXITED/WEXITSTATUS for the fsck.fat subprocess
+#endif
 #include "computer/Computer6502.h"
 #include "computer/PowerSwitch.h"
 #include "support/fat16_image.h"
@@ -52,6 +56,32 @@ static constexpr uint8_t  kMonBank    = 4;
 // shares that symbol with the host build, so this tracks it by hand -- it moved
 // down with the DOS ROM base when user RAM shrank to $0800-$87FF.
 static constexpr uint16_t kAsmSrcBuf = 0x7800;
+
+// Run a command, collect everything it printed, and return its exit status.
+//
+// Spawning a child is the one place this suite talks to the host OS directly, and
+// the two families disagree twice over: the pipe calls are spelled differently, and
+// POSIX hands back a wait status that has to be decoded where Windows hands back the
+// exit code as it is. Returns -1 if the child could not be started or did not exit
+// normally, which the caller reports as a failure like any other bad status.
+static int runCaptured(const std::string& cmd, std::string& out) {
+#if defined(_WIN32)
+    FILE* pipe = _popen(cmd.c_str(), "r");
+#else
+    FILE* pipe = popen(cmd.c_str(), "r");
+#endif
+    if (pipe == nullptr) return -1;
+
+    char buf[256];
+    while (std::fgets(buf, sizeof(buf), pipe) != nullptr) out += buf;
+
+#if defined(_WIN32)
+    return _pclose(pipe);
+#else
+    const int status = pclose(pipe);
+    return (status >= 0 && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
+#endif
+}
 
 class MonitorIntegrationTester {
 public:
@@ -1155,13 +1185,7 @@ private:
 
         const std::string cmd = fsck + " -n \"" + disk_path_ + "\" 2>&1";
         std::string report;
-        int rc = -1;
-        if (FILE* pipe = popen(cmd.c_str(), "r")) {
-            char buf[256];
-            while (std::fgets(buf, sizeof(buf), pipe) != nullptr) report += buf;
-            const int status = pclose(pipe);
-            rc = (status >= 0 && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
-        }
+        const int rc = runCaptured(cmd, report);
 
         // Findings fsck reports without necessarily failing: the FAT copies
         // disagreeing is the one that silently destroys data when "repaired".
