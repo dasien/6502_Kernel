@@ -327,6 +327,48 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     interpreter in C -- a second emulator inside the game, ~600-1000 lines before the
     first puzzle. That is an engine project, not a game project.
 
+### Display themes (potential, not planned)
+- [ ] **Colour themes for the display, from kitty theme files.** Investigated
+  2026-09-03; logged rather than started. The fit is a 1:1 map, not a conversion:
+  `DisplayWidget::initPalette()` hardcodes `palette_[16]` in standard ANSI/CGA order
+  (black, red, green, yellow, blue, magenta, cyan, white, then eight brights), which
+  is exactly what a kitty `.conf` lists as `color0`..`color15`. The VIC attribute byte
+  can only select those sixteen anyway -- bits 2-0 fg, bits 5-3 bg, bit 6 brightens.
+  `github.com/dexpota/kitty-themes` is MIT, ported from iTerm2-Color-Schemes with
+  authors cited per file, so vendoring a handful means carrying the licence and
+  attribution in `NOTICE` the way EhBASIC already is. `selection_background` and
+  `selection_foreground` have no meaning here; `cursor` is optional.
+  - **There is no DOS command for this and there never was.** Checked the command
+    table and searched history for `THEME`/`SETTINGS` across `src/kernel/`: nothing.
+    Recollection of one is probably of a conversation. This matters because it is what
+    decides the shape below.
+  - **There is also no palette register.** The VIC exposes $FE2D-$FE37, the font port
+    at $FE62-$FE64 and sprites at $FE65-$FECA; nothing lets the 6502 say what RGB an
+    index means. So the two options are genuinely different pieces of work:
+    - *Host-only*: the GUI reads a `.conf` into `palette_`, driven by a menu item or a
+      `--theme` flag. ~50 lines, no new hardware, no ABI -- and no DOS verb is possible,
+      because the guest cannot reach it.
+    - *A palette port, then a real `THEME` verb.* An index/data register triple in the
+      idiom the soft font already proved. Historically right (the VGA DAC and Amiga
+      copper both worked this way) and it buys effects the index model cannot express:
+      KPANIC's per-sector board colour becomes an actual fade rather than an index swap.
+      **Preferred**, with one trick to keep the 6502 cheap -- do not parse `.conf` on
+      the 6502. Keep the kitty file as the repo's source of truth, convert it at build
+      time to 48 bytes (16 x RGB) with a host tool shaped like `mkprg`, stage it through
+      the disk catalog, and let the DOS command blit 48 bytes at the port. Text parsing
+      would otherwise be the expensive part of an otherwise cheap feature.
+  - **Open question if this is built:** kitty separates `background` from `color0`
+    (Dracula is `#1e1f28` against `#000000`), but here a cell with bg bits 0 *is* the
+    background. Mapping bg 0 to `color0` is faithful to the attribute model; mapping it
+    to `background` is what terminals do and what makes a theme look like its
+    screenshot. The second is probably right and it changes how every theme reads.
+  - **Two things to respect rather than solve:** green-on-black is the machine's face
+    (the default attribute is $02, so a theme decides what the boot screen looks like),
+    and programs pick colours by index deliberately -- VENTURE's per-level recolour,
+    KPANIC's per-sector board, EDIT's status line, all tuned against the CGA palette.
+    A low-contrast theme can make a game element hard to read, which is a reason to
+    curate a few themes rather than ship the 200+ in that repo.
+
 ### Memory map
 - [x] **Kernel to a 4 KB window; banks grow to 16 KB.** With the monitor gone the BIOS
   is 1,562 bytes, so the kernel moved from $E000-$FFFF (8 KB) to $F000-$FFFF (4 KB) and
