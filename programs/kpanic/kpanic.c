@@ -296,7 +296,7 @@ static unsigned char blocked(unsigned char r, unsigned char x) {
     return 0;
 }
 
-static unsigned int rows;               /* conduit rows generated (world distance) */
+unsigned int rows;               /* conduit rows generated (world distance) */
 
 /* Which columns carry a vertical trace. Built once at startup with irregular
  * spacing and the odd adjacent pair, because evenly spaced traces read as graph
@@ -426,15 +426,37 @@ static void draw_row(unsigned char r) {
  * lethal a half-cell before it looked lethal. */
 static unsigned int  craft_px = 39 * CELL_W;
 static unsigned char craft_x = 39;
-static unsigned char tickrate = TICK_DEFAULT;
-static unsigned char paused;
-static unsigned char flash;             /* frames left showing the impact pop */
+unsigned char tickrate = TICK_DEFAULT;
+unsigned char paused;
+unsigned char flash;             /* frames left showing the impact pop */
 
-static unsigned int  energy = ENERGY_MAX;
-static unsigned int  score;
-static unsigned int  crashes;
+unsigned int  energy = ENERGY_MAX;
+/* Stays 16-bit, and the "2-word/BCD score" in DESIGN.md step 7 is deliberately
+ * NOT done. Both ways were built and measured: `unsigned long` cost 650 bytes,
+ * and a two-word 0..9999 + myriad pair cost 1,054 -- worse, because cc65 emits a
+ * division helper call per constant divide and printing needs a dozen of them.
+ *
+ * What the harness settled: energy drains about 14 a second from ENERGY_MAX, so a
+ * run lasts 30-70 seconds, and DIST climbs about 7.5 rows a second. Firewalls pay
+ * 150 roughly every eleven seconds and the best enemy pays 40, which puts a
+ * generous ceiling in the low thousands -- five to ten times short of 65,535.
+ * A kilobyte of headroom nobody can reach is worse than none.
+ *
+ * The real defect was narrower and is fixed: the field is five digits, so it can
+ * show 99,999 while the variable wrapped at 65,535, and a wrapped score reports a
+ * number nobody had. add_score saturates instead, for about a dozen bytes. */
+unsigned int  score;
+unsigned int  crashes;
+
+/* Every scoring site goes through here. Saturating rather than wrapping: a
+ * wrapped score is a wrong number presented as a right one, and an open-coded
+ * `score += n` at five call sites is five chances to forget that. */
+void add_score(unsigned int n) {          /* non-static: tests call it directly */
+    if (score > 0xFFFFu - n) score = 0xFFFFu;
+    else                     score += n;
+}
 static unsigned char cooldown;          /* ticks until the gun can fire again */
-static unsigned char dead;
+unsigned char dead;
 
 /* shots: structure-of-arrays, fixed pool, no allocation */
 static unsigned char s_x[MAX_SHOTS], s_y[MAX_SHOTS], s_live[MAX_SHOTS];
@@ -452,9 +474,9 @@ static unsigned char s_floor[MAX_SHOTS];
 /* The gun: a kind and a level. Collecting the same fragment again deepens it;
  * a different one swaps you to that kind at level 1 -- so a pickup is a real
  * decision when you are already deep in something else. */
-static unsigned char weapon = W_PLAIN;
-static unsigned char wammo;             /* rounds left; meaningless while W_PLAIN */
-static unsigned char wlevel = 1;
+unsigned char weapon = W_PLAIN;
+unsigned char wammo;             /* rounds left; meaningless while W_PLAIN */
+unsigned char wlevel = 1;
 
 /* Fragments drift down with the world like a node, but they are objects rather
  * than terrain because they are dropped mid-run, not generated with a row. */
@@ -780,7 +802,7 @@ static unsigned char shot_hits(unsigned char r, unsigned char x) {
             unsigned char bl = (unsigned char)(r_lx[i] + q);
             unsigned char br = (unsigned char)(r_rx[i] - q);
             r_fw[i] = 0;
-            score += FW_SCORE;
+            add_score(FW_SCORE);
             /* The barrier comes APART rather than blinking out of existence between one
              * frame and the next: debris at the port plus two points spread across the
              * span, so the break-up reads across the whole width it used to occupy.
@@ -797,7 +819,7 @@ static unsigned char shot_hits(unsigned char r, unsigned char x) {
     if (on_node(i, x)) {                /* score, but you forfeit the refill */
         nx = r_nx[i];
         r_nx[i] = 0;                    /* clear first, so the restore paints lane */
-        score += SCORE_NODE;
+        add_score(SCORE_NODE);
         for (k = 0; k < NODE_W; k++) restore_cell(r, nx + k);
         return 1;
     }
@@ -906,7 +928,7 @@ static const unsigned char sector_node[NSECTORS]  = { 55, 70, 85,100 };
 static const unsigned char sector_fire[NSECTORS]  = { 14, 11,  9,  7 };
 
 
-static unsigned char sector;            /* 0-based */
+unsigned char sector;            /* 0-based */
 static unsigned int  sector_next;       /* row count at which the next one begins */
 static unsigned int  fw_next;           /* row count at which the next firewall is armed */
 
@@ -1034,9 +1056,9 @@ static void frag_drop(unsigned char x, unsigned char y) {
 }
 
 static void enemy_kill(unsigned char i) {
-    if (e_type[i] == E_DAEMON)        score += SCORE_DAEMON;
-    else if (e_type[i] == E_WORM)     score += SCORE_WORM;
-    else                              score += SCORE_SENTINEL;
+    if (e_type[i] == E_DAEMON)        add_score(SCORE_DAEMON);
+    else if (e_type[i] == E_WORM)     add_score(SCORE_WORM);
+    else                              add_score(SCORE_SENTINEL);
     e_type[i] = E_NONE;
     if (rndn(FRAG_CHANCE) == 0) frag_drop(e_x[i], e_y[i]);
     pop_add(e_x[i], e_y[i]);

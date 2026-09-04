@@ -190,7 +190,16 @@ Benefits every future real-time program.
 5. Power-up chain.
 6. ~~Boss + checkpoints~~ → firewalls + sector progression. The boss was cut; see
    Core loop for why.
-7. Juice (explosions, cell-offset screen-shake, SID cues) + 2-word/BCD score + score screen.
+7. Juice (explosions, cell-offset screen-shake, SID cues) + ~~2-word/BCD score~~ +
+   score screen. **The wider score was measured and dropped.** `unsigned long` cost
+   650 bytes and a 0..9999-plus-myriad pair cost 1,054 -- worse, because cc65 emits a
+   division helper call per constant divide and printing needs a dozen. The harness
+   settled the reachability: energy drains ~14/s from 1000 so a run is 30-70 s, DIST
+   climbs ~7.5 rows/s, firewalls pay 150 about every 11 s and the best enemy pays 40 --
+   a generous ceiling in the low thousands, five to ten times short of 65,535. What
+   *was* a real defect is fixed for 44 bytes: the five-digit field can show 99,999
+   while the variable stopped at 65,535, so `add_score()` saturates instead of
+   wrapping and reporting a number nobody had.
 8. Balance; **player manual** as a companion text file shipped on the disk beside
    the game (`KPANIC.TXT`, the way VAULT ships `STORY.TXT` in its drawer) — not a
    `docs/*.md`; disk integration (`programs/catalog.txt` → `GAMES/KPANIC.PRG` +

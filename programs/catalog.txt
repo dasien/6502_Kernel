@@ -79,6 +79,7 @@ dir     = programs/kpanic
 sources = kpanic.c glue.s
 config  = kpanic.cfg
 program = KPANIC.PRG -> GAMES/KPANIC.PRG
+doc     = KPANIC.TXT -> GAMES/KPANIC.TXT
 desc    = KERNEL PANIC, a vertical scroller
 
 [venture]

@@ -1,0 +1,105 @@
+                              K E R N E L   P A N I C
+
+
+The conduit is corrupted. You are what is running down it.
+
+Nothing in here is trying to kill you, exactly. The conduit simply costs you
+energy to fly, and it does not stop, and when the energy is gone the kernel
+panics. Everything else -- walls, daemons, firewalls -- is a way of spending
+energy faster than you meant to.
+
+
+CONTROLS
+
+  left / right      steer
+  SPACE             fire
+  up / down         throttle -- slower is safer, faster covers more ground
+  P                 pause
+  Q                 quit
+
+Throttle is not a difficulty setting. It writes the same number the world
+speed reads, so it stays a decision you keep making: hold it back through a
+narrow gauntlet, open it up over a clear stretch, and remember that distance
+is half of what you are scored on.
+
+
+THE ONE THING TO UNDERSTAND
+
+There is a single ENERGY pool and it pays for everything.
+
+  flying                 2 per row of conduit, always, no exceptions
+  hitting the conduit    70
+  flying into corruption 60
+  taking a pellet        30
+
+  a data node            +350, and it is the ONLY way to get energy back
+
+You start with 1000. Below 250 the bar turns red.
+
+Nothing else refills you. Not clearing a screen, not a firewall, not
+surviving. Only nodes. They are deliberately scarce, and that scarcity is
+the whole game: every node is a bet on how long you can keep going before
+the next one.
+
+
+NODES: THE CHOICE
+
+A data node can be taken or shot. Never both.
+
+  fly over it     +350 energy, no points
+  shoot it        +25 points, and the energy is gone
+
+Twenty-five points is not much. Three hundred and fifty energy is a
+hundred and seventy-five rows of conduit. Shoot nodes when you are nearly
+full and greedy; take them when you are not. Getting that wrong is how most
+runs end.
+
+
+WEAPONS
+
+You begin with a plain shot straight up the column. Three others exist, each
+with limited rounds, and each drops from wreckage:
+
+  S   SPREAD    fires into adjacent columns too -- short-ranged, on purpose
+  B   BEAM      a tall fast bolt that punches through what it hits
+  H   HOMING    shots drift toward the nearest target
+
+Picking one up while you already hold it deepens it instead, up to level 3.
+When the rounds run out you fall back to the plain shot, which never runs dry.
+
+
+FIREWALLS
+
+Every 80 rows the conduit is barred by a firewall with a single port in it.
+
+A firewall is a toll, not a door. Shoot the port open and pass through for 150
+points, or take the hit and carry on -- 60 energy, and you keep moving. Which
+one is right depends entirely on how much energy you have and whether you can
+line up on the port in the room you have left.
+
+
+SECTORS
+
+  KERNEL -> HEAP -> STACK -> I/O -> KERNEL -> ...
+
+The loop does not end. Sectors do not run faster -- your throttle is the only
+thing that sets speed. What changes is density: more corruption and fewer
+nodes as you go, planes withheld until the third sector, and the narrow
+river only unlocking in the fifth. The geometry alternates with sector
+parity, so the KERNEL you see the second time is not the one you learned.
+
+
+SCORING
+
+  data node shot     25        daemon     15
+  firewall port      150       worm       25
+                               sentinel   40
+
+Distance is the other half, and it is the half that does not run out. The
+question the game asks is how far you can go, so the score screen shows both.
+
+
+ONE LAST THING
+
+Read the drain, not the bar. The bar tells you where you are; the number at 25
+tells you how many rows you have left, and rows are what you are spending.

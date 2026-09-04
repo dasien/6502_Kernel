@@ -194,6 +194,22 @@ if(CA65_FOUND AND LD65_FOUND)
                     ${VENTURE_DIR}/venture.cfg ${VENTURE_DIR}/venture.h
             VERBATIM
         )
+        # KPANIC blob (programs/kpanic). Same shape as VENTURE, including -Ln:
+        # steps 7-8 are juice and balance, and the only way to hold a scroller's
+        # simulation still while judging either is to read its own state by name.
+        set(KPANIC_DIR ${CMAKE_SOURCE_DIR}/programs/kpanic)
+        set(KPANIC_BIN ${CMAKE_BINARY_DIR}/kernel/kpanic.bin)
+        add_custom_target(kpanic_bin ALL
+            COMMAND cl65 -t none --signed-chars -O -C ${KPANIC_DIR}/kpanic.cfg
+                    ${KPANIC_DIR}/kpanic.c ${KPANIC_DIR}/glue.s -o ${KPANIC_BIN}
+                    -Ln ${CMAKE_BINARY_DIR}/kernel/kpanic.lbl
+            COMMAND ${CMAKE_COMMAND} -E echo "KERNEL PANIC blob built ($0800)"
+            COMMENT "Building KERNEL PANIC blob"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
+            DEPENDS ${KPANIC_DIR}/kpanic.c ${KPANIC_DIR}/glue.s
+                    ${KPANIC_DIR}/kpanic.cfg ${KPANIC_DIR}/kpanic.h
+            VERBATIM
+        )
         # EDIT blob (programs/edit). Same idea as the others: the tests load a raw
         # $0800 image, while EDIT.PRG for the disk comes from the catalog build.
         set(EDIT_DIR ${CMAKE_SOURCE_DIR}/programs/edit)

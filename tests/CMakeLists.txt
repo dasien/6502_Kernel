@@ -560,6 +560,42 @@ target_compile_features(irc_tests PRIVATE cxx_std_20)
 # VENTURE (programs/venture): drives the real 6502 blob through the PIA control
 # port and reads the screen back. A real-time game cannot be checked by
 # compiling it.
+# KERNEL PANIC (programs/kpanic): the real blob, driven headlessly. Steps 1-6
+# were tuned against a host-C replica of the game's logic because nothing could
+# test a .PRG; this drives the shipped binary instead.
+add_executable(kpanic_tests
+    test_kpanic.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(kpanic_tests gtest_main gtest)
+
+target_include_directories(kpanic_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(kpanic_tests PRIVATE cxx_std_20)
+
+if(TARGET kpanic_bin)
+    add_dependencies(kpanic_tests kpanic_bin)
+endif()
+
+add_test(NAME kpanic COMMAND kpanic_tests)
+
 add_executable(venture_tests
     test_venture.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
