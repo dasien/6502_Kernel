@@ -11,7 +11,7 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
   - [x] WAI/STP are no longer benign stubs (they used to decode and fall through, so a program using either just ran on). WAI now halts until IRQ/NMI is signalled — including a *masked* IRQ, which resumes without vectoring — and STP halts until reset. Covered by tests/test_cpu_interrupts.cpp.
   - [x] Bare "(zp)" indirect opcodes ($12/$32/$52/$72/$92/$B2/$D2/$F2) now decode as 1-byte zero-page-indirect (calculateZeroPageIndirectAddress), not 2-byte absolute-indirect.
 - [x] Cycle-count accuracy: every defined 65C02 opcode now matches its datasheet cost. The bus helpers (readByte/readWord/pushByte/pullByte) each charged cycles while every handler ALSO added the instruction's full published count, so the opcode fetch alone put all 211 opcodes one cycle over and JSR cost 11 instead of 6. Nothing read the counter, so it never surfaced. Helpers no longer charge; PHA/PHP/PLA/PLP (written to the old remainder convention) were corrected to full counts. Locked by tests/test_cpu_cycles.cpp against datasheet reference data.
-- [ ] (Optional) Klaus2m5 interrupt test: still not available in the amb5l ca65 port (as65 source only) and uses a memory-mapped IRQ/NMI feedback register, so it'd need an as65 build (or manual ca65 port) plus a harness extension. Lower value now that the v2.2 IRQ/NMI path has direct coverage: tests/test_cpu_interrupts.cpp asserts masking, level-sensitive IRQ re-entry, edge-triggered NMI and its priority over IRQ, the B bit distinguishing hardware entry from BRK, D cleared on entry, and RTI restore. That found one real bug — reset() left a latched NMI pending, so it vectored through $FFFA before the reset handler ran an instruction.
+- [x] **Retired 2026-09-04** — Klaus2m5 interrupt test. Not done and not planned: it would re-cover ground `test_cpu_interrupts.cpp` already holds directly, for the price of an as65 toolchain and a harness extension. Worth revisiting only if the ca65 port appears upstream, at which point it is nearly free. Original note: (Optional) still not available in the amb5l ca65 port (as65 source only) and uses a memory-mapped IRQ/NMI feedback register, so it'd need an as65 build (or manual ca65 port) plus a harness extension. Lower value now that the v2.2 IRQ/NMI path has direct coverage: tests/test_cpu_interrupts.cpp asserts masking, level-sensitive IRQ re-entry, edge-triggered NMI and its priority over IRQ, the B bit distinguishing hardware entry from BRK, D cleared on entry, and RTI restore. That found one real bug — reset() left a latched NMI pending, so it vectored through $FFFA before the reset handler ran an instruction.
 
 ## Deferred from the kernel/BASIC deep scan (2026-06)
 
@@ -313,7 +313,16 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     screen shake, SID cues; a 2-word/BCD score (`unsigned int` caps at 65,535); a proper
     outcome screen; a final balance pass; and a companion `KPANIC.TXT` manual shipped on
     the disk beside the game the way VAULT ships `STORY.TXT` — not a `docs/*.md`.
-- [ ] **OPCODE** — set aside, recorded so it is not lost. A puzzle game where each
+- [x] **Retired 2026-09-04** — **OPCODE**. Not cancelled as a bad idea, retired as the
+  wrong shape: the blocker below is not a hard part of the game, it is a different
+  project standing in front of it. Two things would revive it, and neither is this
+  game's work to do. If the machine ever grows a **watchdog timer and a write-protect
+  range register** in the I/O page -- the sort of thing added routinely for the soft
+  font, sprites and scroll regions -- then the sandbox is hardware and the interpreter
+  is unnecessary. Or if OPCODE were built as a **host-side tool** rather than a `.PRG`,
+  the problem never arises, because `CPU6502` is already the interpreter it needs.
+  Kept in full because the four existing pieces are the interesting part of the idea.
+  Original note: set aside, recorded so it is not lost. A puzzle game where each
   level is a spec plus a byte/cycle budget and you write real 65C02 to satisfy it,
   scored on size and speed. Extremely on-brand for "My First Computer", and four
   pieces already exist: the two-pass assembler, EDIT, a real 65C02, and (as of the
