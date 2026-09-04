@@ -1331,8 +1331,8 @@ aliases):
 | `ERASE name` | delete a file |
 | `RENAME old,new` | rename a file |
 | `TYPE name` | display a text file |
-| `IMPORT name` | copy a host (macOS) file, via the file picker, into a FAT16 file |
-| `EXPORT name` | copy a FAT16 file out to a host file, via the save dialog |
+| `IMPORT name[,host]` | copy a host file into a FAT16 file (`host` names it; omitted = file picker) |
+| `EXPORT name[,host]` | copy a FAT16 file out to a host file (`host` names it; omitted = save dialog) |
 
 #### Launch by name (unified — ROMs *and* programs)
 

@@ -120,6 +120,36 @@ void PIA::writePia(const uint16_t address, const uint8_t value)
     }
 }
 
+// The host filename the guest wrote to $FE14-$FE1F, or "" if it left it blank.
+//
+// Blank is the normal case and means "ask the user": every verb worked that way
+// before this existed, and still does. A name is what makes the file verbs
+// scriptable, testable, and usable at all without a GUI -- the dialog paths are
+// inside #ifdef QT_GUI, so a console build could not load or save anything.
+//
+// Resolved against the process's working directory, which is bin/ -- already
+// where the ROMs and disk.img come from. The buffer is twelve bytes with no path
+// syntax, so an 8.3 name cannot reach outside that directory; a name carrying a
+// separator is refused rather than trimmed, because silently retargeting a write
+// is worse than not doing it. Refusal reads as a blank name, so the user gets the
+// dialog and the log says why.
+std::string PIA::guestFilename() const
+{
+    std::string name;
+    for (const char c : filename_)
+    {
+        if (c == '\0' || c == ' ') break;
+        if (c == '/' || c == '\\')
+        {
+            PIA_LOG("PIA: guest filename '%.12s' has a path separator - ignoring\n",
+                    filename_.data());
+            return {};
+        }
+        name.push_back(c);
+    }
+    return name;
+}
+
 uint8_t PIA::readPia(const uint16_t address)
 {
     if (!isPiaAddress(address))
@@ -387,30 +417,32 @@ void PIA::processFileOperations()
     if (file_command_ == kFileLoadCommand) {
         PIA_LOG("PIA: File load request - Address: $%04X\n", file_address_);
 
-        std::string filename;
-
+        std::string filename = guestFilename();
+        if (filename.empty())   // no guest name: fall back to asking
+        {
 #ifdef QT_GUI
-        // Open file dialog to let user select file
-        QString qfilename = QFileDialog::getOpenFileName(
-            nullptr,
-            "Load Binary File",
-            QString(),
-            "Binary Files (*.bin *.rom *.prg);;All Files (*.*)"
-        );
+            // Open file dialog to let user select file
+            QString qfilename = QFileDialog::getOpenFileName(
+                nullptr,
+                "Load Binary File",
+                QString(),
+                "Binary Files (*.bin *.rom *.prg);;All Files (*.*)"
+            );
 
-        if (qfilename.isEmpty()) {
-            PIA_LOG("PIA: File load cancelled by user\n");
+            if (qfilename.isEmpty()) {
+                PIA_LOG("PIA: File load cancelled by user\n");
+                file_status_ = kFileError;
+                return;
+            }
+
+            filename = qfilename.toStdString();
+#else
+            // Console-only mode - use a default filename or disable file operations
+            PIA_LOG("PIA: File operations not supported in console mode\n");
             file_status_ = kFileError;
             return;
-        }
-
-        filename = qfilename.toStdString();
-#else
-        // Console-only mode - use a default filename or disable file operations
-        PIA_LOG("PIA: File operations not supported in console mode\n");
-        file_status_ = kFileError;
-        return;
 #endif
+        }
 
         PIA_LOG("PIA: User selected file: '%s'\n", filename.c_str());
 
@@ -472,30 +504,32 @@ void PIA::processFileOperations()
             return;
         }
         
-        std::string filename;
-
+        std::string filename = guestFilename();
+        if (filename.empty())   // no guest name: fall back to asking
+        {
 #ifdef QT_GUI
-        // Open file dialog to let user select save location
-        QString qfilename = QFileDialog::getSaveFileName(
-            nullptr,
-            "Save Binary File",
-            QString(),
-            "Binary Files (*.bin);;All Files (*.*)"
-        );
+            // Open file dialog to let user select save location
+            QString qfilename = QFileDialog::getSaveFileName(
+                nullptr,
+                "Save Binary File",
+                QString(),
+                "Binary Files (*.bin);;All Files (*.*)"
+            );
 
-        if (qfilename.isEmpty()) {
-            PIA_LOG("PIA: File save cancelled by user\n");
+            if (qfilename.isEmpty()) {
+                PIA_LOG("PIA: File save cancelled by user\n");
+                file_status_ = kFileError;
+                return;
+            }
+
+            filename = qfilename.toStdString();
+#else
+            // Console-only mode - disable file operations
+            PIA_LOG("PIA: File operations not supported in console mode\n");
             file_status_ = kFileError;
             return;
-        }
-
-        filename = qfilename.toStdString();
-#else
-        // Console-only mode - disable file operations
-        PIA_LOG("PIA: File operations not supported in console mode\n");
-        file_status_ = kFileError;
-        return;
 #endif
+        }
 
         PIA_LOG("PIA: User selected save file: '%s'\n", filename.c_str());
 
@@ -532,24 +566,27 @@ void PIA::processFileOperations()
         // Open a file for streaming read. The stream is generic text, used by
         // BASIC LOAD (.bas) and the assembler's source load (.s), so default to
         // an inclusive source/text filter rather than BASIC-only.
-        std::string filename;
+        std::string filename = guestFilename();
+        if (filename.empty())   // no guest name: fall back to asking
+        {
 #ifdef QT_GUI
-        QString qfilename = QFileDialog::getOpenFileName(
-            nullptr, "Load Source File", QString(),
-            "Source & Text Files (*.s *.asm *.bas *.txt);;All Files (*.*)");
-        if (qfilename.isEmpty()) {
-            PIA_LOG("PIA: Stream open(read) cancelled by user\n");
+            QString qfilename = QFileDialog::getOpenFileName(
+                nullptr, "Load Source File", QString(),
+                "Source & Text Files (*.s *.asm *.bas *.txt);;All Files (*.*)");
+            if (qfilename.isEmpty()) {
+                PIA_LOG("PIA: Stream open(read) cancelled by user\n");
+                file_command_ = kFileIdle;
+                file_status_ = kFileError;
+                return;
+            }
+            filename = qfilename.toStdString();
+#else
+            PIA_LOG("PIA: File operations not supported in console mode\n");
             file_command_ = kFileIdle;
             file_status_ = kFileError;
             return;
-        }
-        filename = qfilename.toStdString();
-#else
-        PIA_LOG("PIA: File operations not supported in console mode\n");
-        file_command_ = kFileIdle;
-        file_status_ = kFileError;
-        return;
 #endif
+        }
         std::ifstream file(filename, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
             PIA_LOG("PIA: Stream open(read) error - cannot open '%s'\n", filename.c_str());
@@ -573,24 +610,27 @@ void PIA::processFileOperations()
     else if (file_command_ == kFileOpenWriteCommand) {
         // Open a file for streaming write (BASIC SAVE). Output is accumulated
         // and flushed on CLOSE.
-        std::string filename;
+        std::string filename = guestFilename();
+        if (filename.empty())   // no guest name: fall back to asking
+        {
 #ifdef QT_GUI
-        QString qfilename = QFileDialog::getSaveFileName(
-            nullptr, "Save BASIC Program", QString(),
-            "BASIC Programs (*.bas);;Text Files (*.txt);;All Files (*.*)");
-        if (qfilename.isEmpty()) {
-            PIA_LOG("PIA: Stream open(write) cancelled by user\n");
+            QString qfilename = QFileDialog::getSaveFileName(
+                nullptr, "Save BASIC Program", QString(),
+                "BASIC Programs (*.bas);;Text Files (*.txt);;All Files (*.*)");
+            if (qfilename.isEmpty()) {
+                PIA_LOG("PIA: Stream open(write) cancelled by user\n");
+                file_command_ = kFileIdle;
+                file_status_ = kFileError;
+                return;
+            }
+            filename = qfilename.toStdString();
+#else
+            PIA_LOG("PIA: File operations not supported in console mode\n");
             file_command_ = kFileIdle;
             file_status_ = kFileError;
             return;
-        }
-        filename = qfilename.toStdString();
-#else
-        PIA_LOG("PIA: File operations not supported in console mode\n");
-        file_command_ = kFileIdle;
-        file_status_ = kFileError;
-        return;
 #endif
+        }
         stream_filename_ = filename;
         stream_buffer_.clear();
         stream_pos_ = 0;

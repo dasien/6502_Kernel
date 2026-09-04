@@ -276,6 +276,9 @@ namespace Computer
         uint16_t file_address_;
         uint16_t file_end_address_;
         std::array<char, 12> filename_{};
+
+        /// The guest-supplied host filename, or "" when the buffer is blank.
+        [[nodiscard]] std::string guestFilename() const;
         class Memory *memory_;
         class CPU6502 *cpu_ = nullptr;
 

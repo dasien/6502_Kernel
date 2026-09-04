@@ -89,16 +89,19 @@ MON_ENDADDR_HI   = $026F
 ASCII_CR         = $0D
 ASCII_LF         = $0A
 ASCII_SPACE      = $20
+ASCII_COMMA      = $2C
 
 ; ----------------------------------------------------------------
-; Host byte-stream file I/O (PIA) - used by IMPORT/EXPORT to bridge a host
-; (macOS) file and a FAT16 file via the file-picker dialog.
+; Host byte-stream file I/O (PIA) - used by IMPORT/EXPORT to bridge a host file
+; and a FAT16 file. The host file is named by FIO_NAME when the command supplies
+; one, and chosen from a picker dialog when it does not.
 ; ----------------------------------------------------------------
 FIO_COMMAND      = $FE10                ; file command register
 FIO_STATUS       = $FE11                ; file status register
 FIO_DATA         = $FE22                ; byte-stream data register
-FIO_OPEN_RD      = $03                  ; open host file for reading (open dialog)
-FIO_OPEN_WR      = $04                  ; open host file for writing (save dialog)
+FIO_NAME         = $FE14                ; $FE14-$FE1F: host filename (12 bytes)
+FIO_OPEN_RD      = $03                  ; open host file for reading
+FIO_OPEN_WR      = $04                  ; open host file for writing
 FIO_CLOSE        = $05                  ; close/flush the host stream
 FIO_INPROG       = $01                  ; status: operation in progress
 FIO_EOF          = $04                  ; status (read): no more bytes
@@ -1161,15 +1164,84 @@ _DOS_DO_LOAD:
     JMP _DOS_PERR_USAGE
 
 ; ----------------------------------------------------------------
-; _DOS_DO_IMPORT - IMPORT NAME : host file (picker) -> FAT16 file NAME
+; ----------------------------------------------------------------
+; _DOS_HOST_NAME - split an optional ",HOSTFILE" off the argument
+; ----------------------------------------------------------------
+; IMPORT and EXPORT name a FAT16 file; the host file used to come only from a
+; picker dialog. An optional second field names it instead, which is what makes
+; those verbs scriptable, testable, and usable without a GUI at all.
+;
+;   EXPORT NOTES.TXT              -> host picks the file (unchanged)
+;   EXPORT NOTES.TXT,NOTES.TXT    -> writes bin/NOTES.TXT, no dialog
+;
+; In:  Y -> first argument character. Out: Y unchanged; the FAT16 name is
+; NUL-terminated at the comma if there was one, and FIO_NAME holds the host name
+; (or twelve zeros, which the host reads as "ask me").
+;
+; The buffer is ALWAYS cleared first. It is a hardware register that keeps its
+; value, so leaving a previous command's name in it would silently retarget the
+; next one -- EXPORT A,X then EXPORT B would write B's contents over X.
+_DOS_HOST_NAME:
+    LDX #$0B                            ; clear all twelve bytes
+    LDA #$00
+@clr:
+    STA FIO_NAME,X
+    DEX
+    BPL @clr
+
+    PHY                                 ; keep the caller's argument index
+    TYA
+    TAX                                 ; X = scan position
+@scan:
+    CPX MON_CMDLEN
+    BCS @done                           ; no comma -> host picks the file
+    LDA MON_CMDBUF,X
+    CMP #ASCII_COMMA
+    BEQ @found
+    INX
+    BRA @scan
+@found:
+    LDA #$00
+    STA MON_CMDBUF,X                    ; terminate the FAT16 name at the comma
+    INX
+@skipsp:
+    CPX MON_CMDLEN                       ; tolerate "NAME, HOST"
+    BCS @done
+    LDA MON_CMDBUF,X
+    CMP #ASCII_SPACE
+    BNE @copy
+    INX
+    BRA @skipsp
+@copy:
+    LDY #$00
+@cploop:
+    CPX MON_CMDLEN
+    BCS @done
+    CPY #$0C                            ; twelve bytes, no terminator needed
+    BCS @done
+    LDA MON_CMDBUF,X
+    BEQ @done
+    CMP #ASCII_SPACE
+    BEQ @done
+    STA FIO_NAME,Y
+    INX
+    INY
+    BRA @cploop
+@done:
+    PLY                                 ; restore the caller's argument index
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_DO_IMPORT - IMPORT NAME[,HOSTFILE] : host file -> FAT16 file NAME
 ; ----------------------------------------------------------------
 _DOS_DO_IMPORT:
     JSR _DOS_ARG_OR_USAGE
+    JSR _DOS_HOST_NAME                  ; optional ",HOSTFILE" -> FIO_NAME
     STY DOS_SH_NAMEIDX
     LDX MON_CMDLEN
     LDA #$00
     STA MON_CMDBUF,X                    ; null-terminate the name
-    LDA #FIO_OPEN_RD                    ; open the host file (open dialog)
+    LDA #FIO_OPEN_RD                    ; open the host file (FIO_NAME, else dialog)
     STA FIO_COMMAND
 @wait:
     LDA FIO_STATUS
@@ -1210,10 +1282,11 @@ _DOS_DO_IMPORT:
     JMP _DOS_PERR_HOST
 
 ; ----------------------------------------------------------------
-; _DOS_DO_EXPORT - EXPORT NAME : FAT16 file NAME -> host file (save dialog)
+; _DOS_DO_EXPORT - EXPORT NAME[,HOSTFILE] : FAT16 file NAME -> host file
 ; ----------------------------------------------------------------
 _DOS_DO_EXPORT:
     JSR _DOS_ARG_OR_USAGE
+    JSR _DOS_HOST_NAME                  ; optional ",HOSTFILE" -> FIO_NAME
     LDX MON_CMDLEN
     LDA #$00
     STA MON_CMDBUF,X
@@ -1222,7 +1295,7 @@ _DOS_DO_EXPORT:
     LDY #$00
     JSR _FS_OPEN
     BCS @notfound
-    LDA #FIO_OPEN_WR                    ; open the host file (save dialog)
+    LDA #FIO_OPEN_WR                    ; open the host file (FIO_NAME, else dialog)
     STA FIO_COMMAND
 @wait:
     LDA FIO_STATUS
@@ -1238,6 +1311,14 @@ _DOS_DO_EXPORT:
 @done:
     LDA #FIO_CLOSE
     STA FIO_COMMAND
+    ; The close is what flushes the host stream, so it is the ONLY point a host
+    ; write failure can reach us -- and it was being thrown away: EXPORT printed
+    ; "EXPORTED" without ever reading the status back, so a write onto a full or
+    ; unwritable target reported success and lost the file. The PIA handles close
+    ; inline, so the result is already here; no wait loop.
+    LDA FIO_STATUS
+    CMP #FIO_ERROR
+    BEQ @hosterr
     JSR _FS_CLOSE
     LDA #<MSG_DOS_EXPORTED
     LDX #>MSG_DOS_EXPORTED
@@ -2052,8 +2133,8 @@ DH_COPY:   .BYTE "COPY src,dst", $09, "copy a file", 0
 DH_MOVE:   .BYTE "MOVE src,dst", $09, "move / rename a file", 0
 DH_REN:    .BYTE "RENAME old,new", $09, "rename a file", 0
 DH_ERASE:  .BYTE "ERASE name", $09, "delete a file", 0
-DH_IMPORT: .BYTE "IMPORT name", $09, "host file -> disk", 0
-DH_EXPORT: .BYTE "EXPORT name", $09, "disk file -> host", 0
+DH_IMPORT: .BYTE "IMPORT name[,host]", $09, "host file -> disk", 0
+DH_EXPORT: .BYTE "EXPORT name[,host]", $09, "disk file -> host", 0
 DH_NEWD:   .BYTE "NEWDRAWER name", $09, "make a drawer", 0
 DH_OPEN:   .BYTE "OPEN name", $09, "enter a drawer", 0
 DH_CLOSE:  .BYTE "CLOSE", $09, "leave the drawer", 0

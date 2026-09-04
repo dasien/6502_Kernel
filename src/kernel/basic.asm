@@ -8088,8 +8088,14 @@ BSAVE_WAIT:
       PLA
       STA   VEC_OUT
 
+      ; The close is what flushes the stream, so it is the only point a host
+      ; write failure can reach us. Ignoring it meant SAVE printed nothing wrong
+      ; while the program was lost. Handled inline by the PIA, so no wait loop.
       LDA   #FIO_CLOSE        ; close (flush) the file
       STA   FIO_COMMAND
+      LDA   FIO_STATUS
+      CMP   #FIO_ERROR
+      BEQ   BFIO_ERR          ; report "ERROR?" rather than silently losing it
 BSAVE_RET:
       RTS
 

@@ -22,7 +22,7 @@ CHESS, VAULT, …) are all things you type at this prompt.
 | `ERASE name` | delete a file |
 | `LOAD name[,addr]` | load a file into memory |
 | `SAVE name,ssss-eeee` | save a memory range to a file |
-| `IMPORT name` / `EXPORT name` | host ↔ disk file exchange |
+| `IMPORT name[,host]` / `EXPORT name[,host]` | host ↔ disk file exchange |
 | `NEWDRAWER name` | create a drawer |
 | `OPEN name` / `CLOSE` | enter / leave a drawer |
 | `DROPDRAWER name` | remove an empty drawer |
@@ -143,8 +143,13 @@ This is how the assemble → `SAVE` → run-by-name loop closes: assemble in `AS
 Because the disk is a genuine FAT16 image, you can move files between the machine
 and your Mac two ways:
 
-- **In MFC/OS:** `IMPORT name` copies a host file (chosen from a host file
-  picker) onto the disk; `EXPORT name` copies a disk file out to a host file.
+- **In MFC/OS:** `IMPORT name` copies a host file onto the disk; `EXPORT name`
+  copies a disk file out to a host file. Name the host file as a second field --
+  `EXPORT NOTES.TXT,NOTES.TXT` -- and no dialog appears; it resolves against the
+  directory the emulator runs from (`bin/`). Omit it and a host file picker opens,
+  as it always has. The named form is the only one that works without a GUI, and
+  the only one a test or script can drive: 12 bytes with no path syntax, so it
+  cannot reach outside that directory.
 - **On the host:** mount `disk.img` directly and drag files in and out (macOS
   Finder, `mount -o loop` on Linux, or any tool that reads FAT16).
 

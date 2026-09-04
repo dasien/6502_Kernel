@@ -120,6 +120,7 @@ public:
         testDosDrawers();
         testDosCrossDrawer();
         testDiskStaysHostCleanAfterGuestWrites();
+        testHostFileNamedByTheGuest();
         testRunDiskProgram();
         testRunOverride();
         testRunNotFound();
@@ -401,6 +402,55 @@ public:
     // taken, leaving 3; BIG.DAT (2050 bytes = 5 clusters) allocates 3 and fails.
     // The discriminating assertion is the SECOND SAVE: it only succeeds if the
     // ERASE actually recovered those 3 clusters.
+    // IMPORT/EXPORT with a guest-supplied host filename.
+    //
+    // The host file used to come only from a Qt picker, which put every host-file
+    // verb out of reach of a test: the dialog code is behind QT_GUI (not defined
+    // here), so all four paths returned kFileError unconditionally. Naming the file
+    // from the 6502 side is what makes them reachable -- and it is why this test
+    // could not have been written before.
+    //
+    // Names resolve against the working directory, which for this suite is bin/.
+    void testHostFileNamedByTheGuest() {
+        const std::string content = "MFC HOST FILE\r\n";
+        mountDisk({{"SRC.TXT", std::vector<uint8_t>(content.begin(), content.end())}});
+
+        std::filesystem::remove("EXPD.TXT");
+
+        // EXPORT: disk -> host, no dialog.
+        clearScreen();
+        sendCommand("EXPORT SRC.TXT,EXPD.TXT", 900000);
+        verifyResponse("EXPORTED", "EXPORT to a named host file succeeds");
+
+        bool wrote = std::filesystem::exists("EXPD.TXT");
+        std::string got;
+        if (wrote) {
+            std::ifstream f("EXPD.TXT", std::ios::binary);
+            got.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        verifyTrue(wrote, "EXPORT created the host file it was told to");
+        verifyTrue(got == content, "the host file holds what the disk file held");
+
+        // IMPORT: host -> disk, no dialog. Round-trips through the same name.
+        clearScreen();
+        sendCommand("IMPORT BACK.TXT,EXPD.TXT", 900000);
+        verifyResponse("IMPORTED", "IMPORT from a named host file succeeds");
+        clearScreen();
+        sendCommand("TYPE BACK.TXT", 900000);
+        verifyResponse("MFC HOST FILE", "the imported file reads back on the disk");
+
+        // A name the host cannot write. The point is not the failure -- it is that
+        // the 6502 is told about it: closeStream() reports the flush result, and
+        // before this test nothing checked that the DOS passes it on.
+        std::filesystem::create_directory("EXPDIR.TXT");
+        clearScreen();
+        sendCommand("EXPORT SRC.TXT,EXPDIR.TXT", 900000);
+        verifyResponse("HOST I/O ERROR", "EXPORT reports a host write it could not do");
+
+        std::filesystem::remove("EXPD.TXT");
+        std::filesystem::remove_all("EXPDIR.TXT");
+    }
+
     void testDosSaveDiskFullReclaims() {
         std::string a = "hi\r\n";
         // Explicitly 128 clusters: this test is ABOUT running out of room, so it
