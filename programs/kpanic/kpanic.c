@@ -601,7 +601,13 @@ static void draw_craft(void) {
     spr_sel(0);
     spr_x_px(craft_px);
     spr_y(CRAFT_ROW);
-    if (flash) { spr_glyph(G_BLAST); spr_attr((unsigned char)(A_WARN | 0x80)); }
+    /* No reverse bit here, however much a crash wants to shout. A sprite has no
+     * cell behind it to swap with -- DisplayWidget draws sprite pixels in the
+     * FOREGROUND colour only -- so setting bit 7 just makes resolveCellColors hand
+     * back the background, and A_WARN's background is black. The impact flash was
+     * therefore drawing the ship in black pixels: hitting a wall read as the craft
+     * blinking out rather than being hit. */
+    if (flash) { spr_glyph(G_BLAST); spr_attr(A_WARN); }
     else       { spr_glyph(G_CRAFT); spr_attr(A_CRAFT); }
 }
 
@@ -770,6 +776,75 @@ static void pop_add(unsigned char x, unsigned char y) {
         pop_t[i] = (unsigned char)(POP_TICKS - (k >> 1));
         pop_x[i] = (unsigned char)px;
         pop_y[i] = (unsigned char)py;
+    }
+}
+
+/* The death blast: an expanding shockwave, for the one event that earns one.
+ *
+ * pop_add's six cells and three-tick fade are right for a routine kill -- a hit
+ * needs a signature, not a ceremony. A run ending is the opposite problem: the
+ * simulation stopped, the panel appeared, and there was no moment in between, so
+ * the most consequential thing in the game was its least visible.
+ *
+ * Drawn as three rings arriving in turn rather than as the same cells dimming in
+ * place. A burst that GROWS reads as an explosion; cells fading where they sit
+ * read as something being switched off, which is what the fade already does for a
+ * kill. Glyphs come from the debris set on purpose: this is the same event an
+ * order louder, not a different visual language.
+ *
+ * Rings are offsets from the craft, tagged with which ring they belong to, so one
+ * table drives both the shape and the timing. */
+static const signed char blast_dx[] = {
+     0,
+    -1, 0, 1, -1, 1, -1, 0, 1,
+    -2, -1, 0, 1, 2,  -2, 2,  -2, -1, 0, 1, 2
+};
+static const signed char blast_dy[] = {
+     0,
+    -1,-1,-1,  0, 0,  1, 1, 1,
+    -2, -2,-2,-2,-2,   0, 0,   2,  2, 2, 2, 2
+};
+static const unsigned char blast_ring[] = {
+     0,
+     1, 1, 1, 1, 1, 1, 1, 1,
+     2, 2, 2, 2, 2,  2, 2,   2, 2, 2, 2, 2
+};
+
+#pragma warn(const-comparison, push, off)
+typedef char blast_dy_size_check[1 - 2 * (sizeof blast_dy != sizeof blast_dx)];
+typedef char blast_ring_size_check[1 - 2 * (sizeof blast_ring != sizeof blast_dx)];
+#pragma warn(const-comparison, pop)
+
+/* Glyph for a ring, given how many rings the front has passed it by. The front
+ * itself is the dense heart; what it leaves behind cools. */
+static const unsigned char blast_glyph[] = { G_BLAST, G_EMBER, G_DUST };
+static const unsigned char blast_attr[]  = { A_SHOT,  A_WARN,  A_TEXT };
+
+/* Paint the blast at stage `front`, or erase it when `front` is past the last
+ * ring. Cells outside the playfield are skipped rather than clamped -- clamping
+ * would stack the ring into a bar along the edge. */
+static void blast_paint(unsigned char x, unsigned char y, unsigned char front,
+                        unsigned char erase) {
+    unsigned char k, age;
+    signed char px, py;
+
+    for (k = 0; k < sizeof blast_dx; k++) {
+        if (blast_ring[k] > front) continue;
+        age = (unsigned char)(front - blast_ring[k]);
+        if (age >= sizeof blast_glyph) continue;    /* cooled away already */
+
+        px = (signed char)((signed char)x + blast_dx[k]);
+        py = (signed char)((signed char)y + blast_dy[k]);
+        if (px < 0 || px >= PLAY_COLS) continue;
+        if (py < 0 || py > PLAY_LAST)  continue;
+
+        if (erase) {
+            restore_cell((unsigned char)py, (unsigned char)px);
+        } else {
+            vaddr(PROW((unsigned char)py) * SCR_W + (unsigned char)px);
+            last_attr = 0xFF;
+            put_cell(blast_glyph[age], blast_attr[age]);
+        }
     }
 }
 
@@ -1768,6 +1843,31 @@ static unsigned char title_screen(void) {
     }
 }
 
+/* Hold on the wreck before the panel.
+ *
+ * Death used to be instantaneous: `dead` went true, the loop returned, and the
+ * end screen was already up. The player's own destruction was the only event in
+ * the game with no visible cause -- you were told the outcome without being shown
+ * it. This spends about a third of a second showing it.
+ *
+ * Paced off jiffies rather than a spin count so it lasts the same wall-clock time
+ * whatever the host is doing, and the world does NOT step: everything is frozen
+ * except the blast, which is what makes it read as a stop rather than a stutter.
+ */
+static void death_throes(void) {
+    unsigned char front;
+    unsigned int  mark;
+
+    for (front = 0; front < 3 + 3; front++) {
+        blast_paint(craft_x, CRAFT_ROW, front, 0);
+
+        mark = jiffies();
+        while ((unsigned int)(jiffies() - mark) < BLAST_HOLD) ;
+
+        blast_paint(craft_x, CRAFT_ROW, front, 1);
+    }
+}
+
 /* End screen. Returns 1 to play again, 0 to quit. The real outcome tally with the
  * score table is step 7; this is the honest minimum -- it states the outcome, it
  * stays up until it is dismissed, and it says which key does what. */
@@ -1778,10 +1878,17 @@ static unsigned char game_over(void) {
      * competing with terrain behind it. */
     vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
 
-    put_str(30, 9,  "*** KERNEL PANIC ***", A_WARN);
-    put_str(28, 11, "ENERGY DEPLETED", A_TEXT);
-    put_str(28, 10, "SECTOR", A_HUD);
-    put_str(38, 10, sector_name[(sector < NSECTORS) ? sector : (NSECTORS - 1)], A_CRAFT);
+    /* The headline states the CAUSE, not the game's name. Running the tank dry is
+     * the only way to reach this screen, so a "KERNEL PANIC" banner here was the
+     * title screen's job done twice -- and it pushed the one line that actually
+     * explained the run down among the tally, where it read as another statistic.
+     * 23 characters centred on column 40. */
+    put_str(29, 9,  "*** ENERGY DEPLETED ***", A_WARN);
+
+    /* Row 10 left blank: the tally is a different kind of statement from the
+     * headline and should not start against it. */
+    put_str(28, 11, "SECTOR", A_HUD);
+    put_str(38, 11, sector_name[(sector < NSECTORS) ? sector : (NSECTORS - 1)], A_CRAFT);
     put_str(28, 12, "SCORE", A_HUD);
     put_num(38, 12, score, 5, A_TEXT);
     put_str(28, 13, "DIST", A_HUD);
@@ -1910,7 +2017,7 @@ static unsigned char play_run(void) {
             hud_dirty = 1;
         }
 
-        if (dead) { draw_hud_live(); return 1; }
+        if (dead) { draw_hud_live(); death_throes(); return 1; }
 
         if (hud_dirty) { draw_hud_live(); hud_dirty = 0; }
 

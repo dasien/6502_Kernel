@@ -338,6 +338,10 @@ extern void          spr_on(unsigned char enable);
  * instead of every cell blinking off together. */
 #define POP_CELLS       6       /* debris cells one hit throws */
 #define POP_TICKS       3       /* life of the innermost cell, in ticks */
+/* Jiffies each ring of the death blast is held. Three rings arriving and three
+ * cooling at four jiffies apiece is about a third of a second -- long enough to
+ * register as an event, short enough not to delay the retry you already want. */
+#define BLAST_HOLD      4
 #define MAX_DEBRIS      24      /* pool: 4 concurrent hits, and a firewall throws 3 */
 
 #define E_NONE          0

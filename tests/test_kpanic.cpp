@@ -251,10 +251,21 @@ TEST_F(KpanicTest, AnEmptyTankIsAKernelPanic)
     run(120);
     EXPECT_EQ(peek("_dead"), 1u) << "an empty tank did not end the run";
 
-    run(30);                        // let the end screen paint
+    run(60);                        // death blast, then the end screen
     const std::string s = screenText();
-    EXPECT_NE(s.find("KERNEL PANIC"), std::string::npos) << s;
+
+    // The headline names the cause, not the game. Asserted on because it is the
+    // only reason this screen can appear, so a "KERNEL PANIC" banner here just
+    // repeated the title screen.
+    for (int r = 8; r <= 16; r++) { std::string q = screenRow(r);
+        while (!q.empty() && q.back() == ' ') q.pop_back();
+        printf("row %2d: |%s|\n", r, q.c_str()); }
+    EXPECT_NE(s.find("ENERGY DEPLETED"), std::string::npos) << s;
+    EXPECT_EQ(s.find("KERNEL PANIC"), std::string::npos)
+        << "the end screen is repeating the application title";
     EXPECT_NE(s.find("SCORE"), std::string::npos);
+    EXPECT_NE(s.find("SECTOR"), std::string::npos);
+    EXPECT_NE(s.find("DIST"), std::string::npos);
 }
 
 /* The energy economy sets how long a run lasts, which is the balance dial the
@@ -299,6 +310,39 @@ TEST_F(KpanicTest, TheScoreSaturatesInsteadOfWrapping)
     // Already pinned stays pinned.
     call1("_add_score", 40);
     EXPECT_EQ(peek16("_score"), 0xFFFFu);
+}
+
+/* The craft's impact flash must not set the reverse-video bit.
+ *
+ * A sprite has no cell behind it to swap with -- DisplayWidget draws sprite
+ * pixels in the FOREGROUND colour only -- so bit 7 makes resolveCellColors hand
+ * back the background instead, and every attribute this game uses has a black
+ * background. The flash was `A_WARN | 0x80`, which drew the ship in black pixels:
+ * hitting a wall read as the craft blinking out rather than being hit.
+ *
+ * Reported from play, not found here; this exists so it cannot come back. The
+ * assertion is deliberately about the whole sprite set, because the bit is wrong
+ * on ANY sprite for the same reason. */
+TEST_F(KpanicTest, NoSpriteEverSetsTheReverseBit)
+{
+    startRun();
+
+    // Hold the craft in its impact flash so draw_craft() takes that branch, then
+    // let a frame run so the attribute actually reaches the chip.
+    poke("_flash", 3);
+    run(2);
+
+    bool saw_flash = false;
+    for (uint8_t i = 0; i < 17; i++) {
+        const auto &s = c.getVideoChip()->sprite(i);
+        if (!s.enabled) continue;
+        EXPECT_EQ(s.attr & 0x80, 0)
+            << "sprite " << static_cast<int>(i) << " has the reverse bit set, so it "
+            << "draws in its background colour -- which is black";
+        if (s.glyph == 15) saw_flash = true;      // G_BLAST, the impact glyph
+    }
+    EXPECT_TRUE(saw_flash) << "the craft was not showing its impact flash, so the "
+                              "attribute under test was never exercised";
 }
 
 } // namespace
