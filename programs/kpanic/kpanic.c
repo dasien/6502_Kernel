@@ -29,8 +29,9 @@
  * double-size rows to make the glyphs bigger; that halved the runway and doubled the
  * scroll quantum to 32 px, which lurched. See the geometry note in kpanic.h.
  *
- * Deliberately NOT here yet: bosses + sector progression (step 6), juice and the
- * real scoring/outcome tally (step 7), balance and the manual (step 8).
+ * Deliberately NOT here yet: cell-offset screen shake and SID cues (step 7), and
+ * the final balance pass (step 8). The boss was cut for firewalls; the manual
+ * ships as KPANIC.TXT; the wider score was measured and dropped (see `score`).
  * ==========================================================================*/
 #include "kpanic.h"
 
@@ -1868,9 +1869,12 @@ static void death_throes(void) {
     }
 }
 
-/* End screen. Returns 1 to play again, 0 to quit. The real outcome tally with the
- * score table is step 7; this is the honest minimum -- it states the outcome, it
- * stays up until it is dismissed, and it says which key does what. */
+/* End screen. Returns 1 to play again, 0 to quit.
+ *
+ * States the cause, the sector reached, the score and the distance, and stays up
+ * until dismissed. A score TABLE -- a persistent list of past runs -- is still not
+ * here, and needs somewhere to keep it: the disk, which means the game would have
+ * to open a file, which it currently never does. */
 static unsigned char game_over(void) {
     unsigned char k;
 

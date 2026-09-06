@@ -309,10 +309,26 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     which at 12 was ~29 s against runs of 60-90 s, so power-ups stopped appearing at
     all. Reason about the cadence the player experiences, not the rate the mechanic
     fires at.
-  - **Remaining (steps 7-8):** juice — explosions beyond the debris scatter, cell-offset
-    screen shake, SID cues; a 2-word/BCD score (`unsigned int` caps at 65,535); a proper
-    outcome screen; a final balance pass; and a companion `KPANIC.TXT` manual shipped on
-    the disk beside the game the way VAULT ships `STORY.TXT` — not a `docs/*.md`.
+  - **Steps 7-8, part done (branch `feat/kpanic-steps-7-8`, not merged).** Parked
+    2026-09-05 at Brian's call, mid-way through the juice.
+    - **Done and play-approved:** a death blast (three rings expanding from the craft
+      with the world frozen, ~⅓ s, then the panel — a run ending previously had no
+      visible cause at all); the wall-hit flash, which was drawing the ship in *black*
+      because `A_WARN | 0x80` set the reverse bit and a sprite has no cell behind it to
+      swap with, so bit 7 could only ever darken it; and an end screen whose headline
+      states the cause rather than repeating the game's name.
+    - **Done, not needing eyes:** `KPANIC.TXT` on the disk beside the game; a saturating
+      `add_score()`; and a real test harness — `kpanic_bin` plus eight tests in
+      `tests/test_kpanic.cpp`, which is what the "no `.PRG` can be tested" note above
+      was waiting for.
+    - **Dropped on measurement:** the 2-word/BCD score. `unsigned long` cost 650 bytes
+      and a myriad-pair 1,054 (cc65 emits a division helper per constant divide), and
+      the harness put a generous score ceiling in the low thousands — five to ten times
+      short of 65,535. See DESIGN.md step 7.
+    - **Still open:** cell-offset screen shake; SID cues; the final balance pass, which
+      wants doing last because juice changes how harsh the game feels without changing
+      a number. A persistent score *table* is also still absent and would need the game
+      to open a disk file, which it never does today.
 - [x] **Retired 2026-09-04** — **OPCODE**. Not cancelled as a bad idea, retired as the
   wrong shape: the blocker below is not a hard part of the game, it is a different
   project standing in front of it. Two things would revive it, and neither is this
