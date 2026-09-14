@@ -76,8 +76,10 @@ RTC_FATDATE_HI   = $FE60
 
 MON_CMDBUF       = $0200                ; BIOS command-line buffer (page aligned)
 MON_CMDLEN       = $026A                ; current command length
+MON_CMDBUF_LEN   = 80                   ; capacity of MON_CMDBUF
 MON_MSG_PTR_LO   = $16                  ; message pointer for K_PRINT_MESSAGE
 MON_MSG_PTR_HI   = $17
+PAGE_ENABLE      = $1E                  ; kernel pager master switch (1 = on)
 CMD_LINE_COUNT   = $21                  ; kernel pager line counter (reset after a command)
 MON_CURRADDR_LO  = $14                  ; K_PARSE_HEX result / our mem cursor (zp)
 MON_CURRADDR_HI  = $15
@@ -87,8 +89,10 @@ MON_ENDADDR_LO   = $026E                ; range end (SAVE)
 MON_ENDADDR_HI   = $026F
 
 ASCII_CR         = $0D
+ASCII_ESC        = $1B
 ASCII_LF         = $0A
 ASCII_SPACE      = $20
+ASCII_HASH       = $23
 ASCII_COMMA      = $2C
 
 ; ----------------------------------------------------------------
@@ -194,7 +198,15 @@ DOS_FTIME        = $03B2                ; word: packed FAT time (hh:mm:ss/2)
 DOS_FDATE        = $03B4                ; word: packed FAT date (y-1980:month:day)
 DOS_W_FREE_LBA   = $03B6                ; word: sector of the first reclaimable ($E5)
                                         ;   directory slot seen this scan (0 = none)
-DOS_W_FREE_IDX   = $03B8                ; byte: slot index within DOS_W_FREE_LBA
+DOS_W_FREE_IDX   = $03B8
+; Boot config runner (SYSTEM/STARTUP.CFG). Page 3 is free from here up.
+DOS_CFG_LINE     = $03B9                ; index of the config line to run next
+DOS_CFG_PAGE     = $03BA                ; saved PAGE_ENABLE, restored when done
+DOS_CFG_EOF      = $03BB                ; the last read stopped at EOF, not a newline
+
+; A config may not be longer than this many lines, so a binary file mistakenly
+; named STARTUP.CFG cannot spin the boot forever.
+CFG_MAX_LINES    = 32                ; byte: slot index within DOS_W_FREE_LBA
 
 ; FAT16 end-of-chain threshold (>= this means last cluster)
 FAT_EOC          = $FFF8
@@ -301,8 +313,167 @@ DOS_VERSION:
 _DOS_COLD:
     LDX #$FF
     TXS                                 ; clean stack
+    JSR _DOS_STARTUP                    ; SYSTEM/STARTUP.CFG, before the sign-on
     JSR _DOS_SPLASH                     ; the sign-on box (OPERATIONAL + ver + free)
     JMP _DOS_PROMPT
+
+; ----------------------------------------------------------------
+; _DOS_STARTUP - run SYSTEM/STARTUP.CFG, the boot config
+; ----------------------------------------------------------------
+; A text file of ordinary DOS commands, run before the prompt. There is no
+; config parser and no settings table: _DOS_DISPATCH already reads MON_CMDBUF,
+; so the whole feature is "K_READ_LINE, but from a file" and every verb the
+; shell has works on day one.
+;
+;   # SYSTEM/STARTUP.CFG
+;   THEME AMBER
+;   OPEN GAMES
+;
+; It runs BEFORE the splash on purpose. _DOS_SPLASH does not clear the screen,
+; so the sign-on lands underneath whatever the config printed and ends up where
+; it always is -- immediately above the prompt -- instead of being scrolled away.
+;
+; Nothing is echoed. The verbs report themselves (OPEN prints only a newline on
+; success, NO SUCH DRAWER on failure), so a config that works is silent and the
+; boot looks untouched, while a config that fails leaves its error on screen
+; above the splash. Echoing every line would have bought nothing and cost the
+; clean boot.
+;
+; A missing file is not an error: most disks will not have one.
+_DOS_STARTUP:
+    ; ESC skips the whole file. Without an escape hatch a single bad line -- one
+    ; that launches something which never returns -- means rebuilding the disk
+    ; from the host to get the machine back. The key comes from the keystroke
+    ; buffer rather than the live port at $FE0F, which only carries game keys, so
+    ; it is pressed during boot rather than held from power-on.
+    JSR K_GET_KEYSTROKE
+    BCC @run
+    CMP #ASCII_ESC
+    BEQ @skip
+
+@run:
+    ; Paging off for the duration, or a config containing CATALOG stops the boot
+    ; at --MORE-- before a prompt has ever appeared.
+    LDA PAGE_ENABLE
+    STA DOS_CFG_PAGE
+    STZ PAGE_ENABLE
+    STZ DOS_CFG_LINE
+
+@loop:
+    JSR _DOS_CFG_READ                   ; -> MON_CMDBUF/MON_CMDLEN; C set = no more
+    BCS @done                           ; (the reader owns DOS_CFG_LINE)
+
+    JSR _DOS_DISPATCH                   ; the shell's own interpreter
+
+    LDA DOS_CFG_LINE
+    CMP #CFG_MAX_LINES
+    BCC @loop
+
+@done:
+    LDA DOS_CFG_PAGE
+    STA PAGE_ENABLE
+@skip:
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_CFG_READ - read config line DOS_CFG_LINE into MON_CMDBUF
+; ----------------------------------------------------------------
+; Out: carry clear and MON_CMDBUF/MON_CMDLEN hold the line, or carry set when
+;      there is no such line (missing file, or past the end).
+;
+; The file is re-opened and re-scanned for EVERY line, which looks wasteful and
+; is not: _FS_OPEN documents "only one file open at a time", and a dispatched
+; command is free to open a file of its own -- TYPE, IMPORT, or launching a
+; program all do. Holding the config open across a dispatch would have its cursor
+; silently stolen mid-loop. Re-reading a handful of sectors a few times at boot
+; costs nothing and is immune to whatever the config asks for.
+_DOS_CFG_READ:
+    ; Copy the name into RAM first. _DOS_RESOLVE_PATH terminates the drawer
+    ; component IN PLACE -- it writes a NUL over the '/' and puts it back after --
+    ; so a name in ROM silently fails to resolve: the write is discarded, the
+    ; drawer name is never terminated, and the lookup misses. Every other caller
+    ; happens to pass a pointer into MON_CMDBUF and never meets this. A bare
+    ; root-level name works from ROM, which makes the failure look like a mount
+    ; problem rather than a path one.
+    LDY #$00
+@copy:
+    LDA MSG_CFG_NAME,Y
+    STA DOS_ARGBUF,Y
+    BEQ @named
+    INY
+    BRA @copy
+@named:
+    LDA #<DOS_ARGBUF
+    LDX #>DOS_ARGBUF
+    LDY #$00                            ; read mode
+    JSR _FS_OPEN
+    BCS @none                           ; no file, or not mounted
+
+    LDX DOS_CFG_LINE                    ; skip that many complete lines
+    BEQ @take
+@skip:
+    JSR _FS_GETB
+    BCS @shut                           ; ran out before reaching the line
+    CMP #ASCII_LF
+    BNE @skip
+    DEX
+    BNE @skip
+
+@take:
+    STZ DOS_CFG_EOF
+    LDY #$00
+@get:
+    JSR _FS_GETB
+    BCC :+
+    INC DOS_CFG_EOF                     ; EOF also terminates a final line
+    BRA @eol
+:
+    CMP #ASCII_LF
+    BEQ @eol
+    CMP #ASCII_CR
+    BEQ @get                            ; tolerate CRLF
+    CPY #MON_CMDBUF_LEN-1               ; over-long: keep scanning to the newline
+    BCS @get                            ; but stop storing
+    STA MON_CMDBUF,Y
+    INY
+    BRA @get
+
+@eol:
+    STY MON_CMDLEN
+    INC DOS_CFG_LINE                    ; this line is consumed either way
+
+    ; Blank and comment lines are skipped HERE rather than by the caller, so they
+    ; cost one more pass of this loop instead of a whole re-open. Only a line that
+    ; will actually be dispatched needs the file re-opened, because only a
+    ; dispatch can steal the cursor. Filtering in the caller made the cost grow
+    ; with the number of LINES rather than the number of COMMANDS: fifteen lines
+    ; of comments added 122,000 instructions to boot, against 5,000 for one.
+    LDA DOS_CFG_EOF
+    BNE @last
+    LDA MON_CMDLEN
+    BEQ @take                           ; blank -> next line, same open
+    LDA MON_CMDBUF
+    CMP #ASCII_HASH
+    BEQ @take                           ; comment -> likewise
+    BRA @ok
+
+@last:                                  ; EOF: a real line only if it had content
+    LDA MON_CMDLEN
+    BEQ @shut
+    LDA MON_CMDBUF
+    CMP #ASCII_HASH
+    BEQ @shut
+
+@ok:
+    JSR _FS_CLOSE
+    CLC
+    RTS
+
+@shut:
+    JSR _FS_CLOSE
+@none:
+    SEC
+    RTS
 
 ; ----------------------------------------------------------------
 ; _DOS_SPLASH - the boot sign-on: a centred CP437 box framing the OPERATIONAL
@@ -2161,6 +2332,9 @@ MSG_DOS_IMPORTED:.BYTE "IMPORTED", $0D, $0A, 0
 MSG_DOS_EXPORTED:.BYTE "EXPORTED", $0D, $0A, 0
 MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 MSG_DOS_HOSTERR: .BYTE "HOST I/O ERROR", $0D, $0A, 0
+; The boot config. In SYSTEM/ with the other machine-owned data files
+; (DIAL.LST, IRC.LST) rather than at the root; _FS_OPEN resolves the drawer.
+MSG_CFG_NAME:    .BYTE "SYSTEM/STARTUP.CFG", 0
 MSG_DOS_COPIED:  .BYTE "COPIED", $0D, $0A, 0
 MSG_DOS_MOVED:   .BYTE "MOVED", $0D, $0A, 0
 MSG_DOS_TOOBIG:  .BYTE "FILE TOO BIG", $0D, $0A, 0

@@ -190,6 +190,36 @@ TYPE SVAULT/STORY.TXT
 COPY GAMES/CHESS.PRG,/CHESS.PRG
 ```
 
+## Boot config (`SYSTEM/STARTUP.CFG`)
+
+MFC/OS runs `SYSTEM/STARTUP.CFG` at boot, before the sign-on. It is a text file
+of ordinary DOS commands, one per line, exactly as you would type them:
+
+```
+# SYSTEM/STARTUP.CFG
+OPEN GAMES
+```
+
+There is no separate settings syntax and no list of supported keys, because the
+shell's own interpreter runs the file — anything you can type at the `]` prompt
+works here, including launching a program by name.
+
+- Blank lines and lines starting with `#` are ignored.
+- A missing file is not an error; most disks will not have one.
+- A command that fails prints its error and the boot carries on, so a mistake
+  costs a message rather than a machine.
+- **Hold ESC while the machine starts to skip the file entirely.** This is the
+  way back if a line in it stops the boot.
+
+The file runs *before* the sign-on box on purpose. The box does not clear the
+screen, so it lands underneath anything the config printed and ends up where it
+always is — immediately above the prompt. A config that works is silent, because
+the verbs are: `OPEN` prints nothing on success. A config that fails leaves its
+error on screen above the box, where you will see it.
+
+Add `CLS` as the last line if you want a config that does print to tidy up after
+itself.
+
 ## Disk info and system commands
 
 ```

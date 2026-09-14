@@ -563,6 +563,48 @@ target_compile_features(irc_tests PRIVATE cxx_std_20)
 # KERNEL PANIC (programs/kpanic): the real blob, driven headlessly. Steps 1-6
 # were tuned against a host-C replica of the game's logic because nothing could
 # test a .PRG; this drives the shipped binary instead.
+# SYSTEM/STARTUP.CFG, the boot config. Each test builds its own machine because
+# the disk has to be in the drive before power-on, which the shared booted
+# fixture cannot express.
+add_executable(dos_startup_tests
+    test_dos_startup.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(dos_startup_tests gtest_main gtest)
+
+target_include_directories(dos_startup_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+    ${CMAKE_SOURCE_DIR}/tests
+)
+
+target_compile_features(dos_startup_tests PRIVATE cxx_std_20)
+
+# The ROMs are what this test is actually testing, and nothing else in this file
+# declares that dependency -- building a single test target then leaves you
+# running the previous ROM, which reads exactly like the feature not working.
+foreach(_rom dos_rom kernel_rom)
+    if(TARGET ${_rom})
+        add_dependencies(dos_startup_tests ${_rom})
+    endif()
+endforeach()
+
+add_test(NAME dos_startup COMMAND dos_startup_tests)
+
 add_executable(kpanic_tests
     test_kpanic.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp

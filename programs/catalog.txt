@@ -30,6 +30,13 @@
 #
 # Each takes "SOURCE -> DISKPATH", SOURCE relative to dir. All three are repeatable.
 
+# ---- system ----------------------------------------------------------------
+
+[startup]
+dir     = programs
+data    = STARTUP.CFG -> SYSTEM/STARTUP.CFG
+desc    = boot config: DOS commands run before the sign-on
+
 # ---- applications ----------------------------------------------------------
 
 [edit]
