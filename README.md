@@ -4,39 +4,32 @@
 
 **MFC** is **My First Computer**: a software-defined WDC 65C02 machine with an
 interactive monitor, a resident FAT16 filesystem, BASIC, FORTH, and a built-in
-assembler — comprehensive enough to program itself, small enough to read.
+assembler along with a handful of applications and games.
 
-The icon is the machine's own boot prompt, `]` and its cursor, set in the CP437
-character ROM the VIC renders text with (`tools/make_icon.py` reads the glyphs
-straight out of `include/computer/Cp437Font.h`, so the mark cannot drift from the
-typeface it is drawn in).
-
-This project started as a continuation of a CPU/assembler/disassembler I wrote in Python.  I wanted to create an actual
-running environment to enter code directly or load from a file and run.
+This project started as a continuation of a CPU/assembler/disassembler I wrote in Python.  I wanted to create an actual running environment to enter code directly or load from a file and run.
 
 I also wanted to test the abilities of AI as part of the development and documentation process.
 
 ## Project Overview
 
-This project implements a complete 6502-based computer system kernel for emulated environments. The kernel provides low-level system initialization, hardware control, and most importantly, a powerful interactive monitor program for direct system interaction.
+This project implements a complete 6502-based computer system kernel. The kernel provides low-level system initialization, hardware control, and an interactive monitor program for direct system interaction.
 
 **Key Features:**
-- Complete 6502 assembly language kernel optimized for emulated environments
+- Complete 6502 assembly language kernel 
 - Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
 - Interactive monitor with comprehensive debugging tools
-- **MFC/OS** DOS shell (`]` prompt) with a resident FAT16 filesystem and launch-by-name for disk programs
+- DOS shell with a resident FAT16 filesystem and launch-by-name for disk programs
 - Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **KERNEL PANIC**, **VENTURE**, **The Sunless Vault** roguelike, and the Scott Adams adventures) — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
 - Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched by typing `BASIC` at the DOS prompt (with human-readable `.bas` LOAD/SAVE via a host file dialog)
-- **System-wide `--More--` pager**: long output from any program (DOS, monitor, BASIC, FORTH) pauses each screenful (SPACE advances, ESC stops)
+- Long output from any program (DOS, monitor, BASIC, FORTH) pauses each screenful (SPACE advances, ESC stops)
 - Memory manipulation and program execution capabilities
-- Streamlined architecture with universal commands and simplified modes
 - File I/O operations for loading and saving programs
 - Comprehensive search, fill, move, and copy operations
 - **Assembly examples** in `examples/` — a dozen runnable 6502 programs (loops, keyboard input, color, hex dump, an 8×8 multiply, a guess-the-number game) with a guide and ABI quick reference (`examples/README.md`)
 
 ## Monitor Program
 
-The heart of this system is the **6502 Monitor** - a complete interactive debugging and programming environment that provides direct control over the computer's memory and execution. The monitor offers a command-line interface with powerful tools for memory operations, program execution, and system inspection.
+The system includes a **6502 Monitor** - a complete interactive debugging and programming environment that provides direct control over the computer's memory and execution. The monitor offers a low level command-line interface with powerful tools for memory operations, program execution, and system inspection.
 
 ### Architecture Overview
 
@@ -367,12 +360,9 @@ or studied:
   scratch for MFC (no ported code). Its integer, turn-based, data-driven engine
   follows the design of the author's own **Dungeon of Yacor**, and its play draws
   inspiration from two classics of the genre — **Telengard** by **Daniel Lawrence**
-  and **Sword of Fargoal** by **Jeff McCord** — as design influences only; no code
-  or assets from those games are used. See `programs/vault/`.
+  and **Sword of Fargoal** by **Jeff McCord** — as design influences. See `programs/vault/`.
 
 See `docs/cc65_to_prg.md` for the C-to-`.PRG` build pipeline.
 
 Where we port or adapt third-party code, the original, unmodified source is
 preserved under `vendor/` so its authorship and licensing remain clear.
-
-The monitor is designed for both interactive exploration and efficient program development workflows.
