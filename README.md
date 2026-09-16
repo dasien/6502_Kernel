@@ -2,9 +2,7 @@
 
 <img src="assets/mfc6502-128.png" align="right" width="128" alt="MFC 6502 icon">
 
-**MFC** is **My First Computer**: a software-defined WDC 65C02 machine with an
-interactive monitor, a resident FAT16 filesystem, BASIC, FORTH, and a built-in
-assembler along with a handful of applications and games.
+**MFC** stands for **My First Computer**: a software-defined WDC 65C02 machine with an interactive monitor, a resident FAT16 filesystem, BASIC, FORTH, and a built-in assembler along with a handful of applications and games.
 
 This project started as a continuation of a CPU/assembler/disassembler I wrote in Python.  I wanted to create an actual running environment to enter code directly or load from a file and run.
 
@@ -17,129 +15,25 @@ This project implements a complete 6502-based computer system kernel. The kernel
 **Key Features:**
 - Complete 6502 assembly language kernel 
 - Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
-- Interactive monitor with comprehensive debugging tools
+- **6502 Monitor**: A complete interactive debugging and programming environment that provides direct control over the computer's memory and execution. 
 - DOS shell with a resident FAT16 filesystem and launch-by-name for disk programs
-- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **KERNEL PANIC**, **VENTURE**, **The Sunless Vault** roguelike, and the Scott Adams adventures) — TERM and IRC keep a RAM **scrollback** buffer you page with **PgUp/PgDn**
+- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **KERNEL PANIC**, **VENTURE**, **The Sunless Vault** roguelike, and the Scott Adams adventures) 
 - Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched by typing `BASIC` at the DOS prompt (with human-readable `.bas` LOAD/SAVE via a host file dialog)
-- Long output from any program (DOS, monitor, BASIC, FORTH) pauses each screenful (SPACE advances, ESC stops)
 - Memory manipulation and program execution capabilities
 - File I/O operations for loading and saving programs
 - Comprehensive search, fill, move, and copy operations
 - **Assembly examples** in `examples/` — a dozen runnable 6502 programs (loops, keyboard input, color, hex dump, an 8×8 multiply, a guess-the-number game) with a guide and ABI quick reference (`examples/README.md`)
 
-## Monitor Program
+## Documentation
 
-The system includes a **6502 Monitor** - a complete interactive debugging and programming environment that provides direct control over the computer's memory and execution. The monitor offers a low level command-line interface with powerful tools for memory operations, program execution, and system inspection.
+Everything deeper lives in **[docs/](docs/README.md)** — a manual per program, the
+architecture and memory map, and the design notes. Docs are split by audience:
+`UPPERCASE.md` is a manual (how to *use* something), `lowercase.md` is reference
+or design (how it *works*).
 
-### Architecture Overview
-
-The monitor features a streamlined architecture with:
-- **Two primary modes**: Command mode (default) and Write mode for interactive editing  
-- **Simplified command processing** with consistent syntax and error handling
-- **Command repeatability** recall last command for quick replay or modification
-### Getting Started
-
-The machine boots into the **MFC/OS** DOS shell, which shows a sign-on splash and
-the `]` prompt:
-```
-]
-```
-From the DOS prompt you run disk programs by name (`EDIT`, `TERM`, `IRC`, `CHESS`, …),
-manage files (`CATALOG`, `TYPE`, `COPY`, …), and launch the **monitor** with `MON`.
-The monitor prompts with the current address followed by `>` (`?` for help, `Q` to
-return to DOS):
-
-```
-0000>
-```
-
-The `NNNN>` prompt indicates you're in monitor command mode. You can now enter any monitor command.
-
-## Monitor Commands
-
-For complete command documentation including syntax and examples, see the
-**[Monitor manual](docs/MONITOR.md)**.
-
-### Quick Command Summary
-
-| Category | Commands | Description |
-|----------|----------|-------------|
-| **Memory Operations** | R:, W:, F:, M:, X: | Read, write, fill, move/copy, and search memory |
-| **Program Operations** | G:, L:, S: | Execute, load, and save programs |
-| **Number Conversion** | D:, H: | Convert between decimal and hexadecimal |
-| **Display Commands** | C:, T:, Z: | Clear screen, show stack, show zero page |
-| **System Commands** | ?, ESC, . | Help, exit mode, command recall |
-
-### Key Command Features
-
-Commands are listed alphabetically by command letter (matching the on-screen `?` help):
-
-- **C: Clear Screen** - Clear the display
-- **D: Decimal to Hex** - Convert decimal (0-65535) to hexadecimal format
-- **F: Fill Memory** - High-performance memory filling with progress feedback
-- **G: Go/Run** - Direct program execution with return to monitor
-- **H: Hex to Decimal** - Convert hexadecimal (0000-FFFF) to decimal format
-- **L: Load File** - Load a host-selected file to an address: `L:8000` (host shows a file dialog)
-- **M: Move/Copy** - Smart memory operations with overlap detection (`M:src-end,dest,B` where B: 0=copy, 1=move)
-- **R: Read Memory** - Display bytes in memory, supports single addresses or ranges
-- **S: Save File** - Save a memory range to a host-selected file: `S:8000-8FFF` (host shows a file dialog)
-- **T: Stack** - Display the stack page ($0100-$01FF), paged
-- **W: Write Memory** - Interactive hex editing with address advancement
-- **X: Search Memory** - Multi-byte pattern search with paged output
-- **Z: Zero Page** - Display zero page ($0000-$00FF), paged
-- **ESC** - Exit the current mode and return to the command prompt
-
-### Error Handling
-
-The monitor provides clear, consistent error messages:
-- **`ERROR?`** - Invalid command syntax or parameters
-- **`RANGE?`** - Invalid or out-of-bounds address range
-- **`VALUE?`** - Invalid hexadecimal characters in input
-
-### **📖 [Detailed Architecture Reference](docs/ARCHITECTURE.md)**
-
-### Memory Layout
-
-- **$0000-$00FF**: Zero Page (system workspace; monitor uses $14-$39, EhBASIC uses the rest)
-- **$0100-$01FF**: Stack memory
-- **$0200-$03FF**: Monitor variables and command buffers
-- **$0400-$07FF**: Formerly the screen (the 80×25 color screen now lives behind the VIC register port at `$FE2D-$FE37`, not in the address map). Claimed by the monitor: `$0400` is the `T:`/`Z:` snapshot, `$0500-$07FF` the assembler's symbol table
-- **$0800-$AFFF**: User RAM (module working RAM; EhBASIC program/variable space)
-- **$B000-$EFFF**: Module window (16 KB; bank 0 = RAM, banks 1..255 = ROM modules — BASIC 1, FORTH 3, MONITOR 4; bank 2 free since the assembler joined the monitor)
-
-The chipset drawn as a board — bus, chips, I/O decode and interrupt lines — is in
-[docs/BOARD.md](docs/BOARD.md).
-- **$F000-$FFFF**: Kernel BIOS (4 KB; CODE ~1,560 bytes, rest free for growth). The monitor is bank 4, not here.
-- **$FE00-$FE22**: PIA registers (keyboard, file I/O, timer) — an I/O page reserved within the kernel region
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full memory map and zero-page allocation.
-
-### **📖 [Kernel Services Guide](docs/ARCHITECTURE.md)**
-
-
-User programs can access kernel services via the jump table at $FF00:
-
-| Address | Service | Description |
-|---------|---------|-------------|
-| $FF00 | PRINT_CHAR | Print single character |
-| $FF03 | PRINT_MESSAGE | Print null-terminated string |
-| $FF06 | PRINT_NEWLINE | Print carriage return/line feed |
-| $FF09 | GET_KEYSTROKE | Wait for key press |
-| $FF0C | CLEAR_SCREEN | Clear display |
-| $FF0F | GET_RANDOM_NUMBER | Generate random byte |
-| $FF12 | RETURN_FROM_MODULE | Module exit point — unmaps the bank, returns to DOS (BASIC `BYE`) |
-| $FF2D | SET_ATTR | Set the color/attribute latch for subsequent output (A = `[R][BR][bg:3][fg:3]`) |
-
-(Abridged — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full 20-entry ABI table, including the decimal-conversion, module-launch, sound, and timing services.)
-
-### File I/O Interface
-
-The kernel provides memory-mapped file I/O at:
-- **$FE10**: File command register
-- **$FE11**: File status register  
-- **$FE12-$FE13**: Address registers
-- **$FE14-$FE1F**: Filename buffer
-- **$FE20-$FE21**: End address (for save operations)
+Start with [DOS.md](docs/DOS.md) to drive the machine, or
+[MONITOR.md](docs/MONITOR.md) to poke at memory. Assembly examples are in
+[`examples/`](examples/).
 
 ## Building and Development
 
@@ -240,39 +134,21 @@ Type `CATALOG` to list the disk, or `HELP` for the command set.
 ctest --test-dir cmake-build-debug        # 27 tests: CPU, banking, FAT16, ACIA/XMODEM, SID, RTC, VIC, ROM layout, disk programs
 ```
 
-### Disk image (`mkdisk`)
+### Disk image
 
-The GUI loads `cmake-build-debug/disk.img`, assembled from **`programs/catalog.txt`**
-— the single source of truth for everything that can go on a disk. One section per
-item, saying where its files live, how to build them (or that they are committed
-content needing no build),
-and where each lands on the disk. Files are declared by what they *are*: a `program`
-(the `.PRG`), `data` the program reads and writes at run time, or a `doc` for a human
-to `TYPE`. The distinction is there so `data` can never be separated from the program
-that needs it — naming `term` inescapably brings `SYSTEM/DIAL.LST`, because the
-catalog records that TERM reads and writes it.
-
-The build derives both the staging commands and the `diskmap.txt` that `mkdisk`
-consumes, so adding a program is one catalog entry rather than three edits that fail
-silently if you miss one. A catalog entry also carries the build recipe — its
-`sources`, its `config`, and an optional `include` — so CMake compiles and links the
-program itself; there are no per-program build scripts. CMake refuses to configure if
-a `programs/*/` directory has an `ld65` config but no catalog entry. Drawers grow across as many FAT16 clusters as they need, so a drawer is
-not capped at one cluster of files.
+The disk is assembled from `programs/catalog.txt`, which decides what can go on
+it and how each program is built:
 
 ```bash
-ninja disk                                  # build the programs, then assemble the image
-ninja everything                            # ...and the ROMs and the app as well
+ninja disk          # build the programs, then assemble the image
+ninja everything    # ...and the ROMs and the app as well
 ```
-Both are explicit — a plain `ninja` never rewrites the disk. `disk` builds every
-catalog program before staging it, so the image can never carry a stale binary.
 
-The `mkdisk` host tool (`cmake-build-debug/bin/mkdisk`) also works standalone:
-```bash
-mkdisk create <image> <diskmap.txt>   # build a fresh image from a bundle
-mkdisk read   <image> <outdir>        # extract an image into a bundle (+ diskmap.txt)
-mkdisk update <image> <diskmap.txt>   # replace/add listed files, keep the rest
-```
+Both are explicit — a plain `ninja` never rewrites the disk. It will refuse while
+a machine is using the image; quit the emulator first.
+
+See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
+`mkdisk` tool, and the image geometry.
 
 ### Project Structure
 ```
@@ -294,17 +170,9 @@ mkdisk update <image> <diskmap.txt>   # replace/add listed files, keep the rest
 ```
 
 For detailed development information and project context, see:
-- **[CLAUDE.md](CLAUDE.md)** - Development guidelines and architecture documentation  
+
 - **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, ASSEMBLER, FORTH, EDIT, TERM, IRC), the architecture reference (ARCHITECTURE.md), and the internals deep-dive (SYSTEM_INTERNALS.md)
 
-## Tips for Effective Use
-
-1. **Start with Help**: Use `?` to see all available commands
-2. **Use Command Recall**: The `.` command saves time when refining commands
-3. **File Operations**: `L:8000` loads and `S:8000-8FFF` saves; the host shows a file dialog to pick the file
-4. **Search Effectively**: Use X: with multiple byte patterns for precise matching
-5. **Number Conversion**: Use D: and H: commands to convert between decimal and hex
-6. **Program Development**: Load programs with L:, test with G:, save modifications with S:
 
 ## Acknowledgments
 

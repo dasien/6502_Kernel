@@ -30,6 +30,7 @@ Docs are split by audience: **manuals** (how to *use* a program) are `UPPERCASE.
 | [sound_design.md](sound_design.md) | SID sound-chip design |
 | [video_design.md](video_design.md) | Why the VIC used to scroll in whole cells, and the three features that fixed it: a redefinable character set, fine vertical scroll, and sprites |
 | [cc65_to_prg.md](cc65_to_prg.md) | Building C programs into `.PRG` files |
+| [disk_image.md](disk_image.md) | How `disk.img` is built: the catalog, `mkdisk`, and the image geometry |
 
 ## Design / internal (dev)
 
