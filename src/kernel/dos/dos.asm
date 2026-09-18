@@ -650,8 +650,8 @@ _DOS_DISPATCH:
     ; instructions plus a uniquely-named local label, and the long chain of forward
     ; branches that shape produced was a standing branch-range hazard.
     ;
-    ; ORDER IS BEHAVIOUR and is preserved exactly from the old chain: a keyword that
-    ; is a prefix of another must come second (CATALOG before CAT), because
+    ; ORDER IS BEHAVIOUR: a keyword that is a prefix of another must come second
+    ; (CATALOG before CAT), because
     ; _DOS_VERB_MATCH accepts a keyword that ends at a space or end-of-line.
     STZ DOS_TMP                         ; byte offset into the table
 @try:
@@ -671,7 +671,7 @@ _DOS_DISPATCH:
 @hit:
     LDX DOS_TMP                         ; tail-jump to the handler, so its RTS
     LDA DOS_VERB_TAB+2,X                ;   returns to _DOS_DISPATCH's caller just
-    STA DOS_PTR                         ;   as the old direct JMPs did
+    STA DOS_PTR
     LDA DOS_VERB_TAB+3,X
     STA DOS_PTR+1
     JMP (DOS_PTR)
@@ -1338,9 +1338,9 @@ _DOS_DO_LOAD:
 ; ----------------------------------------------------------------
 ; _DOS_HOST_NAME - split an optional ",HOSTFILE" off the argument
 ; ----------------------------------------------------------------
-; IMPORT and EXPORT name a FAT16 file; the host file used to come only from a
-; picker dialog. An optional second field names it instead, which is what makes
-; those verbs scriptable, testable, and usable without a GUI at all.
+; IMPORT and EXPORT name a FAT16 file. An optional second field names the host
+; file too, instead of going through the picker dialog, which is what makes those
+; verbs scriptable, testable, and usable without a GUI at all.
 ;
 ;   EXPORT NOTES.TXT              -> host picks the file (unchanged)
 ;   EXPORT NOTES.TXT,NOTES.TXT    -> writes bin/NOTES.TXT, no dialog
@@ -2106,9 +2106,8 @@ _DOS_STR_EQ:
     CLC
     RTS
 
-; MORE is dispatched to _DOS_DO_TYPE: the kernel now pages all output (PAGE_ADVANCE),
-; so "TYPE" and "MORE" behave identically. The old _DOS_DO_MORE / _DOS_PAGE_PAUSE
-; pager was removed in favour of that single shared pager.
+; MORE is dispatched to _DOS_DO_TYPE: the kernel pages all output (PAGE_ADVANCE),
+; so "TYPE" and "MORE" behave identically and the DOS carries no pager of its own.
 
 ; ----------------------------------------------------------------
 ; _DOS_PARSE_PATTERN83 - (DOS_PTR) wildcard "NAME.EXT" -> DOS_NAME83 template

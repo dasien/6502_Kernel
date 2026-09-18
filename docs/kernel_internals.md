@@ -58,8 +58,8 @@ map, so there are no screen pages for the CPU to write over.
 - **LOOP**: 48 pages, `$B0` through `$DF`
   - **Purpose**: bank 0 boots as clean scratch RAM. `MODULE_BANK` was zeroed above,
     so these writes land in window RAM rather than in any module ROM
-- **Note**: this used to call the monitor's `F:` fill engine. The monitor is a bank
-  module now and the BIOS cannot call into the window, so reset carries its own loop
+- **Note**: the BIOS cannot call into the module window, so reset carries its own
+  loop rather than reaching for the monitor's `F:` fill engine
 - **Flow continues to**: RNG seeding
 
 #### 5. RNG seed, pager defaults and handoff

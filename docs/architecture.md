@@ -158,12 +158,8 @@ clocked theirs at 1.79, and the BBC Micro at 2. The MFC is a WDC 65C02, a part t
 was sold at 1, 2, 4, 8 and 14 MHz, and it drives an 80 by 25 soft-font display with
 sprites and a FAT16 disc. A 4 MHz clock suits that machine.
 
-It is also close to what the machine has always run at. The GUI used to execute 1000
-instructions per 1 ms timer tick, which at the 3.47 cycles per instruction the games
-average works out to 3.47 MHz, while a separate QTimer pulsed the jiffy. That speed
-was an accident of a loop bound rather than a decision, and the two clocks drifted
-apart under load. `run(int max_cycles)` counted instructions despite its name, which
-is how the problem went unnoticed for so long.
+It is also close to the effective speed the games were written against, so the
+clock is a decision rather than a side effect of a loop bound.
 
 VENTURE is the most demanding thing on the disc, and two tests pin its cost. They are
 `ATickStaysWithinItsBudget` and `AFrameOfDrawingStaysWithinItsBudget`.
@@ -482,10 +478,9 @@ the bit-packing itself. DOS `CATALOG` unpacks these fields to show each file's
 
 ### I/O — PIA (`$FE00-$FE23`)
 
-The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region (the kernel just
-avoids placing code there). It was moved here from the old `$DC00` so the
-`$B000-$EFFF` region is a clean, I/O-free, bank-switched module slot (see
-`Part 4 (Bank-switched modules)`).
+The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region, which the kernel
+simply avoids placing code in. Putting it here keeps `$B000-$EFFF` a clean,
+I/O-free, bank-switched module slot.
 
 A single PIA-style device provides keyboard input and host file I/O. It offers two file
 models. The block model, which the kernel's `L:` and `S:` commands use, moves a whole
@@ -660,10 +655,10 @@ with the machine lives in a bank module or on disk.
 | Bank launching (`K_LAUNCH_BY_NAME`, `RETURN_FROM_MODULE`) | |
 | The `$FF00` table and the `$FFFA` vectors | |
 
-The monitor used to be two thirds of the kernel. It is a bank module because a
-disk program would load at `$0800`, which is precisely the memory a monitor exists
-to inspect, so it would overwrite the program under test. A bank costs no user
-RAM, maps instantly, and works with no disk present. The trade is that the monitor
+The monitor is a bank module rather than a disk program because a disk program
+would load at `$0800`, which is precisely the memory a monitor exists to inspect,
+so it would overwrite the program under test. A bank costs no user RAM, maps
+instantly, and works with no disk present. The trade is that the monitor
 cannot show its own window. `R:B000-EFFF` displays the monitor's ROM rather than
 bank-0 RAM, and sibling banks are invisible for the same reason.
 

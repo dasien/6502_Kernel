@@ -16,18 +16,18 @@
 STACK_TOP          = $FF           ; Top of stack page
 
 ; ================================================================
-; ZERO PAGE VARIABLES - Relocated for BASIC compatibility
+; ZERO PAGE VARIABLES
 ; ================================================================
-; Original locations $00-$10, $F0-$FF conflicted with BASIC interpreter
-; Relocated to $14-$3F range which is unused by BASIC
-MON_CURRADDR_LO    = $14           ; Current address low byte (was $00)
-MON_CURRADDR_HI    = $15           ; Current address high byte (was $01)
-MON_MSG_PTR_LO     = $16           ; Message pointer low byte (was $02)
-MON_MSG_PTR_HI     = $17           ; Message pointer high byte (was $03)
-JUMP_VECTOR        = $18           ; Indirect jump vector (2 bytes: $18-$19) (was $04-$05)
-; $1A-$1D: video cell-index scratch. The screen left the 64K map (it lives behind
-; the VIC register port now), so the old 16-bit SCREEN_PTR is gone; these hold the
-; computed cell index (CURSOR_Y*80 + CURSOR_X) and a temporary while computing it.
+; BASIC owns $00-$10 and $F0-$FF, so nothing here may go there. $14-$3F is the
+; range BASIC leaves alone; keep new monitor and kernel slots inside it.
+MON_CURRADDR_LO    = $14           ; Current address low byte
+MON_CURRADDR_HI    = $15           ; Current address high byte
+MON_MSG_PTR_LO     = $16           ; Message pointer low byte
+MON_MSG_PTR_HI     = $17           ; Message pointer high byte
+JUMP_VECTOR        = $18           ; Indirect jump vector (2 bytes: $18-$19)
+; $1A-$1D: video cell-index scratch. The screen is not in the 64K map (it lives
+; behind the VIC register port), so there is no 16-bit screen pointer. These hold
+; the computed cell index (CURSOR_Y*80 + CURSOR_X) and a temporary for it.
 VID_CELL_LO        = $1A           ; computed cell index low
 VID_CELL_HI        = $1B           ; computed cell index high
 VID_TMP_LO         = $1C           ; cell-computation temporary low
@@ -36,10 +36,10 @@ VID_TMP_HI         = $1D           ; cell-computation temporary high
 PAGE_ENABLE        = $1E           ; pager master switch (1=on; a future setting toggles it)
 PAGE_SUSPEND       = $1F           ; ESC at --MORE-- suspends paging for the rest of this output
 PAGE_IN_BREAK      = $20           ; guard: inside the page-break prompt (don't re-count)
-CMD_LINE_COUNT     = $21           ; Lines printed since the last pause/command (was $0D)
-PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC (was $0E)
+CMD_LINE_COUNT     = $21           ; Lines printed since the last pause/command
+PAGE_ABORT_FLAG    = $22           ; Set to 1 if user pressed ESC
 RNG_STATE_LO       = $23           ; RNG 16-bit LFSR state, low byte (was RNG_SEED)
-RNG_MAX            = $24           ; Maximum value for random number (was $10)
+RNG_MAX            = $24           ; Maximum value for random number
 ; $25-$34 was the runtime hex lookup table; now reclaimed (NIBBLE_TO_ASCII
 ; computes hex digits). $25-$28 reused as M: move scratch; $29-$32 since taken by
 ; sound/RNG/jiffy state; $33-$34 still free.
@@ -74,33 +74,33 @@ MON_CMDBUF_LEN     = 80            ; Maximum command buffer length
 
 ; Monitor variables relocated to $0269+ to avoid BASIC memory conflicts
 ; BASIC uses $0200-$0268, Monitor command buffer $0200-$024F overlaps but is inactive during BASIC mode
-MON_CMDLEN         = $026A         ; Current length of command in buffer (was $0251)
-MON_MODE           = $026B         ; Current monitor mode (0=Command, 1=Write) (was $0252)
-MON_STARTADDR_LO   = $026C         ; Start address for range operations (low) (was $0253)
-MON_STARTADDR_HI   = $026D         ; Start address for range operations (high) (was $0254)
-MON_ENDADDR_LO     = $026E         ; End address for range operations (low) (was $0255)
-MON_ENDADDR_HI     = $026F         ; End address for range operations (high) (was $0256)
-MON_PARSE_PTR      = $0270         ; Parser position pointer (was $0257)
-MON_HEX_TEMP       = $0272         ; Temporary storage for hex conversion (was $0259)
-MON_BYTE_COUNT     = $0273         ; Count of bytes for write operations (was $025A)
-MON_ERROR_FLAG     = $0275         ; Error flag for invalid operations (was $025C)
-CURSOR_X           = $0276         ; Current cursor X position (0-39) (was $025D)
-CURSOR_Y           = $0277         ; Current cursor Y position (0-24) (was $025E)
-MON_FILL_VALUE     = $0279         ; Fill command byte value (was $0260)
-MON_DEST_ADDR_LO   = $027A         ; Move/Copy destination address low byte (was $0261)
-MON_DEST_ADDR_HI   = $027B         ; Move/Copy destination address high byte (was $0262)
-MON_COPY_MODE      = $027C         ; Move/Copy mode (0=copy, 1=move) (was $0263)
+MON_CMDLEN         = $026A         ; Current length of command in buffer
+MON_MODE           = $026B         ; Current monitor mode (0=Command, 1=Write)
+MON_STARTADDR_LO   = $026C         ; Start address for range operations (low)
+MON_STARTADDR_HI   = $026D         ; Start address for range operations (high)
+MON_ENDADDR_LO     = $026E         ; End address for range operations (low)
+MON_ENDADDR_HI     = $026F         ; End address for range operations (high)
+MON_PARSE_PTR      = $0270         ; Parser position pointer
+MON_HEX_TEMP       = $0272         ; Temporary storage for hex conversion
+MON_BYTE_COUNT     = $0273         ; Count of bytes for write operations
+MON_ERROR_FLAG     = $0275         ; Error flag for invalid operations
+CURSOR_X           = $0276         ; Current cursor X position (0-39)
+CURSOR_Y           = $0277         ; Current cursor Y position (0-24)
+MON_FILL_VALUE     = $0279         ; Fill command byte value
+MON_DEST_ADDR_LO   = $027A         ; Move/Copy destination address low byte
+MON_DEST_ADDR_HI   = $027B         ; Move/Copy destination address high byte
+MON_COPY_MODE      = $027C         ; Move/Copy mode (0=copy, 1=move)
 MON_DUMP_SNAP      = $02DF         ; non-zero: DUMP_MEMORY_RANGE reads MON_SNAP_BUF
 MON_SNAP_BUF       = $0400         ; 256-byte page snapshot for T:/Z: (free RAM)
 ; $0500-$07FF is the assembler's workspace (identifier buffers + symbol table; see
-; assembler.inc). It lives here rather than in user RAM because this page -- the old
-; 40x25 screen, unused since the display moved behind the VIC port -- is below
-; Ram_base and so costs user programs nothing. It cannot live in the module bank:
+; assembler.inc). It lives here rather than in user RAM because this page sits
+; below Ram_base and is otherwise unused, so it costs user programs nothing. It
+; cannot live in the module bank:
 ; that window is ROM while a module is mapped, and a symbol table must be written.
-MON_SEARCH_PATTERN = $027D         ; Search pattern buffer (16 bytes: $027D-$028C) (was $0264-$0273)
-MON_PATTERN_LEN    = $028D         ; Search pattern length (1-16 bytes) (was $0274)
-MON_LAST_CMD_BUF   = $028E         ; Last command buffer (80 bytes: $028E-$02DD) (was $0275-$02C4)
-MON_LAST_CMD_LEN   = $02DE         ; Last command length (1 byte) (was $02C5)
+MON_SEARCH_PATTERN = $027D         ; Search pattern buffer (16 bytes: $027D-$028C)
+MON_PATTERN_LEN    = $028D         ; Search pattern length (1-16 bytes)
+MON_LAST_CMD_BUF   = $028E         ; Last command buffer (80 bytes: $028E-$02DD)
+MON_LAST_CMD_LEN   = $02DE         ; Last command length (1 byte)
 
 ; Monitor Mode Constants
 MON_MODE_CMD       = 0             ; Command mode

@@ -7,7 +7,7 @@ machine directly.
 
 ## Where the monitor lives
 
-The monitor is module bank 4, not part of the kernel ROM. Type `MON` at the `]`
+The monitor is module bank 4. Type `MON` at the `]`
 prompt and the kernel maps the bank and jumps into it. `Q` unmaps it and returns
 you to the DOS. Pressing the STOP key (NMI) breaks in from anywhere, because the
 handler lives in always-mapped kernel ROM, so even a program that has scribbled
@@ -84,10 +84,8 @@ mode 1, clearing the source. It handles overlap and reports the byte count.
 
 `F:` and `M:` both refuse `$0014-$027C` and report `RANGE?`. That span holds the
 monitor's own live pointer, loop bound and fill byte, plus the buffer holding the
-command being executed, and both commands re-read that state on every iteration.
-A fill or copy across it rewrites the loop as it runs. `F:0000-00FF,00` used to
-reset its own pointer and hang the machine, and `F:0200-02FF,AA` used to set the
-bound to `$AAAA` and wipe all of user RAM before printing `OK`. `M:` also refuses
+command being executed, and both commands re-read that state on every iteration,
+so a fill or copy across it would rewrite the loop as it runs. `M:` also refuses
 a destination whose end would carry past `$FFFF`, since its loops stop on the
 source address only. Individual bytes in the span are still reachable with `W:`,
 and `Z:` and `T:` still display them.
@@ -101,11 +99,10 @@ and ESC aborts it.
 `G:` goes, or runs. `G:xxxx` executes code at `xxxx`, and a program returns to
 the monitor with `RTS`.
 
-The monitor's old binary load and save are retired. They opened a host file
-dialog, which predates the filesystem. `S:` now reports `ERROR?`, and `L:` was
-reused by the assembler to load source text. Use the DOS instead, where
+The monitor does not load or save binaries. `S:` reports `ERROR?`, and `L:`
+belongs to the assembler, where it loads source text. Use the DOS for files:
 `LOAD name,addr` and `SAVE name,start-end` at the `]` prompt work against the
-disk, and unlike the old host dialog they can be scripted and tested.
+disk and can be scripted.
 
 ## Number conversion
 
@@ -115,10 +112,9 @@ with a `$` prefix.
 `$:xxxx` converts hex to decimal. The value runs from 0000 to FFFF and prints
 with a `#` prefix.
 
-These were `D:` and `H:` until the assembler was folded in. `D` went to the
-disassembler, which is the letter every period monitor uses for it, and `H` is
-free for a future hunt command. The symbols read the way they work, so `#:` takes
-a decimal number and `$:` takes a hex one.
+The symbols read the way they work, so `#:` takes a decimal number and `$:` takes
+a hex one. `D` is the disassembler, which is the letter every period monitor uses
+for it.
 
 ## Display commands
 
@@ -141,11 +137,10 @@ Paged output advances with SPACE or ENTER and aborts with ESC.
 
 ## Assembler commands
 
-The assembler and disassembler are part of the monitor. They were a separate
-`ASM` module until the monitor itself moved into a bank, at which point keeping
-two prompts only meant crossing the DOS twice per build-and-test cycle. Every
-monitor of the period bundled them the same way, including Supermon, HESMON, and
-the Apple II ROM monitor with its mini-assembler.
+The assembler and disassembler are part of the monitor, so a build-and-test cycle
+never leaves the prompt. Every monitor of the period bundled them the same way,
+including Supermon, HESMON, and the Apple II ROM monitor with its
+mini-assembler.
 
 | Command | Action |
 |---------|--------|
@@ -326,12 +321,12 @@ than what you wrote.
   `#<value` and `#>value` to take a specific byte of an address.
 - A hex constant wider than four digits is an error, so `LDA $12345` does not
   quietly become `LDA $2345`.
-- Code pushed past column 79 is refused rather than truncated. A cut-off token
-  used to assemble as something else entirely, often a label-only line, which
-  dropped the instruction and shifted every later label. A long trailing comment
-  is fine, since only lost code is an error, so the wide comments in `examples/`
+- Code pushed past column 79 is refused rather than truncated, because a cut-off
+  token can assemble as something else entirely, often a label-only line, which
+  drops the instruction and shifts every later label. A long trailing comment is
+  fine, since only lost code is an error, so the wide comments in `examples/`
   still assemble.
-- A branch out of range is reported, as it always was.
+- A branch out of range is reported.
 
 ### A complete example
 
@@ -364,8 +359,7 @@ The assembler shares the machine with everything else, so mind what it touches.
 - The source buffer is `$7800-$87FF`, holding the text loaded by `L:`.
 - The symbol table is `$0520-$07FF`, holding up to 40 labels and constants, with
   the identifier buffers just below it at `$0500-$051F`. This sits in the free
-  page below `Ram_base`, so it costs user programs nothing. It used to take 512
-  bytes out of user RAM.
+  page below `Ram_base`, so it costs user programs nothing.
 - Working RAM is `$0800-$77FF` and it is yours. The assembler reserves only the
   source buffer above it.
 
@@ -384,9 +378,8 @@ monitor with `G:` at the program's origin.
 
 ## Running the ROM modules
 
-The monitor has no module menu. The old one was a `B:` bank picker, and that
-letter now builds the loaded source. The BASIC and FORTH modules launch by name
-from the DOS `]` prompt, so press `Q` to return to DOS and then type `BASIC` or
+The monitor has no module menu. The BASIC and FORTH modules launch by name from
+the DOS `]` prompt, so press `Q` to return to DOS and then type `BASIC` or
 `FORTH`. DOS `BANKS` lists the module catalog, which holds BASIC in bank 1,
 FORTH in bank 3 and the monitor itself in bank 4. See `BASIC.md` and
 `FORTH.md`.

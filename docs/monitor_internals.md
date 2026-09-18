@@ -65,10 +65,7 @@ Dispatched through `CMD_INDEX_MAP`:
 | `Z` | zero-page dump |
 
 The free letters are `E`, `H`, `I`, `J`, `K`, `N`, `O`, `P`, `S`, `U`, `V` and
-`Y`. `H` and `S` were both in use once and are now free, because base conversion
-moved onto the `#:` and `$:` symbols when `D` was given to the disassembler, and
-the monitor's host save was retired in favour of the DOS `SAVE` and `EXPORT`
-commands.
+`Y`.
 
 #### Command Types
 
@@ -241,9 +238,8 @@ the assembler's identifier buffers and symbol table.
 
 #### Zero Page Usage
 
-The monitor's zero-page slots live in `$14-$3F`, a range BASIC does not use.
-They were originally at `$00-$10`, which is why old code and old documents
-sometimes refer to those addresses.
+The monitor's zero-page slots live in `$14-$3F`. BASIC uses `$00-$10` and
+`$F0-$FF`, so nothing of the monitor's may go there.
 
 | Address | Contents |
 |---|---|
@@ -597,8 +593,6 @@ command, in a 16 KB bank shared with the assembler.
 
 The sections above describe how to *add* a command. The rest of this document traces
 how the monitor actually runs, as execution paths and call trees taken from the source.
-These moved here from `kernel_internals.md`, where they had ended up because the old
-combined internals document was split by its part titles rather than by its contents.
 
 They are written as records rather than prose, with a labelled field per line, because
 they are meant to be scanned against the source rather than read through.
@@ -934,9 +928,9 @@ PARSE_COMMAND
         └── (FIO_OPEN_RD through the host file port into SRC_BUF, for B:)
 ```
 
-`L:` loads assembler source text for `B:` to build. The monitor's old binary
-load and its `S:` counterpart were retired, and the DOS `LOAD`, `SAVE`,
-`IMPORT` and `EXPORT` commands do that job now.
+`L:` loads assembler source text for `B:` to build. The monitor does not load or
+save binaries, and the DOS `LOAD`, `SAVE`, `IMPORT` and `EXPORT` commands do
+that job instead.
 
 #### M: (Move/Copy Memory)
 ```

@@ -150,7 +150,7 @@ void updateCpuStatusSidebar();    // Single consolidated function updates all:
 - **Focus-based UI**: Click display to input, visual cursor feedback
 - **Complete key support**: Monitor commands (W:, R:, G:, etc.) work perfectly
 - The terminal feels authentic, because it behaves as a real 6502 computer would.
-- Performance is no longer bound by console I/O, which used to be the bottleneck.
+- Performance is bound by the emulated CPU rather than by terminal I/O.
 
 ### Current User Experience
 1. Click the Power On button.

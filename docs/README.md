@@ -3,7 +3,7 @@
 Docs are split by audience.  For those looking to operate the system,  manuals (how to use a program) are `UPPERCASE.md`.
 For those looking for a deeper understanding of the design of the system, reference/design/internal docs (how it works) are `lowercase.md`.
 
-## Manuals — how to use it
+## Manuals — how to use them
 
 | Doc | Covers |
 |-----|--------|
@@ -25,31 +25,6 @@ sitting at the machine wondering what a key does.
 | KERNEL PANIC | `programs/kpanic/KPANIC.TXT` | `GAMES/KPANIC.TXT` |
 | FRONTIER FORTUNE | `programs/frontier/FRONTIER.TXT` | `GAMES/FRONTIER.TXT` |
 | The Sunless Vault | `programs/vault/VAULT.TXT` | `SVAULT/VAULT.TXT` |
-
-Those files are ASCII-only and wrap at 79 columns, because they are read on an
-80-column CP437 display. That rules out Unicode and markdown alike.
-`programs/catalog.txt` is what puts them on the disk, through a `doc` line of the form
-`doc = X.TXT -> DIR/X.TXT`.
-
-There is no per-game design document. Each game used to carry a `DESIGN.md`, and all
-three were retired in favour of two homes that do not drift away from the thing they
-describe.
-
-- The reason a decision was made goes in a comment at the line it affects, so that it
-  is in front of whoever is about to change it.
-- Cross-cutting history, meaning what was tried and rejected along with the
-  measurements, goes in `../TODO.md` under Games.
-
-They were retired because they did not survive contact with the code. A single review
-found seven false claims in one of them, including a note saying the game used no
-sprites when it had been using them for weeks. The old files are still in git history
-if one is ever wanted back.
-
-The Sunless Vault used to be the exception, and instructively so. Its 216-line player
-guide was an unshipped `USER_GUIDE.md`, while the only thing a player could read at the
-machine was a 29-line `STORY.TXT`. The guide even told you to `TYPE STORY.TXT`, so a
-file you could not read was pointing at one you could. Both are now a single
-`VAULT.TXT`, story first, on the disk where it is needed.
 
 ## Architecture & reference
 

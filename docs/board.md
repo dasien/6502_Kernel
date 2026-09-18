@@ -101,9 +101,9 @@ range. `isVideoRegAddress()` is therefore three tests rather than one.
 | `$FE62-$FE64` | VIC | `VIC` | Soft-font index and data port, which is the second of the VIC's two ranges |
 | `$FE65-$FECA` | VIC | `VIC` | Seventeen sprite records of six bytes each |
 
-The RTC reaches `$FE60` because the FAT date registers were appended after its range
-was first written down. The other documents quoted `$FE5E` until this diagram was
-drawn against the `is*Address()` predicates, which turned up the difference.
+The RTC reaches `$FE60` because the FAT date registers sit above the clock
+registers proper. The authority for every range here is the chip's own
+`is*Address()` predicate.
 
 `$FECB-$FEFF` is unclaimed. That leaves 53 bytes, and it is where the next chip goes.
 The size of the sprite block was chosen against that figure rather than against a

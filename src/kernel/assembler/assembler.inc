@@ -132,10 +132,9 @@ ASM_NAME_BUF     = $0510            ; saved assignment name across EVAL ($0510-$
 SRC_BUF          = $7800            ; source text buffer ($7800-$87FF, $00-terminated)
 SRC_BUF_END      = $87FF            ; last buffer byte (reserved for the terminator)
 
-; The symbol table moved OUT of user RAM into the free page at $0500. That block --
-; the old 40x25 screen, unused since the display moved behind the VIC port -- is
-; below Ram_base, so it costs user programs nothing; the 512 bytes the table used to
-; occupy at $7600 went back to them, and the .ORG ceiling rose with it.
+; The symbol table lives in the free page at $0500, below Ram_base, where nothing
+; else claims it. That costs user programs nothing, where an in-RAM table would
+; take 512 bytes off them and pull the .ORG ceiling down with it.
 ; (It cannot live in the module bank: that is ROM while the monitor is mapped, and
 ; a symbol table has to be written to.)
 SYM_TBL          = $0520            ; symbol table ($0520-$07FF, 736 bytes)
@@ -1076,9 +1075,10 @@ ASM2_PASS_RUN:
     STZ ASM2_LINENO+1
     STZ ASM2_END
     ; Default origin $0800 -- where the DOS loads and runs a .PRG, so a source with
-    ; no .ORG assembles somewhere safe and runnable. It used to default to $0000, so
-    ; forgetting .ORG made pass 2 write opcodes over the monitor's zero page, the
-    ; assembler's own zero page and the 6502 stack, killing the machine mid-build.
+    ; no .ORG assembles somewhere safe and runnable. Do not default to $0000: a
+    ; forgotten .ORG would then have pass 2 write opcodes over the monitor's zero
+    ; page, the assembler's own zero page and the 6502 stack, killing the machine
+    ; mid-build.
     STZ ASM_PC
     LDA #$08
     STA ASM_PC+1
@@ -1177,8 +1177,8 @@ ANL_EOL_TWO:
     ; genuine CRLF (or LFCR) pair. Two of the SAME kind are two line endings with a
     ; blank line between them, and swallowing that loses the blank from the count --
     ; which silently shifted every "? LINE nnnn" after the first blank line by one,
-    ; so the diagnostic pointed at the wrong source line. It used to test only "is
-    ; the next byte a terminator", which cannot tell $0A$0A from $0D$0A.
+    ; so the diagnostic would point at the wrong source line. Testing only "is the
+    ; next byte a terminator" is not enough: it cannot tell $0A$0A from $0D$0A.
     CMP ASM2_EOL1
     BEQ ANL_FINISH                  ; same kind -> blank line, leave it for next read
     INY                             ; different kind -> one ending, consume both

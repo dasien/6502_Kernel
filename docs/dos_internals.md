@@ -33,8 +33,8 @@ Because every text program prints through `K_PRINT_CHAR`, the DOS shell, the
 monitor, BASIC and FORTH are all paged with no code of their own, so long `TYPE`,
 `CATALOG`, `LIST`, `WORDS` and memory dumps pause each screenful. SPACE or any
 other key advances and ESC stops. As a result `MORE` is now identical to `TYPE`
-and dispatches to it, and the old per-command DOS pager was removed. A future
-settings facility will expose `PAGE_ENABLE` so paging can be turned off.
+and dispatches to it, and the DOS carries no pager of its own. A future settings
+facility will expose `PAGE_ENABLE` so paging can be turned off.
 
 `DATE` shows the date and time from the host-time RTC at `$FE55-$FE60`. The same
 clock timestamps files, so `CATALOG` shows a date and time per entry. `BANKS`
@@ -65,8 +65,8 @@ paths on either side, as in `COPY GAMES/CHESS.PRG,/CHESS.PRG`, and it gets this
 for free because path resolution lives in `_FS_OPEN`. `MOVE SRC,DST` shares COPY's
 RAM-buffer path and then deletes the source, so within one directory it is
 effectively a rename and across drawers it is a move. It is guarded against
-`MOVE A,A`. Path resolution was given its own scratch byte, `DOS_RES_SLASH`, so it
-no longer clobbers the source offset COPY and MOVE hold in `DOS_SH_NAMEIDX`. A FAT
+`MOVE A,A`. Path resolution has its own scratch byte, `DOS_RES_SLASH`, so it does not clobber
+the source offset COPY and MOVE hold in `DOS_SH_NAMEIDX`. A FAT
 allocation rover, `DOS_ALLOC_HINT`, was added so cluster allocation resumes where
 the last one stopped instead of rescanning from cluster 2. That turns a
 multi-cluster write from order file-size times used-clusters FAT reads into
@@ -103,10 +103,7 @@ Hardware    ── host disk.img (a real FAT16 volume the Mac can mount too)
 This is the CP/M shape of a BIOS, a BDOS and a CCP. The BIOS is the machine and
 its I/O, the BDOS is the filesystem, and the CCP is the DOS command shell.
 
-### Kernel refactor: BIOS vs. monitor
-
-The old `kernel.asm` was really two things glued together, and they were
-separated.
+### BIOS vs. monitor
 
 The BIOS is the resident foundation. It stays in the kernel ROM and is never
 banked.
@@ -123,13 +120,13 @@ banked.
   the DOS ROM and is reached through these.
 - The vectors and the RNG.
 
-The monitor is a debugger tool and no longer the front door.
+The monitor is a debugger tool rather than the front door.
 
 - `MONITOR_LOOP`, the prompt, the dispatch, and the letter commands.
-- Launched from the DOS by `MON` and exiting back to the DOS. The old `L:` and
-  `S:` host transfers and the `B:` bank menu all moved to the DOS.
-- It has since been relocated to module bank 4, with the assembler folded into it,
-  so the kernel ROM is now a lean 4 KB BIOS at `$F000-$FFFF`.
+- Launched from the DOS by `MON`, and exits back to the DOS.
+- Module bank 4, with the assembler folded into it, which leaves the kernel ROM
+  a lean 4 KB BIOS at `$F000-$FFFF`. Host transfer and the bank catalog are DOS
+  commands.
 
 ### Boot flow
 

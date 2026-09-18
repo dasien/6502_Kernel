@@ -235,15 +235,9 @@ CLS / CLEAR       clear the screen
 HELP              list the built-in commands
 ```
 
-`SHUTDOWN` switches the machine off and the window closes. It is the descendant
-of the `PARK` and `SHIPDISK` utilities that early hard-disk micros shipped, which
-made the disk safe to lose power and then said so. Those stopped there and left
-you to flip the switch, because nothing of that vintage could cut its own mains
-power.
-
-There is nothing to park. Sector writes go straight through to the disk image, so
-the image is consistent between any two of them and there is no cache to lose.
-That is what the message says, rather than pretending to flush something.
+`SHUTDOWN` switches the machine off and the window closes. There is nothing to
+park first. Sector writes go straight through to the disk image, so the image is
+consistent between any two of them and there is no cache to lose.
 
 Under it is a soft power register at `$FE61`. Switching off takes two writes,
 `$5A` then `$A5`, and any other value cancels a half-entered sequence. A single
@@ -262,7 +256,7 @@ three-character extension).
 
 The root directory holds up to 512 files and drawers. A drawer has no fixed limit
 and grows as you add files, so deep collections belong in drawers rather than at
-the root. Root capacity used to be 16, one sector's worth.
+the root.
 
 The image must be FAT16 with 512-byte sectors. MFC/OS checks the volume when it
 mounts and refuses anything else, because driving a FAT12 or FAT32 volume as

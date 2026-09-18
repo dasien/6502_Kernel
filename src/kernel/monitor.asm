@@ -16,8 +16,8 @@
 ;        which is what let the kernel drop from 3951 to 1562 bytes.
 ; ================================================================
 ; The interactive monitor: command loop, parser, and the R:/W:/G:/F:/M:/X:/T:/Z:/
-; D:/H: commands. It used to live in kernel ROM; the kernel is now just the BIOS
-; (screen, keyboard, conversion, pager, IRQ/NMI, sound, bank launching, $FF00).
+; D:/H: commands. The kernel proper is just the BIOS (screen, keyboard,
+; conversion, pager, IRQ/NMI, sound, bank launching, $FF00).
 ;
 ; Why a bank and not a disk program: a .PRG loads at $0800, which is exactly the
 ; memory a monitor exists to inspect -- it would overwrite the program under test.
@@ -930,7 +930,7 @@ CMD_DECIMAL_TO_HEX:
 
 CMD_DEC_ERROR:
     ; A = error code (1 = invalid digit -> VALUE?, 2 = overflow -> RANGE?). The
-    ; parser no longer prints; the command maps the code to a monitor message.
+    ; the parser does not print; the command maps the code to a monitor message.
     PHA
     LDA #$01
     STA MON_ERROR_FLAG
@@ -1066,8 +1066,7 @@ CMD_READ_SINGLE:
 CMD_RUN_PROGRAM:
     ; Jump straight to the user program. CMD_RUN_PROGRAM is entered via the
     ; parser's JMP dispatch (it has no return address of its own on the stack),
-    ; so the user program's RTS returns directly to the monitor — one fewer
-    ; stack level than the old JSR-wrapper indirection.
+    ; so the user program's RTS returns directly to the monitor.
     JMP (MON_CURRADDR_LO)       ; Jump to user program
 
 ; Dump memory range in formatted hex display with paging support
@@ -1852,7 +1851,7 @@ CMD_JUMP_COMPACT_LO:
     .BYTE <PARSE_CMD_LOADSRC    ; 5 - 'L' (load source for B:)
     .BYTE <PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE <PARSE_CMD_READ_CHECK ; 7 - 'R'
-    .BYTE <PARSE_CMD_DONE       ; 8 - unused ('S' retired; host save is DOS EXPORT)
+    .BYTE <PARSE_CMD_DONE       ; 8 - unused ('S' is free; host save is DOS EXPORT)
     .BYTE <PARSE_CMD_STACK      ; 9 - 'T'
     .BYTE <PARSE_CMD_WRITE_CHECK; 10 - 'W'
     .BYTE <PARSE_CMD_EXIT       ; 11 - unused (ESC handled earlier)
@@ -1872,7 +1871,7 @@ CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_LOADSRC    ; 5 - 'L' (load source for B:)
     .BYTE >PARSE_CMD_MOVE_CHECK ; 6 - 'M'
     .BYTE >PARSE_CMD_READ_CHECK ; 7 - 'R'
-    .BYTE >PARSE_CMD_DONE       ; 8 - unused ('S' retired; host save is DOS EXPORT)
+    .BYTE >PARSE_CMD_DONE       ; 8 - unused ('S' is free; host save is DOS EXPORT)
     .BYTE >PARSE_CMD_STACK      ; 9 - 'T'
     .BYTE >PARSE_CMD_WRITE_CHECK; 10 - 'W'
     .BYTE >PARSE_CMD_EXIT       ; 11 - unused (ESC handled earlier)
@@ -1894,7 +1893,7 @@ CMD_INDEX_MAP:
     .BYTE $FF   ; E -> invalid
     .BYTE 2     ; F -> 2 (Fill)
     .BYTE 3     ; G -> 3 (Run)
-    .BYTE $FF   ; H -> invalid (hex conversion moved to '$:'; help is '?')
+    .BYTE $FF   ; H -> invalid (hex conversion is '$:'; help is '?')
     .BYTE $FF   ; I -> invalid
     .BYTE $FF   ; J -> invalid
     .BYTE $FF   ; K -> invalid
@@ -1905,7 +1904,7 @@ CMD_INDEX_MAP:
     .BYTE $FF   ; P -> invalid
     .BYTE $FF   ; Q -> invalid
     .BYTE 7     ; R -> 7 (Read Memory)
-    .BYTE $FF   ; S -> invalid (host save retired; use DOS SAVE / EXPORT)
+    .BYTE $FF   ; S -> invalid (host save is DOS SAVE / EXPORT)
     .BYTE 9     ; T -> 9 (Print Stack)
     .BYTE $FF   ; U -> invalid
     .BYTE $FF   ; V -> invalid
@@ -1982,6 +1981,6 @@ MSG_SUCCESS:         .BYTE "OK", $0D, $0A, 0
 ; ================================================================
 ; ASSEMBLER / DISASSEMBLER
 ; ================================================================
-; Formerly bank 2 ("DEV TOOLS"), now part of this module -- see the header of
-; assembler.inc for why. Provides the A: D: B: L: commands dispatched above.
+; Part of this module -- see the header of assembler.inc for why. Provides the
+; A: D: B: L: commands dispatched above.
 .include "assembler.inc"

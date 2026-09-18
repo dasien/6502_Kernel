@@ -37,9 +37,9 @@
 ;               live inside the VIC and are reached through the register port at
 ;               $FE2D-$FE37 (see docs/board.md).
 ; I/O page:     $FE00-$FECA (PIA, BlockDevice, ACIA, VIC, SID, RTC, PowerSwitch;
-;               $FE23 MODULE_BANK).
-;               Moved here from the old $DC00 so $B000-$EFFF is a clean, bankable
-;               module window (see docs/architecture.md, Part 4).
+;               $FE23 MODULE_BANK). Sited inside the kernel region so that
+;               $B000-$EFFF stays a clean, bankable module window
+;               (see docs/architecture.md, Part 4).
 ;
 ; ================================================================
 ; FEATURES
@@ -374,11 +374,10 @@ ZP_CLEAR_LOOP:
     ; here are scratch at this point - they get cleared in the monitor-init step
     ; just below.
     ;
-    ; This used to call the monitor's F: fill engine (FILL_RANGE_CORE). The monitor
-    ; is a bank module now and the BIOS cannot call into the window -- at this point
-    ; in boot it holds whatever the host installed, and mapping bank 4 to borrow a
-    ; fill loop would mean clearing the window from inside it. So: a private page
-    ; loop, 48 pages of $B0..$DF.
+    ; The BIOS cannot borrow the monitor's F: fill engine for this. The monitor is
+    ; a bank module, at this point in boot the window holds whatever the host
+    ; installed, and mapping bank 4 to reach a fill loop would mean clearing the
+    ; window from inside it. Hence a private page loop, 48 pages of $B0..$DF.
     STZ MON_CURRADDR_LO
     LDA #>MODULE_WINDOW_START
     STA MON_CURRADDR_HI
@@ -462,8 +461,9 @@ CLEAR_MON_VAR_LOOP:
 ; Modifies: A
 ; Return a random number 1..RNG_MAX. Uses multiply-high range reduction --
 ; result = hi(raw * RNG_MAX) + 1 -- so every 1..MAX value can appear and the
-; output rides the full 65535 LFSR period. (The old rejection method exposed a
-; tiny fixed cycle for small MAX -- e.g. only 9 values for d10.) RNG_MAX preserved.
+; output rides the full 65535 LFSR period. Rejection sampling is the obvious
+; alternative and is worse here: it exposes a tiny fixed cycle for a small MAX,
+; only 9 values for a d10. RNG_MAX preserved.
 GET_RANDOM_NUMBER:
     PHX
     JSR GET_RANDOM          ; A = raw 0..255
@@ -576,7 +576,7 @@ HEX_PAIR_ERROR:
     RTS
 
 ; Convert a nibble (A = 0-15) to its ASCII hex character ('0'-'9' or 'A'-'F').
-; Replaces the old runtime HEX_LOOKUP_TABLE. Modifies A (and flags); preserves X, Y.
+; Computed rather than table-driven. Modifies A (and flags); preserves X, Y.
 NIBBLE_TO_ASCII:
     CMP #$0A                    ; 0-9 or A-F?
     BCC NIBBLE_IS_DIGIT
@@ -693,7 +693,7 @@ SET_ATTR:
     RTS
 
 ; Scroll the screen up one line. The VIC does the row shift and blanks the bottom
-; line chip-side (one command), so the CPU no longer copies ~2000 bytes. Uses A.
+; line chip-side (one command), so the CPU copies nothing. Uses A.
 SCROLL_SCREEN:
     LDA #ASCII_SPACE
     STA VREG_CMD_PARAM          ; bottom line filled with spaces
@@ -1077,10 +1077,11 @@ READ_CMD_DONE_CR:
     STZ MON_CMDBUF,X            ; Null terminate the command
 READ_CMD_EXIT:
     ; Shared exit. The published $FF15 contract is "length in A, zero flag set for
-    ; an empty line", but both exits used to end with a tail jump to PRINT_NEWLINE,
-    ; and PRINT_CHAR deliberately preserves A -- so callers always got $0D with Z
-    ; clear. A conforming caller doing "JSR $FF15 / BEQ empty" could never see an
-    ; empty line, and one using A as the length read 13 bytes of a 0-byte buffer.
+    ; an empty line", so A must be reloaded AFTER the newline. Do not turn this
+    ; into a tail jump to PRINT_NEWLINE: PRINT_CHAR deliberately preserves A, so
+    ; every caller would get $0D with Z clear. "JSR $FF15 / BEQ empty" would then
+    ; never see an empty line, and a caller using A as the length would read 13
+    ; bytes of a 0-byte buffer.
     JSR PRINT_NEWLINE           ; Move to next line on screen
     LDA MON_CMDLEN              ; A = length, Z set when the line is empty
     RTS
@@ -1583,7 +1584,7 @@ NMI_HANDLER_BREAK:
                                 ;   pager permanently disabled system-wide
     ; The monitor itself is bank MON_BANK now, so break-in maps it rather than
     ; unmapping whatever was there. That is also what makes STOP reliable: a program
-    ; that scribbles on MODULE_BANK can no longer lock you out of the monitor,
+    ; that scribbles on MODULE_BANK cannot lock you out of the monitor,
     ; because the NMI handler lives in always-mapped kernel ROM and re-maps on the
     ; way in. The cost is that the monitor can never show $B000-$EFFF as RAM -- it
     ; is standing in that window. Sibling banks are invisible for the same reason.
