@@ -2,7 +2,7 @@
 ; dos.asm - MFC-DOS resident ROM ($8800-$AFFF, always mapped)
 ; ================================================================
 ; The resident operating system for MFC-DOS: the FAT16 filesystem driver and
-; (later) the DOS command shell. See docs/SYSTEM_INTERNALS.md.
+; (later) the DOS command shell. See docs/dos_internals.md.
 ;
 ; This region is always mapped by the emulator (it is NOT in the bankable
 ; $B000-$EFFF module window), so its routines are reachable at all times. The
@@ -69,7 +69,7 @@ RTC_DAY          = $FE59
 RTC_MONTH        = $FE5A
 RTC_YEAR         = $FE5B
 RTC_DOW          = $FE5C
-RTC_FATTIME_LO   = $FE5D                ; host-packed FAT time/date (see Rtc.h)
+RTC_FATTIME_LO   = $FE5D                ; host-packed FAT time/date (see RTC.h)
 RTC_FATTIME_HI   = $FE5E
 RTC_FATDATE_LO   = $FE5F
 RTC_FATDATE_HI   = $FE60
@@ -1956,7 +1956,7 @@ _DOS_PMSG:
 ; The filesystem allows only one open file at a time (reads and writes both
 ; stream through the block device's single sector buffer), so COPY reads SRC
 ; fully into user RAM ($0800..$87FF), then writes it to DST. Files larger than
-; the ~34KB buffer report "FILE TOO BIG". On entry Y = delimiter after the verb.
+; that 32KB buffer report "FILE TOO BIG". On entry Y = delimiter after the verb.
 _DOS_DO_COPY:
     STZ DOS_SH_HASADDR                  ; 0 = copy (source kept)
     BRA _DOS_COPY_COMMON

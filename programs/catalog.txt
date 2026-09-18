@@ -71,7 +71,7 @@ dir     = programs/vault
 sources = vault.c map.c draw.c player.c monster.c combat.c item.c spell.c data.c glue.s
 config  = vault.cfg
 program = VAULT.PRG -> SVAULT/VAULT.PRG
-doc     = STORY.TXT -> SVAULT/STORY.TXT
+doc     = VAULT.TXT -> SVAULT/VAULT.TXT
 desc    = The Sunless Vault, a roguelike
 
 [chess]
@@ -94,6 +94,7 @@ dir     = programs/venture
 sources = venture.c glue.s
 config  = venture.cfg
 program = VENTURE.PRG -> GAMES/VENTURE.PRG
+doc     = VENTURE.TXT -> GAMES/VENTURE.TXT
 desc    = Venture (Exidy 1981) port
 
 [frontier]

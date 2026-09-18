@@ -1,8 +1,8 @@
 /*
  * venture.h -- VENTURE for MFC: shared constants and the runtime glue API.
  *
- * A port of Exidy's Venture (1981). See DESIGN.md for the whole design and
- * docs/VENTURE.md for the player's card; this header is just the numbers the code
+ * A port of Exidy's Venture (1981). See VENTURE.TXT for the player's card and
+ * TODO.md's Games entry for the design record; this header is just the numbers the code
  * needs in one place.
  */
 

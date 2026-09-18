@@ -12,7 +12,7 @@
  * (~500ms stall) and firing cancelled steering outright, because the host only
  * repeats the most recently pressed key. Polling independent bits fixes both.
  *
- * The ENERGY pool is the game's whole point (see DESIGN.md): it drains as you
+ * The ENERGY pool is the game's whole point: it drains as you
  * travel and refills only by flying over a data node. A node can be TAKEN for
  * energy or SHOT for score -- never both -- so every node is a bet on how long
  * you intend to live.
@@ -432,7 +432,7 @@ unsigned char paused;
 unsigned char flash;             /* frames left showing the impact pop */
 
 unsigned int  energy = ENERGY_MAX;
-/* Stays 16-bit, and the "2-word/BCD score" in DESIGN.md step 7 is deliberately
+/* Stays 16-bit, and the "2-word/BCD score" once planned for step 7 is deliberately
  * NOT done. Both ways were built and measured: `unsigned long` cost 650 bytes,
  * and a two-word 0..9999 + myriad pair cost 1,054 -- worse, because cc65 emits a
  * division helper call per constant divide and printing needs a dozen of them.

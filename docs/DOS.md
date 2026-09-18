@@ -1,10 +1,11 @@
 # MFC/OS — DOS Manual
 
-**MFC/OS** is the machine's resident disk operating system: it boots to the `]`
+MFC/OS is the machine's resident disk operating system. It boots to the `]`
 prompt, manages files on a real FAT16 disk image, and launches every other
-program by name. Think Apple II / CP/M — a command shell with a filesystem, not a
-menu. BASIC, the assembler, the monitor, and the disk programs (EDIT, TERM, IRC,
-CHESS, VAULT, …) are all things you type at this prompt.
+program by name. It works the way an Apple II or a CP/M machine does, as a
+command shell with a filesystem rather than a menu. BASIC, the assembler, the
+monitor, and the disk programs (EDIT, TERM, IRC, CHESS, VAULT and the rest) are
+all things you type at this prompt.
 
 ## Quick reference
 
@@ -59,15 +60,15 @@ Type a program's name and press Enter. MFC/OS resolves it in this order:
 2. A built-in ROM program: `BASIC`, `MON`, `FORTH`.
 3. A program file (`.PRG`) on the disk.
 
-You may leave off the `.PRG` extension — typing `EDIT` runs `EDIT.PRG`. Programs
-run and, when they finish, return you to the `]` prompt.
+You may leave off the `.PRG` extension, so typing `EDIT` runs `EDIT.PRG`.
+Programs run and, when they finish, return you to the `]` prompt.
 
 ```
 EDIT              launch the editor
 TERM              launch the serial terminal
 IRC               launch the IRC client
 BASIC             enter BASIC
-ASM               enter the assembler
+MON               enter the monitor
 ```
 
 A built-in ROM program shadows a disk file of the same name. To force the disk
@@ -78,7 +79,7 @@ Unknown names print `COMMAND NOT FOUND`.
 
 ## The monitor (`MON`)
 
-Type `MON` to enter the machine-code monitor — a low-level debugger for reading
+Type `MON` to enter the machine-code monitor, a low-level debugger for reading
 and writing memory, filling and searching, and jumping to code. Press `Q` inside
 the monitor to return to the `]` prompt.
 
@@ -92,7 +93,8 @@ listed with `CATALOG`.
 ### Listing — `CATALOG` / `CAT`
 
 `CATALOG` prints the files in the current directory with a `NAME / BYTES` header
-and decimal sizes in aligned columns; drawers are tagged `<D>` instead of a size.
+and decimal sizes in aligned columns. Drawers are tagged `<D>` instead of a
+size.
 
 ```
 CATALOG           list everything here
@@ -107,12 +109,12 @@ Wildcards use `*` (any run of characters) and `?` (any single character) against
 ### Reading — `TYPE` / `MORE`
 
 `TYPE name` prints a text file to the screen. `MORE name` does the same thing.
-Long output pauses each screenful with a `--MORE--` prompt; press SPACE to
+Long output pauses each screenful with a `--MORE--` prompt. Press SPACE to
 continue or ESC to stop.
 
 ```
 TYPE README.TXT
-MORE SVAULT/STORY.TXT
+MORE SVAULT/VAULT.TXT
 ```
 
 ### Copying, moving, renaming, deleting
@@ -135,28 +137,29 @@ SAVE name,ssss-eeee  save a memory range to a file (with a .PRG load-address hea
 ```
 
 Program files begin with a 2-byte load address, exactly like a Commodore `.PRG`.
-This is how the assemble → `SAVE` → run-by-name loop closes: assemble in `ASM`,
-`SAVE NAME,start-end`, then type `NAME` to run it.
+This is how the assemble, save and run-by-name loop closes. Assemble in the
+monitor with `A:` or `B:`, quit back to the prompt with `Q`, then
+`SAVE NAME,start-end` and type `NAME` to run it.
 
 ### Host file exchange — `IMPORT` / `EXPORT`
 
 Because the disk is a genuine FAT16 image, you can move files between the machine
 and your Mac two ways:
 
-- **In MFC/OS:** `IMPORT name` copies a host file onto the disk; `EXPORT name`
-  copies a disk file out to a host file. Name the host file as a second field --
-  `EXPORT NOTES.TXT,NOTES.TXT` -- and no dialog appears; it resolves against the
-  directory the emulator runs from (`bin/`). Omit it and a host file picker opens,
-  as it always has. The named form is the only one that works without a GUI, and
-  the only one a test or script can drive: 12 bytes with no path syntax, so it
-  cannot reach outside that directory.
-- **On the host:** mount `disk.img` directly and drag files in and out (macOS
-  Finder, `mount -o loop` on Linux, or any tool that reads FAT16).
+- From MFC/OS, `IMPORT name` copies a host file onto the disk and `EXPORT name`
+  copies a disk file out to a host file. Naming the host file as a second field,
+  as in `EXPORT NOTES.TXT,NOTES.TXT`, skips the dialog and resolves the name
+  against the directory the emulator runs from (`bin/`). Omit it and a host file
+  picker opens, as it always has. The named form is the only one that works
+  without a GUI and the only one a test or script can drive. It holds 12 bytes
+  with no path syntax, so it cannot reach outside that directory.
+- From the host, mount `disk.img` directly and drag files in and out with macOS
+  Finder, `mount -o loop` on Linux, or any tool that reads FAT16.
 
 ## Drawers (subdirectories)
 
-Drawers are one level of subdirectories — a way to group files (`GAMES/`,
-`SYSTEM/`, `SVAULT/`). They can't nest, but they grow as needed across multiple
+Drawers are one level of subdirectories, a way to group files such as `GAMES/`,
+`SYSTEM/` and `SVAULT/`. They can't nest, but they grow as needed across multiple
 disk clusters, so there is no small file limit inside a drawer.
 
 ```
@@ -179,14 +182,14 @@ For example, to play the vault game and read its backstory:
 ```
 OPEN SVAULT
 VAULT
-TYPE STORY.TXT
+TYPE VAULT.TXT
 ```
 
 Or reach the same files from the root without opening the drawer:
 
 ```
 CATALOG SVAULT
-TYPE SVAULT/STORY.TXT
+TYPE SVAULT/VAULT.TXT
 COPY GAMES/CHESS.PRG,/CHESS.PRG
 ```
 
@@ -201,21 +204,21 @@ OPEN GAMES
 ```
 
 There is no separate settings syntax and no list of supported keys, because the
-shell's own interpreter runs the file — anything you can type at the `]` prompt
+shell's own interpreter runs the file. Anything you can type at the `]` prompt
 works here, including launching a program by name.
 
 - Blank lines and lines starting with `#` are ignored.
-- A missing file is not an error; most disks will not have one.
+- A missing file is not an error, and most disks will not have one.
 - A command that fails prints its error and the boot carries on, so a mistake
   costs a message rather than a machine.
-- **Hold ESC while the machine starts to skip the file entirely.** This is the
-  way back if a line in it stops the boot.
+- Hold ESC while the machine starts to skip the file entirely. This is the way
+  back if a line in it stops the boot.
 
-The file runs *before* the sign-on box on purpose. The box does not clear the
-screen, so it lands underneath anything the config printed and ends up where it
-always is — immediately above the prompt. A config that works is silent, because
-the verbs are: `OPEN` prints nothing on success. A config that fails leaves its
-error on screen above the box, where you will see it.
+The file runs before the sign-on box on purpose. The box does not clear the
+screen, so it lands underneath anything the config printed and ends up
+immediately above the prompt, where it always is. A config that works is silent
+because its verbs are silent, and `OPEN` prints nothing on success. A config
+that fails leaves its error on screen above the box, where you will see it.
 
 Add `CLS` as the last line if you want a config that does print to tidy up after
 itself.
@@ -232,44 +235,45 @@ CLS / CLEAR       clear the screen
 HELP              list the built-in commands
 ```
 
-`SHUTDOWN` switches the machine off and the window closes. It is the descendant of
-the `PARK` and `SHIPDISK` utilities that early hard-disk micros shipped: make it safe
-to lose power, then say so. Those stopped there and left you to flip the switch,
-because nothing of that vintage could cut its own mains power.
+`SHUTDOWN` switches the machine off and the window closes. It is the descendant
+of the `PARK` and `SHIPDISK` utilities that early hard-disk micros shipped, which
+made the disk safe to lose power and then said so. Those stopped there and left
+you to flip the switch, because nothing of that vintage could cut its own mains
+power.
 
-There is nothing to park. Sector writes go straight through to the disk image, so it
-is consistent between any two of them and there is no cache to lose — which is what
-the message says, rather than pretending to flush something.
+There is nothing to park. Sector writes go straight through to the disk image, so
+the image is consistent between any two of them and there is no cache to lose.
+That is what the message says, rather than pretending to flush something.
 
-Under it is a soft power register at `$FE61`. Switching off takes two writes, `$5A`
-then `$A5`, and any other value cancels a half-entered sequence: a single magic byte
-would let one wild pointer take the machine down.
+Under it is a soft power register at `$FE61`. Switching off takes two writes,
+`$5A` then `$A5`, and any other value cancels a half-entered sequence. A single
+magic byte would let one wild pointer take the machine down.
 
-`DATE` prints one line such as `Wed 2026-07-26 14:30:05` — it shows both the date
+`DATE` prints one line such as `Wed 2026-07-26 14:30:05`. It shows both the date
 and the time, so there is no separate time command.
 
 ## The disk
 
 MFC/OS stores everything on a single FAT16 disk image (`disk.img`). Because it's
-a standard FAT16 volume, your host can mount the same image read/write — macOS,
-Linux and Windows all can — so files you create on the machine appear on the host
+a standard FAT16 volume, your host can mount the same image read/write. macOS,
+Linux and Windows all can, so files you create on the machine appear on the host
 and vice versa. Files use 8.3 names (up to eight characters, a dot, and a
 three-character extension).
 
-The root directory holds up to **512 files and drawers**; a drawer has no fixed
-limit and grows as you add files, so deep collections belong in drawers rather than
-at the root. (Root capacity used to be 16, one sector's worth.)
+The root directory holds up to 512 files and drawers. A drawer has no fixed limit
+and grows as you add files, so deep collections belong in drawers rather than at
+the root. Root capacity used to be 16, one sector's worth.
 
-**The image must be FAT16 with 512-byte sectors.** MFC/OS checks the volume when
-it mounts and refuses anything else, because driving a FAT12 or FAT32 volume as
+The image must be FAT16 with 512-byte sectors. MFC/OS checks the volume when it
+mounts and refuses anything else, because driving a FAT12 or FAT32 volume as
 FAT16 would corrupt it on the very first write. If you format an image yourself,
-ask for FAT16 explicitly and make it at least ~2 MB — every formatter silently
-chooses FAT12 for small volumes:
+ask for FAT16 explicitly and make it at least 2 MB, since every formatter
+silently chooses FAT12 for small volumes.
 
 ```
 mkfs.fat -F 16 disk.img          # Linux
 newfs_msdos -F 16 disk.img       # macOS
 ```
 
-Two FATs (the default for both of those tools) are fine: MFC/OS keeps every copy
+Two FATs, the default for both of those tools, are fine. MFC/OS keeps every copy
 in step, so a host filesystem check won't find them disagreeing.

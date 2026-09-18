@@ -155,7 +155,7 @@ FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 
 ; Module-slot bank select. Writing n maps bank n into the $B000-$DFFF module
 ; window: 0 = RAM (boot/default), 1..255 = read-only ROM modules. Reading returns
-; the current bank. Lives in the always-mapped I/O page (see docs/ARCHITECTURE.md, Part 4).
+; the current bank. Lives in the always-mapped I/O page (see docs/architecture.md, Part 4).
 MODULE_BANK        = $FE23         ; bank-select register for the $B000-$DFFF window
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
@@ -175,7 +175,7 @@ MON_ENTRY_BREAK    = $B003         ; break-in entry: fresh prompt, no banner (NM
 ; VREG_ADDR_LO/HI, then read/write the auto-incrementing VREG_CHAR/VREG_COLOR
 ; data ports. VREG_ATTR is the current-attribute latch applied to VREG_CHAR
 ; writes; VREG_CMD drives chip-side block ops; VREG_CURSOR_LO/HI position the
-; displayed cursor (high-byte bit7 = hidden). See docs/ARCHITECTURE.md, Part 2.
+; displayed cursor (high-byte bit7 = hidden). See docs/architecture.md, Part 2.
 VREG_ADDR_LO       = $FE2D         ; cell index low (0..1999)
 VREG_ADDR_HI       = $FE2E         ; cell index high
 VREG_CHAR          = $FE2F         ; char data port (auto-increments index)

@@ -1,0 +1,264 @@
+                        T H E   S U N L E S S   V A U L T
+
+
+For an age the Shimmering Orb hung above the Temple of Dawn, and its light was
+the light of the world -- warmth in the fields, colour in the tide, the slow
+sure turning of the seasons.
+
+Then the Orb was taken.
+
+A pale sorcerer, envious of the sun, hid it at the bottom of a vault fifteen
+floors deep. The instant the Orb left the surface, the sky went out. Crops
+greyed. The oceans stilled. Cold crept into every hearth, and the world has
+waited, dimming, ever since.
+
+Descend the Sunless Vault, floor by floor, past the things that have learned to
+live without the sun, and take back the Orb from the guardian the sorcerer left
+to keep it.
+
+But know two things before you go:
+
+  The Orb still remembers warmth, and every crawling, hungering thing in the
+  vault is drawn to it. Once it is in your hands, more will come -- and keep
+  coming -- the longer you hold it.
+
+  And the sorcerer was no fool. He set a trap in the stone: the moment the Orb
+  is lifted, the vault begins to seal itself. You will have only minutes to
+  climb back into the light before the way grinds shut for good, and the dark
+  keeps you -- and the Orb -- forever.
+
+Recover the Orb. Climb out. Give the world back its warmth.
+
+
+GETTING IN
+
+The game lives in the SVAULT drawer. At the DOS ] prompt:
+
+  OPEN SVAULT
+  VAULT
+
+Roll your hero (R to reroll the four stats, Enter to accept), type a name, and
+you drop onto floor 1.
+
+
+THE GOAL
+
+Descend to floor 15, kill the Vault Guardian, and step onto the Shimmering Orb
+to lift it. That opens a stairway and starts a real-time SEAL CLOCK -- climb
+all the way back to the surface before it runs out. Reaching the top with the
+Orb wins; dying or letting the vault seal loses.
+
+
+CONTROLS
+
+  arrow keys, or h j k l   move west / south / north / east
+                           (bump a creature to attack it)
+  SPACE or .               wait one turn
+  >                        use the stairs you are standing on -- down, or UP
+                           once you hold the Orb
+  i                        character sheet: stats, HP/MP, XP, gold, weapon and
+                           armour bonuses, carried potions and scrolls.
+                           Press a letter to use one
+  c                        cast a spell (lists the spells your INT allows)
+  p                        pray at an altar (only while standing on one)
+  Q                        quit to DOS
+
+Opening a menu is free. USING an item or CASTING a spell costs a turn, and the
+monsters act. One turn happens per key press.
+
+
+WHAT YOU SEE
+
+  @  yellow      you
+  #  white       wall
+  .  green       floor
+  >  cyan        stairs
+  omega, white   an altar -- stand on it and press p
+  delta, yellow  the Shimmering Orb, on floor 15
+  a letter       a creature; see the monster list below
+  a shading      a shadow, the one creature not drawn as a letter
+  an inverted !  a potion: yellow is healing, cyan is mana
+  a triple bar   a scroll (magic map)
+  a sunburst     a pile of gold
+  gear shapes    weapon upgrade / armour upgrade
+  dark grey      explored, but out of sight now -- you remember the layout,
+                 not what has moved into it
+
+You see only what your torch reaches. Rooms light up as you enter them;
+corridors reveal as you go.
+
+
+YOUR HERO
+
+Four stats, rolled at the start (minimum 8) and raised permanently at altars:
+
+  STR   melee damage
+  INT   which spells you know, and the size of your mana pool
+  CON   hit points
+  DEX   accuracy and evasion
+
+  HP    = 6 + CON + (level-1) * (4 + CON/6)
+  Mana  = 2*INT + (level-1) * (INT/2)
+
+Kills grant XP. Levelling up fully heals you and enlarges both pools; the
+status bar shows progress as XP have/needed.
+
+You regain about 1 HP every 15 turns and about 1 mana every 25 turns, so you
+can rest by waiting on a safe tile. HP recovery pauses while you are poisoned.
+
+Weapon and armour upgrades add a permanent +N to damage and to damage soaked.
+
+
+COMBAT
+
+When you bump a creature, or it attacks you:
+
+  hit chance   70 + attacker accuracy - defender evasion, clamped to 5-95%
+  damage       a roll in the attacker's range, minus the defender's armour,
+               always at least 1 on a hit
+  critical     10% chance, doubles the damage
+
+Your accuracy rises with DEX and level, your damage with STR and your weapon
+bonus, your armour with the armour bonus and the Shield spell.
+
+The message log is two lines. The TOP line is what you do this turn; the BOTTOM
+line is what the world does back. After a hit that does not kill, the top line
+hints at what is left of the foe -- barely hurt, wounded, badly hurt, near
+death -- so you can judge whether to press or back off.
+
+
+MONSTER MANUAL
+
+Creatures appear within a floor range, so the deeper you go the worse it gets.
+
+  r   rat          1-3      4  weakest thing down here
+  b   bat          1-4      4  hard to hit (evasive)
+  k   kobold       1-4      6
+  s   snake        2-5      7  POISON
+  S   skeleton     2-6      9  risen dead
+  g   goblin       2-6     10
+  .   shadow       3-8     12  drawn as a faint shading, not a letter --
+                               dark and hard to see; evasive
+  o   orc          3-8     15  lightly armoured
+  d   wolf         3-8     14  swift hunter
+  z   zombie       3-8     20  slow but tough
+  G   gnoll        4-9     18
+  O   ogre         5-11    30  hits hard
+  w   wraith       6-12    24  evasive, POISON
+  V   vampire      7-13    38  LIFE DRAIN -- for a few turns after it hits,
+                               damage you take heals IT (shown as DRN).
+                               Kill it to end the drain
+  T   troll        7-13    42  REGENERATES -- finish it fast
+  B   basilisk     8-14    40  its gaze may PARALYSE you for a turn or two
+  M   mind flayer  8-14    36  may CONFUSE you -- your steps go the wrong way
+  W   wyvern       8-14    34
+  N   necromancer  9-15    30  RAISES SKELETONS -- kill it before it fills
+                               the room
+  D   demon       10-15    52
+  Y   drake       12-15    68
+  H   hydra       12-15    80  strikes 1-3 times per turn
+  AE  Vault Guardian 15   110  the boss; hits hard and regenerates
+
+POISON stacks a few ticks per hit and drains HP each turn until it wears off,
+shown as PSN on the status bar. Regenerators heal a little every turn they are
+in view, so burst them down.
+
+Monsters walk OVER gold and items without destroying them. Kill one standing on
+loot and it drops where it falls.
+
+
+PICKUPS
+
+  gold                 currency. Spend it at altars; it also counts toward your
+                       score. Picked up automatically, shown on the i page
+  potion of healing    restores HP
+  potion of mana       restores mana
+  scroll of magic map  reveals a whole floor's layout
+  weapon upgrade       permanent +1 to your attack
+  armour upgrade       permanent +1 to your defence
+
+Potions and scrolls go into your pack; use them from the i menu. Gold and gear
+apply the instant you step on them.
+
+
+SPELLS (press c)
+
+You KNOW every spell your INT meets the requirement for. MANA limits how often
+you cast. Casting costs a turn.
+
+  spell           min INT  mana  effect
+  Magic Missile        8      4  bolt the nearest creature you can see,
+                                 3 + INT/2 + d4 damage
+  Light                9      3  widens your torch for a while -- see farther,
+                                 but it is not a full map
+  Heal                10      8  restore 8 + INT HP
+  Shield              11     14  +armour for several turns
+  Teleport            12      2  blink to a random floor cell; a cheap escape
+  Time Stop           15    all  freezes every monster AND the seal clock for
+                                 about 5 + INT/4 turns. Needs at least 20 mana
+                                 and consumes your entire pool
+
+Raise INT at an altar to unlock more of the book.
+
+
+ALTARS (press p)
+
+Now and then a floor holds an altar. Stand on it and press p to spend gold:
+
+  restore body and mind     refill HP and mana
+  blessing of Might         permanent +1 STR
+  blessing of Mind          permanent +1 INT, and a larger mana pool
+  blessing of Vigor         permanent +1 CON, and more maximum HP
+  blessing of Grace         permanent +1 DEX
+
+Every purchase raises the price of the next. Your score counts the gold you
+GATHER, not what is left in your purse, so spending at altars costs you nothing
+on the scoreboard. Buy freely.
+
+
+THE ESCAPE
+
+Lifting the Orb changes everything.
+
+A seal clock appears, SEAL mm:ss, and counts down in REAL TIME -- it ticks even
+while you stand still and think. You have ten minutes. It turns red for the
+last two.
+
+The stairs now lead UP. Climb floor by floor back toward the surface. Each
+floor is freshly generated and swarming, every room occupied: the Orb's warmth
+draws everything to you.
+
+Time Stop freezes the clock as well as the monsters, and opening a menu pauses
+it. Use those windows wisely.
+
+Reach the surface before 0:00 to win. If the clock runs out, the vault seals
+you in.
+
+
+SCORE
+
+  depth, round trip (deepest reached + floors climbed back)    x10
+  creatures slain                                               x3
+  damage dealt                                                  /2
+  healing done                                                  /4
+  mana spent                                                    /4
+  gold gathered (total found, not what is left)                 x1
+  escaped with the Orb                                        +500
+
+Getting deep and climbing back out is where the points are. A clean escape is
+worth far more than any hoard.
+
+
+ADVICE FROM THOSE WHO WENT DOWN BEFORE YOU
+
+Rest between fights. Wait on a cleared tile to regain HP and mana before
+pushing on.
+
+Bank an escape. Keep enough mana for a Teleport -- it costs only 2 -- and save
+Time Stop for a swarmed choke point during the climb.
+
+Use the altars. Score counts gold gathered, not gold kept, so blessings are
+effectively free on the scoreboard. Spend on whatever helps you survive.
+
+Learn the depth bands. If you are seeing trolls and wyverns, the ogres and
+gnolls are behind you; plan gear and spells for what is ahead.

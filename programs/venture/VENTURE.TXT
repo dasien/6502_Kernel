@@ -1,0 +1,193 @@
+                              V E N T U R E
+
+
+A port of Venture (Exidy, 1981). You are Winky, a smiley-faced adventurer
+raiding a dungeon for treasure while things that cannot be killed close in
+behind you.
+
+The game explains nothing while you play. An arcade cabinet had an
+instruction card bolted to it and the machine itself just played. This is
+the card.
+
+
+STARTING
+
+  ]OPEN GAMES
+  GAMES]VENTURE
+
+Press any key at the title, at the treasure roster, and at each CAUGHT or
+between-levels tally.
+
+
+CONTROLS
+
+  arrow keys        move -- hold two together for a diagonal
+  SPACE             fire an arrow
+  P                 pause
+  Q                 quit to DOS
+
+HOLD THE KEYS, DO NOT TAP THEM. The machine reads which keys are down right
+now, with no repeat delay, so holding a direction gives smooth movement and
+tapping gives you one cell. It is also why you can move and fire at once,
+and steer diagonally, which a keyboard alone could not manage.
+
+ESC does nothing, on purpose. Every arrow key sends an ESC as the first byte
+of its sequence, so a game that quit on ESC would quit whenever you moved.
+
+
+BEFORE A LEVEL
+
+A roster of every treasure in the game, each slot a question mark until you
+have taken that one, then its own shape in its own colour. It is the only
+long-run progress the game shows, and the reason to go back into a room type
+you have already survived.
+
+
+THE HALL
+
+The game proper opens on the dungeon hall: an open arena with the level's
+four rooms sitting in it as blocks.
+
+  the smiley face   Winky -- you
+  a hollow box      a room, with TWO entrances on different sides
+  a solid block     an entrance; walk onto it to go in
+  a filled-in box   a room you have looted: entrances sealed, filled right in
+  the Greek phi     a Hallmonster -- see below
+  dim blocks        wall
+
+YOU CANNOT SEE INTO A ROOM FROM THE HALL, EVER. The entrance tells you
+nothing about what is behind it until you have been inside. That is
+deliberate: you commit first and find out second. The one thing the hall
+tells you is which rooms are done, and only after you have been in them.
+
+THE DOORS LINE UP. An entrance on a room's east side opens on that room's
+east doorway, and leaving by its north doorway puts you back at the north of
+its block. You can navigate the dungeon by memory rather than by surprise.
+
+YOU CANNOT FIRE IN THE HALL. The bow is for rooms.
+
+Clear all four rooms and you descend a level, and the whole dungeon changes
+colour: magenta, then cyan, then yellow. Three levels, then it starts again,
+faster. There is no ending. You play until your lives run out.
+
+
+HALLMONSTERS
+
+They patrol the hall. They cannot be killed, shot, blocked or reasoned with
+-- an arrow simply stops on one. They kill you on contact, and they are
+always walking toward you.
+
+They are slower than you, so the hall is survivable if you keep moving. What
+they are really for is the clock: LINGER TOO LONG IN A ROOM AND ONE COMES
+THROUGH A DOORWAY AFTER YOU. You will hear it arrive.
+
+INSIDE A ROOM IT WALKS THROUGH THE WALLS, and it is not much slower than you
+are. It does not go round anything, it cannot be cornered, and nothing you
+put between you and it helps. Walking away in a straight line barely gains
+you anything. What does is moving diagonally, since that carries you on both
+axes at once and it only ever moves on one. There is one answer and it is to
+leave, by whichever doorway is not on its side of the room.
+
+THERE ARE MORE OF THEM AS YOU GO. One at the start of a level, and another
+wakes every time you loot a room -- so the fourth room is not the easy one.
+
+
+INSIDE A ROOM
+
+  the smiley face   Winky -- you
+  assorted shapes   the room's monsters -- one arrow each
+  the card suits    its treasure: apples, jewel, ring, ingot, chest, amulet
+  light shading     remains -- what is left of something you killed
+  solid blocks      wall
+  an arrow shape    your arrow, in flight
+  a triple bar      a doorway; there are TWO, and either is a way out
+  a dim triangle    a pip showing where your next arrow will go
+
+The bar across the top shows SCORE, LIVES and LEVEL.
+
+Take the treasure, then get out. Every room has two doorways on different
+sides -- the one you came in by and one to run for -- and neither will let
+you leave empty-handed. Which one you leave by decides where in the hall you
+come out.
+
+WATCH THE PIP. Facing sticks after you let go of the key, and the pip is the
+only thing that shows it. It is how you know what you are aimed at while you
+are backing away from something.
+
+ONE ARROW AT A TIME. You cannot spray. The shot flies in whatever direction
+you last moved, and until it hits something or reaches a wall you are
+unarmed. Because facing sticks, you can back away from a serpent while still
+aiming at it, which is often the only way to fight something chasing you.
+
+THE DEAD DO NOT CLEAR AWAY. A killed monster leaves remains, and remains
+kill you exactly as dead as the monster did. Every kill makes the room
+smaller. Clear a room carelessly and you can wall yourself off from the
+treasure, or from the door.
+
+Remains stop monsters too -- but they go round. Killing something does not
+buy you a wall, only a hazard you both have to work around. Monsters will
+not walk through each other either, so a narrow gap is worth holding.
+
+SCORING IS THE TRAP. The treasure is worth 200 times the level. A monster is
+worth 100 times the level -- BUT ONLY AFTER THE TREASURE IS IN YOUR HAND.
+Kill anything before that and it is worth nothing at all.
+
+So the safe instinct -- clear the room, then loot at leisure -- pays you
+nothing. The points are in grabbing the treasure first and then deciding how
+much longer you dare stay in a room filling up with your own leavings, with
+a Hallmonster due.
+
+DYING COSTS THE ROOM, NOT THE LEVEL. You are put back in the hall and the
+room is still there to try again.
+
+
+BETWEEN LEVELS
+
+SCORE THIS LEVEL times BONUS MULTIPLIER = TOTAL BONUS, added to your score.
+The multiplier is the level you just finished plus the lives you still have,
+so a clean level is worth a great deal more than a survived one.
+
+
+SOUND
+
+There is no music, only cues: a chime for treasure, a short note for a kill,
+a low tone when you die -- and one that matters, the note that means a
+Hallmonster has just walked into the room you are standing in. You need to
+know that without looking away from what you are doing.
+
+
+WHEN IT ENDS
+
+Three lives and the run is over. The last screen shows your final score and
+asks whether you want another go: Y for a new game, N or Q back to DOS. A
+new game starts you over completely, treasure roster included. It is what
+THIS player has found.
+
+
+DIFFERENCES FROM THE ARCADE
+
+Movement is by whole character cells rather than smooth motion; there is no
+pixel-addressable layer for this, so cells are the resolution. At fifteen
+cells a second it still plays as an arcade game rather than a board game.
+
+The hall and the rooms are separate screens instead of a zoom, so the hall
+shows each room as a block rather than as its true shape.
+
+Some monsters and treasures are renamed to match the shapes the character
+set actually has: the Necklace, Urn, Key, Crown and Griffin are a Jewel, an
+Ingot, a Ring, an Amulet and a Wraith here.
+
+Six room layouts serve the twelve room-visits of a run, dealt four at a time
+and rotated by level, rather than twelve distinct pictures. The roster lists
+those six.
+
+No moving walls. One arcade room has bars that slide back and forth; the
+room that takes its shape from that screenshot does not take its motion.
+
+What IS here because the arcade has it: two doorways per room, looted rooms
+sealing themselves solid, the growing Hallmonster count, the per-level
+recolour, the facing pip, the treasure roster and the between-levels tally.
+
+What is NOT changed: the invincible Hallmonsters, the lethal remains, the
+worthless-before-the-treasure rule, one arrow in flight, and the fact that
+there is no ending. You play until your lives run out.

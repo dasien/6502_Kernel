@@ -4,93 +4,137 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is the MFC 6502 ("My First Computer") project: a 6502 kernel development project that implements low-level system initialization and hardware control for a 6502-based computer system (specifically targeting Commodore 64 architecture). The project combines assembly language kernel code with C++ development tools.
+This is the MFC 6502 ("My First Computer") project: a **software-defined 8-bit computer**
+that does not correspond to any machine that ever shipped. Two halves:
 
-This is not a c64 emulator and does not use PETSCII.
+- a **6502/65C02 kernel, DOS, monitor and programs** in assembly and cc65 C, and
+- a **Qt host emulator** in C++ that provides the CPU and the virtual chipset.
+
+**It is not a Commodore 64 emulator.** The memory map, the chipset and the character set
+are all MFC's own: there is no VIC-II, no CIA, no `$00/$01` processor port and no PETSCII.
+The display is **80x25 CP437** living behind a VIC *register port*, not a screen-memory
+range. The CPU target is the **WDC W65C02S**, so the CMOS additions (`RMB`/`SMB`,
+`BBR`/`BBS`, `WAI`, `STP`, valid decimal flags) are all in scope.
 
 ## Build System
 
-The project uses CMake and ninja as the build system:
+The project uses CMake and Ninja:
 
 ```bash
-cmake -G Ninja -DBUILD_TESTS=ON ..
-ninja
+cmake -G Ninja -DBUILD_TESTS=ON -B cmake-build-debug -S .
+ninja -C cmake-build-debug
 ```
 
-The main executable target is `6502_Kernel` which builds from `main.cpp`.
+Targets that matter:
+
+| Target | What it does |
+|---|---|
+| `6502-kernel` | the Qt host emulator (`src/CMakeLists.txt`, from `src/main.cpp`) |
+| `disk` | builds every program from `programs/catalog.txt`, then assembles `disk.img` |
+| `everything` | every ROM, program, tool and the app |
+| `run` | `everything`, then boots it |
+| `mkdisk` / `mkfat16` / `mkprg` | host-side tools in `tools/` |
+
+`programs/catalog.txt` is the **single source of truth** for what can go on a disk —
+adding a program is one entry there, not three edits in three files. `.PRG` files are
+build outputs and are gitignored.
+
+`ninja run` must launch from `cmake-build-debug/bin`, because the machine resolves
+`../kernel/kernel.rom` and `../disk.img` relative to its working directory; the target
+already handles this.
 
 ## Testing
 
 ### Test Organization
-```
-/tests/                          # Source-controlled test code
-├── CMakeLists.txt              # Test build configuration
-├── test_advanced_commands.cpp  # Unit tests for monitor commands
-├── test_monitor_integration.cpp # Integration tests
-└── scripts/                    # Test utility scripts
 
-cmake-build-debug/tests/        # Build artifacts (excluded from Git)
-├── kernel_tests               # Unit test executable
-├── monitor_integration_tests  # Integration test executable
-└── [generated files]          # CMake and build artifacts
+```
+/tests/                     # 29 source-controlled test files, GoogleTest
+├── CMakeLists.txt          # one target per area
+├── test_cpu_*.cpp          # ALU, interrupts, cycle counts
+├── test_vic_*.cpp          # char plane, soft font, fine scroll, sprites
+├── test_dos_*.cpp          # block I/O, FAT16, boot-time STARTUP.CFG
+├── test_venture.cpp        # a .PRG game, driven through the emulated machine
+├── test_kpanic.cpp         # ditto
+└── scripts/                # cmake-script validators (ROM, memory layout)
+
+cmake-build-debug/bin/      # built test executables (gitignored)
 ```
 
 ### Running Tests
+
 ```bash
-# Build with tests enabled
-cmake -G Ninja -DBUILD_TESTS=ON ..
-ninja
-
-# Run all tests
-ctest
-
-# Run specific test suites
-ctest -R kernel_unit_tests
-ctest -R monitor_integration
-ctest -R validate_kernel_rom
-
-# Run tests with verbose output
-ctest --verbose
+ctest --test-dir cmake-build-debug              # all 32 targets
+ctest --test-dir cmake-build-debug -R vic_      # one area
+ctest --test-dir cmake-build-debug --output-on-failure -R kpanic
 ```
 
+A full run takes roughly two and a half minutes.
+
 ### Test Types
-- **Unit Tests** (`kernel_tests`): Test individual components using Google Test
-- **Integration Tests** (`monitor_integration_tests`): Test monitor command functionality
-- **ROM Validation** (`validate_kernel_rom`): Verify kernel ROM integrity
-- **Memory Layout Validation** (`validate_memory_layout`): Check memory map compliance
+
+- **Device/unit** — `kernel_unit_tests`, `cpu_*`, `vic_*`, `sid`, `rtc`, `pia_keystate`,
+  `block_device_*`, `clock`: exercise one class against its register contract.
+- **Integration** — `monitor_integration`, `dos_*`, `fat16_roundtrip`, `acia_xmodem`,
+  `term_*`, `irc`, `edit_splash`: drive real 6502 code on the emulated machine.
+- **Program tests** — `venture`, `kpanic`: load a `.PRG` and assert on gameplay state.
+  Note these exist; the older claim that `.PRG` programs cannot be tested is obsolete.
+- **Validators** — `validate_kernel_rom`, `validate_memory_layout`,
+  `opcode_table_current`, `kernel_bios_monitor_split`: cmake scripts and drift guards.
+  `opcode_table_current` regenerates the 65C02 table and fails if the committed copy is
+  stale, so the assembler's table can never silently diverge from the CPU.
 
 ## Architecture and Code Organization
 
 ### Core Components
 
-1. **kernel.asm** - The main 6502 assembly kernel code that handles:
-   - System initialization and reset vector handling
-   - Hardware setup (VIC-II, SID, CIA chips)
-   - Memory banking configuration
-   - Interrupt service routines
-   - Zero page and stack initialization
-   - **6502 Monitor Program** - Complete interactive debugging/programming environment
+1. **`src/kernel/kernel.asm`** — the BIOS in a 4 KB window at `$F000-$FFFF`: reset and
+   interrupt vectors, zero-page and stack setup, the jiffy IRQ, and the `$FF00` kernel
+   ABI jump table. The monitor is **not** here — it is module bank 4.
 
-2. **main.cpp** - C++ development tool/simulator (currently a basic template)
+2. **`src/kernel/dos/dos.asm`** — MFC/OS at `$8800-$AFFF`: the shell, FAT16 filesystem,
+   program loader, and the boot-time `SYSTEM/STARTUP.CFG` runner.
 
-3. **docs/ARCHITECTURE.md** - Comprehensive documentation of the 6502 memory layout including:
-   - Zero page allocation ($0000-$00FF)
-   - Stack organization ($0100-$01FF)
-   - System variables ($0200-$03FF)
-   - Low RAM ($0400-$07FF): T:/Z: snapshot + the assembler's symbol table
-   - Hardware I/O mapping ($FE00-$FE60)
-   - ROM areas and bank switching
+3. **`src/kernel/monitor.asm`** — the machine-language monitor, with the two-pass
+   assembler folded in. Module bank 4.
+
+4. **`src/computer/`** — the virtual chipset in C++: `CPU6502`, `Memory`, `PIA`, `VIC`,
+   `SID`, `RTC`, `ACIA`, `BlockDevice`, `PowerSwitch`, `TimingCircuit`. Each owns an
+   `is*Address()` predicate; `Memory` dispatches through those, which is why adding a
+   register range to a chip needs no change to `Memory`.
+
+5. **`src/ui/`** — the Qt front end. `DisplayWidget` renders the character plane,
+   sprites and the cursor.
+
+6. **`programs/`** — cc65 C and assembly programs built to `.PRG` (EDIT, TERM, IRC,
+   VENTURE, KPANIC, the Sunless Vault, FRONTIER, CHESS...).
+
+7. **`docs/`** — `architecture.md` is the consolidated internals reference (memory map,
+   zero page, the `$FF00` ABI, bank switching); `board.md` is the chipset as a
+   single-board computer with the authoritative I/O decode table.
 
 ### Memory Architecture
 
-The memory map is MFC's own; it is not a Commodore 64 layout:
-- **Zero Page ($00-$FF)**: Critical for kernel workspace and fast addressing
-- **Stack ($0100-$01FF)**: System stack growing downward from $01FF
-- **System Variables ($0200-$03FF)**: Kernel data structures and I/O buffers
-- **$0400-$07FF**: the T:/Z: page snapshot ($0400) and the assembler's identifier
-  buffers and symbol table ($0500-$07FF). The screen is NOT here -- the 80x25
-  display lives behind the VIC register port
-- **Hardware I/O ($FE00-$FE60)**: PIA, VIC register port, ACIA, SID, RTC
+The memory map is MFC's own; it is not a Commodore 64 layout. `docs/architecture.md`
+is authoritative — this is the shape of it:
+
+| Range | Contents |
+|---|---|
+| `$0000-$00FF` | Zero page — kernel/monitor/DOS workspace. **Not** a processor port |
+| `$0100-$01FF` | System stack, growing down from `$01FF` |
+| `$0200-$03FF` | Kernel data structures and I/O buffers |
+| `$0400-$07FF` | `T:`/`Z:` page snapshot (`$0400`) + the assembler's identifier buffers and symbol table (`$0500-$07FF`) |
+| `$0800-$87FF` | **User RAM** — where `.PRG` programs load and run |
+| `$8800-$AFFF` | DOS ROM |
+| `$B000-$EFFF` | Bank-switched module window, 16 KB |
+| `$F000-$FFFF` | Kernel BIOS ROM |
+| `$FE00-$FECA` | Memory-mapped I/O (inside the kernel window, reserved by the `IORESV` linker segment) |
+| `$FFFA-$FFFF` | NMI / RESET / IRQ vectors |
+
+**The screen is not in the map.** The 80x25 CP437 character plane and its attributes
+live behind the VIC register port and are reached by writing a cell index then streaming
+glyphs; there is no screen-memory range to poke.
+
+cc65 `.cfg` files **must** put the C stack at `$8700`, since user RAM ends at `$87FF`.
 
 ## 6502 Monitor Program
 
@@ -250,12 +294,15 @@ Searches memory for a specific byte pattern.
 
 The kernel code follows these patterns:
 - Hardware initialization loops for clearing chip registers
-- Memory banking through processor port ($00/$01) control
+- Memory banking through the `MODULE_BANK` register at `$FE23`
 - Interrupt vector setup at $FFFA-$FFFF
-- Zero page clearing preserving processor port registers
-- Screen and color memory initialization
-- You can use https://www.masswerk.at/6502/6502_instruction_set.html and http://www.6502.org/documents as resources for the processor and assembly language
-- 
+- Zero page cleared wholesale at reset — there are no processor-port bytes to preserve
+- Screen clearing via a VIC **command** (there is no screen or colour memory to fill)
+- Null-terminated strings printed through one indirect-indexed routine (see below) —
+  the house style for any new message
+- Reference material: https://www.masswerk.at/6502/6502_instruction_set.html and
+  http://www.6502.org/documents
+
 ## Development Guidelines
 
 ### Assembly Code Standards
@@ -265,21 +312,28 @@ The kernel code follows these patterns:
 - Preserve critical zero page locations during initialization
 
 ### Memory Banking Considerations
-- The processor port at $00/$01 controls memory banking
-- Default configuration ($37 at $01) enables ROM, Kernal ROM, and I/O
-- Banking changes affect what appears in $A000-$FFFF range
-- Always restore banking state after temporary changes
+- **`MODULE_BANK` at `$FE23`** selects which 16 KB module is visible in the
+  `$B000-$EFFF` window. Write `n` to map bank `n`.
+- Bank 0 is plain scratch RAM and is what boots. BASIC is 1, FORTH is 3, MONITOR
+  (assembler included) is 4. Bank 2 is free.
+- Banking affects **only** `$B000-$EFFF`. The DOS ROM, kernel and I/O page are always
+  visible; nothing can bank them out.
+- `Memory` answers `$FE23` itself, before any peripheral is consulted — it is a decoder
+  register, not a chip.
+- Always restore the previous bank after a temporary change.
 
 ### Hardware Initialization Sequence
-1. Clear decimal mode and disable interrupts
-2. Set up stack pointer
-3. Configure memory banking
-4. Initialize VIC-II video chip
-5. Initialize SID sound chip
-6. Initialize CIA chips for keyboard/timers
-7. Clear zero page (preserving $00/$01)
-8. Clear screen and color memory
-9. Start monitor program
+1. `CLD` / `SEI` — clear decimal mode, disable interrupts
+2. Initialize the stack pointer to `STACK_TOP`
+3. Point `MODULE_BANK` at bank 0, so the module window boots as clean scratch RAM
+4. Clear zero page
+5. Clear the screen (a VIC command, not a memory fill) and the module window RAM
+6. Initialize the devices and install the interrupt vectors
+7. Enable the jiffy IRQ and `CLI`
+8. Enter **DOS**, which runs `SYSTEM/STARTUP.CFG` and then signs on
+
+There is no VIC-II, SID-CIA or keyboard-CIA init step: the PIA supplies the keyboard,
+the ACIA the serial port, and the SID needs no reset sequence.
 
 ### Monitor Development Guidelines
 - Always use the null-terminated string system for new messages
@@ -295,11 +349,14 @@ The kernel code follows these patterns:
 
 ## Critical Memory Locations
 
-Refer to `docs/ARCHITECTURE.md` for complete details, but key locations include:
-- **$00/$01**: Processor port for memory banking
-- **$01FF**: Initial stack pointer location
+Refer to `docs/architecture.md` for complete details, but key locations include:
+- **`$FE23`**: `MODULE_BANK` — the bank-select register (there is no `$00/$01` port)
+- **`$01FF`**: Initial stack pointer location
 - **$B000-$EFFF**: Bank-switched module window, 16 KB (BASIC 1, FORTH 3, MONITOR 4 with the assembler built in; bank 2 free)
-- **$FE00-$FE60**: Memory-mapped I/O — PIA, VIC register port, ACIA, SID, RTC
-  (the 80×25 screen and its colors live behind the VIC port, not in the 64K map)
+- **`$FE00-$FECA`**: Memory-mapped I/O — PIA (incl. the live held-key port at `$FE0F`),
+  `MODULE_BANK`, BlockDevice, ACIA, VIC register port, SID, RTC, PowerSwitch, VIC
+  soft-font port and VIC sprite block. The 80x25 screen and its colours live behind the
+  VIC port, not in the 64K map. **First free byte: `$FECB`** (53 left).
+  `docs/board.md` has the authoritative per-chip decode table
 - **$F000-$FFFF**: Kernel BIOS ROM (the monitor is module bank 4, not here)
 - **$FFFA-$FFFF**: Interrupt vectors (NMI, RESET, IRQ)

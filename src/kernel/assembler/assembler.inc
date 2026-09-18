@@ -23,9 +23,10 @@
 ;                    source lines, and an origin outside writable RAM)
 ; Assembler:    ca65  (-I src/kernel/assembler for opcodes_65c02.inc)
 ;
-; A bank-switched ROM module for the $B000-$DFFF window (module bank 2; see
-; docs/ARCHITECTURE.md, Part 4). The kernel maps this bank by name and JMPs
-; to the entry at $B000; the module returns to the monitor via $FF12.
+; Part of the monitor module in the $B000-$EFFF window (module bank 4; it was
+; bank 2 of its own until the monitor moved into a bank, see docs/MONITOR.md).
+; Provides the A: D: B: L: commands the monitor dispatches; a module returns to
+; the DOS prompt via $FF12.
 ;
 ; Module ABI: reaches the system ONLY through the kernel jump table at $FF00 (the
 ; kernel ROM is always mapped regardless of the active bank). It reuses the

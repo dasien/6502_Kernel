@@ -2,8 +2,8 @@
  * frontier.c -- FRONTIER FORTUNE (build step 8: a living economy).
  *
  * A Wild-West trading game: buy low, sell high, beat the loan shark before the
- * 60 days run out. Port of the author's 2008 Objective-C prototype; see
- * DESIGN.md for the full design and for what the prototype left unfinished.
+ * 60 days run out. Port of the author's 2008 Objective-C prototype; TODO.md's
+ * Games entry records the design and what the prototype left unfinished.
  *
  * Menu-driven and turn-based -- there is no tick loop, no scrolling and no
  * timing anywhere in this program. Each screen paints itself once on entry and

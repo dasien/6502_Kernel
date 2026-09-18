@@ -21,17 +21,17 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
 - [x] IRQ/NMI wired (v2.2): CPU IRQ/NMI dispatch + a ~60Hz PIA interval timer (BASIC ON IRQ) + NMI stop key (BASIC ON NMI / break to monitor). The kernel ISRs set EhBASIC's "happened" bit.
 
 ### BASIC label rewrite
-- [x] Resolved via a glossary rather than a rename. EhBASIC's upstream is unmaintained (Lee Davison deceased) so parity is no longer a goal, but a full in-place rename of ~780 code labels was judged not worth the risk/effort. Instead, docs/basic_label_glossary.md (now part of docs/SYSTEM_INTERNALS.md) maps the cryptic LAB_<hex> labels (and the named handlers) to their meaning, drawn from the source comments. The ROM is left untouched. (Also added the required "Derived from EhBASIC" attribution: in the BASIC sign-on banner and the root NOTICE file.)
+- [x] Resolved via a glossary rather than a rename. EhBASIC's upstream is unmaintained (Lee Davison deceased) so parity is no longer a goal, but a full in-place rename of ~780 code labels was judged not worth the risk/effort. Instead, docs/basic_label_glossary.md (now part of docs/basic_internals.md) maps the cryptic LAB_<hex> labels (and the named handlers) to their meaning, drawn from the source comments. The ROM is left untouched. (Also added the required "Derived from EhBASIC" attribution: in the BASIC sign-on banner and the root NOTICE file.)
 
 ### Kernel code-quality refactors (ROM has ~4KB free; these are maintainability, not space)
 - [x] Factor duplicated idioms: added PRINT_HEX_BYTE (byte->2 hex digits to screen), PRINT_MSG_AY (set MON_MSG_PTR from A/Y and print, replacing 13 inline copies), and shared SKIP_SPACES/EXPECT_COMMA parser helpers (replacing the skip-spaces/comma preamble duplicated across the F:, M: (x2), X:, and L:/S: filename parsers). CODE segment dropped from ~4185 to 3946 bytes; all tests pass.
 - [x] Remove dead code: deleted unreferenced NIBBLE_TO_HEX_CHAR/NIBBLE_DIGIT, unused constants (MON_HEX_DIGITS, CURSOR_CHAR, ASCII_0/9/A/F, FILE_IDLE, FILE_ERROR), and the MOVE copy-vs-move branch that printed identical text. HELP_MSG_COUNT was kept and wired into the help loop (replacing a magic #30) rather than deleted.
 
 ### Documentation
-- [x] docs/kernel_memory_map.md (now consolidated into docs/ARCHITECTURE.md, Part 2) and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
-- [x] Done via the #65 docs consolidation: docs/system_architecture.md was merged into docs/ARCHITECTURE.md (Part 1 — System overview) and its stale C64-style $D000 I/O / VIC-II / SID / CIA / banking description was dropped. The authoritative memory map now lives in docs/ARCHITECTURE.md, Part 2.
+- [x] docs/kernel_memory_map.md (now consolidated into docs/architecture.md, Part 2) and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
+- [x] Done via the #65 docs consolidation: docs/system_architecture.md was merged into docs/architecture.md (Part 1 — System overview) and its stale C64-style $D000 I/O / VIC-II / SID / CIA / banking description was dropped. The authoritative memory map now lives in docs/architecture.md, Part 2.
 
-### Bankable module slot (docs/ARCHITECTURE.md, Part 4)
+### Bankable module slot (docs/architecture.md, Part 4)
 - [x] Phase 1 (v2.2.7/8): relocate I/O $DC00 -> $FE00, reserve the I/O page (IORESV), clean the $B000-$DFFF window.
 - [x] Phase 2 (v2.2.9): banking infrastructure - MODULE_BANK register ($FE23), emulator Memory window routing (bank 0=RAM, 1..255=ROM), host bank table (Memory::loadBank), RESET maps window to RAM. Behavior-preserving; BASIC still in bank-0 RAM. Covered by tests/test_memory_banking.cpp.
 - [x] Phase 3 (v3.0): BASIC is now module bank 1 (host installs basic.rom as a bank, not flat RAM). Added the kernel MODULE_DIR catalog + the B: bank menu/launcher; RETURN_FROM_BASIC -> RETURN_FROM_MODULE ($FF12) unmaps the bank on exit; RESET zeroes the $B000-$DFFF window so bank 0 boots clean. Factored FILL_RANGE_CORE out of F: and reused it. Covered by testBankMenu/testBankLaunch; integration harness now returns non-zero on failure so ctest catches regressions.
@@ -127,7 +127,13 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     reuse dispatch slots the retired bank menu and host-load command left empty.
   - assembler.asm -> assembler.inc, included by monitor.asm; its eight duplicated
     address definitions deleted in favour of kernel_vars.inc.
-  - ASSEMBLER.md folded into MONITOR.md and left as a pointer (existing links).
+  - ASSEMBLER.md folded into MONITOR.md, left as a pointer, and **removed**
+    2026-09-17. Its justification had gone circular: the only things still linking
+    to it were the docs index row that existed to list it and this note. Everything
+    it said -- 16-character identifiers, quoted `.BYTE`, the Supermon/HESMON
+    rationale, the move of base conversion to `#:`/`$:` -- is in MONITOR.md, and it
+    was an UPPERCASE file (a manual, by the docs convention) that documented nothing
+    anyone uses. In git history if it is ever wanted.
 
 ### Assembler v0.9: the shipped examples actually assemble (2026-08-02)
 - [x] Three bugs, found because `L:`+`B:` on examples/colors.asm reported `? LINE 0010`.
@@ -154,7 +160,7 @@ anything today; all four are recorded so they are not rediscovered the hard way.
 
 ### Games
 - [x] **VENTURE** (`programs/venture/`, `VENTURE.PRG` 18,227 bytes) — a port of Exidy's Venture
-  (1981); design in `programs/venture/DESIGN.md`, manual in `docs/VENTURE.md`. All ten
+  (1981); manual shipped on the disk as `GAMES/VENTURE.TXT`. All ten
   build steps done: the dungeon hall, six themed rooms dealt four at a time per level,
   Hallmonsters patrolling the hall and coming through room doors if you dawdle, the
   three-level loop that speeds up and never ends, and SID cues. It fit the machine as
@@ -226,6 +232,14 @@ anything today; all four are recorded so they are not rediscovered the hard way.
       budget tests came out of it — a frame of drawing under 9,000 cycles, a tick
       under 30,000 — because those are facts a harness can settle and smoothness is
       not. 37 tests, `VENTURE.PRG` 18,227 bytes.
+  - **Why this machine suited the port**, recorded before the build and borne out: the
+    protagonist already ships in the character ROM (CP437 `$01` is an outline smiley,
+    `$02` the filled one — see `venture.h`, which has the more current story of what
+    happened to that two-frame animation); Venture predates twitch play, so one cell per
+    tick at 15 ticks/sec is faithful rather than a compromise; and eight-way movement
+    while firing is exactly the case the `$FE0F` control port exists for. The arcade
+    zoomed from dungeon map to room, we switch screens — cheaper, and it reads better at
+    80x25.
   - **Two gaps, deliberate** — down from three. The between-levels tally needs all
     four rooms of a level looted, i.e. four bespoke routes through four layouts. The
     other is the arrow-swap fix, which has no signature on screen: the arrow is drawn
@@ -252,8 +266,75 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     on 2026-09-02 all passed, so treat that rate as unverified rather than current.
     Making the seed injectable is the fix either way — it removes the question instead
     of re-measuring it.
-- [ ] **KERNEL PANIC** (`programs/kpanic/`, `KPANIC.PRG` 13,679 bytes) — original
-  real-time vertical scroller; design in `programs/kpanic/DESIGN.md`. Build steps 1-6
+- [x] **FRONTIER FORTUNE** (`programs/frontier/`, `FRONTIER.PRG` 27,009 bytes) — a
+  Wild-West trading game in the *Taipan!* / *Drug Wars* lineage; player manual on the
+  disk as `GAMES/FRONTIER.TXT`. A port of the author's own 2008 Objective-C iPhone
+  prototype — original game and design by Brian Gentry (Trestle Development), no
+  third-party code involved. Menu-driven and turn-based: no real-time loop, no
+  scrolling, no timing, which is the genre this machine was built to run.
+  - **The economy is persistent world state, not dice — the one real departure.**
+    `price[NTOWNS][NGOODS]` holds a live price for every good in every town at all
+    times; nothing is regenerated on arrival. Towns have a *character* (short of a
+    good, in surplus, both, or unremarkable) that reshuffles at ~3%/town/day, prices
+    drift daily toward their town's normal with a ±3% walk, and **your own trades move
+    the price on screen as you trade**, healing over about a week.
+  - **Why that replaced the first attempt.** The original rerolled prices across their
+    full range on arrival and layered a hidden ±60% "pressure" on top. Self-defeating
+    twice over: the reroll noise was far larger than the effect, so the player could
+    never perceive having caused anything, and pressure was applied only *inside* the
+    reroll, so the price did not move until the next visit. A `glut` label appeared
+    with no visible cause. Verified on the host after the change: selling 100 Water at
+    $124 takes it to $69 immediately and it recovers to $114 over ten days, and the
+    two-town shuttle earns $7.7k on trip one, $1.4k on trip two, and is **losing $16.6k
+    a trip by trip ten** — it dismantles itself instead of printing money.
+  - **Information rots, deliberately.** Everything you know about a town is from your
+    last visit, prices *and* character, snapshotted into `seen_*`. The Ledger shows the
+    remembered grid with staleness in days. Reading live values there would be
+    clairvoyance and would destroy the reason to keep moving.
+  - **Genre note:** Drug Wars, Dope Wars and Taipan! all reroll randomly each visit and
+    have no persistent per-town character at all. The living economy is a deliberate
+    addition, not a port of anything — pure rerolls punish the player for buying without
+    any way to know where to sell.
+  - **The loan shark is what makes the clock matter.** Debt compounds ~2% per day
+    travelled (`debt += debt / 50`), so an untouched $5,500 becomes ~$17,800 by day 60.
+    The prototype charged no interest, which left it with no pressure at all. Savings
+    deliberately earn nothing — the Bank exists to keep cash away from road agents.
+  - **Engine traps worth not rediscovering:**
+    - **Money must be 32-bit `long`.** 100 units of Gold at $29,999 is ~$3,000,000 and
+      cc65's `int` caps at 65,535, so every cash/debt/price-total path overflows if this
+      is missed. `K_PRINT_DEC` (`$FF27`) already takes a pointer to 4 little-endian
+      bytes, so 32-bit display is a solved problem.
+    - No float anywhere; percentages are integer division (2% = `/50`).
+    - Menus read the **keystroke buffer**, not the control port — the port is for
+      real-time programs ([[control-port-keystate]] applies to KPANIC/VENTURE, not here).
+    - Screens redraw wholesale on entry, so none of KPANIC's diff-rendering machinery is
+      needed. Fixed arrays throughout, no `malloc`.
+  - **Prototype bugs deliberately not carried over:** `getRandomItem()` and
+    `getRandomEvent()` used `rand() % 9 - 1` / `rand() % 11 - 1`, which return **-1** and
+    can also run past the end — out of bounds at both ends; `eLoseCargo` was an empty
+    `case`; `customizeDescription:` returned nothing, so the `|X|` item-name placeholder
+    in event text never substituted; and there was no interest, no day-60 ending and no
+    score, so the prototype never closed its loop.
+  - **Deferred: value-based market depth.** `MARKET_DEPTH` (200) is measured in **units**,
+    so saturation only polices the cheap end. Ten bars of Gold move a price 10/200 = 5%;
+    a hundred barrels of Water move it 50%. High-value goods dodge saturation entirely
+    because you can never afford enough volume to shift the market. The fix is to move
+    the price by **dollar volume traded** rather than unit count. Still unimplemented —
+    `frontier.c` computes `p * qty / MARKET_DEPTH`.
+    - Why it eventually matters: combined with the $100,000 debt ceiling, one leveraged
+      trade on a crashed price is game-ending. Measured — Gold crashed $9,000 → $22,500
+      with 0 extra wagons nets **+$133,000 in one day**, against Whiskey's +$82,475 (12
+      wagons) and Feed's −$500. From a starting net worth of −$3,500 that ends the run on
+      day two. The crash event is only ~0.4% per journey, which is why it is deferred
+      rather than urgent.
+    - What the same analysis **validated** and any fix must preserve: space binds below
+      **$965/unit** and cash binds above it, giving three genuine tiers — high value
+      (Gold, Lumber) borrow, wagons wasted; mid (Whiskey, Medicine, Guns) borrow *and*
+      buy wagons, both bind; bulk (Feed, Water, Food) neither, since interest on max debt
+      exceeds the whole margin. That answers whether borrowing is ever correct: it is,
+      and knowing when is the skill.
+- [ ] **KERNEL PANIC** (`programs/kpanic/`, `KPANIC.PRG` 14,125 bytes) — original
+  real-time vertical scroller; manual on the disk as `GAMES/KPANIC.TXT`. Build steps 1-6
   done and play-tested good, plus a full weapon/feel rework. Steps 7-8 open (below).
   It is the program the VIC's **soft font, fine vertical scroll and sprites** were added
   for — see `docs/video_design.md`; every one of those exists because a character-cell
@@ -305,8 +386,9 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     (`row_cell()`), with the board phase hoisted into file scope so the duplicate's real
     justification — 80 16-bit modulos a row — survives. Removing the duplication made
     the binary 572 bytes *smaller*.
-  - **KPANIC has no test harness, but VENTURE now shows how to build one.** When the
-    work above was done nothing could test a `.PRG`, so decisions here were made by
+  - **The decisions above were made before KPANIC had a test harness.** It has one now
+    (`tests/test_kpanic.cpp`, the `kpanic` ctest target) — but when this work was done
+    nothing could test a `.PRG`, so they were made by
     replicating the logic in throwaway host C and measuring — see the note in
     `~/.claude` memory. That caught things reading could not: a generator guard leaving
     a 2-wide lane where it promised 3 (608 rows per million), an economy where a
@@ -339,8 +421,10 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     which at 12 was ~29 s against runs of 60-90 s, so power-ups stopped appearing at
     all. Reason about the cadence the player experiences, not the rate the mechanic
     fires at.
-  - **Steps 7-8, part done (branch `feat/kpanic-steps-7-8`, not merged).** Parked
-    2026-09-05 at Brian's call, mid-way through the juice.
+  - **Steps 7-8, part done and MERGED to `main`** (`9e83229`, `9af5cac`). Parked
+    2026-09-05 at Brian's call, mid-way through the juice. The note here previously said
+    this sat unmerged on a `feat/kpanic-steps-7-8` branch; that branch was merged and
+    deleted, so nothing is outstanding and there is no branch to go looking for.
     - **Done and play-approved:** a death blast (three rings expanding from the craft
       with the world frozen, ~⅓ s, then the panel — a run ending previously had no
       visible cause at all); the wall-hit flash, which was drawing the ship in *black*
@@ -354,7 +438,7 @@ anything today; all four are recorded so they are not rediscovered the hard way.
     - **Dropped on measurement:** the 2-word/BCD score. `unsigned long` cost 650 bytes
       and a myriad-pair 1,054 (cc65 emits a division helper per constant divide), and
       the harness put a generous score ceiling in the low thousands — five to ten times
-      short of 65,535. See DESIGN.md step 7.
+      short of 65,535. See the score note in `kpanic.c`.
     - **Still open:** cell-offset screen shake; SID cues; the final balance pass, which
       wants doing last because juice changes how harsh the game feels without changing
       a number. A persistent score *table* is also still absent and would need the game

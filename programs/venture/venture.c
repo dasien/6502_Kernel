@@ -9,9 +9,9 @@
  * The layouts, the two-doors-per-room structure, the way a looted room seals
  * itself solid, the growing Hallmonster count and the per-level palette all come
  * from reading screenshots of the arcade game rather than from a description of
- * it. See DESIGN.md for what was taken and what could not be.
+ * it. VENTURE.TXT records what was taken and what could not be.
  *
- * The game explains nothing while it runs. docs/VENTURE.md is the instruction
+ * The game explains nothing while it runs. VENTURE.TXT is the instruction
  * card; an arcade cabinet carried one bolted to the side and the machine itself
  * just played.
  */
@@ -179,7 +179,7 @@ static const char *const room_art[THEMES][ROOM_H] = {
 
 
 /* Glyph tables, indexed by theme. Chosen by rendering the character ROM and reading
- * the shapes; the names in docs/VENTURE.md follow the glyphs, not the other way
+ * the shapes; the names in VENTURE.TXT follow the glyphs, not the other way
  * round. The colours give the level-start roster the arcade's multicoloured look. */
 static const unsigned char theme_monster[THEMES]  = {
     0x15, 0xE9, 0x0F, 0xEA, 0x9D, 0xE8
@@ -894,7 +894,7 @@ static void draw_hud(void)
 }
 
 /* The status line carries state, never advice. The game does not explain its own
- * rules -- that is what docs/VENTURE.md is for, in the same way an arcade cabinet
+ * rules -- that is what VENTURE.TXT is for, in the same way an arcade cabinet
  * had an instruction card and the machine itself just played. */
 static void msg(const char *s)
 {

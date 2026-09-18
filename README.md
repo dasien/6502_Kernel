@@ -26,16 +26,15 @@ This project implements a complete 6502-based computer system kernel. The kernel
 
 ## Documentation
 
-Everything deeper lives in **[docs/](docs/README.md)** — a manual per program, the
-architecture and memory map, and the design notes. Docs are split by audience:
-`UPPERCASE.md` is a manual (how to *use* something), `lowercase.md` is reference
+There is a complete documentation indexed in **[docs/](docs/README.md)** — a manual per program, the
+architecture and memory map, and the design notes. 
+Docs are split by audience:`UPPERCASE.md` is a manual (how to *use* something), `lowercase.md` is reference
 or design (how it *works*).
 
 Start with [DOS.md](docs/DOS.md) to drive the machine, or
-[MONITOR.md](docs/MONITOR.md) to poke at memory. Assembly examples are in
-[`examples/`](examples/).
+[MONITOR.md](docs/MONITOR.md) to poke at memory. 
 
-## Building and Development
+## Building the system
 
 ### Prerequisites
 
@@ -89,11 +88,7 @@ ninja -C cmake-build-debug run          # ...then boot the machine
 
 The `.PRG` files are build outputs, not committed artifacts — they are produced into
 `cmake-build-debug/programs/<name>/` and staged from there, exactly like the ROMs.
-That is deliberate: when they were checked in, editing a program's C and forgetting
-to rebuild left the disk carrying yesterday's binary while the test blobs, compiled
-from the same sources by CMake, picked the change up — the tests agreed with you and
-the machine did not. The twelve Scott Adams games under `disk/GAMES/` *are* committed:
-they are content, not built from sources in this repo.
+The exception to this are th twelve Scott Adams games under `disk/GAMES/`.  They *are* committed as they are content, not built from sources in this repo.
 
 Configuration ends with a summary of what was actually enabled — check it before
 filing a bug about missing sound or a missing window:
@@ -171,7 +166,8 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 
 For detailed development information and project context, see:
 
-- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, ASSEMBLER, FORTH, EDIT, TERM, IRC), the architecture reference (ARCHITECTURE.md), and the internals deep-dive (SYSTEM_INTERNALS.md)
+- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, ASSEMBLER, FORTH, EDIT, TERM, IRC), the architecture reference (architecture.md), and the internals docs (kernel_internals.md, monitor_internals.md,
+  dos_internals.md, basic_internals.md, host_gui.md)
 
 
 ## Acknowledgments

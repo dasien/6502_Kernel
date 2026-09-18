@@ -1048,7 +1048,7 @@ CMD_READ_MEMORY:
     BCS CMD_READ_RANGE_ERROR    ; If invalid range, show error
 
 CMD_READ_RANGE_VALID:
-    ; Display memory range with 8-byte hex line formatting
+    ; Display memory range with MON_BYTES_PER_LINE hex bytes per line
     JMP DUMP_MEMORY_RANGE       ; tail call (RTS returns to the parser)
 
 CMD_READ_RANGE_ERROR:
@@ -1072,7 +1072,7 @@ CMD_RUN_PROGRAM:
 
 ; Dump memory range in formatted hex display with paging support
 ; Input: Start address in MON_STARTADDR_HI/LO, end address in MON_ENDADDR_HI/LO
-; Output: Formatted memory dump to screen (8 bytes per line with addresses)
+; Output: Formatted memory dump to screen (MON_BYTES_PER_LINE per line, with addresses)
 ; Modifies: A, X, Y, MON_LINE_COUNT, MON_MSG_TMP_POS
 ; Note: Supports paging - user can ESC to abort, shows address: data format
 DUMP_MEMORY_RANGE:
@@ -1884,7 +1884,7 @@ CMD_JUMP_COMPACT_HI:
     .BYTE >PARSE_CMD_LINEASM    ; 17 - 'A' (line assembler)
 
 ; Index mapping table - maps command character to table index
-; For characters B-Z, subtract 'B' ($42) to get offset into this table
+; For characters A-Z, subtract 'A' ($41) to get offset into this table
 ; Note: '?' character is handled as special case before table lookup (maps to help)
 CMD_INDEX_MAP:
     .BYTE 17    ; A -> 17 (line assembler)

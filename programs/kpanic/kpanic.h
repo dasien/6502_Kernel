@@ -1,6 +1,7 @@
 /* ============================================================================
  * kpanic.h -- KERNEL PANIC: shared constants and declarations.
- * See DESIGN.md for the game design; this header is the engine contract.
+ * KPANIC.TXT (shipped on the disk) is the player's guide and TODO.md's Games entry
+ * is the design record; this header is the engine contract.
  * ==========================================================================*/
 #ifndef KPANIC_H
 #define KPANIC_H
@@ -208,7 +209,7 @@ extern void          spr_on(unsigned char enable);
 #define CELL_W          8       /* pixel width of a cell */
 #define STEER_PX        3       /* pixels per frame held -> 22.5 columns/sec */
 
-/* ---- the shared ENERGY pool (the signature mechanic; see DESIGN.md) ----
+/* ---- the shared ENERGY pool (the signature mechanic) ----
  * One number is simultaneously your fuel, your clock and your distance budget: it
  * drains as you travel, and refills only from data nodes.
  *

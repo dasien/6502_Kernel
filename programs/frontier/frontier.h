@@ -1,6 +1,7 @@
 /* ============================================================================
  * frontier.h -- FRONTIER FORTUNE: shared constants and declarations.
- * See DESIGN.md for the game design; this header is the engine contract.
+ * FRONTIER.TXT (shipped on the disk) is the player's guide and TODO.md's Games
+ * entry is the design record; this header is the engine contract.
  * ==========================================================================*/
 #ifndef FRONTIER_H
 #define FRONTIER_H

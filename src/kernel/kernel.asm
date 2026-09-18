@@ -33,10 +33,13 @@
 ;   Last cmd:   $028E-$02DD (80 bytes)
 ;
 ; Stack:        $0100-$01FF (256 bytes)
-; Screen RAM:   $0400-$07E7 (1000 bytes, 40x25 text)
-; I/O page:     $FE00-$FE23 (PIA: keyboard, file I/O, timer; $FE23 MODULE_BANK).
+; Screen:       not in the 64K map. The 80x25 CP437 character and colour planes
+;               live inside the VIC and are reached through the register port at
+;               $FE2D-$FE37 (see docs/board.md).
+; I/O page:     $FE00-$FECA (PIA, BlockDevice, ACIA, VIC, SID, RTC, PowerSwitch;
+;               $FE23 MODULE_BANK).
 ;               Moved here from the old $DC00 so $B000-$EFFF is a clean, bankable
-;               module window (see docs/ARCHITECTURE.md, Part 4).
+;               module window (see docs/architecture.md, Part 4).
 ;
 ; ================================================================
 ; FEATURES
@@ -110,7 +113,7 @@
 ; 2026-06-08  v2.2.7 Relocated memory-mapped I/O from $DC00 to a reserved page at
 ;                   $FE00-$FEFF (inside the kernel region) so $B000-$EFFF is a
 ;                   clean, I/O-free window. Phase 1 of the bankable module-slot
-;                   plan (docs/ARCHITECTURE.md, Part 4). Behavior-preserving.
+;                   plan (docs/architecture.md, Part 4). Behavior-preserving.
 ; 2026-06-08  v2.2.8 SCROLL_SCREEN page copies made strictly sequential (P0..P3):
 ;                   the interleaved form corrupted bytes spanning a screen page
 ;                   boundary on every scroll (seen via Z:/T:/repeat-? scrolling).
@@ -293,7 +296,7 @@
 ;                   the page had its pointer re-pointed at the --MORE-- prompt by
 ;                   HANDLE_PAGE_BREAK and printed the prompt's tail instead of its own
 ;                   remaining lines (confirmed, not theoretical). Also corrects the
-;                   ARCHITECTURE.md claim that NMI/IRQ are "a bare RTI" and documents
+;                   architecture.md claim that NMI/IRQ are "a bare RTI" and documents
 ;                   K_PRINT_HELP_LINE's input.
 ; 2026-07-29  v3.25 Size pass, behaviour-preserving: 178 bytes freed (4067 -> 3889).
 ;                   Deleted SAVE_MONITOR_STATE/RESTORE_MONITOR_STATE, which no
@@ -362,7 +365,8 @@ ZP_CLEAR_LOOP:
 ; RAM INITIALIZATION
 ; ================================================================
 
-    JSR CLEAR_SCREEN            ; Clear screen memory ($0400-$07FF)
+    JSR CLEAR_SCREEN            ; VIC clear command -- the screen is behind the
+                                ; register port, not at $0400
 
     ; Clear the module window ($B000-$EFFF) so bank 0 boots as clean scratch RAM.
     ; MODULE_BANK was set to 0 above, so these writes land in the window RAM (not
@@ -1703,7 +1707,7 @@ LIST_MODULES:
 ;   bytes 1-2   entry address (little-endian) - JMP target after mapping
 ;   bytes 3-4   pointer to the null-terminated launch name (typed at the DOS ])
 ; Adding a module = add a record + name string here and register its ROM image
-; as that bank in the host bank table (Computer6502). See docs/ARCHITECTURE.md, Part 4.
+; as that bank in the host bank table (Computer6502). See docs/architecture.md, Part 4.
 ; ----------------------------------------------------------------
 MODULE_DIR_RECSIZE = 5
 MODULE_DIR:

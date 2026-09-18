@@ -1,17 +1,14 @@
 # MFC Architecture & Reference
 
-The consolidated internals reference for MFC: the system overview, the full
-memory/zero-page map, the kernel API ($FF00 jump table), and the bank-switched
-module design. (User-facing manuals live in the `UPPERCASE.md` docs.)
-
-**Contents:** Part 1 System overview · Part 2 Memory & zero-page map ·
-Part 3 Kernel API · Part 4 Bank-switched modules
+This document is the consolidated internals reference for MFC. It covers the system
+overview, the full memory map, the kernel API at the `$FF00` jump table, and the
+bank-switched module design.
 
 ### Table of Contents
 
 - [Part 1 — System overview](#part-1--system-overview)
   - [Overview](#overview)
-  - [Block diagram](#block-diagram)
+  - [Logical Block diagram](#logical-block-diagram)
   - [Components](#components)
   - [Memory map (summary)](#memory-map-summary)
   - [Data flow](#data-flow)
@@ -21,7 +18,7 @@ Part 3 Kernel API · Part 4 Bank-switched modules
   - [Zero Page](#zero-page)
   - [Stack (`$0100-$01FF`)](#stack-0100-01ff)
   - [System Variables (`$0200-$03FF`)](#system-variables-0200-03ff)
-  - [Video (VIC) register port (`$FE2D-$FE37`)](#video-vic-register-port-fe2d-fe37)
+  - [Video (VIC) register port (`$FE2D-$FE37`, `$FE62-$FECA`)](#video-vic-register-port-fe2d-fe37-fe62-feca)
   - [Sound (SID) register port (`$FE38-$FE54`)](#sound-sid-register-port-fe38-fe54)
   - [Real-time clock (RTC) register port (`$FE55-$FE60`)](#real-time-clock-rtc-register-port-fe55-fe60)
   - [I/O — PIA (`$FE00-$FE23`)](#io--pia-fe00-fe23)
@@ -55,21 +52,15 @@ Part 3 Kernel API · Part 4 Bank-switched modules
 
 ### Overview
 
-MFC -- **My First Computer** -- is a software-defined computer built around a
-cycle-stepped **WDC 65C02** CPU.
-The C++/Qt host emulates the CPU and a set of memory-mapped peripherals; a 6502
-kernel ROM (BIOS + MFC/OS DOS) and bank-switched ROM modules (BASIC, the monitor, an
-the monitor with its built-in assembler, FORTH) run on top. It is **not** a Commodore 64 and
-does not use PETSCII — the display is 80×25 CP437 text with 16 colors.
+MFC is a software-defined computer built around a virtual WDC 65C02 CPU. The C++ and
+Qt host emulates that CPU along with a set of memory-mapped peripherals. On top of it
+run a 6502 kernel ROM, which holds the BIOS and MFC-DOS, and a set of bank-switched
+ROM modules for BASIC, FORTH, and the monitor with its built-in assembler. The display
+is 80 by 25 CP437 text in 16 colours.
 
-This document describes the components and how they interconnect. For the exact
-memory/zero-page/I-O addresses, `Part 2 (Memory and zero-page map)` is authoritative.
+The rest of this part describes those components and how they connect.
 
-### Block diagram
-
-> For the same machine drawn as a physical board — chips on a bus, the I/O decode
-> chip by chip, interrupt lines, and the host-side backing for each peripheral —
-> see **[BOARD.md](BOARD.md)**.
+### Logical Block diagram
 
 ```
         ┌────────────┐   ┌──────────────┐   ┌────────────────────────────┐
@@ -94,41 +85,46 @@ memory/zero-page/I-O addresses, `Part 2 (Memory and zero-page map)` is authorita
        display
 ```
 
+> The same machine drawn as a physical board is in [board.md](board.md).
+
 ### Components
 
-All emulated devices live in `src/computer/` (headers in `include/computer/`);
-the `Computer6502` class wires them together.
+All emulated devices live in `src/computer/`, with their headers in
+`include/computer/`. The `Computer6502` class wires them together.
 
-- **CPU6502** — cycle-stepped WDC 65C02: full CMOS instruction set including
-  `RMB`/`SMB`/`BBR`/`BBS`, `WAI`, `STP`, and correct decimal-mode flags. Validated
-  against the Klaus2m5/amb5l functional, decimal, and 65C02-extended suites.
-- **Memory** — 64K store plus the address decoder: it overlays the kernel ROM at
-  `$F000-$FFFF`, routes the I/O page (`$FE00-$FE64`) to the peripherals, and drives
-  the bank-switched module window at `$B000-$EFFF` (BASIC / FORTH / MONITOR,
-  selected via `MODULE_BANK` at `$FE23`).
-- **VIC** — text video. The 80×25 screen and its per-cell color/attribute plane
-  live **inside the chip**, reached through a small register port (`$FE2D-$FE37`):
-  set a cell index, then stream glyphs/attributes; chip-side clear/scroll/fill-row
-  commands avoid per-cell CPU writes. Renders full 8-bit CP437.
-- **PIA** — keyboard input (circular buffer), the host file I/O ports the DOS/
-  monitor use for `LOAD`/`SAVE`, and the ~60 Hz interval-timer IRQ ("jiffy").
-- **Acia** — emulated 6551 serial port; the terminal (`TERM`) and IRC clients talk
-  through it. Paired on the GUI build with **Modem**, a Hayes-AT/telnet bridge over
-  `QTcpSocket` so the machine can "dial" real BBSes/IRC servers.
-- **Sid** — software MOS 6581/8580 SID (three voices, ADSR, filter) at
-  `$FE38-$FE54`; `SidAudio` streams its PCM to the host audio out when Qt
-  Multimedia is present.
-- **Rtc** — real-time clock (`$FE55-$FE60`); backs the DOS `DATE`/`TIME`, FAT16
-  file timestamps, and the kernel RNG seed.
-- **BlockDevice** — a FAT16 disk image (`disk.img`); the resident DOS filesystem
-  reads/writes it. Images are built by the host `mkdisk` tool from a diskmap bundle.
-- **ResetCircuit / TimingCircuit** — power-on/warm reset (loads the `$FFFC` vector,
-  sets the startup CPU state) and ~1 MHz cycle pacing.
-- **MapFileParser** — loads the assembled kernel/module ROM segments into memory
-  from their `.map`/binary outputs at startup.
+- `CPU6502` is a cycle-stepped WDC 65C02 with the full CMOS instruction set and
+  correct decimal-mode flags. It has been validated against the Klaus2m5 and amb5l
+  functional, decimal, and 65C02-extended test suites.
+- `Memory` is the 64K store and the address decoder. The memory map in Part 2
+  describes the layout it enforces.
+- `VIC` holds the 80 by 25 screen and its per-cell colour and attribute plane inside
+  the chip itself, reached through a small register port at `$FE2D-$FE37`. A program
+  sets a cell index and then streams glyphs and attributes. Chip-side commands for
+  clear, scroll and fill-row avoid per-cell CPU writes. It renders the full 8-bit
+  CP437 character set.
+- `PIA` provides keyboard input through a circular buffer, the host file I/O ports
+  that DOS and the monitor use for `LOAD` and `SAVE`, and the interval-timer IRQ at
+  roughly 60 Hz that the system calls the jiffy.
+- `ACIA` is an emulated 6551 serial port, and both the terminal and the IRC client
+  talk through it. On the GUI build it is paired with `Modem`, a Hayes-AT and telnet
+  bridge over `QTcpSocket`, so the machine can contact real BBSes and IRC servers.
+- `SID` is a software MOS 6581 or 8580 with three voices, ADSR envelopes and a
+  filter, at `$FE38-$FE54`. `SidAudio` streams its PCM to the host audio output when
+  Qt Multimedia is present.
+- `RTC` is the real-time clock at `$FE55-$FE60`. It backs the DOS `DATE` and `TIME`
+  commands, FAT16 file timestamps, and the kernel's RNG seed.
+- `BlockDevice` presents a FAT16 disk image named `disk.img`, which the resident DOS
+  filesystem reads and writes. Images are built by the host `mkdisk` tool from a
+  diskmap bundle.
+- `ResetCircuit` and `TimingCircuit` handle power-on and warm reset, which loads the
+  `$FFFC` vector and sets the startup CPU state, and pace the machine at roughly
+  1 MHz.
+- `MapFileParser` loads the assembled kernel and module ROM segments into memory from
+  their `.map` and binary outputs at startup.
 
-On the GUI build, `src/ui/` adds **MainWindow** (menus, Control/View, zoom) and
-**DisplayWidget** (blits the VIC screen with the embedded CP437 font).
+On the GUI build, `src/ui/` adds `MainWindow`, which provides the menus and the zoom
+control, and `DisplayWidget`, which blits the VIC screen using the embedded CP437
+font.
 
 ### Memory map (summary)
 
@@ -148,95 +144,104 @@ register layout, and the `$FF00` kernel ABI jump table.
 
 ### CPU clock
 
-The machine runs at **4 MHz** (`Computer6502::kDefaultClockHz`), and everything timed
-derives from it: `runCycles()` generates the 60 Hz interval-timer IRQ every
-`clockHz / 60` cycles, so a second of machine time contains sixty jiffies whatever the
-host is doing. `setClockHz()` changes it; the games' pacing constants are in
-jiffies-per-tick and so follow the clock automatically, but they were *tuned* at this
-speed, so a large change means retuning them.
+The machine runs at 4 MHz, which is set by `Computer6502::kDefaultClockHz`, and
+everything timed derives from that figure. `runCycles()` generates the 60 Hz
+interval-timer IRQ every `clockHz / 60` cycles, so a second of machine time contains
+sixty jiffies whatever the host happens to be doing. `setClockHz()` changes the rate.
+The games express their pacing constants in jiffies per tick and so follow the clock
+automatically, but they were tuned at this speed, so a large change would mean
+retuning them.
 
-The classic home 6502 ran near 1 MHz (Apple II 1.023, PET/VIC-20/C64 ~1.0), but the
-era was not uniform — the Atari 800 and NES clocked theirs at 1.79 and the BBC Micro at
-2. The MFC is a WDC 65C02, a part sold at 1, 2, 4, 8 and 14 MHz, with an 80×25 soft-font
-display, sprites and a FAT16 disc; 4 MHz suits that machine.
+The classic home 6502 ran near 1 MHz. The Apple II was 1.023, and the PET, VIC-20 and
+C64 were all close to 1.0. The era was not uniform, though. The Atari 800 and the NES
+clocked theirs at 1.79, and the BBC Micro at 2. The MFC is a WDC 65C02, a part that
+was sold at 1, 2, 4, 8 and 14 MHz, and it drives an 80 by 25 soft-font display with
+sprites and a FAT16 disc. A 4 MHz clock suits that machine.
 
-It is also what it has always run at. The GUI used to execute 1000 *instructions* per
-1 ms timer tick — at the 3.47 cycles/instruction the games average, 3.47 MHz — while a
-separate QTimer pulsed the jiffy. The speed was an accident of a loop bound, and the two
-clocks drifted apart under load. `run(int max_cycles)` counted instructions despite its
-name, which is how that went unnoticed.
+It is also close to what the machine has always run at. The GUI used to execute 1000
+instructions per 1 ms timer tick, which at the 3.47 cycles per instruction the games
+average works out to 3.47 MHz, while a separate QTimer pulsed the jiffy. That speed
+was an accident of a loop bound rather than a decision, and the two clocks drifted
+apart under load. `run(int max_cycles)` counted instructions despite its name, which
+is how the problem went unnoticed for so long.
 
-**Measured load.** VENTURE is the most demanding thing on the disc, and its cost is
-pinned by two tests (`ATickStaysWithinItsBudget`, `AFrameOfDrawingStaysWithinItsBudget`):
+VENTURE is the most demanding thing on the disc, and two tests pin its cost. They are
+`ATickStaysWithinItsBudget` and `AFrameOfDrawingStaysWithinItsBudget`.
 
 | | cycles | per second |
 |---|---|---|
 | simulation tick | 24,000 | × 10 = 240,000 |
 | frame of sprite drawing | 7,700 | × 60 = 464,000 |
-| | | **≈ 704,000 (0.7 MHz)** |
+| | | about 704,000, or 0.7 MHz |
 
-So productive work is about **18% of the 4 MHz clock**; the remainder is absorbed by
-the game loop's busy-wait, which is what a game loop is for. The floor is *not* 0.7 MHz
-though — the loop only tests for a due tick once per pass, and a pass can contain a
-whole frame, so a machine with little slack starts servicing ticks late and the
-accumulator discards the backlog. Measured at a true 1 MHz, VENTURE managed a third of
-its intended pace. **~2 MHz is the realistic floor; 4 MHz is comfortable.**
+Productive work therefore accounts for about 18% of the 4 MHz clock. The remainder is
+absorbed by the game loop's busy-wait, which is what a game loop is for. The floor is
+not 0.7 MHz, though. The loop tests for a due tick only once per pass, and a pass can
+contain a whole frame, so a machine with little slack starts servicing ticks late and
+the accumulator then discards the backlog. Measured at a true 1 MHz, VENTURE managed a
+third of its intended pace. The realistic floor is around 2 MHz, and 4 MHz is
+comfortable.
 
 ### Data flow
 
-- **Keyboard:** host key → PIA input buffer → kernel `K_GET_KEYSTROKE` (`$FF09`) →
-  the running program.
-- **Display:** program → `PRINT_CHAR`/blit ABI → VIC register port → chip screen
-  buffer → `DisplayWidget` renders it.
-- **Serial / dialing:** `TERM`/`IRC` → ACIA → Modem → TCP/telnet → remote host, and
-  back. `+++ATH` hangs up.
-- **Disk:** DOS FAT16 driver → BlockDevice sectors → `disk.img`. Files, drawers
-  (one-level subdirectories, growable across FAT clusters), timestamps.
-- **Sound:** program writes SID registers (or calls the sound ABI) → Sid synthesis
-  → host audio.
+- A keyboard press travels from the host key event into the PIA input buffer, out
+  through the kernel's `K_GET_KEYSTROKE` at `$FF09`, and into the running program.
+- Display output goes from the program through the `PRINT_CHAR` or blit ABI to the VIC
+  register port, into the chip's screen buffer, and finally to `DisplayWidget`, which
+  renders it.
+- Serial traffic runs from `TERM` or `IRC` through the ACIA to `Modem`, which carries
+  it over TCP or telnet to the remote host, and back again the same way. Sending
+  `+++ATH` hangs up.
+- Disk access runs from the DOS FAT16 driver through `BlockDevice` sectors to
+  `disk.img`. That covers files, drawers, which are one-level subdirectories that can
+  grow across FAT clusters, and timestamps.
+- Sound is produced when a program writes SID registers directly or calls the sound
+  ABI. `SID` synthesises it and passes it to the host audio output.
 
 ### System integration
 
-`Computer6502` (`src/computer/Computer6502.cpp`) constructs the chips, connects the
-Memory decoder to the peripherals, loads the ROMs via `MapFileParser`, and triggers
-the power-on reset; the host then steps the CPU/timer. This keeps a realistic
-65C02 environment while layering on modern conveniences — a FAT16 disk, a real
-terminal/modem, sound, and development tools.
+`Computer6502`, in `src/computer/Computer6502.cpp`, constructs the chips, connects the
+`Memory` decoder to the peripherals, loads the ROMs through `MapFileParser`, and
+triggers the power-on reset. The host then steps the CPU and the timer. The result
+keeps a realistic 65C02 environment while layering modern conveniences on top of it,
+including a FAT16 disk, a working terminal and modem, sound, and development tools.
 
 ---
 
 ## Part 2 — Memory & zero-page map
 
 
-This is a **software-based 6502 computer**, not a Commodore 64 emulator. It
-uses ASCII (not PETSCII), a flat 64K address space (no memory banking), and a
-small set of memory-mapped devices. This document reflects the actual kernel
-(`kernel.asm`) and BASIC (`basic.asm`) source and the linker configs
-(`memory.cfg`, `basic_memory.cfg`).
+This is a software-based 6502 computer rather than a Commodore 64 emulator. It uses
+ASCII rather than PETSCII, a flat 64K address space with no memory banking, and a
+small set of memory-mapped devices. The map below reflects the actual kernel source in
+`kernel.asm`, the BASIC source in `basic.asm`, and the linker configurations in
+`memory.cfg` and `basic_memory.cfg`.
 
 ### Overall Address Space
 
 | Address Range | Size | Purpose |
 |---------------|------|---------|
-| `$0000-$00FF` | 256 B | **Zero page** — shared between EhBASIC and the monitor (see split below) |
-| `$0100-$01FF` | 256 B | **Stack** — grows down from `$01FF` |
-| `$0200-$03FF` | 512 B | **System variables** — BASIC page-2 vars + monitor variables/buffers |
-| `$0400-$07FF` | 1 KB | Formerly the 40×25 screen; the screen now lives behind the VIC register port (see below). **Not free**: `$0400` is the `T:`/`Z:` page snapshot and `$0500-$07FF` is the assembler's identifier buffers and symbol table. Usable as scratch by a program that uses neither |
-| `$0800-$87FF` | 32 KB | **Free RAM** — user programs; BASIC program/variables/strings when BASIC runs; the assembler reserves `$7800-$87FF` (source) and `$7600-$77FF` (symbols) while building |
-| `$8800-$AFFF` | 10 KB | **DOS ROM** — always-mapped MFC-DOS resident ROM (FAT16 filesystem + DOS shell) |
-| `$B000-$EFFF` | 16 KB | **Module window** — bank 0 = RAM, banks 1..255 = ROM modules (BASIC is bank 1) |
-| `$F000-$FFFF` | 4 KB | **Kernel BIOS** — the monitor is module bank 4, not here |
-| `$FE00-$FE28` | — | **PIA** I/O + `MODULE_BANK` ($FE23) + block-device registers ($FE24-$FE28) — within the kernel region |
+| `$0000-$00FF` | 256 B | Zero page, shared between EhBASIC and the monitor. The split is described below |
+| `$0100-$01FF` | 256 B | Stack, growing down from `$01FF` |
+| `$0200-$03FF` | 512 B | System variables. BASIC's page-2 variables live here alongside the monitor's variables and buffers |
+| `$0400-$07FF` | 1 KB | Formerly the 40 by 25 screen. The screen now lives behind the VIC register port, described below. This range is not free. `$0400` holds the `T:` and `Z:` page snapshot, and `$0500-$07FF` holds the assembler's identifier buffers and symbol table. A program that uses neither may treat it as scratch |
+| `$0800-$87FF` | 32 KB | Free RAM for user programs. BASIC keeps its program, variables and strings here when it runs, and the assembler reserves `$7800-$87FF` for source and `$7600-$77FF` for symbols while it builds |
+| `$8800-$AFFF` | 10 KB | The DOS ROM, which is always mapped and holds the FAT16 filesystem and the DOS shell |
+| `$B000-$EFFF` | 16 KB | The module window. Bank 0 is RAM and banks 1 to 255 are ROM modules, of which BASIC is bank 1 |
+| `$F000-$FFFF` | 4 KB | The kernel BIOS. The monitor is module bank 4 and is not here |
+| `$FE00-$FE28` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
 
-There is no SID / CIA. The **VIC** is an 80×25 color text chip whose character
-and color planes live *inside the chip* (not in the 64K map) and are reached
-through a VDC-style register port at `$FE2D-$FE37` (see the I/O section). The
-keyboard and file I/O are exposed through a small PIA-style register block at
-`$FE00`. The `$B000-$EFFF` window is
-a bank-switched **module slot**: the `MODULE_BANK` register (`$FE23`) selects
-RAM (bank 0) or one of up to 255 pre-loaded ROM modules. See
-`Part 4 (Bank-switched modules)`. The `$8800-$AFFF` **DOS ROM** is an always-mapped (never
-banked) read-only region holding the resident filesystem; see `SYSTEM_INTERNALS.md`.
+There is no CIA, and the SID is not a Commodore part. The VIC is an 80 by 25 colour
+text chip whose character and colour planes live inside the chip rather than in the
+64K map, and they are reached through a VDC-style register port at `$FE2D-$FE37` that
+the I/O section below describes. The keyboard and file I/O are exposed through a small
+PIA-style register block at `$FE00`.
+
+The `$B000-$EFFF` window is a bank-switched module slot. The `MODULE_BANK` register at
+`$FE23` selects either RAM, which is bank 0, or one of up to 255 pre-loaded ROM
+modules. Part 4 covers that mechanism in full. The DOS ROM at `$8800-$AFFF` is an
+always-mapped read-only region holding the resident filesystem, and it can never be
+banked out. `dos_internals.md` describes what lives in it.
 
 ### Zero Page
 
@@ -246,7 +251,7 @@ EhBASIC interpreter, which uses page zero heavily. The split:
 | Range | Owner | Notes |
 |-------|-------|-------|
 | `$00-$13` | EhBASIC | warm-start vector, USR vector, FAC temporaries, etc. |
-| `$14-$39` | **Monitor** | see table below (free when BASIC is not the active workspace) |
+| `$14-$39` | Monitor | see table below (free when BASIC is not the active workspace) |
 | `$3A-$5A` | free | unused gap |
 | `$5B-$FF` | EhBASIC | descriptor stack, program/var/array/string pointers, FACs, PRNG, decimal workspace |
 
@@ -283,17 +288,17 @@ to `$FF` at reset.
 
 ### System Variables (`$0200-$03FF`)
 
-When BASIC is running it owns the low part of this region; the monitor's
-variables live above it. The monitor command buffer overlaps BASIC's area but
-the two never run at the same time.
+When BASIC is running it owns the low part of this region, and the monitor's variables
+live above it. The monitor's command buffer overlaps BASIC's area, which is safe
+because the two never run at the same time.
 
 | Range | Owner | Purpose |
 |-------|-------|---------|
 | `$0200-$020C` | EhBASIC | I/O vectors (`ccflag`, `VEC_IN`/`VEC_OUT`/`VEC_LD`/`VEC_SV`) |
 | `$0221-$0268` | EhBASIC | input line buffer (`Ibuff`) |
-| `$0200-$024F` | Monitor | `MON_CMDBUF` — 80-byte command input buffer (overlaps BASIC; mutually exclusive) |
-| `$0269-$028D` | Monitor | monitor variables (relocated above BASIC's `$0268`) — see below |
-| `$028E-$02DD` | Monitor | `MON_LAST_CMD_BUF` — 80-byte last-command buffer (`.` recall) |
+| `$0200-$024F` | Monitor | `MON_CMDBUF`, an 80-byte command input buffer. It overlaps BASIC, and the two are mutually exclusive |
+| `$0269-$028D` | Monitor | Monitor variables, relocated above BASIC's `$0268`. They are listed below |
+| `$028E-$02DD` | Monitor | `MON_LAST_CMD_BUF`, an 80-byte last-command buffer that `.` recalls |
 | `$02DE-$03FF` | free | available system RAM |
 
 #### Monitor variables (`$0269-$028D`)
@@ -317,21 +322,22 @@ the two never run at the same time.
 | `$0279` | `MON_FILL_VALUE` | Fill (F:) byte value |
 | `$027A-$027B` | `MON_DEST_ADDR_LO/HI` | Move/copy (M:) destination |
 | `$027C` | `MON_COPY_MODE` | Move/copy mode (0=copy, 1=move) |
-| `$027D-$028C` | `MON_SEARCH_PATTERN` | Search (X:) pattern, up to 16 bytes |
+| `$027D-$028C` | `MON_SEARCH_PATTERN` | The search pattern for `X:`, up to 16 bytes |
 | `$028D` | `MON_PATTERN_LEN` | Search pattern length |
 
-Note: `DEC_DIGIT_BUFFER` ($027D) deliberately aliases `MON_SEARCH_PATTERN` —
-the D:/H: and X: commands never run at the same time.
+`DEC_DIGIT_BUFFER` at `$027D` deliberately aliases `MON_SEARCH_PATTERN`. That is safe
+because the `D:`, `H:` and `X:` commands never run at the same time.
 
 ### Video (VIC) register port (`$FE2D-$FE37`, `$FE62-$FECA`)
 
-The 80×25 screen is **not** in the 64K address space. The VIC owns two parallel
-cell planes — a character plane (one 7-bit ASCII byte per cell) and a color
-plane (one attribute byte per cell) — reached through an auto-incrementing
-register port, the same idiom as the block device. Set a cell index via
-`VREG_ADDR_LO/HI`, then read/write the `VREG_CHAR` / `VREG_COLOR` data ports
-(each access advances the index, wrapping at 2000). `VREG_CMD` runs chip-side
-block ops so the CPU never copies the screen.
+The 80 by 25 screen is not in the 64K address space. The VIC owns two parallel cell
+planes, a character plane holding one byte per cell and a colour plane holding one
+attribute byte per cell, and both are reached through an auto-incrementing register
+port. That is the same idiom the block device uses. A program sets a cell index through
+`VREG_ADDR_LO` and `VREG_ADDR_HI`, then reads or writes the `VREG_CHAR` and
+`VREG_COLOR` data ports. Each access advances the index, which wraps at 2000.
+`VREG_CMD` runs chip-side block operations so the CPU never has to copy the screen
+itself.
 
 | Address | Register | Purpose |
 |---------|----------|---------|
@@ -349,93 +355,110 @@ block ops so the CPU never copies the screen.
 | `$FE62` | `VREG_FONT_LO` | Font byte index low |
 | `$FE63` | `VREG_FONT_HI` | Font byte index high (spans all font sets) |
 | `$FE64` | `VREG_FONT_DATA` | Font data port; auto-increments |
-| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0 pos, bits 4–2 **width−1**), Y lo, Y hi (bits 1–0 pos, bits 4–2 **height−1**, **bit 7 = enable**), glyph, attribute |
+| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0 pos, bits 4–2 width−1), Y lo, Y hi (bits 1–0 pos, bits 4–2 height−1, bit 7 = enable), glyph, attribute |
 
 The soft-font port and the sprite block sit above the RTC rather than beside the
 rest because the port block ends at `$FE37` with the SID immediately after.
 `$FECB-$FEFF` is the remaining free space in the I/O page.
 
-A sprite is one cell (8×16 nominal pixels) unless its size bits say otherwise; up
-to 8×8 cells. A multi-cell sprite draws **consecutive glyph codes, row-major from
-the base** — a 2×2 at code *g* is *g*,*g*+1 across the top and *g*+2,*g*+3 across
-the bottom, wrapping at 255 — so it gains detail rather than just magnifying one
-pattern, and stays a single sprite with one position to update. Size is stored as
-*size−1* in bits that a position never uses, so code written before sizes existed
-leaves them zero and still gets 1×1. A clear returns every sprite to one cell and
-switches it off. Note that sprite positions are nominal pixels on an 8×16 grid and
-ignore row doubling: on a screen with double-size rows the cell and sprite planes
-do not agree about where a row is.
+A sprite occupies one cell of 8 by 16 nominal pixels unless its size bits say
+otherwise, and it may reach 8 by 8 cells. A multi-cell sprite draws consecutive glyph
+codes, row-major from the base code. A 2 by 2 sprite at code g therefore uses g and
+g+1 across the top and g+2 and g+3 across the bottom, wrapping at 255. That means a
+larger sprite gains real detail instead of merely magnifying one pattern, and it
+remains a single sprite with one position to update. The size is stored as size minus
+one, in bits that a position never uses, so code written before sizes existed leaves
+them zero and still gets a single cell. A clear returns every sprite to one cell and
+switches it off.
 
-The scroll region is rows *top*..*bottom* inclusive; scroll commands shift only
-those rows and leave everything outside them untouched, so an app can pin a
-header above and a status line below. A clear (`VREG_CMD` `1`) resets it to the
-whole screen, so anything holding a region has to reprogram it after a clear.
-The bottom has a register of its own; the top rides the command engine (`7`)
-only because the port block ends at `$FE37` with the SID immediately after.
-Commands `5`, `7`, `11` and `12` consume `VREG_CMD_PARAM`, which is also the fill
-character — set the fill char again before the next clear, scroll or fill-row.
-IRC pins its input/status rows below the region, EDIT pins its status line, and
-TERM maps the pair onto ANSI's DECSTBM (`ESC [ top ; bot r`).
+Sprite positions are nominal pixels on an 8 by 16 grid and take no account of row
+doubling. On a screen with double-size rows, the cell plane and the sprite plane do not
+agree about where a given row is.
 
-**Soft font.** Glyph shapes are RAM, not a fixed ROM. Font storage lives inside
-the chip — like the cell planes, it is *not* in the 64K map — and holds 16
-complete 256-glyph sets, reached through the index/data port above. Command `11`
-picks which set the renderer reads, so a program uploads variants once and then
-switches with a single write; that is the equivalent of repointing the C64's
-`$D018`, and it is what makes pixel-smooth character scrolling affordable.
-`reset()` seeds every set from CP437 and a clear selects the ROM font, so
-redefining a handful of glyphs leaves the other 248 readable and no program can
-strand the shell with an unreadable font.
+The scroll region runs from a top row to a bottom row inclusive. Scroll commands shift
+only those rows and leave everything outside them untouched, so a program can pin a
+header above the region and a status line below it. A clear, which is `VREG_CMD` `1`,
+resets the region to the whole screen, so anything that depends on a region has to
+reprogram it after every clear.
 
-**Fine scroll.** Command `12` slides the whole scroll region down by a pixel
-count, so the world can move in steps finer than a character cell (the C64's
-`YSCROLL`). The region's **top row becomes a hidden staging row**: sliding down
-opens a gap at the top and what belongs there is the row that does not exist
-yet, so the renderer clips the region one row in. When the offset reaches a cell
-height the program issues a real scroll, resets the offset and writes a fresh
-hidden top row. It costs one row. A clear turns it off.
+The bottom row has a register of its own, while the top row rides the command engine as
+command `7`. That asymmetry exists only because the port block ends at `$FE37` with the
+SID immediately after it. Commands `5`, `7`, `11` and `12` all consume
+`VREG_CMD_PARAM`, which doubles as the fill character, so a program must set the fill
+character again before its next clear, scroll or fill-row. IRC pins its input and
+status rows below the region, EDIT pins its status line, and TERM maps the pair onto
+ANSI's DECSTBM sequence.
 
-**Sprites.** 17 glyphs positioned in *pixels* (nominal 8×16 grid, so 0–639 ×
-0–399), drawn over the cell planes with the glyph's background bits transparent.
-Crucially they are **not** moved by the scroll region or the fine offset — that
-is the whole reason they exist. Anything drawn into the cell plane rides the fine
-offset, so a screen-fixed object like a player's craft sawtooths by a cell on
-every scroll; a sprite does not. Their shapes come from the same font storage the
-cells use. A clear disables all of them.
+Glyph shapes are RAM rather than a fixed ROM. Font storage lives inside the chip, and
+like the cell planes it is not in the 64K map. It holds 16 complete sets of 256 glyphs,
+reached through the index and data port described above. Command `11` picks which set
+the renderer reads, so a program can upload its variants once and then switch between
+them with a single write. That is the equivalent of repointing the C64's `$D018`, and
+it is what makes pixel-smooth character scrolling affordable.
 
-Attribute byte: `[R][BR][bg:3][fg:3]` — bit 7 reverse, bit 6 bright, bits 5–3
-background (0–7), bits 2–0 foreground (0–7). Power-on/clear default is `$02`
-(green on black). The kernel tracks the logical cursor in `CURSOR_X/Y`
-(`$0276/$0277`) and writes the screen through this port; `K_SET_ATTR` (`$FF2D`)
-sets the color latch.
+`reset()` seeds every set from CP437, and a clear selects the ROM font. Redefining a
+handful of glyphs therefore leaves the other 248 readable, and no program can strand
+the shell with a font nobody can read.
+
+Command `12` slides the whole scroll region down by a pixel count, so the world can
+move in steps finer than a character cell. The C64 called the same idea `YSCROLL`.
+
+The region's top row becomes a hidden staging row as a consequence. Sliding down opens
+a gap at the top, and what belongs in that gap is the row that does not exist yet, so
+the renderer clips the region one row in. When the offset reaches a full cell height,
+the program issues a real scroll, resets the offset and writes a fresh hidden top row.
+The technique costs one row of the display. A clear turns it off.
+
+There are 17 sprites, positioned in pixels on the nominal 8 by 16 grid, which gives a
+range of 0 to 639 horizontally and 0 to 399 vertically. They are drawn over the cell
+planes with the glyph's background bits left transparent.
+
+The important property is that neither the scroll region nor the fine offset moves
+them, and that is the whole reason they exist. Anything drawn into the cell plane rides
+the fine offset, so a screen-fixed object such as a player's craft sawtooths by a cell
+on every scroll. A sprite does not. Their shapes come from the same font storage the
+cells use, and a clear disables all of them.
+
+The attribute byte is laid out as `[R][BR][bg:3][fg:3]`. Bit 7 selects reverse video,
+bit 6 selects bright, bits 5 to 3 hold the background colour from 0 to 7, and bits 2 to
+0 hold the foreground colour. The default at power-on and after a clear is `$02`, which
+is green on black. The kernel tracks the logical cursor in `CURSOR_X` and `CURSOR_Y` at
+`$0276` and `$0277` and writes the screen through this port. `K_SET_ATTR` at `$FF2D`
+sets the colour latch.
 
 ### Sound (SID) register port (`$FE38-$FE54`)
 
-A software sound chip modeled on the MOS 6581/8580 SID: the real 29-register
-layout (three voices + filter) relocated from `$D400` to `$FE38`, so SID
-knowledge and music transfer directly. Per voice (V1 `$FE38`, V2 `$FE3F`,
-V3 `$FE46`; 7 registers each): `FREQ_LO/HI`, `PW_LO/HI` (12-bit pulse width),
-`CONTROL` (bit0 gate, bit1 sync, bit2 ring, bit3 test, bit4 triangle, bit5
-sawtooth, bit6 pulse, bit7 noise), `ATK/DEC`, `SUS/REL`. Global: `FC_LO`/`FC_HI`
-(11-bit cutoff, `$FE4D/4E`), `RES_FILT` (resonance + per-voice routing, `$FE4F`),
-`MODE_VOL` (filter mode LP/BP/HP + master volume, `$FE50`), and read-only
-`OSC3`/`ENV3` voice-3 read-back (`$FE53/54`).
+This is a software sound chip modelled on the MOS 6581 and 8580 SID. It keeps the real
+29-register layout of three voices and a filter, relocated from `$D400` to `$FE38`, so
+existing SID knowledge and music transfer across directly.
 
-The host synthesizes 44.1 kHz PCM from the register state and plays it through
-Qt (`SidAudio`/`QAudioSink`). Ring/sync modulation are not modeled. The kernel
-uses voice 1 for the system beep and the `K_SOUND_TONE`/`K_SOUND_OFF` ABI; ASCII
-BEL (`$07`) rings a short non-blocking beep (gated off by the timer IRQ). All
-kernel sound honors the `SOUND_ENABLE` zero-page flag (`$29`, default on).
+Each voice has seven registers, and the three voices start at `$FE38`, `$FE3F` and
+`$FE46`. They are `FREQ_LO` and `FREQ_HI`, `PW_LO` and `PW_HI` for the 12-bit pulse
+width, `CONTROL`, `ATK_DEC` and `SUS_REL`. In `CONTROL`, bit 0 is the gate, bit 1 is
+sync, bit 2 is ring modulation, bit 3 is test, and bits 4 to 7 select triangle,
+sawtooth, pulse and noise respectively.
+
+The global registers are `FC_LO` and `FC_HI` at `$FE4D` and `$FE4E`, which hold the
+11-bit cutoff, `RES_FILT` at `$FE4F`, which holds resonance and per-voice routing, and
+`MODE_VOL` at `$FE50`, which holds the filter mode and the master volume. `OSC3` and
+`ENV3` at `$FE53` and `$FE54` are read-only read-back registers for voice 3.
+
+The host synthesises 44.1 kHz PCM from the register state and plays it through Qt,
+using `SidAudio` and `QAudioSink`. Ring and sync modulation are not modelled. The
+kernel uses voice 1 for the system beep and for the `K_SOUND_TONE` and `K_SOUND_OFF`
+ABI calls. An ASCII BEL at `$07` rings a short beep that does not block, because the
+timer IRQ gates it off. All kernel sound honours the `SOUND_ENABLE` zero-page flag at
+`$29`, which defaults to on.
 
 ### Real-time clock (RTC) register port (`$FE55-$FE60`)
 
-A read-only real-time clock that mirrors the host's local wall-clock time (always
-correct, not settable — so no battery-backed persistence is needed). The DOS
-`DATE` command reads it.
+This is a read-only real-time clock that mirrors the host's local wall-clock time. It
+is always correct and cannot be set, so the machine needs no battery-backed
+persistence. The DOS `DATE` command reads it.
 
 | Address | Register | Notes |
 |---------|----------|-------|
-| `$FE55` | `RTC_LATCH` | write any value → snapshot host time into the fields; read = 0 |
+| `$FE55` | `RTC_LATCH` | Writing any value snapshots the host time into the fields. Reading returns 0 |
 | `$FE56` | `RTC_SEC` | seconds, BCD 00–59 |
 | `$FE57` | `RTC_MIN` | minutes, BCD 00–59 |
 | `$FE58` | `RTC_HOUR` | hours, BCD 00–23 (24-hour) |
@@ -464,35 +487,38 @@ avoids placing code there). It was moved here from the old `$DC00` so the
 `$B000-$EFFF` region is a clean, I/O-free, bank-switched module slot (see
 `Part 4 (Bank-switched modules)`).
 
-A single PIA-style device provides keyboard input and host file I/O. There are
-two file models: **block** (kernel `L:`/`S:` — whole memory range in/out) and
-**byte stream** (BASIC `LOAD`/`SAVE` — one byte at a time via the data register).
-Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
-512-byte sectors — the storage layer beneath the MFC-DOS FAT16 filesystem (see
-`SYSTEM_INTERNALS.md`); it is independent of the PIA file models above.
+A single PIA-style device provides keyboard input and host file I/O. It offers two file
+models. The block model, which the kernel's `L:` and `S:` commands use, moves a whole
+memory range in or out at once. The byte-stream model, which BASIC's `LOAD` and `SAVE`
+use, moves one byte at a time through the data register.
+
+A block device at `$FE24-$FE28` is a separate thing again. It presents a host
+`disk.img` as 512-byte sectors and is the storage layer beneath the MFC-DOS FAT16
+filesystem, which `dos_internals.md` describes. It is independent of both PIA file
+models.
 
 | Address | Register | Purpose |
 |---------|----------|---------|
 | `$FE00` | `PIA_DATA` | Keyboard data (read consumes a key) |
 | `$FE02` | `PIA_CONTROL` | Status flags (bit 0 = data available) |
 | `$FE0E` | `TIMER_IRQ_ACK` | Write to acknowledge the ~60 Hz periodic timer IRQ |
-| `$FE0F` | `KEY_STATE` | Live held-key bitmask (read-only) — see below |
-| `$FE10` | `FILE_COMMAND` | File op: load/save (block), open-read/open-write/close (stream) |
+| `$FE0F` | `KEY_STATE` | A read-only bitmask of the keys held right now. Described below |
+| `$FE10` | `FILE_COMMAND` | The file operation. Load and save are block operations, and open-read, open-write and close are stream operations |
 | `$FE11` | `FILE_STATUS` | Idle / in-progress / success / stream-open / EOF / error |
 | `$FE12-$FE13` | `FILE_ADDR_LO/HI` | Block load/save target/start address |
 | `$FE14-$FE1F` | `FILE_NAME_BUF` | Filename buffer (12 bytes) |
 | `$FE20-$FE21` | `FILE_END_ADDR_LO/HI` | Block save end address |
 | `$FE22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
-| `$FE23` | `MODULE_BANK` | Module bank select: 0 = RAM, 1..255 = ROM module mapped at `$B000-$EFFF` |
-| `$FE24-$FE25` | `BLK_LBA` | Block device: 16-bit sector number (little-endian) |
-| `$FE26` | `BLK_CMD` | Block device: 1 = read sector, 2 = write sector |
-| `$FE27` | `BLK_STATUS` | Block device: 0 = ready, $FF = error |
-| `$FE28` | `BLK_DATA` | Block device: 512-byte sector data port (auto-incrementing) |
+| `$FE23` | `MODULE_BANK` | Selects the module bank. Bank 0 is RAM, and banks 1 to 255 are ROM modules mapped at `$B000-$EFFF` |
+| `$FE24-$FE25` | `BLK_LBA` | The block device's 16-bit sector number, little-endian |
+| `$FE26` | `BLK_CMD` | The block device command. 1 reads a sector and 2 writes one |
+| `$FE27` | `BLK_STATUS` | The block device status. 0 means ready and `$FF` means error |
+| `$FE28` | `BLK_DATA` | The block device's 512-byte sector data port, which auto-increments |
 
 #### `KEY_STATE` (`$FE0F`) — the control port
 
-`PIA_DATA` is a queue of what was *typed*; `KEY_STATE` is a snapshot of what is
-*held*. Read it as a bitmask, active-high:
+`PIA_DATA` is a queue of what was typed. `KEY_STATE` is a snapshot of what is held down
+at this moment. It reads as an active-high bitmask.
 
 | Bit | Key | | Bit | Key |
 |-----|-----|-|-----|-----|
@@ -500,19 +526,20 @@ Separately, a **block device** ($FE24-$FE28) presents a host `disk.img` as
 | 1 | Down | | 4 | Fire (Space) |
 | 2 | Left | | 5 | Button 2 (Left Shift) |
 
-Bits 6–7 are reserved and read 0. The read is non-destructive — poll it every
-frame for as long as the key is down.
+Bits 6 and 7 are reserved and read as 0. The read is non-destructive, so a program can
+poll it every frame for as long as a key is down.
 
 An action game cannot work from the keystroke queue alone. That queue carries no
-key-up, so the only evidence a key is still held is host auto-repeat, which stalls
-for ~500 ms before starting and — on most platforms — repeats only the *most
-recently pressed* key, so pressing fire silently cancels a held direction. These
-bits are independent, so steering and firing at once is expressible at all, and
-movement is as smooth as the polling rate rather than the repeat rate.
+key-up event, so the only evidence that a key is still held is host auto-repeat. Auto-
+repeat stalls for roughly 500 ms before it starts, and on most platforms it repeats
+only the most recently pressed key, which means pressing fire silently cancels a held
+direction. The bits in this register are independent of each other, so steering and
+firing at the same time is expressible at all, and movement is as smooth as the polling
+rate rather than the repeat rate.
 
-The register reads 0 when nothing sets it, which is the case for the console
-build and the headless test harness; programs that use it degrade to "no input"
-rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
+The register reads 0 when nothing sets it, which is the case for the console build and
+the headless test harness. A program that uses it therefore degrades to receiving no
+input rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 
 ### ROM Layout
 
@@ -551,25 +578,28 @@ rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 | `$FF36` | `K_SOUND_OFF` | `SOUND_OFF` — stop voice 1 (gate off) |
 | `$FF39` | `K_GET_JIFFIES` | `GET_JIFFIES` — read the 60 Hz monotonic tick counter (returns A = low, X = high) |
 
-The jump table is also the **module ABI**: a ROM module reaches kernel services
-only through these entries, so it is independent of where the kernel's internal
-routines live. The `$FF15`/`$FF18` services share the monitor's command buffer
-(`MON_CMDBUF`) and `MON_CURRADDR` as scratch — safe because the monitor is
-suspended while a module runs and that state is saved/restored across the launch.
+The jump table is also the module ABI. A ROM module reaches kernel services only
+through these entries, so it is independent of where the kernel's internal
+routines live. The `$FF15` and `$FF18` services share the monitor's command buffer
+`MON_CMDBUF` and `MON_CURRADDR` as scratch, which is safe because the monitor is
+suspended while a module runs and that state is saved and restored across the
+launch.
 
 #### Module window (`$B000-$EFFF`, 16 KB)
 
-A bank-switched slot selected by `MODULE_BANK` (`$FE23`). Bank 0 is RAM (the
-boot/default state, zeroed by `RESET`); banks 1..255 are read-only ROM modules
-pre-loaded by the host. The kernel owns a `MODULE_DIR` catalog (bank #, entry
-address, name); the `B:` menu lists it and, on selection, writes `MODULE_BANK`
-and `JMP`s to the module entry. A module exits with `JMP $FF12`, which unmaps
-the bank.
+A bank-switched slot selected by `MODULE_BANK` at `$FE23`. Bank 0 is RAM, the
+boot and default state, zeroed by `RESET`. Banks 1 to 255 are read-only ROM
+modules pre-loaded by the host. The kernel owns a `MODULE_DIR` catalog holding a
+bank number, an entry address and a name for each one. The DOS `BANKS` command
+prints the catalog through `K_LIST_MODULES`, and launching a module by name goes
+through `K_LAUNCH_BY_NAME`, which writes `MODULE_BANK` and jumps to the module
+entry. A module exits with `JMP $FF12`, which unmaps the bank and returns to the
+DOS prompt.
 
-**BASIC is module bank 1.** EhBASIC 2.22p5 with project additions; cold start
-(`LAB_COLD`) is at `$B000`. BASIC I/O is routed through the kernel via the
-page-2 vectors (`VEC_IN`/`OUT` → keyboard/screen; `VEC_LD`/`SV` → the
-file-stream LOAD/SAVE routines).
+BASIC is module bank 1, EhBASIC 2.22p5 with project additions, and its cold start
+`LAB_COLD` is at `$B000`. BASIC I/O is routed through the kernel by the page-2
+vectors, with `VEC_IN` and `VEC_OUT` pointing at the keyboard and screen and
+`VEC_LD` and `VEC_SV` at the file-stream LOAD and SAVE routines.
 
 ### Interrupt Vectors (`$FFFA-$FFFF`)
 
@@ -581,12 +611,15 @@ file-stream LOAD/SAVE routines).
 
 ### Free RAM for User Programs
 
-- `$3A-$5A` — small free zero-page gap (fast addressing) when BASIC is not in use.
-- `$02DE-$03FF` — leftover system-variable space.
-- `$0800-$87FF` — main user RAM (32 KB). Avoid `$0400-$07E7` (screen) and
-  `$8800-$AFFF` (DOS ROM). When BASIC is active this is its program/variable/string
-  space (`Ram_base=$0800`, `Ram_top=$8800`). The assembler reserves the top of this
-  region while building (`$7800-$87FF` source, `$7600-$77FF` symbols).
+- `$3A-$5A` is a small free zero-page gap, useful for fast addressing when BASIC
+  is not in use.
+- `$02E0-$03FF` is leftover system-variable space.
+- `$0800-$87FF` is the main user RAM, 32 KB. Below it, `$0400` holds the `T:` and
+  `Z:` page snapshot and `$0500-$07FF` holds the assembler's identifier buffers
+  and symbol table, and above it `$8800-$AFFF` is the DOS ROM. When BASIC is
+  active this region is its program, variable and string space, with
+  `Ram_base=$0800` and `Ram_top=$8800`. The assembler reserves the top of it while
+  building, using `$7800-$87FF` for the source text.
 
 ### Key Constants (from `kernel.asm`)
 
@@ -597,8 +630,9 @@ file-stream LOAD/SAVE routines).
 | `SCREEN_HEIGHT` | `25` | Lines on screen |
 | `LINES_PER_PAGE` | `24` | Paging threshold |
 
-(The screen is no longer memory-mapped; the kernel writes it through the VIC
-register port at `$FE2D-$FE37` and tracks the logical cursor in `CURSOR_X/Y`.)
+The screen is not memory-mapped. The kernel writes it through the VIC register
+port at `$FE2D-$FE37` and tracks the logical cursor in `CURSOR_X` and
+`CURSOR_Y`.
 
 ---
 
@@ -608,58 +642,61 @@ register port at `$FE2D-$FE37` and tracks the logical cursor in `CURSOR_X/Y`.)
 ### Overview
 
 The MFC kernel exposes a stable jump table at `$FF00`. User programs and bank
-modules call these routines with `JSR` to the fixed addresses below; the entries
+modules call these routines with `JSR` to the fixed addresses below. The entries
 never move, so a program built today keeps working as the kernel evolves.
 
 ### What is in the BIOS, and what is not
 
-The kernel ROM holds the **machine**; everything that is merely *software shipped
-with the machine* lives in a bank module or on disk. Concretely:
+The kernel ROM holds the machine, and everything that is merely software shipped
+with the machine lives in a bank module or on disk.
 
 | In the BIOS (`$F000-$FFFF`) | Elsewhere |
 |---|---|
-| Screen output, cursor, scrolling, the pager | The monitor — **module bank 4** |
-| Keyboard input and line editing (`K_READ_LINE`, `.` recall) | BASIC — bank 1 |
-| Hex and decimal conversion (`K_PARSE_HEX`, `K_PRINT_DEC`, …) | FORTH — bank 3 |
-| IRQ/NMI handlers, the 60 Hz tick, NMI break-in | FORTH — bank 3 |
-| Sound (`K_SOUND_TONE`) and the RNG | EDIT / TERM / IRC — disk `.PRG` files |
-| Bank launching (`K_LAUNCH_BY_NAME`, `RETURN_FROM_MODULE`) | The filesystem and shell — MFC-DOS at `$8800` |
+| Screen output, cursor, scrolling, the pager | The monitor, module bank 4 |
+| Keyboard input and line editing (`K_READ_LINE`, `.` recall) | BASIC, bank 1 |
+| Hex and decimal conversion (`K_PARSE_HEX`, `K_PRINT_DEC`, …) | FORTH, bank 3 |
+| IRQ/NMI handlers, the 60 Hz tick, NMI break-in | EDIT, TERM, IRC and the games, disk `.PRG` files |
+| Sound (`K_SOUND_TONE`) and the RNG | The filesystem and shell, MFC-DOS at `$8800` |
+| Bank launching (`K_LAUNCH_BY_NAME`, `RETURN_FROM_MODULE`) | |
 | The `$FF00` table and the `$FFFA` vectors | |
 
 The monitor used to be two thirds of the kernel. It is a bank module because a
-disk program would load at `$0800` — precisely the memory a monitor exists to
-inspect — so it would overwrite the program under test. A bank costs no user RAM,
-maps instantly, and works with no disk present. The trade is that the monitor
-cannot show its own window: `R:B000-EFFF` displays the monitor's ROM rather than
+disk program would load at `$0800`, which is precisely the memory a monitor exists
+to inspect, so it would overwrite the program under test. A bank costs no user
+RAM, maps instantly, and works with no disk present. The trade is that the monitor
+cannot show its own window. `R:B000-EFFF` displays the monitor's ROM rather than
 bank-0 RAM, and sibling banks are invisible for the same reason.
 
-**The boundary is enforced, not aspirational.** Because the BIOS and the monitor
-are separate link units, neither can name the other's labels — the assembler
-rejects it. What the assembler cannot see is that `monitor.asm` reaches the BIOS
-through hand-written equates to `$FF00` addresses; insert an entry in the middle
-of the table and every equate below it still assembles while pointing one slot
-off. The `kernel_bios_monitor_split` test
-(`tests/scripts/check_kernel_split.py`) checks every equate against the table
-below, and the bank's entry addresses against the constants the kernel jumps to.
+The boundary is enforced rather than aspirational. Because the BIOS and the
+monitor are separate link units, neither can name the other's labels, and the
+assembler rejects the attempt. What the assembler cannot see is that `monitor.asm`
+reaches the BIOS through hand-written equates to `$FF00` addresses. Insert an
+entry in the middle of the table and every equate below it still assembles while
+pointing one slot off. The `kernel_bios_monitor_split` test in
+`tests/scripts/check_kernel_split.py` checks every equate against the table below,
+and the bank's entry addresses against the constants the kernel jumps to.
 
-Two consequences worth knowing when adding to the kernel:
+Two consequences are worth knowing when adding to the kernel.
 
-- **Append to the jump table, never insert.** Existing entries are an ABI that
+- Append to the jump table and never insert. Existing entries are an ABI that
   disk programs and every module bind to by address.
-- **The BIOS may not call into a module.** The window may not be mapped, and if it
-  is, it may hold a different bank. Anything the BIOS needs must live in the BIOS —
-  which is why `.`-recall and the boot-time window clear were moved down out of the
-  monitor rather than published.
+- The BIOS may not call into a module. The window may not be mapped, and if it is,
+  it may hold a different bank. Anything the BIOS needs must live in the BIOS,
+  which is why `.` recall and the boot-time window clear were moved down out of
+  the monitor rather than published.
 
 ### Calling convention
 
-- Parameters and results are passed in registers (A, X, Y) unless noted.
-- The carry flag often signals success/failure (carry set = error/none, per entry).
-- A few zero-page locations are part of the ABI:
-  - `$14/$15` `MON_CURRADDR` — result of `K_PARSE_HEX` / `K_PARSE_DEC`.
-  - `$16/$17` `MON_MSG_PTR` — string pointer for `K_PRINT_MESSAGE`.
-  - `$24` `RNG_MAX` — upper bound for `K_GET_RAND_NUM`.
-  - `$0200` `MON_CMDBUF` — line buffer filled by `K_READ_LINE`.
+- Parameters and results are passed in the A, X and Y registers unless noted.
+- The carry flag often signals success or failure, and each entry below says which
+  way round it runs.
+- A few zero-page locations are part of the ABI.
+  - `$14` and `$15` hold `MON_CURRADDR`, the result of `K_PARSE_HEX` and
+    `K_PARSE_DEC`.
+  - `$16` and `$17` hold `MON_MSG_PTR`, the string pointer for
+    `K_PRINT_MESSAGE`.
+  - `$24` holds `RNG_MAX`, the upper bound for `K_GET_RAND_NUM`.
+  - `$0200` is `MON_CMDBUF`, the line buffer filled by `K_READ_LINE`.
 
 ### Jump table (summary)
 
@@ -690,11 +727,13 @@ Two consequences worth knowing when adding to the kernel:
 
 #### Output
 
-**`K_PRINT_CHAR` — `$FF00`** — print A as a character. `$0D` (CR) moves to the
-start of the next line; `$08` (BS) backspaces and clears. Preserves X and Y.
+`K_PRINT_CHAR` at `$FF00` prints A as a character. `$0D`, a carriage return,
+moves to the start of the next line, and `$08`, a backspace, backspaces and
+clears. It preserves X and Y.
 
-**`K_PRINT_MESSAGE` — `$FF03`** — print a null-terminated string (< 256 bytes).
-Put the address in `MON_MSG_PTR` (`$16` low, `$17` high) first.
+`K_PRINT_MESSAGE` at `$FF03` prints a null-terminated string of fewer than 256
+bytes. Put the address in `MON_MSG_PTR`, low byte at `$16` and high byte at `$17`,
+first.
 
 ```assembly
     LDA #<MSG
@@ -705,14 +744,15 @@ Put the address in `MON_MSG_PTR` (`$16` low, `$17` high) first.
 MSG: .BYTE "HELLO WORLD", 0
 ```
 
-**`K_PRINT_NEWLINE` — `$FF06`** — print CR/LF.
+`K_PRINT_NEWLINE` at `$FF06` prints a carriage return and line feed.
 
-**`K_PRINT_HEX_BYTE` — `$FF1B`** — print A as two hex digits. Preserves X, Y.
+`K_PRINT_HEX_BYTE` at `$FF1B` prints A as two hex digits. It preserves X and Y.
 
-**`K_PRINT_DEC` — `$FF27`** — print a 32-bit little-endian value in decimal.
-Input: `A`/`X` = pointer (low/high) to a 4-byte value in memory; `Y` = field
-width (0 = no padding; larger = right-align with leading spaces). Copies the value
-into its own workspace, so the caller's bytes are untouched.
+`K_PRINT_DEC` at `$FF27` prints a 32-bit little-endian value in decimal. A and X
+are the low and high bytes of a pointer to a 4-byte value in memory, and Y is the
+field width, where 0 means no padding and a larger value right-aligns with leading
+spaces. It copies the value into its own workspace, so the caller's bytes are
+untouched.
 
 ```assembly
     LDA #<NUM      ; NUM holds the value, 4 bytes little-endian
@@ -721,65 +761,69 @@ into its own workspace, so the caller's bytes are untouched.
     JSR $FF27
 ```
 
-**`K_SET_ATTR` — `$FF2D`** — latch A as the color/attribute for characters printed
-afterward. Attribute byte: bit7 reverse, bit6 bright, bits5-3 background (0-7),
-bits2-0 foreground (0-7). Colors: 0 black, 1 red, 2 green, 3 yellow, 4 blue,
-5 magenta, 6 cyan, 7 white. Default `$02` (green on black).
+`K_SET_ATTR` at `$FF2D` latches A as the colour attribute for characters printed
+afterwards. In the attribute byte, bit 7 is reverse, bit 6 is bright, bits 5 to 3
+are the background colour and bits 2 to 0 the foreground. The eight colours are 0
+black, 1 red, 2 green, 3 yellow, 4 blue, 5 magenta, 6 cyan and 7 white. The
+default is `$02`, green on black.
 
-**`K_PRINT_HELP_LINE` — `$FF30`** — print a command's `syntax`<TAB>`description`
-line with the description padded to column 22; used by the `?`/help screens. The
-string pointer goes in `MON_MSG_PTR` (`$16/$17`), as for `K_PRINT_MESSAGE`, and the
-string is `"<syntax>",$09,"<description>",0`.
+`K_PRINT_HELP_LINE` at `$FF30` prints a command's syntax and description as one
+line, with the description padded to column 22. The help screens use it. The
+string pointer goes in `MON_MSG_PTR` at `$16` and `$17`, as for
+`K_PRINT_MESSAGE`, and the string itself is
+`"<syntax>",$09,"<description>",0`.
 
-**`K_GET_KEYSTROKE` — `$FF09`** — **non-blocking**. Returns carry set with the key
-in A when one is waiting, carry clear when the buffer is empty. To wait for a key,
-spin: `@w JSR $FF09 : BCC @w`.
+`K_GET_KEYSTROKE` at `$FF09` does not block. It returns carry set with the key in
+A when one is waiting, and carry clear when the buffer is empty. To wait for a
+key, spin with `@w JSR $FF09 : BCC @w`.
 
-**`K_READ_LINE` — `$FF15`** — read one edited line (backspace/ESC handled) into
-`MON_CMDBUF` (`$0200`); the length is left in `MON_CMDLEN` and returned in A (zero
-flag set for an empty line).
+`K_READ_LINE` at `$FF15` reads one edited line into `MON_CMDBUF` at `$0200`,
+handling backspace and ESC itself. The length is left in `MON_CMDLEN` and returned
+in A, with the zero flag set for an empty line.
 
-**`K_PARSE_HEX` — `$FF18`** — parse a hex address from `MON_CMDBUF` starting at
-offset X; result in `MON_CURRADDR` (`$14/$15`), carry set if invalid.
+`K_PARSE_HEX` at `$FF18` parses a hex address from `MON_CMDBUF` starting at offset
+X, leaves the result in `MON_CURRADDR` at `$14` and `$15`, and sets carry if the
+text is invalid.
 
-**`K_PARSE_DEC` — `$FF2A`** — parse a decimal number from `MON_CMDBUF` starting at
-offset X; result in `MON_CURRADDR` (`$14/$15`), carry set if invalid. Pair with
-`K_READ_LINE` to read a number the user typed.
+`K_PARSE_DEC` at `$FF2A` parses a decimal number the same way, with the same
+result location and the same carry convention. Pair it with `K_READ_LINE` to read
+a number the user typed.
 
 #### Screen / system
 
-**`K_CLEAR_SCREEN` — `$FF0C`** — clear the screen (fill with spaces) and home the
-cursor.
+`K_CLEAR_SCREEN` at `$FF0C` clears the screen and homes the cursor.
 
-**`K_GET_RAND_NUM` — `$FF0F`** — return a random integer `1..RNG_MAX` in A. Store
-the inclusive upper bound in `RNG_MAX` (`$24`) first. The generator is an
+`K_GET_RAND_NUM` at `$FF0F` returns a random integer from 1 to `RNG_MAX` in A.
+Store the inclusive upper bound in `RNG_MAX` at `$24` first. The generator is an
 RTC-seeded 16-bit LFSR, so sequences differ from run to run.
 
-**`K_MON_ENTRY` — `$FF1E`** — cold-enter the monitor. (DOS jumps here to start the
-`MON` command.)
+`K_MON_ENTRY` at `$FF1E` cold-enters the monitor. DOS jumps here to start the
+`MON` command.
 
-**`K_RETURN_MODULE` — `$FF12`** — from within a bank module (e.g. BASIC, DEV
-TOOLS), unmap the module bank and return control to the monitor.
+`K_RETURN_MODULE` at `$FF12` is called from within a bank module such as BASIC or
+FORTH. It unmaps the module bank, clears BASIC's interrupt-enable flags, resets
+the stack and returns to the DOS prompt.
 
-**`K_LAUNCH_BY_NAME` — `$FF21`** / **`K_LIST_MODULES` — `$FF24`** — DOS-internal:
-launch a disk program or bank module by name, and print the module/bank catalog
-(the `BANKS` command).
+`K_LAUNCH_BY_NAME` at `$FF21` and `K_LIST_MODULES` at `$FF24` are DOS-internal.
+They launch a disk program or bank module by name, and print the module catalog
+for the `BANKS` command.
 
 #### Sound
 
-**`K_SOUND_TONE` — `$FF33`** — play a sustained tone on SID voice 1; `A` = frequency
-low byte, `X` = frequency high (`Fout = FREQ * clock / 2^24`). Honors the
-`SOUND_ENABLE` mute (`$29`).
+`K_SOUND_TONE` at `$FF33` plays a sustained tone on SID voice 1, with A the
+frequency low byte and X the frequency high byte, where
+`Fout = FREQ * clock / 2^24`. It honours the `SOUND_ENABLE` mute at `$29`.
 
-**`K_SOUND_OFF` — `$FF36`** — stop voice 1 (gate off).
+`K_SOUND_OFF` at `$FF36` stops voice 1 by gating it off.
 
-**`K_GET_JIFFIES` — `$FF39`** — read the monotonic 60 Hz tick counter; returns
-`A` = low byte, `X` = high byte. It starts at 0 on RESET, is advanced by the timer
-IRQ, and wraps every 65536 ticks (~18.2 minutes) — compare deltas with unsigned
-subtraction and the wrap is harmless. The read is `SEI`-guarded internally so the
-two bytes can't tear, and the caller's interrupt-enable state is preserved. Use it
-for frame pacing in real-time programs (a fixed-tick accumulator loop) rather than
-counting instructions, which drifts with host speed.
+`K_GET_JIFFIES` at `$FF39` reads the monotonic 60 Hz tick counter, returning the
+low byte in A and the high byte in X. It starts at 0 on RESET, is advanced by the
+timer IRQ, and wraps every 65536 ticks, about 18.2 minutes. Compare deltas with
+unsigned subtraction and the wrap is harmless. The read is `SEI`-guarded
+internally so the two bytes cannot tear, and the caller's interrupt-enable state
+is preserved. Use it for frame pacing in real-time programs, as a fixed-tick
+accumulator loop, rather than counting instructions, which drifts with host
+speed.
 
 ---
 
@@ -790,12 +834,12 @@ See `examples/` for runnable programs that use these calls, and
 
 ## Part 4 — Bank-switched modules
 
-> **Historical.** This part records the design of the module slot as it was argued at the time, including the addresses and sizes then in play (`$B000-$DFFF`, 12 KB, an 8 KB kernel at `$E000`). The window is now `$B000-$EFFF` (16 KB) under a 4 KB BIOS at `$F000`, and the monitor is bank 4. Part 2 is the authoritative current map; the reasoning below is left as written.
+> Historical. This part records the design of the module slot as it was argued at the time, including the addresses and sizes then in play (`$B000-$DFFF`, 12 KB, an 8 KB kernel at `$E000`). The window is now `$B000-$EFFF` (16 KB) under a 4 KB BIOS at `$F000`, and the monitor is bank 4. Part 2 is the authoritative current map; the reasoning below is left as written.
 
 
 **Status:** Phases 1–5 implemented (kernel v3.27). I/O is at `$FE00`, the module
 window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
-bank 1**, and a **DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
+bank 1, and a DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
 `assembler.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
 catalog), modules return via `$FF12` (`RETURN_FROM_MODULE`, which unmaps the bank),
 and `RESET` zeroes the window so bank 0 boots clean.
@@ -819,10 +863,10 @@ run by name** all happen at the `]` prompt without host involvement.
 ### Goal
 
 Stop growing (or shrinking) the kernel ROM to add big features. Instead, make the
-12 KB region currently occupied by EhBASIC a **bank-switched module window**: a slot
+12 KB region currently occupied by EhBASIC a bank-switched module window: a slot
 into which the kernel maps one ROM "module" at a time (BASIC, an assembler/
 disassembler package, a Z-machine to play Zork, a text editor, …). BASIC becomes
-just *one* module rather than a permanent resident.
+just one module rather than a permanent resident.
 
 This mirrors how real 6502 machines did it — cartridge ROMs, bank-switched ROM,
 the Apple II language card.
@@ -849,12 +893,12 @@ $FF00–$FFF9   Kernel API jump table (grows upward; ~83 entries possible, 20 us
 $FFFA–$FFFF   NMI / RESET / IRQ vectors
 ```
 
-Key property: **the module window contains no I/O** — any ROM assembled at `$B000`
+Key property: the module window contains no I/O — any ROM assembled at `$B000`
 runs in a clean, contiguous 12 KB with no addresses to avoid.
 
 ### Prerequisite: relocate I/O out of the module window (`$DC00` → `$FE00`)
 
-Today the PIA/file-I/O lives at `$DC00–$DC22`, *inside* the module window (a vestige
+Today the PIA/file-I/O lives at `$DC00–$DC22`, inside the module window (a vestige
 of the C64-style map). That was tolerable when BASIC was the only, hand-authored
 occupant. For arbitrary module ROMs we can't enforce a "don't touch this 36-byte
 window" rule, so we remove the constraint by moving the I/O.
@@ -879,10 +923,10 @@ New I/O page layout (re-based 1:1 from the old `$DCxx` block):
 | `$FE14–$FE1F` | `FILE_NAME_BUF` (12 bytes) |
 | `$FE20/$FE21` | `FILE_END_ADDR_LO/HI` |
 | `$FE22` | `FIO_DATA` — BASIC byte-stream LOAD/SAVE |
-| `$FE23` | **`MODULE_BANK`** — bank-select register |
-| `$FE61` | **`POWER`** — soft power switch; write $5A then $A5 to switch off |
-| `$FE62–$FE64` | **`VREG_FONT_LO/HI/DATA`** — VIC soft-font port; index + auto-incrementing data. Font storage is inside the chip, not in the 64K map (see `docs/video_design.md`) |
-| `$FE65–$FECA` | **VIC sprites** — 17 sprites x 6 bytes: X lo/hi, Y lo/hi (bit 7 = enable), glyph, attribute. Positions are nominal pixels on the 8x16 grid; a sprite is drawn over the cell planes and is NOT moved by the scroll region or the fine offset |
+| `$FE23` | `MODULE_BANK` — bank-select register |
+| `$FE61` | `POWER` — soft power switch; write $5A then $A5 to switch off |
+| `$FE62–$FE64` | `VREG_FONT_LO/HI/DATA` — VIC soft-font port; index + auto-incrementing data. Font storage is inside the chip, not in the 64K map (see `docs/video_design.md`) |
+| `$FE65–$FECA` | VIC sprites — 17 sprites x 6 bytes: X lo/hi, Y lo/hi (bit 7 = enable), glyph, attribute. Positions are nominal pixels on the 8x16 grid; a sprite is drawn over the cell planes and is NOT moved by the scroll region or the fine offset |
 
 Touched by the relocation:
 - `kernel.asm`: re-base the `PIA_*`, `FILE_*`, timer-ack equates.
@@ -899,7 +943,7 @@ Phase 1 (this relocation) is self-contained and worth doing on its own.
   - `0` = RAM (slot is plain read/write RAM — the boot/default state).
   - `1…255` = read-only module ROM banks.
 - **Read:** returns the current bank (kernel can save/restore).
-- **Reset:** forced to `0`. **BASIC is not auto-loaded**; the slot starts empty.
+- **Reset:** forced to `0`. BASIC is not auto-loaded; the slot starts empty.
 - Lives in the always-mapped I/O page, so it's reachable regardless of what's mapped.
 
 Bank capacity is bounded only by the register width: one byte → 256 banks × 12 KB
@@ -927,7 +971,7 @@ write(addr, v):
 
 ### Module contract
 
-A "module" is a 6502 ROM **ported to this system**:
+A "module" is a 6502 ROM ported to this system:
 1. Assembled to run from the module window (entry recorded in the directory below;
    `$B000` by default).
 2. Reaches kernel services (character I/O, etc.) **only through the `$FF00` jump
@@ -938,7 +982,7 @@ A "module" is a 6502 ROM **ported to this system**:
 4. Uses `$0800–$AFFF` as working RAM, shared with all other modules → one tool at a
    time; "save your work before switching." Each module documents its RAM footprint.
 
-A module is **not** required to reserve any specific bytes — there is no embedded
+A module is not required to reserve any specific bytes — there is no embedded
 header or signature. Naming/entry metadata lives in the kernel (see below), so even
 hard-to-modify third-party ROMs (a Z-machine, an off-the-shelf assembler) only need
 the unavoidable port (re-base + retarget I/O), nothing more.
@@ -967,7 +1011,7 @@ bank set, then rebuild the kernel. The directory + names are tiny — well withi
 
 ### `B:` — Bank menu (replaces per-module commands)
 
-`B:` is repurposed from "launch BASIC" to **"Bank"**: it lists the directory and lets
+`B:` is repurposed from "launch BASIC" to "Bank": it lists the directory and lets
 you pick a module to map + run.
 
 ```
@@ -1012,23 +1056,23 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
 
 ### Settled decisions
 
-1. **Naming/metadata → kernel-side `MODULE_DIR` table** (not embedded headers, no
+1. Naming/metadata → kernel-side `MODULE_DIR` table (not embedded headers, no
    per-module signature). Works for hard-to-modify third-party ROMs; BASIC is just
    directory entry 1, no special-casing.
-2. **First module → one combined "DEV TOOLS" ROM** (bank 2): assembler **and**
+2. First module → one combined "DEV TOOLS" ROM (bank 2): assembler and
    disassembler together (they share the opcode/mnemonic tables).
-3. **Feature placement → size-based split.** Big debugger machinery (disassembler,
+3. Feature placement → size-based split. Big debugger machinery (disassembler,
    mini-assembler, single-step, breakpoints) lives in modules. Small always-useful
    commands (register display, hex add/subtract, memory compare) stay resident in the
    kernel.
-4. **Bank 0 = RAM**, usable as scratch (not persistent across module loads).
-5. **Module working RAM** = documented per-module footprint in `$0800–$AFFF`; one tool
+4. Bank 0 = RAM, usable as scratch (not persistent across module loads).
+5. Module working RAM = documented per-module footprint in `$0800–$AFFF`; one tool
    at a time, save before switching.
-6. **`B:` = Bank menu**, replacing the old `B:` and any per-module command.
+6. `B:` = Bank menu, replacing the old `B:` and any per-module command.
 
 ### Migration
 
-- EhBASIC → **bank 1**, unchanged content (same `$B000` entry); the host registers it
+- EhBASIC → bank 1, unchanged content (same `$B000` entry); the host registers it
   as a bank instead of loading it at boot. Its file-I/O equates move with the I/O
   relocation. It becomes directory entry 1.
 - Kernel grows only: the I/O relocation, `MODULE_BANK` handling, `MODULE_DIR`, and the
@@ -1036,29 +1080,29 @@ A small name→file map (config or convention). Bank 0 is RAM (no image).
 
 ### Implementation phases
 
-1. **[DONE, v2.2.7/8]** **Relocate I/O** `$DC00` → `$FE00` (kernel + basic + emulator),
+1. [DONE, v2.2.7/8] Relocate I/O `$DC00` → `$FE00` (kernel + basic + emulator),
    reserve the I/O page via an `IORESV` segment so the linker errors if `CODE` grows
    into it. Re-tested (integration suite + BASIC LOAD/SAVE). Window is now clean.
-2. **[DONE, v2.2.9]** **Banking infrastructure**: `MODULE_BANK` register (`$FE23`) +
+2. [DONE, v2.2.9] Banking infrastructure: `MODULE_BANK` register (`$FE23`) +
    `Memory` window routing (bank 0 = RAM, 1..255 = read-only ROM) + host bank table
    (`Memory::loadBank`). `RESET` maps the window to RAM. Behavior-preserving: BASIC
    still loads into bank-0 RAM at `$B000`. Covered by `tests/test_memory_banking.cpp`
    (11 cases) and the unchanged integration suite.
-3. **[DONE, v3.0]** **Convert BASIC to bank 1**: the host installs `basic.rom` as a
+3. [DONE, v3.0] Convert BASIC to bank 1: the host installs `basic.rom` as a
    bank (`Memory::loadBank(1, …)`) instead of flat RAM. Added the kernel `MODULE_DIR`
    catalog + the `B:` bank menu/launcher; `RETURN_FROM_BASIC` became
    `RETURN_FROM_MODULE` (`$FF12`) and now unmaps the bank on exit. `RESET` zeroes
    `$B000–$DFFF` so bank 0 boots clean (safe now that BASIC is a ROM bank). Factored
    `FILL_RANGE_CORE` out of `F:` and reused it for the window clear. Covered by
    `testBankMenu`/`testBankLaunch` in the integration suite.
-4. **[DONE, v3.1/3.1.1]** **First new module**: combined assembler + disassembler
+4. [DONE, v3.1/3.1.1] First new module: combined assembler + disassembler
    in bank 2 (`assembler.rom`). Disassembler, line assembler, and a two-pass
    assembler (labels, expressions, `.ORG`/`.END`/`.BYTE`/`.WORD`/`.ASCII`, `=`),
    with host `.s` source load and a build listing. The module ABI was extended
    (`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`) so the module reuses the kernel
    instead of duplicating input/parsing/printing.
 
-5. **[DONE]** **In-machine authoring**: the resident FAT16 filesystem (MFC-DOS,
+5. [DONE] In-machine authoring: the resident FAT16 filesystem (MFC-DOS,
    `$8800-$AFFF`) and the full-screen `EDIT` program mean source is written and
    saved on the machine rather than host-loaded. Self-hosting is complete.
 
