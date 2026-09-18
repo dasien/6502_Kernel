@@ -147,81 +147,130 @@ if(CA65_FOUND AND LD65_FOUND)
     # the catalog build.)
     find_program(CL65_FOUND cl65)
     if(CL65_FOUND)
-        set(TERM_DIR ${CMAKE_SOURCE_DIR}/programs/term)
+        # ------------------------------------------------------------------
+        # Raw $0800 test blobs for the headless program tests
+        # ------------------------------------------------------------------
+        # The tests load a flat image from ../kernel/<name>.bin; the .PRG that
+        # ships on the disk is a separate product of the catalog build
+        # (Programs.cmake).
+        #
+        # Every source is compiled to its own object under the build tree, by
+        # mfc_cc65_object() -- see Cc65Compile.cmake for why cl65's one-shot mode
+        # cannot be used here without the TERM and IRC builds racing each other
+        # over programs/common/scrollback.
+        #
+        # mfc_add_test_blob(<name>
+        #     DIR      <source directory>
+        #     CONFIG   <ld65 config, relative to DIR>
+        #     SOURCES  <source...>          (relative to DIR, or absolute)
+        #     [INCLUDE <dir>]               (added as -I)
+        #     [LABELS]                      (emit <name>.lbl for the test harness)
+        #     [DEPENDS <extra file...>]     (headers the depfile cannot cover)
+        #     [MESSAGE <text>])
+        function(mfc_add_test_blob name)
+            cmake_parse_arguments(B "LABELS" "DIR;CONFIG;INCLUDE;MESSAGE" "SOURCES;DEPENDS" ${ARGN})
+            set(_out ${CMAKE_BINARY_DIR}/kernel/${name}.bin)
+            set(_objdir ${CMAKE_BINARY_DIR}/kernel/blobs/${name})
+
+            set(_objs "")
+            set(_seen "")
+            foreach(_src IN LISTS B_SOURCES)
+                # A source may be named relative to DIR, or absolutely, as the
+                # shared programs/common sources are.
+                if(IS_ABSOLUTE ${_src})
+                    set(_path ${_src})
+                else()
+                    set(_path ${B_DIR}/${_src})
+                endif()
+                get_filename_component(_base ${_path} NAME_WE)
+                # Two sources with the same stem would compile to the same object
+                # and the second would silently overwrite the first.
+                if(_base IN_LIST _seen)
+                    message(FATAL_ERROR
+                        "blob ${name}: two sources are both named '${_base}', so "
+                        "one object file would overwrite the other. Rename one.")
+                endif()
+                list(APPEND _seen ${_base})
+
+                set(_obj ${_objdir}/${_base}.o)
+                mfc_cc65_object(${_obj}
+                    SOURCE  ${_path}
+                    INCLUDE ${B_INCLUDE}
+                    DEPENDS ${B_DEPENDS}
+                )
+                list(APPEND _objs ${_obj})
+            endforeach()
+
+            if(B_LABELS)
+                set(_labels -Ln ${CMAKE_BINARY_DIR}/kernel/${name}.lbl)
+            else()
+                set(_labels "")
+            endif()
+
+            add_custom_command(
+                OUTPUT ${_out}
+                # cl65, not bare ld65: the link needs the cc65 runtime library
+                # for the target, and cl65 is what supplies none.lib.
+                COMMAND cl65 -t none -C ${B_DIR}/${B_CONFIG} ${_objs} -o ${_out} ${_labels}
+                COMMAND ${CMAKE_COMMAND} -E echo "${B_MESSAGE}"
+                DEPENDS ${_objs} ${B_DIR}/${B_CONFIG}
+                COMMENT "ld65 kernel/${name}.bin"
+                VERBATIM
+            )
+            add_custom_target(${name}_bin ALL DEPENDS ${_out})
+        endfunction()
+
         set(COMMON_DIR ${CMAKE_SOURCE_DIR}/programs/common)
-        set(TERM_BIN ${CMAKE_BINARY_DIR}/kernel/term.bin)
-        add_custom_target(term_bin ALL
-            COMMAND cl65 -t none --signed-chars -O -I ${COMMON_DIR} -C ${TERM_DIR}/term.cfg
-                    ${TERM_DIR}/term.c ${COMMON_DIR}/scrollback.c ${TERM_DIR}/glue.s -o ${TERM_BIN}
-            COMMAND ${CMAKE_COMMAND} -E echo "TERM terminal blob built ($0800)"
-            COMMENT "Building TERM terminal blob"
-            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
-            DEPENDS ${TERM_DIR}/term.c ${TERM_DIR}/glue.s ${TERM_DIR}/term.cfg
-                    ${COMMON_DIR}/scrollback.c ${COMMON_DIR}/scrollback.h
-            VERBATIM
+
+        # TERM, the serial ANSI terminal, for the headless ANSI test.
+        mfc_add_test_blob(term
+            DIR      ${CMAKE_SOURCE_DIR}/programs/term
+            CONFIG   term.cfg
+            SOURCES  term.c ${COMMON_DIR}/scrollback.c glue.s
+            INCLUDE  ${COMMON_DIR}
+            DEPENDS  ${COMMON_DIR}/scrollback.h
+            MESSAGE  "TERM terminal blob built ($0800)"
         )
-        # IRC chat client blob (programs/irc), same toolchain as TERM. Staged at
-        # ../kernel/irc.bin for the headless test; IRC.PRG for the disk is made
-        # by the catalog build.
-        set(IRC_DIR ${CMAKE_SOURCE_DIR}/programs/irc)
-        set(COMMON_DIR ${CMAKE_SOURCE_DIR}/programs/common)
-        set(IRC_BIN ${CMAKE_BINARY_DIR}/kernel/irc.bin)
-        add_custom_target(irc_bin ALL
-            COMMAND cl65 -t none --signed-chars -O -I ${COMMON_DIR} -C ${IRC_DIR}/irc.cfg
-                    ${IRC_DIR}/irc.c ${COMMON_DIR}/scrollback.c ${IRC_DIR}/glue.s -o ${IRC_BIN}
-            COMMAND ${CMAKE_COMMAND} -E echo "IRC chat-client blob built ($0800)"
-            COMMENT "Building IRC chat-client blob"
-            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
-            DEPENDS ${IRC_DIR}/irc.c ${IRC_DIR}/glue.s ${IRC_DIR}/irc.cfg
-                    ${COMMON_DIR}/scrollback.c ${COMMON_DIR}/scrollback.h
-            VERBATIM
+
+        # IRC, the chat client, same toolchain as TERM.
+        mfc_add_test_blob(irc
+            DIR      ${CMAKE_SOURCE_DIR}/programs/irc
+            CONFIG   irc.cfg
+            SOURCES  irc.c ${COMMON_DIR}/scrollback.c glue.s
+            INCLUDE  ${COMMON_DIR}
+            DEPENDS  ${COMMON_DIR}/scrollback.h
+            MESSAGE  "IRC chat-client blob built ($0800)"
         )
-        # VENTURE blob (programs/venture). Staged at ../kernel/venture.bin so the
-        # headless test can load it at $0800 and drive it through the control port;
-        # VENTURE.PRG for the disk is made by the catalog build.
-        set(VENTURE_DIR ${CMAKE_SOURCE_DIR}/programs/venture)
-        set(VENTURE_BIN ${CMAKE_BINARY_DIR}/kernel/venture.bin)
-        add_custom_target(venture_bin ALL
-            # -Ln emits the label file the test harness reads the game's own
-            # coordinates from, instead of inferring them from the screen.
-            COMMAND cl65 -t none --signed-chars -O -C ${VENTURE_DIR}/venture.cfg
-                    ${VENTURE_DIR}/venture.c ${VENTURE_DIR}/glue.s -o ${VENTURE_BIN}
-                    -Ln ${CMAKE_BINARY_DIR}/kernel/venture.lbl
-            COMMAND ${CMAKE_COMMAND} -E echo "VENTURE blob built ($0800)"
-            COMMENT "Building VENTURE blob"
-            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
-            DEPENDS ${VENTURE_DIR}/venture.c ${VENTURE_DIR}/glue.s
-                    ${VENTURE_DIR}/venture.cfg ${VENTURE_DIR}/venture.h
-            VERBATIM
+
+        # VENTURE. LABELS emits the label file the test harness reads the game's
+        # own coordinates from, instead of inferring them from the screen.
+        mfc_add_test_blob(venture
+            DIR      ${CMAKE_SOURCE_DIR}/programs/venture
+            CONFIG   venture.cfg
+            SOURCES  venture.c glue.s
+            LABELS
+            DEPENDS  ${CMAKE_SOURCE_DIR}/programs/venture/venture.h
+            MESSAGE  "VENTURE blob built ($0800)"
         )
-        # KPANIC blob (programs/kpanic). Same shape as VENTURE, including -Ln:
-        # steps 7-8 are juice and balance, and the only way to hold a scroller's
-        # simulation still while judging either is to read its own state by name.
-        set(KPANIC_DIR ${CMAKE_SOURCE_DIR}/programs/kpanic)
-        set(KPANIC_BIN ${CMAKE_BINARY_DIR}/kernel/kpanic.bin)
-        add_custom_target(kpanic_bin ALL
-            COMMAND cl65 -t none --signed-chars -O -C ${KPANIC_DIR}/kpanic.cfg
-                    ${KPANIC_DIR}/kpanic.c ${KPANIC_DIR}/glue.s -o ${KPANIC_BIN}
-                    -Ln ${CMAKE_BINARY_DIR}/kernel/kpanic.lbl
-            COMMAND ${CMAKE_COMMAND} -E echo "KERNEL PANIC blob built ($0800)"
-            COMMENT "Building KERNEL PANIC blob"
-            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
-            DEPENDS ${KPANIC_DIR}/kpanic.c ${KPANIC_DIR}/glue.s
-                    ${KPANIC_DIR}/kpanic.cfg ${KPANIC_DIR}/kpanic.h
-            VERBATIM
+
+        # KERNEL PANIC. Same shape as VENTURE, including the labels: steps 7-8 are
+        # juice and balance, and the only way to hold a scroller's simulation still
+        # while judging either is to read its own state by name.
+        mfc_add_test_blob(kpanic
+            DIR      ${CMAKE_SOURCE_DIR}/programs/kpanic
+            CONFIG   kpanic.cfg
+            SOURCES  kpanic.c glue.s
+            LABELS
+            DEPENDS  ${CMAKE_SOURCE_DIR}/programs/kpanic/kpanic.h
+            MESSAGE  "KERNEL PANIC blob built ($0800)"
         )
-        # EDIT blob (programs/edit). Same idea as the others: the tests load a raw
-        # $0800 image, while EDIT.PRG for the disk comes from the catalog build.
-        set(EDIT_DIR ${CMAKE_SOURCE_DIR}/programs/edit)
-        set(EDIT_BIN ${CMAKE_BINARY_DIR}/kernel/edit.bin)
-        add_custom_target(edit_bin ALL
-            COMMAND cl65 -t none --signed-chars -O -C ${EDIT_DIR}/edit.cfg
-                    ${EDIT_DIR}/edit.c ${EDIT_DIR}/glue.s -o ${EDIT_BIN}
-            COMMAND ${CMAKE_COMMAND} -E echo "EDIT blob built ($0800)"
-            COMMENT "Building EDIT blob"
-            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
-            DEPENDS ${EDIT_DIR}/edit.c ${EDIT_DIR}/glue.s ${EDIT_DIR}/edit.cfg
-            VERBATIM
+
+        # EDIT.
+        mfc_add_test_blob(edit
+            DIR      ${CMAKE_SOURCE_DIR}/programs/edit
+            CONFIG   edit.cfg
+            SOURCES  edit.c glue.s
+            MESSAGE  "EDIT blob built ($0800)"
         )
     else()
         message(STATUS "cl65 not found - skipping TERM/IRC/VENTURE/EDIT blobs")

@@ -14,13 +14,6 @@
 # Requires mfc_read_catalog() to have run. Call mfc_add_catalog_programs() once; it
 # defines a <entry>_prg target per built entry and returns their names.
 
-# Flags every disk program shares.
-#
-# --signed-chars is NOT optional: cc65 defaults to unsigned char and several of
-# these ports (micro-Max most visibly) assume signed, failing silently if it is
-# dropped. -t none is the bare 6502 target -- the .cfg supplies the layout.
-set(MFC_PRG_CFLAGS -t none --signed-chars -O)
-
 # Read the load address out of an ld65 config's STARTADDRESS default.
 #
 # Taking it from the config rather than hardcoding $0800 is the point: the two-byte
@@ -65,26 +58,14 @@ function(mfc_add_catalog_program entry out_target)
     _mfc_load_address("${_config}" _load)
     _mfc_program_filename("${entry}" _prgname)
 
-    # cc65 writes objects next to their sources unless told otherwise, which would
-    # put build output in the source tree and let the test blobs (BuildKernel.cmake
-    # compiles some of the same sources) race us for the same file. Give every
-    # object an explicit home in the build tree instead.
+    # Every object gets an explicit home in the build tree. cc65 writes both its
+    # object and its intermediate assembly next to the source unless told
+    # otherwise, which would put build output in the source tree and let two
+    # steps compiling the same file collide -- TERM and IRC both build
+    # ../common/scrollback.c, here and again for the test blobs in
+    # BuildKernel.cmake. mfc_cc65_object() places every intermediate; see
+    # Cc65Compile.cmake.
     file(MAKE_DIRECTORY "${_outdir}")
-
-    if(MFC_CAT_${entry}_INCLUDE)
-        set(_inc -I "${_srcdir}/${MFC_CAT_${entry}_INCLUDE}")
-    else()
-        set(_inc "")
-    endif()
-
-    # Header tracking needs a generator that understands DEPFILE. Ninja and modern
-    # Make do; Visual Studio and Xcode do not, and asking them errors at generate
-    # time -- so on those the programs simply rebuild on a source change, as they
-    # did under the shell scripts.
-    set(_depfiles_work FALSE)
-    if(CMAKE_GENERATOR MATCHES "Ninja|Makefiles")
-        set(_depfiles_work TRUE)
-    endif()
 
     set(_objs "")
     set(_seen "")
@@ -100,29 +81,12 @@ function(mfc_add_catalog_program entry out_target)
         list(APPEND _seen "${_base}")
 
         set(_obj "${_outdir}/${_base}.o")
-        set(_dep "${_outdir}/${_base}.d")
-        # For the progress line only: "programs/irc/../common/scrollback.c" is
-        # accurate and unreadable.
         get_filename_component(_abs "${_srcdir}/${_src}" ABSOLUTE)
-        file(RELATIVE_PATH _label "${CMAKE_SOURCE_DIR}" "${_abs}")
-        if(_depfiles_work)
-            add_custom_command(
-                OUTPUT ${_obj}
-                COMMAND cl65 ${MFC_PRG_CFLAGS} ${_inc}
-                        -c -o ${_obj} --create-dep ${_dep} ${_srcdir}/${_src}
-                DEPENDS ${_srcdir}/${_src}
-                DEPFILE ${_dep}
-                COMMENT "cc65 ${_label}"
-                VERBATIM
-            )
+        if(MFC_CAT_${entry}_INCLUDE)
+            mfc_cc65_object(${_obj} SOURCE ${_abs}
+                            INCLUDE "${_srcdir}/${MFC_CAT_${entry}_INCLUDE}")
         else()
-            add_custom_command(
-                OUTPUT ${_obj}
-                COMMAND cl65 ${MFC_PRG_CFLAGS} ${_inc} -c -o ${_obj} ${_srcdir}/${_src}
-                DEPENDS ${_srcdir}/${_src}
-                COMMENT "cc65 ${_label}"
-                VERBATIM
-            )
+            mfc_cc65_object(${_obj} SOURCE ${_abs})
         endif()
         list(APPEND _objs ${_obj})
     endforeach()

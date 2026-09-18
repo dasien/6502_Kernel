@@ -44,6 +44,7 @@ include(FindQt)
 add_subdirectory(src)
 
 # Kernel ROM build (if cc65 available)
+include(Cc65Compile)
 include(BuildKernel)
 
 # Testing support
