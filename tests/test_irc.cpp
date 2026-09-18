@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "computer/Computer6502.h"
-#include "computer/Acia.h"
+#include "computer/ACIA.h"
 #include "computer/PIA.h"
 #include "computer/VIC.h"
 #include "computer/CPU6502.h"
@@ -34,7 +34,7 @@ class IrcTest : public ::testing::Test
 {
 protected:
     Computer6502 c;
-    Computer::Acia *acia = nullptr;
+    Computer::ACIA *acia = nullptr;
     Computer::CPU6502 *cpu = nullptr;
     Computer::Memory *mem = nullptr;
 

@@ -34,7 +34,7 @@
 #include "computer/CPU6502.h"
 #include "computer/Memory.h"
 #include "computer/PIA.h"
-#include "computer/Sid.h"
+#include "computer/SID.h"
 #include "computer/Cp437Font.h"
 #include "computer/VIC.h"
 

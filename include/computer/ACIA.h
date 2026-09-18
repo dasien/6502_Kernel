@@ -1,5 +1,5 @@
 /**
- * @file Acia.h
+ * @file ACIA.h
  * @brief Emulated 6551 ACIA (serial UART) with host-side RX/TX FIFOs.
  * @author 6502 Kernel Project
  */
@@ -13,7 +13,7 @@
 namespace Computer
 {
     /**
-     * @class Acia
+     * @class ACIA
      * @brief A minimal 6551-style serial port exposed through four I/O registers,
      *        just past the block device ($FE29-$FE2C).
      *
@@ -39,7 +39,7 @@ namespace Computer
      *
      * @see Memory, Computer6502, BlockDevice
      */
-    class Acia
+    class ACIA
     {
     public:
         /// Register addresses in the always-mapped I/O page.

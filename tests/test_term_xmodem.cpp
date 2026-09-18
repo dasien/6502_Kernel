@@ -16,7 +16,7 @@
 #include <fstream>
 #include <vector>
 
-#include "computer/Acia.h"
+#include "computer/ACIA.h"
 #include "computer/BlockDevice.h"
 #include "computer/CPU6502.h"
 #include "computer/Computer6502.h"
@@ -70,7 +70,7 @@ protected:
     Computer6502 computer;
     CPU6502 *cpu = nullptr;
     Memory *mem = nullptr;
-    Computer::Acia *acia = nullptr;
+    Computer::ACIA *acia = nullptr;
     std::string image_path_;
 
     void SetUp() override

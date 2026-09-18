@@ -1,5 +1,5 @@
 /**
- * @file Sid.cpp
+ * @file SID.cpp
  * @brief Software SID (6581/8580) synthesis implementation.
  *
  * Three voices (triangle/sawtooth/pulse/noise) with per-voice ADSR envelopes and
@@ -10,7 +10,7 @@
  * Written from public SID documentation -- no reSID/GPL code.
  */
 
-#include "computer/Sid.h"
+#include "computer/SID.h"
 
 #include <algorithm>
 #include <cmath>
@@ -32,22 +32,22 @@ namespace Computer
         // step. Guard against a zero-length sweep.
         double stepPerSample(double ms)
         {
-            const double samples = (ms / 1000.0) * Sid::kSampleRate;
+            const double samples = (ms / 1000.0) * SID::kSampleRate;
             return samples > 1.0 ? (1.0 / samples) : 1.0;
         }
     } // namespace
 
-    Sid::Sid()
+    SID::SID()
     {
         reset();
     }
 
-    bool Sid::isSidAddress(uint16_t address)
+    bool SID::isSidAddress(uint16_t address)
     {
         return address >= kRegBase && address <= kRegLast;
     }
 
-    uint8_t Sid::read(uint16_t address) const
+    uint8_t SID::read(uint16_t address) const
     {
         if (!isSidAddress(address))
             return 0;
@@ -64,7 +64,7 @@ namespace Computer
         return regs_[idx];
     }
 
-    void Sid::write(uint16_t address, uint8_t value)
+    void SID::write(uint16_t address, uint8_t value)
     {
         if (!isSidAddress(address))
             return;
@@ -72,7 +72,7 @@ namespace Computer
         regs_[address - kRegBase] = value;
     }
 
-    void Sid::reset()
+    void SID::reset()
     {
         std::lock_guard<std::mutex> lock(mtx_);
         regs_.fill(0);
@@ -87,7 +87,7 @@ namespace Computer
     // control register's gate bit each sample, so no edge tracking is needed on the
     // register-write side. Decay and release approximate the SID's exponential
     // curve with a geometric decay toward the target level.
-    void Sid::advanceEnvelope(Voice &v, const uint8_t *vr)
+    void SID::advanceEnvelope(Voice &v, const uint8_t *vr)
     {
         const bool gate = (vr[kOffControl] & kCtrlGate) != 0;
         const uint8_t ad = vr[kOffAttackDecay];
@@ -138,7 +138,7 @@ namespace Computer
     // advance the voice's phase. Each waveform is generated as a 12-bit unsigned
     // value and combined waveforms are bitwise-ANDed -- a recognizable
     // approximation of the SID's combined outputs.
-    double Sid::oscillatorOutput(Voice &v, const uint8_t *vr)
+    double SID::oscillatorOutput(Voice &v, const uint8_t *vr)
     {
         const uint8_t ctrl = vr[kOffControl];
         const uint16_t freq = static_cast<uint16_t>(vr[kOffFreqLo] | (vr[kOffFreqHi] << 8));
@@ -207,7 +207,7 @@ namespace Computer
         return (acc / 2047.5) - 1.0;
     }
 
-    void Sid::generateSamples(int16_t *out, int frames)
+    void SID::generateSamples(int16_t *out, int frames)
     {
         // Snapshot the registers so we don't hold the lock while synthesizing.
         std::array<uint8_t, kNumRegs> regs;

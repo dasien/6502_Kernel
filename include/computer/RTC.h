@@ -1,5 +1,5 @@
 /**
- * @file Rtc.h
+ * @file RTC.h
  * @brief Read-only real-time clock that mirrors the host wall-clock time.
  * @author 6502 Kernel Project
  */
@@ -15,7 +15,7 @@
 namespace Computer
 {
     /**
-     * @class Rtc
+     * @class RTC
      * @brief A simple read-only RTC exposed as memory-mapped registers in the
      *        always-mapped I/O page ($FE55-$FE5C), just past the SID.
      *
@@ -49,9 +49,9 @@ namespace Computer
      * The time source is injectable (defaults to the real clock) so tests can
      * pin a known timestamp and assert exact register values.
      *
-     * @see Memory, Computer6502, Sid, Acia
+     * @see Memory, Computer6502, SID, ACIA
      */
-    class Rtc
+    class RTC
     {
     public:
         static constexpr uint16_t kRegLatch = 0xFE55;
@@ -72,7 +72,7 @@ namespace Computer
 
         /// Construct with the default (real) time source and take an initial
         /// snapshot so reads are valid even before the first latch.
-        Rtc();
+        RTC();
 
         [[nodiscard]] static bool isRtcAddress(uint16_t address);
 

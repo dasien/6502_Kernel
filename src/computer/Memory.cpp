@@ -2,9 +2,9 @@
 #include "VIC.h"
 #include "PIA.h"
 #include "BlockDevice.h"
-#include "Acia.h"
-#include "Sid.h"
-#include "Rtc.h"
+#include "ACIA.h"
+#include "SID.h"
+#include "RTC.h"
 #include "PowerSwitch.h"
 
 #include <algorithm>
@@ -38,7 +38,7 @@ namespace Computer
         }
 
         // Check if this is an ACIA (serial) register read ($FE29-$FE2C)
-        if (acia_ && Acia::isAciaAddress(address))
+        if (acia_ && ACIA::isAciaAddress(address))
         {
             return acia_->read(address);
         }
@@ -52,7 +52,7 @@ namespace Computer
         }
 
         // Check if this is a SID sound-chip register read ($FE38-$FE54).
-        if (sid_ && Sid::isSidAddress(address))
+        if (sid_ && SID::isSidAddress(address))
         {
             return sid_->read(address);
         }
@@ -63,7 +63,7 @@ namespace Computer
             return power_->read(address);
         }
 
-        if (rtc_ && Rtc::isRtcAddress(address))
+        if (rtc_ && RTC::isRtcAddress(address))
         {
             return rtc_->read(address);
         }
@@ -111,7 +111,7 @@ namespace Computer
         }
 
         // Check if this is an ACIA (serial) register write ($FE29-$FE2C)
-        if (acia_ && Acia::isAciaAddress(address))
+        if (acia_ && ACIA::isAciaAddress(address))
         {
             acia_->write(address, value);
             return;
@@ -127,7 +127,7 @@ namespace Computer
         }
 
         // Check if this is a SID sound-chip register write ($FE38-$FE54).
-        if (sid_ && Sid::isSidAddress(address))
+        if (sid_ && SID::isSidAddress(address))
         {
             sid_->write(address, value);
             return;
@@ -140,7 +140,7 @@ namespace Computer
             return;
         }
 
-        if (rtc_ && Rtc::isRtcAddress(address))
+        if (rtc_ && RTC::isRtcAddress(address))
         {
             rtc_->write(address, value);
             return;
@@ -213,17 +213,17 @@ namespace Computer
         block_device_ = block_device;
     }
 
-    void Memory::setAcia(Acia *acia)
+    void Memory::setAcia(ACIA *acia)
     {
         acia_ = acia;
     }
 
-    void Memory::setSid(Sid *sid)
+    void Memory::setSid(SID *sid)
     {
         sid_ = sid;
     }
 
-    void Memory::setRtc(Rtc *rtc)
+    void Memory::setRtc(RTC *rtc)
     {
         rtc_ = rtc;
     }

@@ -15,9 +15,9 @@ namespace Computer
     class VIC;
     class PIA;
     class BlockDevice;
-    class Acia;
-    class Sid;
-    class Rtc;
+    class ACIA;
+    class SID;
+    class RTC;
     class PowerSwitch;
     class PowerSwitch;
 
@@ -153,21 +153,21 @@ namespace Computer
 
         /**
          * @brief Set or update the ACIA (serial UART) for memory-mapped I/O
-         * @param acia Pointer to Acia instance ($FE29-$FE2C)
+         * @param acia Pointer to ACIA instance ($FE29-$FE2C)
          */
-        void setAcia(Acia *acia);
+        void setAcia(ACIA *acia);
 
         /**
          * @brief Set or update the SID sound chip for memory-mapped I/O
-         * @param sid Pointer to Sid instance ($FE38-$FE54)
+         * @param sid Pointer to SID instance ($FE38-$FE54)
          */
-        void setSid(Sid *sid);
+        void setSid(SID *sid);
 
         /**
          * @brief Set or update the RTC for memory-mapped I/O
-         * @param rtc Pointer to Rtc instance ($FE55-$FE60)
+         * @param rtc Pointer to RTC instance ($FE55-$FE60)
          */
-        void setRtc(Rtc *rtc);
+        void setRtc(RTC *rtc);
 
         /**
          * @brief Attach the soft power switch.
@@ -219,9 +219,9 @@ namespace Computer
         VIC *video_chip_;             ///< Pointer to VIC for memory-mapped video I/O
         PIA *pia_;                    ///< Pointer to PIA for memory-mapped peripheral I/O
         BlockDevice *block_device_ = nullptr; ///< Block device ($FE24-$FE28), or null
-        Acia *acia_ = nullptr;                ///< Serial ACIA ($FE29-$FE2C), or null
-        Sid *sid_ = nullptr;                  ///< SID sound chip ($FE38-$FE54), or null
-        Rtc *rtc_ = nullptr;                  ///< real-time clock ($FE55-$FE60), or null
+        ACIA *acia_ = nullptr;                ///< Serial ACIA ($FE29-$FE2C), or null
+        SID *sid_ = nullptr;                  ///< SID sound chip ($FE38-$FE54), or null
+        RTC *rtc_ = nullptr;                  ///< real-time clock ($FE55-$FE60), or null
         PowerSwitch *power_ = nullptr;        ///< soft power switch ($FE61), or null
 
         /// Module ROM images, indexed by bank (1..255). Each entry is either

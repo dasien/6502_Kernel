@@ -1,11 +1,11 @@
 #include "Modem.h"
-#include "Acia.h"
+#include "ACIA.h"
 
 #include <QAbstractSocket>
 #include <QByteArray>
 #include <QString>
 
-Modem::Modem(Computer::Acia *acia, QObject *parent)
+Modem::Modem(Computer::ACIA *acia, QObject *parent)
     : QObject(parent), acia_(acia), socket_(new QTcpSocket(this)), proto_(this)
 {
     connect(socket_, &QTcpSocket::connected, this, [this]() {

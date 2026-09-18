@@ -289,7 +289,7 @@ TEST_F(KpanicTest, AHandsOffRunDiesInAPlayableWindow)
  *
  * The HUD field is five digits, so it can display 99,999, while the variable is
  * 16-bit and stops at 65,535. A wrapping add would put a small number on screen
- * after a large one -- a score nobody had, presented as fact. DESIGN.md's wider
+ * after a large one -- a score nobody had, presented as fact. The wider
  * score was measured at 650 and 1,054 bytes and rejected as unreachable headroom;
  * this is the part of it that was a real defect. */
 TEST_F(KpanicTest, TheScoreSaturatesInsteadOfWrapping)

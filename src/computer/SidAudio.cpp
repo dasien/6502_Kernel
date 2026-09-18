@@ -4,7 +4,7 @@
  */
 
 #include "computer/SidAudio.h"
-#include "computer/Sid.h"
+#include "computer/SID.h"
 
 #include <QAudioFormat>
 #include <QAudioSink>
@@ -17,7 +17,7 @@ namespace
     class SidPullDevice : public QIODevice
     {
     public:
-        explicit SidPullDevice(Computer::Sid *sid) : sid_(sid) {}
+        explicit SidPullDevice(Computer::SID *sid) : sid_(sid) {}
 
         bool isSequential() const override { return true; }
 
@@ -25,7 +25,7 @@ namespace
         // available, so advertise a continuous (effectively endless) stream.
         qint64 bytesAvailable() const override
         {
-            return static_cast<qint64>(Computer::Sid::kSampleRate) * sizeof(int16_t) +
+            return static_cast<qint64>(Computer::SID::kSampleRate) * sizeof(int16_t) +
                    QIODevice::bytesAvailable();
         }
 
@@ -43,15 +43,15 @@ namespace
         qint64 writeData(const char *, qint64) override { return 0; }
 
     private:
-        Computer::Sid *sid_;
+        Computer::SID *sid_;
     };
 } // namespace
 
-SidAudio::SidAudio(Computer::Sid *sid, QObject *parent)
+SidAudio::SidAudio(Computer::SID *sid, QObject *parent)
     : QObject(parent), sid_(sid)
 {
     QAudioFormat format;
-    format.setSampleRate(Computer::Sid::kSampleRate);
+    format.setSampleRate(Computer::SID::kSampleRate);
     format.setChannelCount(1);
     format.setSampleFormat(QAudioFormat::Int16);
 

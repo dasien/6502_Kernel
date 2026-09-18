@@ -1,9 +1,9 @@
 /**
- * @file Rtc.cpp
+ * @file RTC.cpp
  * @brief Read-only host-time RTC implementation.
  */
 
-#include "computer/Rtc.h"
+#include "computer/RTC.h"
 
 namespace Computer
 {
@@ -16,18 +16,18 @@ namespace Computer
         }
     } // namespace
 
-    Rtc::Rtc()
+    RTC::RTC()
         : now_([] { return std::time(nullptr); })
     {
         latch();
     }
 
-    bool Rtc::isRtcAddress(uint16_t address)
+    bool RTC::isRtcAddress(uint16_t address)
     {
         return address >= kRegFirst && address <= kRegLast;
     }
 
-    void Rtc::latch()
+    void RTC::latch()
     {
         const std::time_t t = now_();
         std::tm local{};
@@ -57,7 +57,7 @@ namespace Computer
         regs_[kRegFatDateHi - kRegFirst] = static_cast<uint8_t>(fatDate >> 8);
     }
 
-    uint8_t Rtc::read(uint16_t address) const
+    uint8_t RTC::read(uint16_t address) const
     {
         if (!isRtcAddress(address))
             return 0;
@@ -66,14 +66,14 @@ namespace Computer
         return regs_[address - kRegFirst];
     }
 
-    void Rtc::write(uint16_t address, uint8_t /*value*/)
+    void RTC::write(uint16_t address, uint8_t /*value*/)
     {
         if (address == kRegLatch)
             latch();
         // Field registers are read-only: writes are ignored (clock is not settable).
     }
 
-    void Rtc::setTimeProvider(std::function<std::time_t()> provider)
+    void RTC::setTimeProvider(std::function<std::time_t()> provider)
     {
         now_ = std::move(provider);
         latch();

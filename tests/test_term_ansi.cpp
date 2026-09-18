@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "computer/Computer6502.h"
-#include "computer/Acia.h"
+#include "computer/ACIA.h"
 #include "computer/PIA.h"
 #include "computer/VIC.h"
 
@@ -30,7 +30,7 @@ class TermAnsiTest : public ::testing::Test
 {
 protected:
     Computer::Computer6502 c;
-    Computer::Acia *acia = nullptr;
+    Computer::ACIA *acia = nullptr;
     Computer::CPU6502 *cpu = nullptr;
     Computer::Memory *mem = nullptr;
 

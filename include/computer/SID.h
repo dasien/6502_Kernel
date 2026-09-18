@@ -1,5 +1,5 @@
 /**
- * @file Sid.h
+ * @file SID.h
  * @brief Software sound chip modeled on the MOS 6581/8580 SID.
  * @author 6502 Kernel Project
  */
@@ -15,7 +15,7 @@
 namespace Computer
 {
     /**
-     * @class Sid
+     * @class SID
      * @brief A register-faithful software SID (6581/8580) sound chip.
      *
      * The real SID exposes 29 registers ($D400-$D41C). This model relocates that
@@ -38,9 +38,9 @@ namespace Computer
      * combined waveforms use a bitwise-AND approximation. Ring/sync modulation are
      * not modeled. No reSID (or other GPL) code is used.
      *
-     * @see Memory, Computer6502, Acia
+     * @see Memory, Computer6502, ACIA
      */
-    class Sid
+    class SID
     {
     public:
         // --- Register map: 29 registers at $FE38-$FE54, in real-SID order. ---
@@ -97,7 +97,7 @@ namespace Computer
         static constexpr double kSidClock = 1000000.0; ///< nominal SID master clock (Hz)
         static constexpr int kNumVoices = 3;
 
-        Sid();
+        SID();
 
         // --- Memory-mapped register port ($FE38-$FE54) ---
         [[nodiscard]] static bool isSidAddress(uint16_t address);

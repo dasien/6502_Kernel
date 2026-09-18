@@ -14,9 +14,9 @@
 #include "VIC.h"
 #include "PIA.h"
 #include "BlockDevice.h"
-#include "Acia.h"
-#include "Sid.h"
-#include "Rtc.h"
+#include "ACIA.h"
+#include "SID.h"
+#include "RTC.h"
 #include "PowerSwitch.h"
 #include "PowerSwitch.h"
 
@@ -144,27 +144,27 @@ namespace Computer
 
         /**
          * @brief Get pointer to the serial ACIA
-         * @return Acia* Pointer to the $FE29-$FE2C serial port
+         * @return ACIA* Pointer to the $FE29-$FE2C serial port
          * @note Used to drive the "other end of the wire" (host RX/TX FIFOs)
          */
-        Acia *getAcia()
+        ACIA *getAcia()
         {
             return &acia;
         }
 
         /**
          * @brief Get pointer to the SID sound chip
-         * @return Sid* Pointer to the $FE38-$FE54 sound chip
+         * @return SID* Pointer to the $FE38-$FE54 sound chip
          * @note Used by the GUI audio bridge (QAudioSink) and by tests
          */
-        Sid *getSid()
+        SID *getSid()
         {
             return &sid;
         }
 
         /**
          * @brief Get pointer to the real-time clock
-         * @return Rtc* Pointer to the $FE55-$FE60 RTC
+         * @return RTC* Pointer to the $FE55-$FE60 RTC
          * @note Used by tests to pin a known time via setTimeProvider
          */
         /**
@@ -184,7 +184,7 @@ namespace Computer
             return &power;
         }
 
-        Rtc *getRtc()
+        RTC *getRtc()
         {
             return &rtc;
         }
@@ -232,9 +232,9 @@ namespace Computer
         uint32_t clock_hz_ = kDefaultClockHz;  ///< the machine's stated speed
         uint64_t next_jiffy_ = 0;              ///< cycle count the next jiffy IRQ is due
         BlockDevice block_device; ///< Block device backing the FAT16 disk image
-        Acia acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
-        Sid sid; ///< SID sound chip ($FE38-$FE54)
-        Rtc rtc; ///< real-time clock ($FE55-$FE60)
+        ACIA acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
+        SID sid; ///< SID sound chip ($FE38-$FE54)
+        RTC rtc; ///< real-time clock ($FE55-$FE60)
         PowerSwitch power; ///< soft power switch ($FE61)
         Memory memory; ///< 64KB system memory with memory-mapped I/O
         CPU6502 cpu; ///< MOS 65C02 microprocessor

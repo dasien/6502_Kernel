@@ -5,7 +5,7 @@ set(SOURCES
     main.cpp
     computer/Memory.cpp
     computer/BlockDevice.cpp
-    computer/Acia.cpp
+    computer/ACIA.cpp
     computer/ModemProtocol.cpp
     computer/CPU6502.cpp
     computer/ResetCircuit.cpp
@@ -13,8 +13,8 @@ set(SOURCES
     computer/Computer6502.cpp
     computer/VIC.cpp
     computer/PIA.cpp
-    computer/Sid.cpp
-    computer/Rtc.cpp
+    computer/SID.cpp
+    computer/RTC.cpp
     computer/PowerSwitch.cpp
     computer/MapFileParser.cpp
 )

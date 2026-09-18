@@ -1,18 +1,18 @@
 /**
- * @file Acia.cpp
+ * @file ACIA.cpp
  * @brief Emulated 6551 ACIA implementation.
  */
 
-#include "computer/Acia.h"
+#include "computer/ACIA.h"
 
 namespace Computer
 {
-    bool Acia::isAciaAddress(uint16_t address)
+    bool ACIA::isAciaAddress(uint16_t address)
     {
         return address >= kRegData && address <= kRegControl;
     }
 
-    uint8_t Acia::read(uint16_t address)
+    uint8_t ACIA::read(uint16_t address)
     {
         switch (address)
         {
@@ -40,7 +40,7 @@ namespace Computer
         }
     }
 
-    void Acia::write(uint16_t address, uint8_t value)
+    void ACIA::write(uint16_t address, uint8_t value)
     {
         switch (address)
         {
@@ -64,12 +64,12 @@ namespace Computer
         }
     }
 
-    void Acia::hostSend(uint8_t byte)
+    void ACIA::hostSend(uint8_t byte)
     {
         rx_.push_back(byte);
     }
 
-    uint8_t Acia::hostRecv()
+    uint8_t ACIA::hostRecv()
     {
         if (tx_.empty())
             return 0;

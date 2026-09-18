@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "computer/Computer6502.h"
-#include "computer/Acia.h"
+#include "computer/ACIA.h"
 
 namespace
 {

@@ -17,7 +17,7 @@
 
 #include "ModemProtocol.h"
 
-namespace Computer { class Acia; }
+namespace Computer { class ACIA; }
 
 /**
  * @class Modem
@@ -33,7 +33,7 @@ class Modem : public QObject, public Computer::ModemHost
 {
     Q_OBJECT
 public:
-    explicit Modem(Computer::Acia *acia, QObject *parent = nullptr);
+    explicit Modem(Computer::ACIA *acia, QObject *parent = nullptr);
 
     /// Drain bytes the 6502 transmitted (ACIA TX) into the protocol.
     void poll();
@@ -45,7 +45,7 @@ public:
     void sendToCpu(const uint8_t *data, size_t n) override;
 
 private:
-    Computer::Acia *acia_;
+    Computer::ACIA *acia_;
     QTcpSocket *socket_;
     Computer::ModemProtocol proto_;
     bool dialing_ = false;

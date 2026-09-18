@@ -36,11 +36,11 @@ add_executable(cpu_alu_tests
     test_cpu_alu.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
 )
@@ -65,11 +65,11 @@ add_executable(cpu_interrupt_tests
     test_cpu_interrupts.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
 )
@@ -94,11 +94,11 @@ add_executable(cpu_cycle_tests
     test_cpu_cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
 )
@@ -117,11 +117,11 @@ target_compile_features(cpu_cycle_tests PRIVATE cxx_std_20)
 add_executable(memory_banking_tests
     test_memory_banking.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
@@ -145,11 +145,11 @@ target_compile_features(memory_banking_tests PRIVATE cxx_std_20)
 add_executable(block_device_tests
     test_block_device.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
@@ -181,11 +181,11 @@ add_executable(dos_blockio_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -213,11 +213,11 @@ add_executable(dos_fat16_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -244,11 +244,11 @@ add_executable(acia_xmodem_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -274,11 +274,11 @@ add_executable(print_char_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -381,10 +381,10 @@ target_include_directories(vic_sprite_tests PRIVATE
 target_compile_features(vic_sprite_tests PRIVATE cxx_std_20)
 
 # SID sound-chip unit test: register map + oscillator/ADSR synthesis. Self-
-# contained (Sid has no other device deps), like the VIC char-plane test.
+# contained (SID has no other device deps), like the VIC char-plane test.
 add_executable(sid_tests
     test_sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
 )
 
 target_link_libraries(sid_tests gtest_main gtest)
@@ -398,10 +398,10 @@ target_include_directories(sid_tests PRIVATE
 target_compile_features(sid_tests PRIVATE cxx_std_20)
 
 # RTC unit test: register map + BCD host-time snapshot (injectable time source).
-# Self-contained (Rtc has no other device deps).
+# Self-contained (RTC has no other device deps).
 add_executable(rtc_tests
     test_rtc.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
 )
 
@@ -426,11 +426,11 @@ add_executable(pia_keystate_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
 )
 
 target_link_libraries(pia_keystate_tests gtest_main gtest)
@@ -452,11 +452,11 @@ add_executable(edit_splash_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -479,11 +479,11 @@ add_executable(term_ansi_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -507,11 +507,11 @@ add_executable(term_xmodem_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -535,11 +535,11 @@ add_executable(irc_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -571,11 +571,11 @@ add_executable(dos_startup_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -610,11 +610,11 @@ add_executable(kpanic_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -643,11 +643,11 @@ add_executable(venture_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -676,11 +676,11 @@ add_executable(monitor_integration_tests
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
@@ -807,11 +807,11 @@ add_executable(clock_tests
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Sid.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Rtc.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/computer/Acia.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
