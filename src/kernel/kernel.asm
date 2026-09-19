@@ -15,10 +15,10 @@
 ; MEMORY USAGE SUMMARY
 ; ================================================================
 ; ROM (Reserved):  $F000-$FFFF (4096 bytes)
-; ROM (Used):      ~4273 bytes
-;   CODE segment:  $E000-$EF6E (3951 bytes)
+; ROM (Used):      1625 bytes of the 4 KB window
+;   CODE segment:  $F000-$F610 (1553 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
-;   JUMPS segment: $FF00-$FF3B (60 bytes) - kernel API jump table (20 entries)
+;   JUMPS segment: $FF00-$FF41 (66 bytes) - kernel API jump table (22 entries)
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
 ; Zero Page:    placed above EhBASIC's $00-$13 and below its ~$5B-$FF (~21 bytes used)
@@ -358,7 +358,7 @@ RESET:
 ZP_CLEAR_LOOP:
     STZ $00,X               ; Clear zero page location
     INX                     ; Increment address
-    CPX #$F0                ; Stop at $F0 to leave BASIC's high zero page ($F0-$FF) alone
+    CPX #$F0                ; Clear $00-$EF; $F0-$FF is left as the CPU found it
     BNE ZP_CLEAR_LOOP       ; Loop until done
 
 ; ================================================================
@@ -377,7 +377,7 @@ ZP_CLEAR_LOOP:
     ; The BIOS cannot borrow the monitor's F: fill engine for this. The monitor is
     ; a bank module, at this point in boot the window holds whatever the host
     ; installed, and mapping bank 4 to reach a fill loop would mean clearing the
-    ; window from inside it. Hence a private page loop, 48 pages of $B0..$DF.
+    ; window from inside it. Hence a private page loop, 64 pages of $B0..$EF.
     STZ MON_CURRADDR_LO
     LDA #>MODULE_WINDOW_START
     STA MON_CURRADDR_HI
@@ -390,7 +390,7 @@ ZP_CLEAR_LOOP:
     BNE @win_byte
     INC MON_CURRADDR_HI
     LDY MON_CURRADDR_HI
-    CPY #(>MODULE_WINDOW_END)+1 ; past $DF -> done
+    CPY #(>MODULE_WINDOW_END)+1 ; past $EF -> done
     BNE @win_page
     ; The loop left MON_CURRADDR past the window end; the ZP clear already ran, so
     ; reset it here to $0000 for the initial prompt address.

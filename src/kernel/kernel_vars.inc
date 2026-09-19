@@ -18,8 +18,9 @@ STACK_TOP          = $FF           ; Top of stack page
 ; ================================================================
 ; ZERO PAGE VARIABLES
 ; ================================================================
-; BASIC owns $00-$10 and $F0-$FF, so nothing here may go there. $14-$3F is the
-; range BASIC leaves alone; keep new monitor and kernel slots inside it.
+; EhBASIC owns $00-$13 and $5B-$FF, so nothing here may go in either. The one
+; usable gap is $14-$5A: the monitor and kernel take $14-$39, and $3A-$5A is
+; free. Keep new slots inside that gap.
 MON_CURRADDR_LO    = $14           ; Current address low byte
 MON_CURRADDR_HI    = $15           ; Current address high byte
 MON_MSG_PTR_LO     = $16           ; Message pointer low byte
@@ -84,7 +85,7 @@ MON_PARSE_PTR      = $0270         ; Parser position pointer
 MON_HEX_TEMP       = $0272         ; Temporary storage for hex conversion
 MON_BYTE_COUNT     = $0273         ; Count of bytes for write operations
 MON_ERROR_FLAG     = $0275         ; Error flag for invalid operations
-CURSOR_X           = $0276         ; Current cursor X position (0-39)
+CURSOR_X           = $0276         ; Current cursor X position (0-79)
 CURSOR_Y           = $0277         ; Current cursor Y position (0-24)
 MON_FILL_VALUE     = $0279         ; Fill command byte value
 MON_DEST_ADDR_LO   = $027A         ; Move/Copy destination address low byte
@@ -153,10 +154,10 @@ FILE_NAME_BUF      = $FE14         ; Filename buffer start ($FE14-$FE1F)
 FILE_END_ADDR_LO   = $FE20         ; End address low byte for save range
 FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 
-; Module-slot bank select. Writing n maps bank n into the $B000-$DFFF module
+; Module-slot bank select. Writing n maps bank n into the $B000-$EFFF module
 ; window: 0 = RAM (boot/default), 1..255 = read-only ROM modules. Reading returns
 ; the current bank. Lives in the always-mapped I/O page (see docs/architecture.md, Part 4).
-MODULE_BANK        = $FE23         ; bank-select register for the $B000-$DFFF window
+MODULE_BANK        = $FE23         ; bank-select register for the $B000-$EFFF window
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
 MODULE_WINDOW_END  = $EFFF         ; last byte of the bankable module window (16 KB)
@@ -165,12 +166,12 @@ MODULE_WINDOW_END  = $EFFF         ; last byte of the bankable module window (16
 ; kernel ROM: as a disk program it would load at $0800 and so overwrite the very
 ; code it exists to debug, while a bank costs no user RAM and is present even with
 ; no disk. The accepted blind spot is that it cannot inspect its own window
-; ($B000-$DFFF) or a sibling bank -- everything else in the map is visible.
+; ($B000-$EFFF) or a sibling bank -- everything else in the map is visible.
 MON_BANK           = $04           ; MODULE_BANK value that maps the monitor
 MON_ENTRY_COLD     = $B000         ; cold entry: banner + fresh prompt (DOS 'MON')
 MON_ENTRY_BREAK    = $B003         ; break-in entry: fresh prompt, no banner (NMI STOP)
 
-; VDC-style video register port ($FE2D-$FE36). The 80x25 character and color
+; VDC-style video register port ($FE2D-$FE37). The 80x25 character and color
 ; planes live inside the VIC, NOT in the 64K map. Set a cell index via
 ; VREG_ADDR_LO/HI, then read/write the auto-incrementing VREG_CHAR/VREG_COLOR
 ; data ports. VREG_ATTR is the current-attribute latch applied to VREG_CHAR
