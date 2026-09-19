@@ -1,3 +1,8 @@
+/**
+ * @file MapFileParser.cpp
+ * @brief ld65 .map parsing for ROM segment loading.
+ */
+
 #include "MapFileParser.h"
 #include <fstream>
 #include <sstream>

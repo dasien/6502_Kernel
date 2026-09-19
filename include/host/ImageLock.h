@@ -2,6 +2,7 @@
  * @file ImageLock.h
  * @brief Advisory lock on a host disk image, so the build cannot rewrite an
  *        image a running machine is using.
+ * @author 6502 Kernel Project
  *
  * The hazard this exists for: `ninja disk` rewrites disk.img in place with
  * std::ios::trunc, and BlockDevice re-opens the image by path on every sector

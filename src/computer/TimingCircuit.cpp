@@ -1,3 +1,8 @@
+/**
+ * @file TimingCircuit.cpp
+ * @brief Timing circuit implementation.
+ */
+
 #include "TimingCircuit.h"
 #include <chrono>
 #include <thread>

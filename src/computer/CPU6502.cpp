@@ -1,3 +1,9 @@
+/**
+ * @file CPU6502.cpp
+ * @brief WDC W65C02S instruction set, addressing modes and interrupt
+ *        dispatch.
+ */
+
 #include "CPU6502.h"
 
 namespace Computer {

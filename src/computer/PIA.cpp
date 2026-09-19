@@ -1,3 +1,8 @@
+/**
+ * @file PIA.cpp
+ * @brief PIA implementation: keyboard input and host file I/O.
+ */
+
 #include "PIA.h"
 #include "Memory.h"
 #include "CPU6502.h"

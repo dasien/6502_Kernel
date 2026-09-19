@@ -1,3 +1,8 @@
+/**
+ * @file MainWindow.cpp
+ * @brief Main window implementation: wiring, menus and the run loop.
+ */
+
 #include "MainWindow.h"
 #include <QApplication>
 #include <QMenuBar>

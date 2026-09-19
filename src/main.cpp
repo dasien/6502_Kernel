@@ -1,3 +1,8 @@
+/**
+ * @file main.cpp
+ * @brief Entry point: builds the machine and starts the Qt application.
+ */
+
 #ifdef QT_GUI
 #include <QApplication>
 #include <QIcon>

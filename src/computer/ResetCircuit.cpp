@@ -1,3 +1,8 @@
+/**
+ * @file ResetCircuit.cpp
+ * @brief Reset circuit implementation.
+ */
+
 #include "ResetCircuit.h"
 #include <thread>
 #include <chrono>

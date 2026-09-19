@@ -1,3 +1,8 @@
+/**
+ * @file Computer6502.cpp
+ * @brief Machine assembly: owns the CPU, memory and every peripheral.
+ */
+
 #include "Computer6502.h"
 #include "MapFileParser.h"
 #include <vector>

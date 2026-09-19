@@ -1,3 +1,8 @@
+/**
+ * @file DisplayWidget.cpp
+ * @brief Display widget implementation: glyph blitting, sprites, input.
+ */
+
 #include "DisplayWidget.h"
 #include "Cp437Font.h"
 #include "computer/PIA.h"   // kKey* bit definitions for the live key-state port

@@ -1,3 +1,8 @@
+/**
+ * @file ModemProtocol.cpp
+ * @brief Hayes-modem and telnet state machine implementation.
+ */
+
 #include "ModemProtocol.h"
 
 #include <cctype>

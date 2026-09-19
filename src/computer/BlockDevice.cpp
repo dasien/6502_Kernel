@@ -1,3 +1,8 @@
+/**
+ * @file BlockDevice.cpp
+ * @brief Block-device implementation over a host disk image.
+ */
+
 #include "BlockDevice.h"
 
 #include <fstream>

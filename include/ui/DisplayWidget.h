@@ -1,3 +1,10 @@
+/**
+ * @file DisplayWidget.h
+ * @brief Qt widget that renders the VIC's character plane, sprites and
+ *        cursor.
+ * @author 6502 Kernel Project
+ */
+
 #ifndef DISPLAYWIDGET_H
 #define DISPLAYWIDGET_H
 

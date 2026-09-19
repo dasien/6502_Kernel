@@ -1,3 +1,8 @@
+/**
+ * @file VIC.cpp
+ * @brief Video chip implementation: cell planes, soft font, scroll, sprites.
+ */
+
 #include "VIC.h"
 #include "Cp437Font.h"
 

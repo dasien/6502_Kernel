@@ -1,3 +1,8 @@
+/**
+ * @file Modem.cpp
+ * @brief Qt adapter implementation: ACIA to TCP socket.
+ */
+
 #include "Modem.h"
 #include "ACIA.h"
 

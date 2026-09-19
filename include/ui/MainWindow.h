@@ -1,3 +1,10 @@
+/**
+ * @file MainWindow.h
+ * @brief Qt main window: hosts the display, drives the machine, owns the
+ *        peripherals.
+ * @author 6502 Kernel Project
+ */
+
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
