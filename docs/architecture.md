@@ -116,9 +116,9 @@ All emulated devices live in `src/computer/`, with their headers in
 - `BlockDevice` presents a FAT16 disk image named `disk.img`, which the resident DOS
   filesystem reads and writes. Images are built by the host `mkdisk` tool from a
   diskmap bundle.
-- `ResetCircuit` and `TimingCircuit` handle power-on and warm reset, which loads the
-  `$FFFC` vector and sets the startup CPU state, and pace the machine at roughly
-  1 MHz.
+- `ResetCircuit` handles power-on and warm reset, which loads the `$FFFC` vector
+  and sets the startup CPU state. The clock is `Computer6502::kDefaultClockHz`,
+  4 MHz, and `MainWindow` runs the CPU against a time budget derived from it.
 - `MapFileParser` loads the assembled kernel and module ROM segments into memory from
   their `.map` and binary outputs at startup.
 
@@ -208,8 +208,8 @@ including a FAT16 disk, a working terminal and modem, sound, and development too
 
 
 This is a software-based 6502 computer rather than a Commodore 64 emulator. It uses
-ASCII rather than PETSCII, a flat 64K address space with no memory banking, and a
-small set of memory-mapped devices. The map below reflects the actual kernel source in
+ASCII rather than PETSCII, a 64K address space whose only banked region is the
+`$B000-$EFFF` module window, and a small set of memory-mapped devices. The map below reflects the actual kernel source in
 `kernel.asm`, the BASIC source in `basic.asm`, and the linker configurations in
 `memory.cfg` and `basic_memory.cfg`.
 
@@ -221,11 +221,11 @@ small set of memory-mapped devices. The map below reflects the actual kernel sou
 | `$0100-$01FF` | 256 B | Stack, growing down from `$01FF` |
 | `$0200-$03FF` | 512 B | System variables. BASIC's page-2 variables live here alongside the monitor's variables and buffers |
 | `$0400-$07FF` | 1 KB | Formerly the 40 by 25 screen. The screen now lives behind the VIC register port, described below. This range is not free. `$0400` holds the `T:` and `Z:` page snapshot, and `$0500-$07FF` holds the assembler's identifier buffers and symbol table. A program that uses neither may treat it as scratch |
-| `$0800-$87FF` | 32 KB | Free RAM for user programs. BASIC keeps its program, variables and strings here when it runs, and the assembler reserves `$7800-$87FF` for source and `$7600-$77FF` for symbols while it builds |
+| `$0800-$87FF` | 32 KB | Free RAM for user programs. BASIC keeps its program, variables and strings here when it runs, and the assembler reserves `$7800-$87FF` for source, with its symbol table down at `$0520-$07FF` while it builds |
 | `$8800-$AFFF` | 10 KB | The DOS ROM, which is always mapped and holds the FAT16 filesystem and the DOS shell |
 | `$B000-$EFFF` | 16 KB | The module window. Bank 0 is RAM and banks 1 to 255 are ROM modules, of which BASIC is bank 1 |
 | `$F000-$FFFF` | 4 KB | The kernel BIOS. The monitor is module bank 4 and is not here |
-| `$FE00-$FE28` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
+| `$FE00-$FECA` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
 
 There is no CIA, and the SID is not a Commodore part. The VIC is an 80 by 25 colour
 text chip whose character and colour planes live inside the chip rather than in the
@@ -295,26 +295,24 @@ because the two never run at the same time.
 | `$0200-$024F` | Monitor | `MON_CMDBUF`, an 80-byte command input buffer. It overlaps BASIC, and the two are mutually exclusive |
 | `$0269-$028D` | Monitor | Monitor variables, relocated above BASIC's `$0268`. They are listed below |
 | `$028E-$02DD` | Monitor | `MON_LAST_CMD_BUF`, an 80-byte last-command buffer that `.` recalls |
-| `$02DE-$03FF` | free | available system RAM |
+| `$02DE` | Monitor | `MON_LAST_CMD_LEN` |
+| `$02DF` | Monitor | `MON_DUMP_SNAP`, the flag that makes a dump read the `T:`/`Z:` snapshot |
+| `$02E0-$03FF` | free | available system RAM |
 
 #### Monitor variables (`$0269-$028D`)
 
 | Address | Symbol | Purpose |
 |---------|--------|---------|
-| `$0269` | `MON_CMDPTR` | Command buffer position |
 | `$026A` | `MON_CMDLEN` | Command length |
 | `$026B` | `MON_MODE` | Monitor mode (0=Command, 1=Write) |
 | `$026C-$026D` | `MON_STARTADDR_LO/HI` | Range start address |
 | `$026E-$026F` | `MON_ENDADDR_LO/HI` | Range end address |
 | `$0270` | `MON_PARSE_PTR` | Parser position |
-| `$0271` | `MON_PARSE_LEN` | Remaining parse length |
 | `$0272` | `MON_HEX_TEMP` | Hex conversion temp |
 | `$0273` | `MON_BYTE_COUNT` | Byte counter |
-| `$0274` | `MON_LINE_COUNT` | Display line counter |
 | `$0275` | `MON_ERROR_FLAG` | Error flag |
-| `$0276` | `CURSOR_X` | Cursor X (0-39) |
+| `$0276` | `CURSOR_X` | Cursor X (0-79) |
 | `$0277` | `CURSOR_Y` | Cursor Y (0-24) |
-| `$0278` | `MON_MSG_TMP_POS` | Temp message position |
 | `$0279` | `MON_FILL_VALUE` | Fill (F:) byte value |
 | `$027A-$027B` | `MON_DEST_ADDR_LO/HI` | Move/copy (M:) destination |
 | `$027C` | `MON_COPY_MODE` | Move/copy mode (0=copy, 1=move) |
@@ -339,7 +337,7 @@ itself.
 |---------|----------|---------|
 | `$FE2D` | `VREG_ADDR_LO` | Cell index low (0–1999) |
 | `$FE2E` | `VREG_ADDR_HI` | Cell index high |
-| `$FE2F` | `VREG_CHAR` | Char data port (bit 7 → reverse); auto-increments |
+| `$FE2F` | `VREG_CHAR` | Char data port, a full 8-bit CP437 code point; auto-increments |
 | `$FE30` | `VREG_COLOR` | Color/attribute data port; auto-increments |
 | `$FE31` | `VREG_ATTR` | Current attribute latch applied to `VREG_CHAR` writes |
 | `$FE32` | `VREG_CMD` | `1`=clear, `2`=scroll up, `3`=scroll down, `4`=fill row, `5`=set row size (param: bit 7 double, bits 4–0 row), `6`=all rows normal, `7`=set scroll-region top row (param), `8`=render from font ROM, `9`=render from font RAM, `10`=reload CP437 into every font set, `11`=select font set (param), `12`=fine scroll offset in pixels (param) |
@@ -351,7 +349,7 @@ itself.
 | `$FE62` | `VREG_FONT_LO` | Font byte index low |
 | `$FE63` | `VREG_FONT_HI` | Font byte index high (spans all font sets) |
 | `$FE64` | `VREG_FONT_DATA` | Font data port; auto-increments |
-| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0 pos, bits 4–2 width−1), Y lo, Y hi (bits 1–0 pos, bits 4–2 height−1, bit 7 = enable), glyph, attribute |
+| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0 pos, bits 4–2 width−1, bit 5 magnify X), Y lo, Y hi (bits 1–0 pos, bits 4–2 height−1, bit 5 magnify Y, bit 7 = enable), glyph, attribute |
 
 The soft-font port and the sprite block sit above the RTC rather than beside the
 rest because the port block ends at `$FE37` with the SID immediately after.
@@ -392,7 +390,7 @@ the renderer reads, so a program can upload its variants once and then switch be
 them with a single write. That is the equivalent of repointing the C64's `$D018`, and
 it is what makes pixel-smooth character scrolling affordable.
 
-`reset()` seeds every set from CP437, and a clear selects the ROM font. Redefining a
+The constructor seeds every set from CP437, and a clear selects the ROM font. Redefining a
 handful of glyphs therefore leaves the other 248 readable, and no program can strand
 the shell with a font nobody can read.
 
@@ -542,11 +540,11 @@ input rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 
 | Segment | Range | Purpose |
 |---------|-------|---------|
-| `CODE` | `$F000-$F619` (1562 B) | BIOS code and data |
+| `CODE` | `$F000-$F610` (1553 B) | BIOS code and data |
 | `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK` + VIC + SID) |
 | `JUMPS` | `$FF00-$FF41` (66 B) | Kernel API jump table (22 entries) |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
-| (free) | ~`$EF45-$FDFF` | ~3.6 KB unused |
+| (free) | `$F611-$FDFF` | ~2.0 KB unused |
 
 #### Kernel API jump table (`$FF00`)
 
@@ -558,11 +556,11 @@ input rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 | `$FF09` | `K_GET_KEYSTROKE` | `GET_KEYSTROKE` |
 | `$FF0C` | `K_CLEAR_SCREEN` | `CLEAR_SCREEN` |
 | `$FF0F` | `K_GET_RAND_NUM` | `GET_RANDOM_NUMBER` |
-| `$FF12` | `K_RETURN_MODULE` | `RETURN_FROM_MODULE` — unmaps the bank, returns to monitor (BASIC `BYE`) |
+| `$FF12` | `K_RETURN_MODULE` | `RETURN_FROM_MODULE` — unmaps the bank, returns to the DOS prompt (BASIC `BYE`) |
 | `$FF15` | `K_READ_LINE` | `READ_COMMAND_LINE` — edited line input (backspace/ESC) → `MON_CMDBUF`/`MON_CMDLEN` |
 | `$FF18` | `K_PARSE_HEX` | `HEX_QUAD_TO_ADDR` — X = offset in `MON_CMDBUF` → `MON_CURRADDR`, carry set if invalid |
 | `$FF1B` | `K_PRINT_HEX_BYTE` | `PRINT_HEX_BYTE` — print A as two hex digits |
-| `$FF1E` | `K_MON_ENTRY` | `MONITOR_MAIN` — DOS launches the monitor here (`MON`) |
+| `$FF1E` | `K_MON_ENTRY` | `MON_LAUNCH` — DOS launches the monitor here (`MON`) |
 | `$FF21` | `K_LAUNCH_BY_NAME` | `LAUNCH_BY_NAME` — DOS launches a module by name |
 | `$FF24` | `K_LIST_MODULES` | `LIST_MODULES` — print the module catalog (`BANKS`) |
 | `$FF27` | `K_PRINT_DEC` | `PRINT_DEC` — print a 32-bit value in decimal |
@@ -572,6 +570,8 @@ input rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 | `$FF33` | `K_SOUND_TONE` | `SOUND_TONE` — play a tone on SID voice 1 (A = freq low, X = freq high); honors `SOUND_ENABLE` |
 | `$FF36` | `K_SOUND_OFF` | `SOUND_OFF` — stop voice 1 (gate off) |
 | `$FF39` | `K_GET_JIFFIES` | `GET_JIFFIES` — read the 60 Hz monotonic tick counter (returns A = low, X = high) |
+| `$FF3C` | `K_HEX_PAIR` | `HEX_PAIR_TO_BYTE` — parse two hex digits into a byte |
+| `$FF3F` | `K_PARSE_DEC_VAL` | `PARSE_DECIMAL_VALUE` — parse a decimal value |
 
 The jump table is also the module ABI. A ROM module reaches kernel services only
 through these entries, so it is independent of where the kernel's internal
@@ -703,7 +703,7 @@ Two consequences are worth knowing when adding to the kernel.
 | `$FF09` | `K_GET_KEYSTROKE` | Non-blocking key read (carry set + A = key when ready) |
 | `$FF0C` | `K_CLEAR_SCREEN` | Clear screen, home cursor |
 | `$FF0F` | `K_GET_RAND_NUM` | A = random `1..RNG_MAX` |
-| `$FF12` | `K_RETURN_MODULE` | Bank module exit → return to the monitor |
+| `$FF12` | `K_RETURN_MODULE` | Bank module exit → return to the DOS prompt |
 | `$FF15` | `K_READ_LINE` | Edited line input → `MON_CMDBUF`; A = length |
 | `$FF18` | `K_PARSE_HEX` | Parse hex at `MON_CMDBUF`+X → `MON_CURRADDR` |
 | `$FF1B` | `K_PRINT_HEX_BYTE` | Print A as two hex digits |
@@ -717,6 +717,8 @@ Two consequences are worth knowing when adding to the kernel.
 | `$FF33` | `K_SOUND_TONE` | Play a tone on SID voice 1 (A = freq lo, X = freq hi) |
 | `$FF36` | `K_SOUND_OFF` | Stop SID voice 1 (gate off) |
 | `$FF39` | `K_GET_JIFFIES` | Read the 60 Hz monotonic tick counter (A = lo, X = hi) |
+| `$FF3C` | `K_HEX_PAIR` | Parse two hex digits into a byte |
+| `$FF3F` | `K_PARSE_DEC_VAL` | Parse a decimal value |
 
 ### Details
 

@@ -28,6 +28,7 @@ THE ONE THING TO UNDERSTAND
 There is a single ENERGY pool and it pays for everything.
 
   flying                 2 per row of conduit, always, no exceptions
+  flying into a firewall 120
   hitting the conduit    70
   flying into corruption 60
   taking a pellet        30
@@ -73,20 +74,20 @@ FIREWALLS
 Every 80 rows the conduit is barred by a firewall with a single port in it.
 
 A firewall is a toll, not a door. Shoot the port open and pass through for 150
-points, or take the hit and carry on -- 60 energy, and you keep moving. Which
+points, or take the hit and carry on -- 120 energy, and you keep moving. Which
 one is right depends entirely on how much energy you have and whether you can
 line up on the port in the room you have left.
 
 
 SECTORS
 
-  KERNEL -> HEAP -> STACK -> I/O -> KERNEL -> ...
+  KERNEL -> HEAP -> STACK -> I/O -> I/O -> ...
 
 The loop does not end. Sectors do not run faster -- your throttle is the only
 thing that sets speed. What changes is density: more corruption and fewer
-nodes as you go, planes withheld until the third sector, and the narrow
-river only unlocking in the fifth. The geometry alternates with sector
-parity, so the KERNEL you see the second time is not the one you learned.
+nodes as you go, the third enemy type withheld until the second sector, and
+the narrow channel only unlocking in the second as well. Past the fourth the
+name stops changing, but the density does not.
 
 
 SCORING
@@ -102,4 +103,5 @@ question the game asks is how far you can go, so the score screen shows both.
 ONE LAST THING
 
 Read the drain, not the bar. The bar tells you where you are; the number at 25
-tells you how many rows you have left, and rows are what you are spending.
+tells you your raw energy, which is twice the rows you have left, and rows are
+what you are spending.

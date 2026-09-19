@@ -97,8 +97,8 @@ the reminder `(no channel - use /join #channel)` instead.
 - Channel/private messages: `<nick> text`
 - Actions (`/me`, CTCP ACTION): `* nick text`
 - Notices: `-nick- text`
-- Joins/parts/quits/nick changes: ` nick joined …`, ` nick left …`,
-  ` nick quit …`, ` nick is now …`
+- Joins/parts/quits/nick changes: `* nick joined …`, `* nick left …`,
+  `* nick quit …`, `* nick is now …`
 - Server replies (WHOIS, LIST, MOTD, etc.) print as their human-readable text.
 
 Text is down-converted from UTF-8 to the display's single-byte glyph set, and
@@ -113,7 +113,8 @@ message to the current channel.
 - `/part [#channel]` leaves a channel. Bare `/part` leaves the current one.
 - `/nick <name>` changes your nickname.
 - `/msg <nick> <text>` sends a private message, echoed as `>nick< text`.
-- `/me <action>` sends an action to the current channel as `* you action`.
+- `/me <action>` sends an action to the current channel, echoed as
+  `* yournick action`.
 - `/list [filter]` lists the channels on the server. The listing can be long,
   and the server may accept a filter such as `>50`.
 - `/names [#channel]` lists the users in a channel, the current one if bare.

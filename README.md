@@ -101,7 +101,7 @@ filing a bug about missing sound or a missing window:
 ```
 
 Build outputs land in `cmake-build-debug/`: `bin/6502-kernel`, `kernel/*.rom`
-(kernel, dos, basic, assembler, forth), `kernel/kernel.map`, and `disk.img`.
+(kernel, dos, basic, monitor, forth), `kernel/kernel.map`, and `disk.img`.
 
 ### Running
 
@@ -124,7 +124,7 @@ Type `CATALOG` to list the disk, or `HELP` for the command set.
 ### Verifying the build
 
 ```bash
-ctest --test-dir cmake-build-debug        # 27 tests: CPU, banking, FAT16, ACIA/XMODEM, SID, RTC, VIC, ROM layout, disk programs
+ctest --test-dir cmake-build-debug        # 32 tests: CPU, banking, FAT16, ACIA/XMODEM, SID, RTC, VIC, ROM layout, disk programs
 ```
 
 ### Disk image
@@ -157,14 +157,14 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)
 ├── disk/                  # committed disk content (GAMES/ Scott Adams .PRGs)
 ├── vendor/                # Pristine upstream sources we port/derive from
-├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, dat2c
+├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, mkprg
 ├── docs/                  # Documentation
 └── tests/                 # Unit and integration tests (GoogleTest)
 ```
 
 For detailed development information and project context, see:
 
-- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, ASSEMBLER, FORTH, EDIT, TERM, IRC), the architecture reference (architecture.md), and the internals docs (kernel_internals.md, monitor_internals.md,
+- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, FORTH, EDIT, TERM, IRC), the architecture reference (architecture.md), and the internals docs (kernel_internals.md, monitor_internals.md,
   dos_internals.md, basic_internals.md, host_gui.md)
 
 

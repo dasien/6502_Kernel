@@ -241,7 +241,7 @@ of a large one, sixty times over, is the whole game.
 
 Bank what you cannot afford to lose, before the journey and not after.
 
-Buy the sidearm. It is a quarter of one percent of what a full wagon of Gold
+Buy the sidearm. It is a rounding error against what a full wagon of Gold
 is worth, and the men on the road know the difference.
 
 

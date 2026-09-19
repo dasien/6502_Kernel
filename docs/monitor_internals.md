@@ -299,7 +299,7 @@ HELP_MSG_TABLE:
 HELP_MSG_COUNT = 19              ; Number of help messages
 ```
 
-`CMD_SHOW_HELP` walks the table for `HELP_MSG_COUNT * 2` bytes, so a message
+`PRINT_HELP_BODY` walks the table for `HELP_MSG_COUNT * 2` bytes, so a message
 added to the table without bumping the count is simply never printed.
 
 #### Help Message Format Guidelines
@@ -357,9 +357,9 @@ subroutine so the eleven bytes of setup appear once.
 ```assembly
 PRINT_FILL_SUCCESS:
     LDA #<MSG_FILL_SUCCESS      ; 2 bytes
-    STA MON_MSG_PTR_LO          ; 3 bytes
+    STA MON_MSG_PTR_LO          ; 2 bytes (zero page)
     LDA #>MSG_FILL_SUCCESS      ; 2 bytes
-    STA MON_MSG_PTR_HI          ; 3 bytes
+    STA MON_MSG_PTR_HI          ; 2 bytes (zero page)
     JMP PRINT_MESSAGE           ; 3 bytes, tail call
 ```
 
@@ -548,7 +548,7 @@ command does.
 Reuse the four existing messages rather than adding new ones. `ERROR?` covers a
 general syntax or parameter error, `RANGE?` an address range error, `VALUE?` a
 parameter value error, and `OK` a success. Each new string costs ROM in a bank
-that also holds the assembler, and three well-known replies are easier to
+that also holds the assembler, and four well-known replies are easier to
 recognise than a dozen bespoke ones.
 
 ---
@@ -619,10 +619,10 @@ they are meant to be scanned against the source rather than read through.
 - **INFINITE LOOP**: `READ_CMD_LOOP` 
   - **BLOCKING CALL**: `JSR GET_KEYSTROKE` - Wait for keyboard input
   - **BRANCH CONDITIONS**:
-    - `CMP #ASCII_CR; BEQ READ_CMD_DONE` - Enter pressed → exit loop
+    - `CMP #ASCII_CR; BEQ READ_CMD_DONE_CR` - Enter pressed → exit loop
     - `CMP #ASCII_BACKSPACE; BEQ READ_CMD_BACKSPACE` - Handle backspace
     - `CMP #ASCII_DELETE; BEQ READ_CMD_BACKSPACE` - Handle delete  
-    - `CMP #ASCII_ESC; BEQ READ_CMD_CANCEL` - Escape → clear and restart
+    - `CMP #ASCII_ESC; BEQ READ_CMD_ESCAPE` - Escape → see 7b below
     - `CPX #MON_CMDBUF_LEN-1; BCS READ_CMD_LOOP` - Buffer full → ignore char
     - `CMP #ASCII_SPACE; BCC READ_CMD_LOOP` - Non-printable → ignore
     - `CMP #$7F; BCS READ_CMD_LOOP` - Above tilde → ignore
@@ -696,7 +696,9 @@ than a new branch in the parser.
 - **Address parsing**: `JSR HEX_QUAD_TO_ADDR` - Parse 4-hex-digit address
 - **Range check** (any command that accepts a range):
   - `CPX MON_CMDLEN; BEQ PARSE_COLON_SUCCESS` - End of command → single address
-  - `LDA MON_CMDBUF,X; CMP #ASCII_DASH; BNE PARSE_COLON_SUCCESS` - No dash → single
+  - `LDA MON_CMDBUF,X; CMP #ASCII_DASH; BEQ PARSE_RANGE` - dash → parse a range
+  - `CMP #ASCII_COMMA; BEQ PARSE_COLON_SUCCESS` - comma → single address
+  - anything else → `JMP PARSE_COLON_ERROR`
   - **Range parsing**: Parse second address after dash
 - **Result**: Address(es) stored in MON_CURRADDR_*, carry flag indicates success/error
 
@@ -711,8 +713,8 @@ than a new branch in the parser.
 - **INFINITE LOOP**: `WRITE_MODE_INPUT`
   - **BLOCKING CALL**: `JSR READ_COMMAND_LINE` - Get hex input
   - **Exit checks**:
-    - `LDA MON_CMDLEN; BEQ WRITE_MODE_DONE` - Empty → exit
-    - Check for "X:" command → exit
+    - `LDA MON_CMDLEN; BEQ WRITE_MODE_DONE` - empty line → exit
+    - `CMP #$01` then `LDA MON_CMDBUF; CMP #ASCII_ESC` - a lone ESC → exit
   - **Flow to**: Hex parsing loop
 
 ##### Hex Parsing Loop
@@ -750,15 +752,15 @@ than a new branch in the parser.
 ##### Memory Display Loop
 - **LOOP**: `DUMP_RANGE_LOOP`
   - **Address display**: Print current address in hex
-  - **Inner loop**: `DUMP_PRINT_BYTES` (up to 8 bytes per line)
+  - **Inner loop**: `DUMP_PRINT_BYTES` (up to `MON_BYTES_PER_LINE` = 16 per line)
     - **Address comparison**: Compare current vs end address
     - **BRANCH CONDITIONS**:
       - `BCC DUMP_PRINT_BYTE` - Current < end → print byte
       - `BNE DUMP_RANGE_DONE` - Current > end → done
-      - `BEQ DUMP_PRINT_LAST_BYTE` - Current = end → last byte
+      - `BEQ DUMP_PRINT_BYTE` - Current = end → last byte
     - **Byte printing**: Convert to hex, print with space
     - **Address increment**: Increment with carry handling
-    - **Line limit**: `CPY #MON_BYTES_PER_LINE; BNE DUMP_PRINT_BYTES`
+    - **Line limit**: `INC MON_BYTE_COUNT; CMP #MON_BYTES_PER_LINE; BNE DUMP_PRINT_BYTES`
   - **Line completion**: Print newline, start next line
   - **Exit condition**: Address comparison indicates end reached
 
@@ -770,13 +772,15 @@ than a new branch in the parser.
 **Path**: Various → HEX_CHAR_TO_NIBBLE
 
 ##### Character Validation Decision Tree
-- **Digit check**: `CMP #ASCII_0; BCC HEX_CHAR_INVALID`
-- **Digit range**: `CMP #ASCII_9+1; BCC HEX_CHAR_DIGIT` → Convert 0-9
-- **Uppercase check**: `CMP #ASCII_A; BCC HEX_CHAR_INVALID`  
-- **Uppercase range**: `CMP #ASCII_F+1; BCC HEX_CHAR_UPPER` → Convert A-F
-- **Lowercase check**: `CMP #$61; BCC HEX_CHAR_INVALID`
-- **Lowercase range**: `CMP #$67; BCS HEX_CHAR_INVALID` → Convert a-f
-- **Error path**: `SEC; RTS` - Set carry flag for invalid character
+- **Rebase**: `SEC; SBC #$30` - subtract '0' once, then test the remainder
+- **Digit range**: `CMP #$0A; BCC HEX_CHAR_VALID` → 0-9, done
+- **Below 'A'**: `CMP #$11; BCC HEX_CHAR_INVALID` - `'A'-'0'` = `$11`
+- **Above 'F'**: `CMP #$17; BCS HEX_CHAR_INVALID` - `'F'-'0'+1` = `$17`
+- **Letter fold**: `SEC; SBC #$07` → A-F become 10-15
+- **Exit paths**: `HEX_CHAR_VALID` clears carry, `HEX_CHAR_INVALID` sets it
+
+There is no lowercase branch. `READ_COMMAND_LINE` folds case as it reads, so the
+routine only ever sees uppercase.
 
 #### 15. Message Printing Flow
 **Path**: Various → PRINT_MESSAGE → PRINT_MSG_LOOP
@@ -797,7 +801,7 @@ than a new branch in the parser.
 #### Summary of Blocking Operations:
 1. `READ_CMD_LOOP` - command input loop, running until Enter or Escape
 2. `MONITOR_LOOP` - the monitor's main loop, infinite
-3. `WRITE_MODE_INPUT` - write-mode input loop, running until `X:`
+3. `WRITE_MODE_INPUT` - write-mode input loop, running until ESC or an empty line
 
 `GET_KEYSTROKE` itself does not block. It reads `PIA_CONTROL`, and if the
 data-available bit is clear it branches straight to `GET_NO_KEY` and returns. Callers
@@ -807,8 +811,8 @@ this form.
 
 #### Summary of Finite Loops:
 1. `ZP_CLEAR_LOOP` - 240 iterations, clearing `$00-$EF`
-2. Module-window clear - 48 pages, `$B0` through `$DF`
-3. `DUMP_PRINT_BYTES` - up to 8 iterations per line, for memory display
+2. Module-window clear - 64 pages, `$B0` through `$EF`
+3. `DUMP_PRINT_BYTES` - up to 16 iterations per line, for memory display
 4. `WRITE_MODE_PARSE_LOOP` - variable iterations, parsing hex input
 5. `PRINT_MSG_LOOP` - variable iterations, printing a string
 
@@ -839,10 +843,10 @@ MONITOR_MAIN
 └── MONITOR_LOOP
     ├── JSR PRINT_MONITOR_PROMPT
     │   ├── JSR PRINT_CURRENT_ADDRESS
-    │   │   ├── JSR BYTE_TO_HEX_PAIR (for high byte)
-    │   │   │   └── (uses HEX_LOOKUP_TABLE)
+    │   │   ├── JSR PRINT_HEX_BYTE (for high byte)
+    │   │   │   └── (uses NIBBLE_TO_ASCII)
     │   │   ├── JSR PRINT_CHAR (4 times for address digits)
-    │   │   └── JSR BYTE_TO_HEX_PAIR (for low byte)
+    │   │   └── JSR PRINT_HEX_BYTE (for low byte)
     │   └── JSR PRINT_CHAR (2 times for "> ")
     ├── JSR READ_COMMAND_LINE
     │   ├── JSR GET_KEYSTROKE (multiple times)
@@ -959,7 +963,7 @@ PARSE_COMMAND
         │          └── JSR PRINT_NEWLINE_PAGED
         └── single: JMP SHOW_WRITE_ADDRESS
             ├── JSR PRINT_CURRENT_ADDRESS
-            ├── JSR BYTE_TO_HEX_PAIR
+            ├── JSR PRINT_HEX_BYTE
             └── JSR PRINT_CHAR (multiple times)
 ```
 
@@ -988,7 +992,7 @@ PARSE_COMMAND
     └── JMP CMD_WRITE_MODE
         ├── JSR SHOW_WRITE_ADDRESS
         │   ├── JSR PRINT_CURRENT_ADDRESS
-        │   ├── JSR BYTE_TO_HEX_PAIR
+        │   ├── JSR PRINT_HEX_BYTE
         │   ├── JSR PRINT_CHAR (multiple times)
         │   └── JSR PRINT_NEWLINE_PAGED
         └── JSR WRITE_MODE_LOOP
@@ -1016,7 +1020,7 @@ PARSE_COMMAND
     └── JMP CMD_SEARCH_MEMORY
         ├── JSR VALIDATE_ADDRESS_RANGE
         ├── JSR PRINT_CURRENT_ADDRESS (for each match found)
-        │   └── JSR BYTE_TO_HEX_PAIR
+        │   └── JSR PRINT_HEX_BYTE
         └── JSR PRINT_NEWLINE_PAGED
 ```
 
@@ -1045,7 +1049,7 @@ PARSE_COMMAND
         │       └── JSR PRINT_CHAR (for each character)
         ├── JSR PRINT_NEWLINE_PAGED
         ├── JSR PRINT_HELP_BODY
-        │   ├── JSR PRINT_MESSAGE (for each entry in HELP_MSG_TABLE)
+        │   ├── JSR PRINT_HELP_LINE (for each entry in HELP_MSG_TABLE)
         │   └── JSR PRINT_NEWLINE_PAGED (after each help line)
         └── JMP PRINT_NEWLINE_PAGED
 ```
@@ -1100,14 +1104,14 @@ HEX_CHAR_TO_NIBBLE
 
 #### Display Functions
 ```
-BYTE_TO_HEX_PAIR
-└── (uses HEX_LOOKUP_TABLE, no JSR calls)
+PRINT_HEX_BYTE
+└── (uses NIBBLE_TO_ASCII, no JSR calls)
 
 PRINT_MESSAGE
 └── JSR PRINT_CHAR (for each character until null terminator)
 
 PRINT_CHAR
-├── (normal characters: direct screen memory writes)
+├── JSR SET_VREG_ADDR, then STA VREG_CHAR (the screen is behind the VIC port)
 ├── PRINT_CHAR_NEWLINE (for ASCII_CR)
 │   └── JSR SCROLL_SCREEN (if needed)
 └── PRINT_CHAR_BACKSPACE (for ASCII_BACKSPACE)

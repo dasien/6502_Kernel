@@ -95,7 +95,7 @@ you type.
   is highlighted in reverse video.
 - The Down and Right arrows jump to the next occurrence, and Up and Left go to the
   previous one. Search wraps around the document and steps through every match,
-  including several on the same line.
+  including several on the same line, up to the first 256 occurrences.
 - Backspace shortens the query.
 - Enter keeps the cursor at the current match and reports `Found` or `Not found`.
 - ESC cancels and returns the cursor to where it started.
@@ -122,7 +122,8 @@ MFC EDIT name* L3/12 C7  Saved
   A trailing `*` means there are unsaved changes.
 - `L3/12` means the cursor is on line 3 of 12 total lines.
 - `C7` means the cursor is in column 7.
-- A transient message (`Saved`, `Not found`, `Cancelled`, `No memory`, …)
+- A transient message (`Saved`, `Not found`, `Cancelled`, `Search cancelled`,
+  `No memory`, …)
   appears at the right and clears on the next keystroke.
 
 ## Display and limits

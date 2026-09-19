@@ -55,7 +55,7 @@ map, so there are no screen pages for the CPU to write over.
 
 #### 4. Module-window clear
 **Path**: `CLEAR_SCREEN` → private page loop
-- **LOOP**: 48 pages, `$B0` through `$DF`
+- **LOOP**: 64 pages, `$B0` through `$EF`
   - **Purpose**: bank 0 boots as clean scratch RAM. `MODULE_BANK` was zeroed above,
     so these writes land in window RAM rather than in any module ROM
 - **Note**: the BIOS cannot call into the module window, so reset carries its own

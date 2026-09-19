@@ -13,7 +13,6 @@ reference to reach for.
 | `FORTH` (at DOS `]`) | Launch the FORTH module |
 | `n m + .` | Push `n`, `m`, add, print result |
 | `: NAME … ;` | Define a new word |
-| `.S` | Show the data stack (non-destructive) |
 | `VLIST` / `WORDS` | List the dictionary |
 | `HEX` / `DECIMAL` | Set the number base |
 | `MON` | Quit back to DOS |
@@ -55,8 +54,8 @@ Define your own words between `:` and `;`, then run them.
 5 SQUARE .             prints: 25 OK
 ```
 
-Other everyday words include `DUP`, `DROP`, `SWAP` and `OVER` for the stack, `.S` to
-show the stack, `WORDS` or `VLIST` to list the dictionary, `HEX` and `DECIMAL` to
+Other everyday words include `DUP`, `DROP`, `SWAP` and `OVER` for the stack,
+`VLIST` to list the dictionary, `HEX` and `DECIMAL` to
 change base, and `VARIABLE` and `CONSTANT`. The fig-FORTH glossary has the full set.
 
 If a line has an error, FORTH reports it and returns to the prompt, so you can fix the

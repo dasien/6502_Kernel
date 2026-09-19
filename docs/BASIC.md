@@ -20,7 +20,7 @@ an EhBASIC reference documents works here.
 | `NEW` | Erase the program in memory |
 | `SAVE` | Save as a host `.bas` file (macOS Save dialog) |
 | `LOAD` | Load a host `.bas` file (macOS Open dialog) |
-| `RND(1)` | Next random number, 0 to 1 |
+| `RND(0)` | Next random number, 0 to 1 |
 | `BYE` | Exit BASIC, return to the DOS `]` prompt |
 
 MFC BASIC is derived from EhBASIC by Lee Davison. Any EhBASIC reference describes the
@@ -42,7 +42,8 @@ Ready
 .
 ```
 
-The `.`, or the blank line after `Ready`, is where you type. Nothing needs a line
+The line after `Ready` is where you type. BASIC prints no prompt character of
+its own, so the marker you see is the hardware cursor. Nothing needs a line
 number to run interactively. Type a statement and press Enter to run it immediately,
 or prefix it with a line number to store it as part of a program.
 
@@ -94,9 +95,10 @@ the file.
 
 `RND` returns a floating-point value. As in EhBASIC:
 
-- `RND(1)` (any positive argument) returns the next pseudo-random number in the
-  range 0 to 1.
-- Use it in expressions, e.g. a dice roll: `PRINT INT(RND(1) * 6) + 1`.
+- `RND(0)` returns the next pseudo-random number in the range 0 to 1. A non-zero
+  argument re-seeds the generator from that value instead of advancing it, so
+  `RND(1)` returns the same number every time you call it.
+- Use it in expressions, e.g. a dice roll: `PRINT INT(RND(0) * 6) + 1`.
 
 The generator is a fixed sequence, so a program that only uses `RND` produces the
 same numbers each session unless you re-seed it (see an EhBASIC reference for the

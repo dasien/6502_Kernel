@@ -54,8 +54,9 @@ drawer directory chains another cluster. Path resolution is wired into `_FS_OPEN
 `DRAWER/FILE` means a named root drawer and `/FILE` means the root. The file verbs
 therefore act in the current drawer, and bare names keep the `FS_OPEN` ABI working
 for launched programs. `CATALOG` tags drawers `<D>` and hides `.` and `..`, and
-the prompt shows the open drawer as `UTILS]`. Drawers are created at runtime,
-since the `mkfat16` test image builder is root-only, and they cannot nest. This
+the prompt shows the open drawer as `UTILS]`. Drawers cannot nest. `mkfat16` can
+place files in one with an `@DRAWER` argument, which its default sample disk
+already uses for `SYSTEM/`. This
 work surfaced and fixed a latent overlap where `DOS_TMP2` aliased `DOS_ENTRY+0`,
 which was harmless until subdirectory enumeration interleaved a FAT read with
 entry inspection.
@@ -95,7 +96,7 @@ Apps        ── BASIC, monitor, assembler/disassembler, editor, games
 Resident OS ── DOS shell  (prompt, commands, launch-by-name)        [DOS ROM]
             ── Filesystem (FAT16 over the block device)             [DOS ROM]
             ── BIOS       (boot/init, I/O, the $FF00 ABI, banking)  [kernel ROM]
-            ── Block device driver (512-byte sectors)               [BIOS]
+            ── Block device driver (512-byte sectors)               [DOS ROM]
 ─────────────────────────────────────────────────────────────────────────
 Hardware    ── host disk.img (a real FAT16 volume the Mac can mount too)
 ```
@@ -116,8 +117,9 @@ banked.
   `GET_KEYSTROKE`, `READ_COMMAND_LINE`, hex parsing and `PRINT_HEX_BYTE`.
 - The `$FF00` jump-table ABI and the bank mechanism, meaning `MODULE_DIR`, bank
   launch and the `$FF12` return.
-- The block-device driver and the FS ABI entries. The FAT16 code itself lives in
-  the DOS ROM and is reached through these.
+- The vectors and the RNG. The block device driver, the FAT16 code and the FS
+  entries all live in the DOS ROM instead, reached through its own `$AF00`
+  table.
 - The vectors and the RNG.
 
 The monitor is a debugger tool rather than the front door.
@@ -147,11 +149,13 @@ The registers sit in the I/O page, just after `MODULE_BANK` at `$FE23`.
 |------|------|---------|
 | `$FE24-$FE25` | `BLK_LBA` | 16-bit sector number (→ 32 MB image; widen to 3 bytes later if needed) |
 | `$FE26` | `BLK_CMD` | write `1` = read sector→buffer, `2` = write buffer→sector |
-| `$FE27` | `BLK_STATUS` | `0` = ready, non-zero = busy/error/no-disk |
+| `$FE27` | `BLK_STATUS` | `0` = ready, `$FF` = I/O error. Transfers are synchronous, so there is no busy state, and a missing image is created rather than refused |
 | `$FE28` | `BLK_DATA` | 512-byte data port, auto-incrementing index |
 
 To read, set `BLK_LBA`, write 1 to `BLK_CMD`, then read `BLK_DATA` 512 times. To
-write, write `BLK_DATA` 512 times, set `BLK_LBA`, then write 2 to `BLK_CMD`. On
+write, set `BLK_LBA` first, then write `BLK_DATA` 512 times, then write 2 to
+`BLK_CMD`. The LBA must come first, because writing either LBA byte resets the
+data-port index. On
 the emulator side this is a small block-device class that opens `disk.img`, keeps
 a 512-byte buffer, and wires four registers through `Memory`.
 
@@ -183,7 +187,7 @@ optional short aliases.
 
 | Command | Does |
 |---------|------|
-| `CATALOG` (`CAT`) | list files (name, size) + free space |
+| `CATALOG` (`CAT`) | list files (name, size, modified date) |
 | `LOAD name[,addr]` | load a file into memory (addr from the file's header if omitted) |
 | `SAVE name,start-end` | save a memory range to a file (writes the load-address header) |
 | `ERASE name` | delete a file |
@@ -199,8 +203,8 @@ the DOS resolves it in order.
 
 1. A built-in DOS command such as `CATALOG` or `ERASE`, which includes `MON`.
 2. A built-in ROM program from the `MODULE_DIR` registry, currently `BASIC` in
-   bank 1 and `FORTH` in bank 3. The DOS maps the bank and jumps to its entry, and
-   the module returns to the DOS on exit.
+   bank 1, `FORTH` in bank 3 and the monitor in bank 4. The DOS maps the bank and
+   jumps to its entry, and the module returns to the DOS on exit.
 3. A program file on disk, which the DOS loads into RAM and executes.
 
 Resolution is ROM-module-first, so a disk file of the same name is shadowed. The

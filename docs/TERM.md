@@ -111,5 +111,7 @@ TERM is an 80 by 25 ANSI and VT100 terminal. It supports the following.
 
 ## Serial settings
 
-The ACIA runs at 19200 baud, 8N1 (polled). The host modem bridge maps the
+TERM programs the ACIA for 19200 baud, 8N1, and polls it. The emulated 6551
+does not model a baud rate, so data actually moves as fast as the host supplies
+it. The host modem bridge maps the
 `host:port` you dial to a TCP/telnet connection.

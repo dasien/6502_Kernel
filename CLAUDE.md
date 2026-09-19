@@ -140,16 +140,19 @@ cc65 `.cfg` files **must** put the C stack at `$8700`, since user RAM ends at `$
 
 The kernel includes a complete interactive monitor program for debugging and programming. The monitor provides a command-line interface for memory manipulation, program execution, and system inspection.
 
-### Monitor Memory Layout ($0200-$0261)
+### Monitor Memory Layout
 
-The monitor uses system RAM starting at $0200 for variables and buffers:
+Defined once in `src/kernel/kernel_vars.inc`, not in `monitor.asm`:
 
 - **$0200-$024F**: Command input buffer (80 bytes)
-- **$0250-$0251**: Command buffer pointer and length
-- **$0252-$0258**: Monitor state variables (mode, addresses)
-- **$0259-$025E**: Parser variables and temporary storage
-- **$0260-$0261**: Message pointer for optimized string printing
-- **$0262-$027E**: Extended monitor variables for F:, M:, X: commands
+- **$026A-$027C**: Core state — length, mode, addresses, cursor, fill, move
+- **$027D-$028D**: Search pattern buffer and its length
+- **$028E-$02DE**: Last-command buffer and length, for the `.` recall
+- **$02DF**: `MON_DUMP_SNAP`, the flag that makes a dump read the snapshot
+- **$0400**: `MON_SNAP_BUF`, the 256-byte page snapshot used by `T:` and `Z:`
+- **$02E0-$02FF** is free. The gap below $026A is BASIC's ($0200-$0268); the
+  command buffer overlaps it only because the two are never active at once.
+- The message pointer is zero page, `MON_MSG_PTR` at **$16/$17**.
 
 ### Monitor Commands
 
@@ -164,18 +167,25 @@ The monitor provides a comprehensive set of commands for memory operations, prog
 
 #### Program Execution
 - **G:xxxx** - Go/Run mode: Execute program starting at address xxxx
-- **L:xxxx** - Load program from file at specified address
-- **S:xxxx-yyyy** - Save memory range to file
+- **A:xxxx** - Line assembler from xxxx (empty line or ESC exits)
+- **D:xxxx** - Disassemble 16 instructions from xxxx
+- **L:** - Load an assembler source file for B: to build
+- **B:** - Build the loaded source
+
+The monitor has no binary load or save. `S:` reports `ERROR?`; use the DOS
+`LOAD`, `SAVE`, `IMPORT` and `EXPORT` verbs.
 
 #### Number Conversion
-- **D:nnnnn** - Convert decimal (0-65535) to hexadecimal with '$' prefix
-- **H:xxxx** - Convert hexadecimal (0000-FFFF) to decimal with '#' prefix
+- **#:nnnnn** - Convert decimal (0-65535) to hexadecimal with '$' prefix
+- **$:xxxx** - Convert hexadecimal (0000-FFFF) to decimal with '#' prefix
 
 #### System Information
 - **C:** - Clear screen
 - **T:** - Display stack memory ($0100-$01FF) with paging
 - **Z:** - Display zero page memory ($0000-$00FF) with paging
 - **?** - Display help with all available commands (no colon required)
+- **.** - Recall the last command
+- **Q** - Quit the monitor and return to the DOS `]` prompt
 
 #### Navigation
 - **ESC** - Exit current mode and return to command prompt
@@ -192,15 +202,16 @@ The monitor provides a comprehensive set of commands for memory operations, prog
 - Hex address parsing (supports both uppercase and lowercase)
 - Range operations (R:8000-80FF displays memory range)
 - Sequential write operations with old/new value display
-- 8-byte-per-line formatted output for readability
+- `MON_BYTES_PER_LINE` (16) bytes per line, which fits the 80-column screen
 
 #### String Optimization System
 The monitor uses an advanced null-terminated string system for efficient message display:
 
 ```assembly
-; Message data stored as null-terminated strings
-MSG_HELP_HEADER:     .BYTE "6502 MONITOR COMMANDS", 0
-MSG_HELP_WRITE:      .BYTE "W:XXXX WRITE", 0
+; Message data stored as null-terminated strings. A help line is the syntax,
+; a TAB that pads out to HELP_DESC_COL, then the description.
+MSG_HELP_HEADER:     .BYTE "MONITOR COMMANDS", 0
+MSG_HELP_WRITE:      .BYTE "W:XXXX", $09, "WRITE MEMORY", 0
 
 ; Generic print routine using indirect indexed addressing
 PRINT_MESSAGE:
@@ -214,14 +225,11 @@ PRINT_MSG_LOOP:
 PRINT_MSG_DONE:
     RTS
 
-; Optimized function calls (8 bytes each)
+; House style for printing one: load the address into A/Y and tail-call.
 PRINT_HELP_HEADER:
-    LDA #<MSG_HELP_HEADER       ; Load low byte of message address
-    STA MON_MSG_PTR             ; Store in message pointer
-    LDA #>MSG_HELP_HEADER       ; Load high byte of message address
-    STA MON_MSG_PTR_HI          ; Store in message pointer high
-    JSR PRINT_MESSAGE           ; Print the message
-    RTS
+    LDA #<MSG_HELP_HEADER
+    LDY #>MSG_HELP_HEADER
+    JMP PRINT_MSG_AY            ; PRINT_MESSAGE's RTS returns to our caller
 ```
 
 This optimization achieves ~80-88% code size reduction compared to individual character loading.
@@ -296,7 +304,7 @@ The kernel code follows these patterns:
 - Hardware initialization loops for clearing chip registers
 - Memory banking through the `MODULE_BANK` register at `$FE23`
 - Interrupt vector setup at $FFFA-$FFFF
-- Zero page cleared wholesale at reset — there are no processor-port bytes to preserve
+- Zero page cleared from $00 to $EF at reset — there are no processor-port bytes to preserve
 - Screen clearing via a VIC **command** (there is no screen or colour memory to fill)
 - Null-terminated strings printed through one indirect-indexed routine (see below) —
   the house style for any new message

@@ -13,8 +13,9 @@ around 780 code labels in place would have been a large and error-prone change, 
 labels are left untouched and this file maps them to their meaning instead.
 
 Descriptions are taken verbatim from the inline comments in `basic.asm`. A
-`LAB_<hex>` label's hex suffix is its assembled address (e.g. `LAB_1274` lives at
-`$1274`). Most zero-page variables already have mnemonic names (`Bpntr`,
+`LAB_<hex>` label's hex suffix is the address it had in upstream EhBASIC rather
+than where it lands here. MFC assembles BASIC into bank 1 at `$B000`, so
+`LAB_1274` is actually at `$B167`. Treat the suffix as part of the name. Most zero-page variables already have mnemonic names (`Bpntr`,
 `Baslnl`, `FAC1`, …) and are documented in the source, so they are not repeated
 here.
 
@@ -43,7 +44,7 @@ here.
 | `LAB_BITCLR` | perform BITCLR |
 | `LAB_BITSET` | perform BITSET |
 | `LAB_BTST` | perform BITTST() |
-| `LAB_BYE` | This command exits BASIC and returns control to the monitor at $FF12 |
+| `LAB_BYE` | This command exits BASIC through $FF12, which unmaps the bank and returns to the DOS `]` prompt |
 | `LAB_CALL` | perform CALL |
 | `LAB_CASC` | check byte, return C=0 if<"A" or >"Z" or "a" to "z" |
 | `LAB_CBIN` | get binary number |
@@ -180,7 +181,7 @@ here.
 | `LAB_WDTH` | perform WIDTH |
 | `LAB_XERR` | do error #X, then warm start |
 
-### Numeric labels (`LAB_<hex>`, sorted by address)
+### Numeric labels (`LAB_<hex>`, sorted by hex suffix)
 
 | Label | Address | Meaning |
 |-------|---------|---------|

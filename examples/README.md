@@ -2,8 +2,9 @@
 
 Small, self-contained 6502 programs for learning to program MFC in assembly.
 Every program loads and runs at **$0800** and ends with `RTS` to return to the
-monitor. Each file has commented source plus a verified "Enter these bytes" block
-(all byte blocks here are confirmed byte-identical to a real `ca65` assembly).
+monitor. Each file has commented source, and all but `lowercase_test.asm` carry
+a verified "Enter these bytes" block (every one of those is confirmed
+byte-identical to a real `ca65` assembly).
 
 ## Two ways to run an example
 
@@ -18,11 +19,9 @@ G:0800            ; run it
 **B. Assemble the source in the built-in assembler** (for the `.asm` source):
 
 ```
-]ASM              ; launch the assembler module
-L                 ; Load -- pick the .asm file in the host dialog
-B                 ; Build to memory (should assemble with no "? LINE" error)
-<ESC>             ; back to DOS
-]MON              ; enter the monitor
+]MON              ; enter the monitor (the assembler lives in it)
+L:                ; Load -- pick the .asm file in the host dialog
+B:                ; Build to memory (should assemble with no "? LINE" error)
 G:0800            ; run it
 ```
 

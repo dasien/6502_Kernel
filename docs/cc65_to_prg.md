@@ -1,12 +1,18 @@
 # Porting C programs to MFC-DOS `.PRG` with cc65
 
 This documents the pipeline for compiling C into a disk program the DOS can
-launch by name. Two ports use it today:
+launch by name. Eight programs are built this way, every catalog entry that
+carries a build recipe. Those are EDIT, TERM, IRC, the Sunless Vault, CHESS,
+KERNEL PANIC, VENTURE and FRONTIER FORTUNE. Two shapes recur:
 
 | Program       | Source            | Pattern                              |
 |---------------|-------------------|--------------------------------------|
 | `CHESS.PRG`   | `programs/micromax` | self-contained (engine + UI in C)  |
 | Scott Adams   | `programs/scottfree`| engine in C + host-pre-parsed data |
+
+The Scott Adams port is the exception to everything below. It is committed
+rather than built, and `programs/scottfree/build.sh` is the one build script
+left in the tree.
 
 ## Toolchain
 
@@ -16,23 +22,26 @@ runs at `$0800` in user RAM. A 2-byte little-endian load-address header is
 prepended afterward to make the `.PRG`.
 
 ```
-cl65 -t none --signed-chars -O -c -o <src>.o <src>.c    # once per source
+cc65 -t none --signed-chars -O -o <src>.s <src>.c       # once per source
+ca65 -t none -o <src>.o <src>.s
 cl65 -t none -C <prog>.cfg <objects...> -o <prog>.bin   # link
 mkprg 0800 <prog>.bin NAME.PRG                          # 2-byte load header
 ```
 
 CMake does all of this for you, driven by the program's entry in
 `programs/catalog.txt`. The machinery lives in `tools/cmake/Programs.cmake`. There is
-no per-program build script. `ninja programs` builds every `.PRG`, `ninja <name>_prg`
-builds a single one, and `ninja disk` puts them on an image. The load address in the
-header is read out of the `.cfg` file's `STARTADDRESS`, so the two cannot drift
-apart.
+no per-program build script for anything the catalog builds. `ninja programs`
+builds every `.PRG`, `ninja <name>_prg` builds a single one, and `ninja disk`
+puts them on an image. The load address in the header is read out of the `.cfg`
+file's `STARTADDRESS`, so the two cannot drift apart.
 
 ## The four pieces
 
 1. The C source is ordinary C, but mind the cc65 gotchas described below.
-2. `glue.s` maps the kernel and DOS ABI onto the C runtime. The minimum is `OUTCH`,
-   `INCH` and `CLS`, and you add `RND`, a quit path and file calls as you need them.
+2. `glue.s` maps the kernel and DOS ABI onto the C runtime. A character-oriented
+   program needs `INCH` and a quit path at minimum, and the two legacy ports
+   also export `OUTCH` and `CLS`. Everything written since drives the VIC port
+   directly instead, through `vaddr`, `vputc`, `vattr`, `vfill` and `vcmd`.
    Exports carry a leading underscore because that is the cc65 calling convention, so
    `OUTCH` is exported as `_OUTCH`. A char argument arrives in `A`, a char result
    returns in `A`, and an int result returns in `A` and `X`.
@@ -47,7 +56,7 @@ apart.
 |-------------------|---------|---------------------------------------|
 | `K_PRINT_CHAR`    | `$FF00` | print A to screen                     |
 | `K_PRINT_NEWLINE` | `$FF06` | newline                               |
-| `K_GET_KEYSTROKE` | `$FF09` | non-blocking: C set + A=char (uppercased) |
+| `K_GET_KEYSTROKE` | `$FF09` | non-blocking: C set + A=char, case preserved |
 | `K_CLEAR_SCREEN`  | `$FF0C` | clear + home                          |
 | `FS_OPEN`         | `$AF03` | open file by name (ptr in `DOS_PTR` `$3C`) |
 | `FS_GETB`         | `$AF06` | read next byte of open file           |
@@ -73,7 +82,7 @@ $0080      cc65 zero-page runtime          __ZPSTART__ (free in a .PRG:
 `__STACKSTART__` must stay at or below `$8700`, because the DOS ROM begins at `$8800`
 and a stack placed above that writes into ROM, where the stores are silently
 discarded. The whole image plus the stack has to fit in the 32 KB, and that is tighter
-than it looks. IRC alone uses about 29.5 KB of it.
+than it looks. FRONTIER, the largest, uses about 26 KB of it.
 
 A heap is needed only if the program calls `malloc`. Neither current port does. Chess
 uses fixed arrays, and Scott Adams links its data in, as described below, so no heap
@@ -124,7 +133,7 @@ cc65's weaker `scanf` and heap support entirely.
 ## Build & test loop
 
 ```
-cd cmake-build-debug && ninja <prog>_prg         # -> programs/<prog>/NAME.PRG
+cd cmake-build-debug && ninja <prog>_prg         # -> <build>/programs/<prog>/NAME.PRG
 ninja disk                                       # ...or rebuild the whole image
 # then relaunch the GUI, or drive it headlessly from a temp test in
 # tests/test_monitor_integration.cpp (mountDisk + addKeypress + screen dump)

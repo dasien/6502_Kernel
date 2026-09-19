@@ -85,16 +85,17 @@ the monitor to return to the `]` prompt.
 
 ## Listing ROM modules (`BANKS`)
 
-`BANKS` lists the built-in ROM programs (BASIC, ASM, FORTH, …). Disk files are
+`BANKS` lists the built-in ROM programs, which are BASIC, FORTH and the monitor.
+Disk files are
 listed with `CATALOG`.
 
 ## Working with files
 
 ### Listing — `CATALOG` / `CAT`
 
-`CATALOG` prints the files in the current directory with a `NAME / BYTES` header
-and decimal sizes in aligned columns. Drawers are tagged `<D>` instead of a
-size.
+`CATALOG` prints the files in the current directory under a
+`NAME  BYTES  MODIFIED` header, with decimal sizes in aligned columns and a
+timestamp per entry. Drawers are tagged `<D>` instead of a size.
 
 ```
 CATALOG           list everything here
@@ -188,10 +189,13 @@ TYPE VAULT.TXT
 Or reach the same files from the root without opening the drawer:
 
 ```
-CATALOG SVAULT
 TYPE SVAULT/VAULT.TXT
 COPY GAMES/CHESS.PRG,/CHESS.PRG
 ```
+
+`CATALOG` is the exception. Its argument is an 8.3 wildcard pattern rather than a
+path, and it always lists the current directory, so `CATALOG SVAULT` at the root
+prints the drawer's own entry rather than its contents. Use `OPEN` first.
 
 ## Boot config (`SYSTEM/STARTUP.CFG`)
 
@@ -211,8 +215,9 @@ works here, including launching a program by name.
 - A missing file is not an error, and most disks will not have one.
 - A command that fails prints its error and the boot carries on, so a mistake
   costs a message rather than a machine.
-- Hold ESC while the machine starts to skip the file entirely. This is the way
-  back if a line in it stops the boot.
+- Press ESC while the machine is starting to skip the file entirely. This is the
+  way back if a line in it stops the boot. The key is read from the keystroke
+  buffer, so it has to be pressed during boot rather than held from power-on.
 
 The file runs before the sign-on box on purpose. The box does not clear the
 screen, so it lands underneath anything the config printed and ends up
@@ -243,7 +248,7 @@ Under it is a soft power register at `$FE61`. Switching off takes two writes,
 `$5A` then `$A5`, and any other value cancels a half-entered sequence. A single
 magic byte would let one wild pointer take the machine down.
 
-`DATE` prints one line such as `Wed 2026-07-26 14:30:05`. It shows both the date
+`DATE` prints one line such as `WED 2026-07-26 14:30:05`. It shows both the date
 and the time, so there is no separate time command.
 
 ## The disk
@@ -269,5 +274,7 @@ mkfs.fat -F 16 disk.img          # Linux
 newfs_msdos -F 16 disk.img       # macOS
 ```
 
-Two FATs, the default for both of those tools, are fine. MFC/OS keeps every copy
-in step, so a host filesystem check won't find them disagreeing.
+Two FATs, the default for both of those tools, are fine. MFC/OS mirrors every
+write into the second copy, so a host filesystem check won't find them
+disagreeing. It does not maintain a third or later copy, which no ordinary
+formatter creates.

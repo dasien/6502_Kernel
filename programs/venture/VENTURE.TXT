@@ -84,11 +84,11 @@ THROUGH A DOORWAY AFTER YOU. You will hear it arrive.
 INSIDE A ROOM IT WALKS THROUGH THE WALLS, and it is not much slower than you
 are. It does not go round anything, it cannot be cornered, and nothing you
 put between you and it helps. Walking away in a straight line barely gains
-you anything. What does is moving diagonally, since that carries you on both
-axes at once and it only ever moves on one. There is one answer and it is to
-leave, by whichever doorway is not on its side of the room.
+you anything, and diagonal movement no longer helps either: it moves on both
+axes every step, just as you do. There is one answer and it is to leave, by
+whichever doorway is not on its side of the room.
 
-THERE ARE MORE OF THEM AS YOU GO. One at the start of a level, and another
+THERE ARE MORE OF THEM AS YOU GO. Three at the start of a level, and another
 wakes every time you loot a room -- so the fourth room is not the easy one.
 
 
@@ -106,8 +106,9 @@ INSIDE A ROOM
 The bar across the top shows SCORE, LIVES and LEVEL.
 
 Take the treasure, then get out. Every room has two doorways on different
-sides -- the one you came in by and one to run for -- and neither will let
-you leave empty-handed. Which one you leave by decides where in the hall you
+sides -- the one you came in by and one to run for. Either will let you out
+whether or not you have the treasure. Which one you leave by decides where in
+the hall you
 come out.
 
 WATCH THE PIP. Facing sticks after you let go of the key, and the pip is the
@@ -150,7 +151,8 @@ so a clean level is worth a great deal more than a survived one.
 
 SOUND
 
-There is no music, only cues: a chime for treasure, a short note for a kill,
+There is no music, only cues: a chime for treasure, a short note for a kill
+made while carrying the treasure,
 a low tone when you die -- and one that matters, the note that means a
 Hallmonster has just walked into the room you are standing in. You need to
 know that without looking away from what you are doing.
@@ -167,8 +169,10 @@ THIS player has found.
 DIFFERENCES FROM THE ARCADE
 
 Movement is by whole character cells rather than smooth motion; there is no
-pixel-addressable layer for this, so cells are the resolution. At fifteen
-cells a second it still plays as an arcade game rather than a board game.
+pixel-addressable layer for this, so cells are the resolution. The movers are
+drawn as hardware sprites and slide between cells, so the picture is smoother
+than the simulation. At ten cells a second it still plays as an arcade game
+rather than a board game.
 
 The hall and the rooms are separate screens instead of a zoom, so the hall
 shows each room as a block rather than as its true shape.

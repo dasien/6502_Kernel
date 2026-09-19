@@ -77,7 +77,7 @@ WHAT YOU SEE
   delta, yellow  the Shimmering Orb, on floor 15
   a letter       a creature; see the monster list below
   a shading      a shadow, the one creature not drawn as a letter
-  an inverted !  a potion: yellow is healing, cyan is mana
+  an inverted !  a potion: red is healing, cyan is mana
   a triple bar   a scroll (magic map)
   a sunburst     a pile of gold
   gear shapes    weapon upgrade / armour upgrade
@@ -137,7 +137,7 @@ Creatures appear within a floor range, so the deeper you go the worse it gets.
   s   snake        2-5      7  POISON
   S   skeleton     2-6      9  risen dead
   g   goblin       2-6     10
-  .   shadow       3-8     12  drawn as a faint shading, not a letter --
+  light shade     3-8     12  drawn as a faint shading, not a letter --
                                dark and hard to see; evasive
   o   orc          3-8     15  lightly armoured
   d   wolf         3-8     14  swift hunter
@@ -188,7 +188,7 @@ you cast. Casting costs a turn.
 
   spell           min INT  mana  effect
   Magic Missile        8      4  bolt the nearest creature you can see,
-                                 3 + INT/2 + d4 damage
+                                 3 + INT/2 + 0-3 damage
   Light                9      3  widens your torch for a while -- see farther,
                                  but it is not a full map
   Heal                10      8  restore 8 + INT HP
