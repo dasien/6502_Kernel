@@ -5,15 +5,6 @@ filesystem. Both have since shipped, so this is research history rather than a l
 list. It is kept because the licence notes are what decide whether we may port or
 borrow code, and the README's acknowledgments depend on them.
 
----
-
-This was a working list of repositories, datasheets, documents and other sources
-informing the design of what were then upcoming features, chiefly the in-machine text
-editor and the resident filesystem. Links and short notes go under the relevant
-heading. Each entry is most useful with a one-line note on why it matters and, where
-it is known, its licence, because licence fit is what decides whether we can port or
-borrow the code at all.
-
 Format suggestion per entry:
 ```
 - <url>

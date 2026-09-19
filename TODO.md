@@ -528,6 +528,419 @@ or a sibling bank.
     Memory::kKernelRomStart, the file size is checked against the window, and every
     segment is bounds-checked. testRomWindowBoundaries pins it.
 
+### MFC-DOS phased build log (2026-07)
+
+> Moved here from `docs/dos_internals.md`. The build record as it was written,
+> with the addresses, kernel versions and module names that were in play at each
+> step. Several have since moved, most notably the DOS ROM base, the assembler's
+> buffers, and the assembler's own existence as a separate `ASM` module.
+> `docs/dos_internals.md` and Part 2 of `docs/architecture.md` are current.
+
+1. Block device — emulator `disk.img` + the `$FE24` registers + `Memory` routing;
+   a 6502 sector read/write smoke test. (Small, foundational.) — DONE. `BlockDevice`
+   (`include/computer/BlockDevice.h`, `src/computer/BlockDevice.cpp`) backs a host
+   `disk.img` (lazily opened, auto-created, grows on write, reads zeros past EOF);
+   `Memory` routes `$FE24-$FE28` to it; `Computer6502` owns it (default image
+   `../disk.img`). Covered by `tests/test_block_device.cpp` (`block_device_unit_tests`).
+2. FAT16 mount + read — mount, `CATALOG`, read a file by name; the FS ABI. (At
+   this point, mount-on-Mac authoring already works.) Sub-steps:
+   - **2.1 Memory-map shift — DONE.** The always-mapped DOS ROM at `$9000-$AFFF`
+     was pulled forward to here (rather than phase 4) so the FS has its permanent
+     home from the start. Emulator routes `$9000-$AFFF` to a `dos.rom` image (writes
+     ignored; falls through to RAM if absent); user RAM is now `$0800-$8FFF`; BASIC
+     `Ram_top → $9000`; the assembler's buffers moved to `$8000` (source) / `$7E00`
+     (symbols). Stub `src/kernel/dos/dos.asm` (signature only) builds `dos.rom`.
+     Covered by DOS-ROM cases in `tests/test_memory_banking.cpp`.
+   - **2.2 — DONE.** Block-device equates + 512-byte sector read/write primitives
+     (`BLK_READ_SECTOR`/`BLK_WRITE_SECTOR`, the 6502 side of `$FE24-$FE28`) + FS ABI
+     stubs, all in `src/kernel/dos/dos.asm`. Stable entry points live in a **DOS ABI
+     jump table at `$AF00`** (mirrors the kernel `$FF00` table): `DOS_COLD`, `FS_OPEN`/
+     `FS_GETB`/`FS_PUTB`/`FS_CLOSE`/`FS_DIR_FIRST`/`FS_DIR_NEXT` (stubs, carry=error),
+     `BLK_READ_SECTOR` (`$AF15`), `BLK_WRITE_SECTOR` (`$AF18`).
+
+     **Register contract for the `$AF00` FS entries:** results come back in **A and
+     the carry (carry set = error / EOF). `FS_GETB` preserves X and Y** — it used
+     to destroy X only on the path that crosses a 512-byte sector boundary, which is
+     the worst kind of bug: a read loop indexing with X passed every small-file test
+     and corrupted itself on the 513th byte, so it is now explicitly preserved and
+     pinned by `FsGetbPreservesXAcrossSectorBoundaries`. Every other FS entry
+     leaves X undefined (`FS_PUTB` clobbers it at entry testing `DOS_W_MODE`, and
+     the open/close/delete/rename paths run cluster and directory arithmetic through
+     X); assume only A and carry survive those. The cc65 glue in `programs/*/glue.s`
+     reloads X on return, which is why this went unnoticed for so long. DOS zero page uses the
+     free `$3A-$5A` gap (`BLK_BUF_PTR=$3A`). Covered by `tests/test_dos_blockio.cpp`
+     (`dos_blockio_tests`) which runs the real `dos.rom` routines.
+   - **2.3 — DONE.** FAT16 read driver in `src/kernel/dos/dos.asm`, validated by
+     `tests/test_dos_fat16.cpp` against host-built images (`tests/support/fat16_image.h`).
+     - 2.3a: auto-mount (parse boot-sector BPB → sectors/cluster, FAT/root/data
+       start, root entry count, cached in the `$0300` DOS state block) +
+       `FS_DIR_FIRST`/`FS_DIR_NEXT` (root-dir walk, skipping deleted/LFN/volume
+       entries, leaving the 32-byte entry in `DOS_ENTRY`).
+     - 2.3b: `FS_OPEN` (parse 8.3 name, scan dir, arm the open-file cursor),
+       `FS_GETB` (stream bytes across sector boundaries, following the FAT16
+       cluster chain at cluster boundaries; carry=EOF), `FS_CLOSE`. Reads stream
+       through the block device's sector buffer (no 512B RAM buffer); FAT lookups
+       and dir scans use bounded skip-reads. `FS_PUTB` remains a stub (phase 3).
+   - **2.4 — DONE.** Interactive surface + tooling:
+     - `tools/mkfat16` creates a FAT16 `disk.img` (sample files by default, or host
+       files added under derived 8.3 names), reusing the shared image builder. It
+       sizes the volume as a genuine FAT16 (>= 4085 clusters), so macOS mounts it
+       read/write and exchanges files with the machine. A `sample_disk` CMake
+       target writes `<build>/disk.img`.
+     - Temporary monitor command `@` (kernel.asm, v3.3): `@` catalogs the disk
+       (names + sizes), `@NAME` types a file. It calls the DOS ABI at `$AF..`
+       directly (the DOS ROM is always mapped), so no kernel `$FF00` change was
+       needed; phase 4 replaces `@` with the real DOS shell.
+     - Covered by `monitor_integration` (catalog, type, missing-file) against a
+       mounted FAT16 image.
+3. FAT16 write — create / `ERASE` / `SAVE`; full round-trip on the machine.
+   - **3a — DONE.** The write engine in `dos.asm`: cluster allocation (scan the FAT
+     for a free entry, mark EOC), FAT-entry read-modify-write (read the sector,
+     skip to the entry, overwrite 2 bytes in the buffered sector, flush — no RAM
+     sector buffer), free-chain, directory-slot find (reuse same-name + free old
+     chain, else append), and `FS_OPEN(write)` / `FS_PUTB` / `FS_CLOSE` (stream
+     bytes, allocate + chain clusters across boundaries, pad + flush the final
+     sector, finalize the dir entry). Single + multi-cluster; truncate-on-reopen.
+     `FS_OPEN` mode is passed in Y (0 = read, 1 = write). A C++ FAT16 parser
+     (`Fat16ImageReader`) independently validates the on-disk format; covered by
+     write/round-trip cases in `tests/test_dos_fat16.cpp`. (Single FAT copy;
+     deleted-slot reclaim deferred.)
+   - **3b — DONE.** `FS_DELETE` (scan, free the cluster chain, mark the directory
+     entry `$E5`) at DOS ABI `$AF1B`. The temporary `@` preview gains write
+     commands (kernel v3.4): `@-NAME` erases, and `@SSSS-EEEE=NAME` saves a memory
+     range to a file (`FS_OPEN`-write + `FS_PUTB` loop + `FS_CLOSE`). Covered by
+     erase/free-and-reuse cases in `dos_fat16_tests` and save/erase round-trip in
+     `monitor_integration`. (Full machine round-trip: poke memory -> `@..=F` save
+     -> `@` catalog -> `@F` type back.)
+4. DOS shell as boot target — the pivot: fill the (already-present) `$9000-$AFFF`
+   DOS ROM with the command shell, boot into the DOS prompt, the command set above,
+   launch-by-name (command → ROM module → file), program-file loader. `MON`/`BASIC`/
+   `ASM` launch their banks; the monitor is entered as a tool and returns to DOS.
+   - **4.1 — DONE.** The boot pivot. RESET now `JMP DOS_COLD`; the machine boots into
+     the MFC/OS shell (banner + `]` prompt) in `dos.asm`: read a line (BIOS
+     `READ_COMMAND_LINE`), match a verb, dispatch. Verbs: `HELP`, `MON` (launches the
+     monitor via the new `K_MON_ENTRY` `$FF1E` BIOS entry), `CATALOG`/`CAT`, `TYPE
+     NAME`. The monitor gains `Q` (quit → `DOS_WARM` `$AF1E`). Kernel v3.5. The `@`
+     preview + `B:` menu remain reachable through `MON` (retired in 4.2/4.3).
+   - **4.2a — DONE.** DOS file verbs in the shell: `SAVE name,SSSS-EEEE` (writes the
+     `.PRG` 2-byte load-address header then the range), `LOAD name[,AAAA]` (loads to
+     the header's address, or an override), `ERASE name`, `RENAME old,new`. New
+     `FS_RENAME` (DOS ABI `$AF21`) + a shared `_DOS_DIR_FIND_EXISTING` helper.
+     Kernel v3.5.1 (MONITOR_MAIN resets its display state on launch). Covered by
+     DOS round-trip cases in `monitor_integration` and `FS_RENAME` cases in
+     `dos_fat16_tests`.
+   - **4.2c — DONE.** Host bridge moved into the DOS as `IMPORT name` / `EXPORT name`
+     (host file picker <-> a FAT16 file, reusing the PIA byte-stream that `L:`/`S:`
+     used, now bridged to the FS via `FS_PUTB`/`FS_GETB`). The monitor's `L:`/`S:`
+     host load/save are retired: removed from `CMD_INDEX_MAP` + help, and their
+     handlers (`PARSE_CMD_LOAD`/`SAVE_CHECK`, `CMD_LOAD_FILE`, `CMD_SAVE_FILE`)
+     excised - freeing ~180 bytes of kernel ROM (the two vacated jump-table slots
+     map to a no-op). Kernel v3.7.
+   - **4.2b — DONE.** Retired the temporary `@` preview: removed its dispatch,
+     `CMD_CATALOG`/`CMD_TYPE`/`CMD_SAVE`/`CMD_ERASE` routines, the `FS_*`/`DOS_DIR_ENTRY`
+     equates, and the `MSG_DOS_*` strings from `kernel.asm` (~550 bytes freed). The
+     monitor is a pure debugger again; the DOS shell owns the file verbs. Kernel v3.6.
+     The obsolete monitor `@` tests were removed (coverage is the DOS-level tests).
+   - **4.3** — launch-by-name. Decisions: `ASM` launch name, ROM-module-first with
+     `&NAME` override to force a disk program, programs return via `RTS`.
+     - 4.3a — DONE. `RETURN_FROM_MODULE` (`$FF12`) now re-enters `DOS_WARM` (monitor-
+       state save/restore dropped); new `K_LAUNCH_BY_NAME` ABI (`$FF21`) scans
+       `MODULE_DIR` and `BANK_LAUNCH`es a match (assembler's name is `ASM`); the DOS
+       resolves an unmatched verb to a module. `BASIC`/`ASM` run from `]` and return
+       to `]`. The monitor `B:` bank menu is excised (`CMD_BANK_MENU`/`PARSE_CMD_BASIC`
+       removed). Kernel v3.8.
+     - 4.3b — DONE. Disk `.PRG` launch (`_DOS_RUN_FILE`): `FS_OPEN` the name, read
+       the 2-byte load-address header, load the body there, then run it as a
+       subroutine — clean stack with a `DOS_WARM` return pushed, so the program's
+       `RTS` returns to `]`. A leading `&` forces this disk path over a same-named
+       module. Unknown name → `COMMAND NOT FOUND`. Closes the loop: assemble in
+       `ASM` → `SAVE NAME,start-end` → type `NAME` to run it.
+5. Editor (module, bank) — full-screen, generic; edit/save FS files → full
+   in-machine self-hosting (edit → assemble → run, all at the DOS).
+6. (Later/optional) relocate the monitor to a bank; kernel ROM becomes a lean BIOS.
+
+The filesystem phases, 1 through 3, are foundational and unchanged regardless of
+the DOS framing. The pivot mainly reshaped phase 4 into a DOS shell rather than
+file verbs bolted onto the monitor, and flipped the boot target.
+
+### Bank-switched module slot: the design as argued (2026-06)
+
+> Moved here from `docs/architecture.md` Part 4. This is the design of the module slot as it was argued at the time, including the addresses and sizes then in play (`$B000-$DFFF`, 12 KB, an 8 KB kernel at `$E000`). The window is now `$B000-$EFFF` (16 KB) under a 4 KB BIOS at `$F000`, and the monitor is bank 4. Part 2 of `docs/architecture.md` is the authoritative current map; the reasoning below is left as written.
+
+
+**Status:** Phases 1–5 implemented (kernel v3.27). I/O is at `$FE00`, the module
+window is a clean bank-switched slot (`MODULE_BANK` `$FE23`), **BASIC is module
+bank 1, and a DEV TOOLS module is bank 2** (`src/kernel/assembler/`,
+`assembler.rom`). `B:` is the module bank menu (driven by the kernel `MODULE_DIR`
+catalog), modules return via `$FF12` (`RETURN_FROM_MODULE`, which unmaps the bank),
+and `RESET` zeroes the window so bank 0 boots clean.
+
+The dev-tools module (v0.7) provides:
+- **Disassembler** (`D xxxx`) — decodes via the canonical 65C02 table generated
+  from the CPU emulator (`tools/gen_opcode_table.py` → `opcodes_65c02.inc`).
+- **Line assembler** (`A xxxx`) — immediate, no-file, numeric operands; quick patches.
+- **Two-pass assembler** (`B`) — labels, `NAME = expr`, expressions (`+`/`-`,
+  `<`/`>`), pseudo-ops `.ORG`/`*=`, `.END`, `.BYTE`/`.DB`, `.WORD`/`.DW`,
+  `.ASCII`/`.TX`; build listing; `? LINE nnnn` errors.
+- **Source load** (`L`) — reads a host `.s` file into the `$A000` source buffer via
+  the byte-stream file interface; symbol table at `$9E00`.
+
+It reaches the system only through the `$FF00` jump table (extended in Phase 4 with
+`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`). Source can be authored either on the
+host (`L`) or on the machine: the resident FAT16 filesystem and the full-screen
+`EDIT` program (see [EDIT.md](EDIT.md)) close the loop, so **edit → assemble → SAVE →
+run by name** all happen at the `]` prompt without host involvement.
+
+### Goal
+
+Stop growing (or shrinking) the kernel ROM to add big features. Instead, make the
+12 KB region currently occupied by EhBASIC a bank-switched module window: a slot
+into which the kernel maps one ROM "module" at a time (BASIC, an assembler/
+disassembler package, a Z-machine to play Zork, a text editor, …). BASIC becomes
+just one module rather than a permanent resident.
+
+This mirrors how real 6502 machines did it — cartridge ROMs, bank-switched ROM,
+the Apple II language card.
+
+#### Why not just grow / shrink the kernel?
+
+- A debugger-grade monitor wants a disassembler (~1–1.5 KB) and mini-assembler
+  (~1–1.5 KB). Those don't belong in the always-resident kernel.
+- Shrinking the kernel to 4 KB to reclaim user RAM would be undone the moment we
+  add a disassembler. Modules sidestep the whole question.
+
+The kernel stays at `$E000–$FFFF` (8 KB), unchanged in start address.
+
+### Memory map (target)
+
+```
+$0000–$07FF   Zero page / stack / system vars / screen      (unchanged)
+$0800–$AFFF   User RAM (~42 KB)                              (module working RAM)
+$B000–$DFFF   MODULE WINDOW (12 KB) — backed by selected bank; clean, no I/O hole
+$E000–$EF6E   Kernel CODE (~3.9 KB at v3.27)                 (start unchanged)
+$EF6F–$FDFF   free kernel ROM (~3.6 KB)                      (kernel growth room)
+$FE00–$FEFF   I/O page (relocated here from $DC00)
+$FF00–$FFF9   Kernel API jump table (grows upward; ~83 entries possible, 20 used)
+$FFFA–$FFFF   NMI / RESET / IRQ vectors
+```
+
+Key property: the module window contains no I/O — any ROM assembled at `$B000`
+runs in a clean, contiguous 12 KB with no addresses to avoid.
+
+### Prerequisite: relocate I/O out of the module window (`$DC00` → `$FE00`)
+
+Today the PIA/file-I/O lives at `$DC00–$DC22`, inside the module window (a vestige
+of the C64-style map). That was tolerable when BASIC was the only, hand-authored
+occupant. For arbitrary module ROMs we can't enforce a "don't touch this 36-byte
+window" rule, so we remove the constraint by moving the I/O.
+
+The I/O shadow doesn't vanish — it moves from the module window (third-party ROM
+territory) into the kernel ROM's unused space (our territory), where avoiding it is
+trivial: the kernel's CODE ends at `$EEC3`, nowhere near `$FE00`. I/O is fixed at
+**one page** (`$FE00–$FEFF`) — current usage is ~36 registers and even generous
+expansion stays far under 256; page-aligned I/O is also natural to decode on real
+hardware.
+
+New I/O page layout (re-based 1:1 from the old `$DCxx` block):
+
+| Addr | Register |
+|------|----------|
+| `$FE00` | `PIA_DATA` — keyboard data |
+| `$FE02` | `PIA_CONTROL` |
+| `$FE0E` | timer IRQ acknowledge |
+| `$FE10` | `FILE_COMMAND` |
+| `$FE11` | `FILE_STATUS` |
+| `$FE12/$FE13` | `FILE_ADDR_LO/HI` |
+| `$FE14–$FE1F` | `FILE_NAME_BUF` (12 bytes) |
+| `$FE20/$FE21` | `FILE_END_ADDR_LO/HI` |
+| `$FE22` | `FIO_DATA` — BASIC byte-stream LOAD/SAVE |
+| `$FE23` | `MODULE_BANK` — bank-select register |
+| `$FE61` | `POWER` — soft power switch; write $5A then $A5 to switch off |
+| `$FE62–$FE64` | `VREG_FONT_LO/HI/DATA` — VIC soft-font port; index + auto-incrementing data. Font storage is inside the chip, not in the 64K map (see `docs/video_design.md`) |
+| `$FE65–$FECA` | VIC sprites — 17 sprites x 6 bytes: X lo/hi, Y lo/hi (bit 7 = enable), glyph, attribute. Positions are nominal pixels on the 8x16 grid; a sprite is drawn over the cell planes and is NOT moved by the scroll region or the fine offset |
+
+Touched by the relocation:
+- `kernel.asm`: re-base the `PIA_*`, `FILE_*`, timer-ack equates.
+- `basic.asm`: re-base `FIO_COMMAND`/`FIO_STATUS`/`FIO_DATA`.
+- `src/computer/PIA.*` / `Memory`: update `isPiaAddress` (and any screen routing).
+- `memory.cfg`: bound the `CODE` segment at `$FDFF` so the linker errors rather than
+  growing into the I/O page.
+
+Phase 1 (this relocation) is self-contained and worth doing on its own.
+
+### Bank-select register — `MODULE_BANK = $FE23`
+
+- **Write `n`:** map bank `n` into `$B000–$DFFF`.
+  - `0` = RAM (slot is plain read/write RAM — the boot/default state).
+  - `1…255` = read-only module ROM banks.
+- **Read:** returns the current bank (kernel can save/restore).
+- **Reset:** forced to `0`. BASIC is not auto-loaded; the slot starts empty.
+- Lives in the always-mapped I/O page, so it's reachable regardless of what's mapped.
+
+Bank capacity is bounded only by the register width: one byte → 256 banks × 12 KB
+(~3 MB). We define a handful and leave the rest open.
+
+### Emulator changes (`Memory`)
+
+Bank-switched (not copy-on-demand): the host pre-loads each module image into a
+`bankROM[1..N]` array at startup; switching is a pointer change — instant, and each
+bank retains its own contents.
+
+```
+read(addr):
+    if I/O addr ($FE00–$FEFF)              -> device / bank-register handler
+    else if screen addr                    -> VIC
+    else if $B000<=addr<=$DFFF and bank!=0  -> bankROM[bank][addr-$B000]   # read-only
+    else                                   -> ram_[addr]
+
+write(addr, v):
+    if I/O addr                            -> device / bank-register handler
+    else if screen addr                    -> VIC
+    else if $B000<=addr<=$DFFF and bank!=0  -> ignored (ROM)
+    else                                   -> ram_[addr]                    # bank 0 = RAM
+```
+
+### Module contract
+
+A "module" is a 6502 ROM ported to this system:
+1. Assembled to run from the module window (entry recorded in the directory below;
+   `$B000` by default).
+2. Reaches kernel services (character I/O, etc.) **only through the `$FF00` jump
+   table** — the stable module ABI. (BASIC already does this via its `PG2_TABS`
+   vectors.)
+3. Returns to the monitor with `JMP $FF12` (`RETURN_FROM_MODULE`), which resets
+   `MODULE_BANK = 0` and re-enters the command loop.
+4. Uses `$0800–$AFFF` as working RAM, shared with all other modules → one tool at a
+   time; "save your work before switching." Each module documents its RAM footprint.
+
+A module is not required to reserve any specific bytes — there is no embedded
+header or signature. Naming/entry metadata lives in the kernel (see below), so even
+hard-to-modify third-party ROMs (a Z-machine, an off-the-shelf assembler) only need
+the unavoidable port (re-base + retarget I/O), nothing more.
+
+### Module directory (in the kernel ROM)
+
+The kernel owns a curated catalog of known modules — like the `$FF00` jump table.
+The `B:` menu and launcher read from it; the module ROMs stay untouched.
+
+```
+; One record per module: bank#, entry address, name pointer.
+MODULE_DIR:
+    .byte 1  : .word $B000 : .word NAME_BASIC      ; bank 1
+    .byte 2  : .word $B000 : .word NAME_DEVTOOLS   ; bank 2
+    .byte 3  : .word $B000 : .word NAME_ZORK       ; bank 3
+MODULE_DIR_COUNT = 3
+
+NAME_BASIC:    .byte "BASIC", 0
+NAME_DEVTOOLS: .byte "ASSEMBLER / DISASSEMBLER", 0
+NAME_ZORK:     .byte "ZORK (Z-MACHINE)", 0
+```
+
+Adding a module = add one record + name string, and add the ROM image to the host
+bank set, then rebuild the kernel. The directory + names are tiny — well within the
+~3.9 KB of kernel headroom.
+
+### `B:` — Bank menu (replaces per-module commands)
+
+`B:` is repurposed from "launch BASIC" to "Bank": it lists the directory and lets
+you pick a module to map + run.
+
+```
+BANKS:
+  1  BASIC
+  2  ASSEMBLER / DISASSEMBLER
+  3  ZORK (Z-MACHINE)
+  ?
+```
+
+- Build the menu by walking `MODULE_DIR` and printing each name.
+- On a numeric selection: store the record's bank in `MODULE_BANK`, then `JMP`
+  (record's entry address). ESC cancels back to the monitor.
+- Adding a module never needs a new kernel command — it just appears in the menu.
+
+```
+; selection -> record index
+LAUNCH_FROM_DIR:
+    ; A = directory index chosen
+    ; load bank#, entry from MODULE_DIR record
+    STA MODULE_BANK          ; map the bank in
+    JMP (entry)              ; run the module
+
+; $FF12 handler
+RETURN_FROM_MODULE:
+    STZ MODULE_BANK          ; unmap (slot back to RAM)
+    ...                      ; return to the monitor command loop
+```
+
+(Optional sanity byte-check after mapping is allowed but not required — the directory
+is the source of truth.)
+
+### Host-side bank registry
+
+At startup the emulator loads module images into the bank table instead of writing
+BASIC into flat RAM:
+- bank 1 ← `basic.rom`
+- bank 2 ← `assembler.rom`
+- (3–255 reserved)
+
+A small name→file map (config or convention). Bank 0 is RAM (no image).
+
+### Settled decisions
+
+1. Naming/metadata → kernel-side `MODULE_DIR` table (not embedded headers, no
+   per-module signature). Works for hard-to-modify third-party ROMs; BASIC is just
+   directory entry 1, no special-casing.
+2. First module → one combined "DEV TOOLS" ROM (bank 2): assembler and
+   disassembler together (they share the opcode/mnemonic tables).
+3. Feature placement → size-based split. Big debugger machinery (disassembler,
+   mini-assembler, single-step, breakpoints) lives in modules. Small always-useful
+   commands (register display, hex add/subtract, memory compare) stay resident in the
+   kernel.
+4. Bank 0 = RAM, usable as scratch (not persistent across module loads).
+5. Module working RAM = documented per-module footprint in `$0800–$AFFF`; one tool
+   at a time, save before switching.
+6. `B:` = Bank menu, replacing the old `B:` and any per-module command.
+
+### Migration
+
+- EhBASIC → bank 1, unchanged content (same `$B000` entry); the host registers it
+  as a bank instead of loading it at boot. Its file-I/O equates move with the I/O
+  relocation. It becomes directory entry 1.
+- Kernel grows only: the I/O relocation, `MODULE_BANK` handling, `MODULE_DIR`, and the
+  `B:` menu/launcher.
+
+### Implementation phases
+
+1. [DONE, v2.2.7/8] Relocate I/O `$DC00` → `$FE00` (kernel + basic + emulator),
+   reserve the I/O page via an `IORESV` segment so the linker errors if `CODE` grows
+   into it. Re-tested (integration suite + BASIC LOAD/SAVE). Window is now clean.
+2. [DONE, v2.2.9] Banking infrastructure: `MODULE_BANK` register (`$FE23`) +
+   `Memory` window routing (bank 0 = RAM, 1..255 = read-only ROM) + host bank table
+   (`Memory::loadBank`). `RESET` maps the window to RAM. Behavior-preserving: BASIC
+   still loads into bank-0 RAM at `$B000`. Covered by `tests/test_memory_banking.cpp`
+   (11 cases) and the unchanged integration suite.
+3. [DONE, v3.0] Convert BASIC to bank 1: the host installs `basic.rom` as a
+   bank (`Memory::loadBank(1, …)`) instead of flat RAM. Added the kernel `MODULE_DIR`
+   catalog + the `B:` bank menu/launcher; `RETURN_FROM_BASIC` became
+   `RETURN_FROM_MODULE` (`$FF12`) and now unmaps the bank on exit. `RESET` zeroes
+   `$B000–$DFFF` so bank 0 boots clean (safe now that BASIC is a ROM bank). Factored
+   `FILL_RANGE_CORE` out of `F:` and reused it for the window clear. Covered by
+   `testBankMenu`/`testBankLaunch` in the integration suite.
+4. [DONE, v3.1/3.1.1] First new module: combined assembler + disassembler
+   in bank 2 (`assembler.rom`). Disassembler, line assembler, and a two-pass
+   assembler (labels, expressions, `.ORG`/`.END`/`.BYTE`/`.WORD`/`.ASCII`, `=`),
+   with host `.s` source load and a build listing. The module ABI was extended
+   (`K_READ_LINE`/`K_PARSE_HEX`/`K_PRINT_HEX_BYTE`) so the module reuses the kernel
+   instead of duplicating input/parsing/printing.
+
+5. [DONE] In-machine authoring: the resident FAT16 filesystem (MFC-DOS,
+   `$8800-$AFFF`) and the full-screen `EDIT` program mean source is written and
+   saved on the machine rather than host-loaded. Self-hosting is complete.
+
+Still open: a richer assembler (macros, more directives); single-step and
+breakpoints in the monitor; more modules; and the undecided monitor-to-bank
+relocation.
+
 ### Early monitor and BASIC fixes
 
 - [x] Z: & T: commands are updating the current address to 00FF and 01FF respectively and they shouldn't.
@@ -549,7 +962,7 @@ or a sibling bank.
 - [x] docs/kernel_memory_map.md (now consolidated into docs/architecture.md, Part 2) and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
 - [x] Done via the #65 docs consolidation: docs/system_architecture.md was merged into docs/architecture.md (Part 1 — System overview) and its stale C64-style $D000 I/O / VIC-II / SID / CIA / banking description was dropped. The authoritative memory map now lives in docs/architecture.md, Part 2.
 
-### Bankable module slot (docs/architecture.md, Part 4)
+### Bankable module slot
 - [x] Phase 1 (v2.2.7/8): relocate I/O $DC00 -> $FE00, reserve the I/O page (IORESV), clean the $B000-$DFFF window.
 - [x] Phase 2 (v2.2.9): banking infrastructure - MODULE_BANK register ($FE23), emulator Memory window routing (bank 0=RAM, 1..255=ROM), host bank table (Memory::loadBank), RESET maps window to RAM. Behavior-preserving; BASIC still in bank-0 RAM. Covered by tests/test_memory_banking.cpp.
 - [x] Phase 3 (v3.0): BASIC is now module bank 1 (host installs basic.rom as a bank, not flat RAM). Added the kernel MODULE_DIR catalog + the B: bank menu/launcher; RETURN_FROM_BASIC -> RETURN_FROM_MODULE ($FF12) unmaps the bank on exit; RESET zeroes the $B000-$DFFF window so bank 0 boots clean. Factored FILL_RANGE_CORE out of F: and reused it. Covered by testBankMenu/testBankLaunch; integration harness now returns non-zero on failure so ctest catches regressions.

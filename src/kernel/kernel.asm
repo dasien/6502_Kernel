@@ -39,7 +39,7 @@
 ; I/O page:     $FE00-$FECA (PIA, BlockDevice, ACIA, VIC, SID, RTC, PowerSwitch;
 ;               $FE23 MODULE_BANK). Sited inside the kernel region so that
 ;               $B000-$EFFF stays a clean, bankable module window
-;               (see docs/architecture.md, Part 4).
+;               (see docs/architecture.md, Part 2).
 ;
 ; ================================================================
 ; FEATURES
@@ -113,7 +113,7 @@
 ; 2026-06-08  v2.2.7 Relocated memory-mapped I/O from $DC00 to a reserved page at
 ;                   $FE00-$FEFF (inside the kernel region) so $B000-$EFFF is a
 ;                   clean, I/O-free window. Phase 1 of the bankable module-slot
-;                   plan (docs/architecture.md, Part 4). Behavior-preserving.
+;                   plan (see TODO.md, bank-switched module slot). Behavior-preserving.
 ; 2026-06-08  v2.2.8 SCROLL_SCREEN page copies made strictly sequential (P0..P3):
 ;                   the interleaved form corrupted bytes spanning a screen page
 ;                   boundary on every scroll (seen via Z:/T:/repeat-? scrolling).
@@ -1708,7 +1708,7 @@ LIST_MODULES:
 ;   bytes 1-2   entry address (little-endian) - JMP target after mapping
 ;   bytes 3-4   pointer to the null-terminated launch name (typed at the DOS ])
 ; Adding a module = add a record + name string here and register its ROM image
-; as that bank in the host bank table (Computer6502). See docs/architecture.md, Part 4.
+; as that bank in the host bank table (Computer6502). See docs/architecture.md, Part 2.
 ; ----------------------------------------------------------------
 MODULE_DIR_RECSIZE = 5
 MODULE_DIR:

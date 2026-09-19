@@ -156,7 +156,7 @@ FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
 
 ; Module-slot bank select. Writing n maps bank n into the $B000-$EFFF module
 ; window: 0 = RAM (boot/default), 1..255 = read-only ROM modules. Reading returns
-; the current bank. Lives in the always-mapped I/O page (see docs/architecture.md, Part 4).
+; the current bank. Lives in the always-mapped I/O page (see docs/architecture.md, Part 2).
 MODULE_BANK        = $FE23         ; bank-select register for the $B000-$EFFF window
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
