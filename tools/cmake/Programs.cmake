@@ -58,13 +58,8 @@ function(mfc_add_catalog_program entry out_target)
     _mfc_load_address("${_config}" _load)
     _mfc_program_filename("${entry}" _prgname)
 
-    # Every object gets an explicit home in the build tree. cc65 writes both its
-    # object and its intermediate assembly next to the source unless told
-    # otherwise, which would put build output in the source tree and let two
-    # steps compiling the same file collide -- TERM and IRC both build
-    # ../common/scrollback.c, here and again for the test blobs in
-    # BuildKernel.cmake. mfc_cc65_object() places every intermediate; see
-    # Cc65Compile.cmake.
+    # Every object gets an explicit home in the build tree. mfc_cc65_object()
+    # places the intermediates too; see Cc65Compile.cmake.
     file(MAKE_DIRECTORY "${_outdir}")
 
     set(_objs "")

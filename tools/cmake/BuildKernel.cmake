@@ -155,9 +155,8 @@ if(CA65_FOUND AND LD65_FOUND)
         # (Programs.cmake).
         #
         # Every source is compiled to its own object under the build tree, by
-        # mfc_cc65_object() -- see Cc65Compile.cmake for why cl65's one-shot mode
-        # cannot be used here without the TERM and IRC builds racing each other
-        # over programs/common/scrollback.
+        # mfc_cc65_object(); see Cc65Compile.cmake for why the compile is two
+        # stages rather than one cl65 call.
         #
         # mfc_add_test_blob(<name>
         #     DIR      <source directory>

@@ -1,23 +1,15 @@
 # Cc65Compile.cmake - compile one cc65 source to an object at an explicit path.
 #
-# Why this exists rather than a plain `cl65 -c -o out.o in.c`.
-#
-# cl65 in compile-and-assemble mode writes its intermediate assembly next to the
-# INPUT, as <source-dir>/<base>.s, and -o redirects only the final object. Two
-# build steps that compile the same C file therefore write, assemble and delete
-# the same .s, and there is nothing to order them. programs/common/scrollback.c
-# is compiled by both TERM and IRC, twice over: once for each test blob in
-# BuildKernel.cmake and once for each .PRG in Programs.cmake. Run in parallel
-# they raced, and the failures were intermittent and unhelpful --
-# "Cannot open input file .../scrollback.s" when one step deleted the file the
-# other was about to assemble, or "ld65: Read error at position 8192
-# (file corrupt?)" when a linker read an object another step was still writing.
-#
-# cl65 has no flag for the intermediate's location, so the fix is to stop using
-# its one-shot mode for C and drive the two stages directly: cc65 emits assembly
-# where we ask, and ca65 assembles it to the object we ask for. Nothing lands in
-# the source tree and no two steps share a path. Assembly sources go straight to
-# ca65, which has no intermediate to collide over.
+# C is driven as two stages, cc65 then ca65, rather than through `cl65 -c`.
+# cl65's compile-and-assemble mode writes its intermediate assembly next to the
+# INPUT, as <source-dir>/<base>.s, and -o redirects only the final object; it has
+# no flag for the intermediate. A source compiled by more than one build step
+# therefore has several steps writing, assembling and deleting one shared .s,
+# with nothing to order them. programs/common/scrollback.c is one: TERM and IRC
+# each build it, for a test blob in BuildKernel.cmake and again for a .PRG in
+# Programs.cmake. Driving the stages directly puts every intermediate where we
+# ask, so no two steps share a path and nothing lands in the source tree.
+# Assembly sources go straight to ca65, which has no intermediate at all.
 #
 # The flags every 6502 program shares are applied here, in one place.
 # --signed-chars is NOT optional: cc65 defaults to unsigned char and several of
