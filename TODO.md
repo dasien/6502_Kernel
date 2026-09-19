@@ -192,24 +192,6 @@
 
 ### Memory map (future, not urgent)
 
-**Superseded, kept because the conclusion changed.** This used to read: shrink the
-kernel from 8 KB ($E000-$FFFF) to 4 KB ($F000-$FFFF) *and* move the BASIC ROM up
-(e.g. $B000-$DFFF -> $C000-$EFFF), so the reclaimed 4 KB lands contiguous with the
-user RAM below BASIC. It also called the kernel shrink a blocking prerequisite
-needing ~111 bytes freed by a structural change.
-
-Both halves are obsolete:
-
-- **The kernel shrink is done** — see "Memory map" directly above. The BIOS came in
-  at 1,562 bytes once the monitor became a bank, so the ~111-byte problem evaporated
-  rather than being solved, and no monitor dispatch table was needed. Kernel CODE is
-  now $F000-$F610 (1,553 bytes) with 2,031 free below IORESV.
-- **The relocation would no longer buy user RAM at all.** That plan assumed the
-  module window sat directly above user RAM. It does not: the **DOS ROM is between
-  them**. The map is now user RAM $0800-$87FF, DOS ROM $8800-$AFFF, module window
-  $B000-$EFFF, kernel $F000-$FFFF — so anything freed at the bottom of the module
-  window is stranded above the DOS ROM and cannot extend one usable block.
-
 - [ ] The only remaining lever that actually grows user RAM is the **DOS ROM base**,
   because the DOS is the thing directly above user RAM. It currently occupies
   $8800-$A6D5 (7,894 bytes) with **2,090 bytes free** below DOSJUMP at $AF00, so the
@@ -239,17 +221,6 @@ only `Ram_top` ever moves.
 - [ ] Remaining from post-Phase-4: assembler macros + more directives; single-step/breakpoints in the monitor.
 
 ## Done
-
-Ordered by most recent activity. Sections carrying no date of their own keep
-their original relative order, at the end.
-
-These were previously grouped under two headings, kept here because the grouping
-says where the work came from. "Deferred from the kernel/BASIC deep scan
-(2026-06)" covered the BASIC, refactor, documentation, module-slot and
-monitor-split sections. "Deferred correctness work (2026-07)" covered DOS and
-filesystem, host file I/O, the monitor and assembler consolidation, and
-assembler v0.9, all surfaced while adding the host-interop and interrupt
-coverage.
 
 ### Monitor and assembler consolidated (2026-07-31)
 - [x] The assembler/disassembler (bank 2, "DEV TOOLS") folded into the monitor and the
@@ -511,35 +482,7 @@ The emulated CPU is now a full **WDC W65C02S**. Validated against all three amb5
   examples/README.md ("assemble the source in the built-in assembler") cannot rot
   again. `testLineNumbersCountBlankLines` pins the line numbering.
 
-### Early monitor and BASIC fixes
-
-- [x] Z: & T: commands are updating the current address to 00FF and 01FF respectively and they shouldn't.
-- [x] Fix BASIC token parsing (e.g. enter 10 FOR I = 1 TO 10) and that is not what prints when you LIST
-
-### BASIC integration fixes
-- [x] LOAD/SAVE I/O vectors (PG2_TABS) pointed at $FF0F = the RNG routine. Resolved by implementing real BASIC SAVE/LOAD: SAVE writes the program as ASCII .bas text and LOAD reads it back (via a new byte-stream mode on the PIA file I/O). VEC_SV/VEC_LD now point at BASIC_SAVE/BASIC_LOAD, so the RNG bug is gone.
-- [x] INIT_BASIC_IO removed (dead code); PG2_TABS is the single source of truth for the BASIC I/O vectors.
-- [x] IRQ/NMI wired (v2.2): CPU IRQ/NMI dispatch + a ~60Hz PIA interval timer (BASIC ON IRQ) + NMI stop key (BASIC ON NMI / break to monitor). The kernel ISRs set EhBASIC's "happened" bit.
-
-### BASIC label rewrite
-- [x] Resolved via a glossary rather than a rename. EhBASIC's upstream is unmaintained (Lee Davison deceased) so parity is no longer a goal, but a full in-place rename of ~780 code labels was judged not worth the risk/effort. Instead, docs/basic_label_glossary.md (now part of docs/basic_internals.md) maps the cryptic LAB_<hex> labels (and the named handlers) to their meaning, drawn from the source comments. The ROM is left untouched. (Also added the required "Derived from EhBASIC" attribution: in the BASIC sign-on banner and the root NOTICE file.)
-
-### Kernel code-quality refactors (ROM has ~4KB free; these are maintainability, not space)
-- [x] Factor duplicated idioms: added PRINT_HEX_BYTE (byte->2 hex digits to screen), PRINT_MSG_AY (set MON_MSG_PTR from A/Y and print, replacing 13 inline copies), and shared SKIP_SPACES/EXPECT_COMMA parser helpers (replacing the skip-spaces/comma preamble duplicated across the F:, M: (x2), X:, and L:/S: filename parsers). CODE segment dropped from ~4185 to 3946 bytes; all tests pass.
-- [x] Remove dead code: deleted unreferenced NIBBLE_TO_HEX_CHAR/NIBBLE_DIGIT, unused constants (MON_HEX_DIGITS, CURSOR_CHAR, ASCII_0/9/A/F, FILE_IDLE, FILE_ERROR), and the MOVE copy-vs-move branch that printed identical text. HELP_MSG_COUNT was kept and wired into the help loop (replacing a magic #30) rather than deleted.
-
-### Documentation
-- [x] docs/kernel_memory_map.md (now consolidated into docs/architecture.md, Part 2) and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
-- [x] Done via the #65 docs consolidation: docs/system_architecture.md was merged into docs/architecture.md (Part 1 — System overview) and its stale C64-style $D000 I/O / VIC-II / SID / CIA / banking description was dropped. The authoritative memory map now lives in docs/architecture.md, Part 2.
-
-### Bankable module slot (docs/architecture.md, Part 4)
-- [x] Phase 1 (v2.2.7/8): relocate I/O $DC00 -> $FE00, reserve the I/O page (IORESV), clean the $B000-$DFFF window.
-- [x] Phase 2 (v2.2.9): banking infrastructure - MODULE_BANK register ($FE23), emulator Memory window routing (bank 0=RAM, 1..255=ROM), host bank table (Memory::loadBank), RESET maps window to RAM. Behavior-preserving; BASIC still in bank-0 RAM. Covered by tests/test_memory_banking.cpp.
-- [x] Phase 3 (v3.0): BASIC is now module bank 1 (host installs basic.rom as a bank, not flat RAM). Added the kernel MODULE_DIR catalog + the B: bank menu/launcher; RETURN_FROM_BASIC -> RETURN_FROM_MODULE ($FF12) unmaps the bank on exit; RESET zeroes the $B000-$DFFF window so bank 0 boots clean. Factored FILL_RANGE_CORE out of F: and reused it. Covered by testBankMenu/testBankLaunch; integration harness now returns non-zero on failure so ctest catches regressions.
-- [x] Phase 4 (v3.1/3.1.1): DEV TOOLS module in bank 2 (src/kernel/devtools/, devtools.rom). Disassembler (D), line assembler (A), two-pass assembler (B) with labels/expressions/.ORG/.END/.BYTE/.WORD/.ASCII/=, host .s source load (L), and a build listing. Canonical 65C02 opcode table generated from CPU6502 (tools/gen_opcode_table.py) with a drift-guard test. Module ABI extended: K_READ_LINE/K_PARSE_HEX/K_PRINT_HEX_BYTE ($FF15/$FF18/$FF1B). Sub-steps 1-6 committed on feat/devtools-module.
-  - [x] In-machine generic text editor + resident filesystem: both shipped. MFC-DOS ($9000-$AFFF) is the resident FAT16 filesystem, and EDIT (programs/edit, docs/EDIT.md) is the full-screen editor. Self-hosting is complete — edit -> assemble -> SAVE -> run by name, all at the `]` prompt.
-
-### Monitor out of the kernel (done)
+### Monitor out of the kernel (2026-07-31)
 Splitting the kernel ROM into a true BIOS (the machine) and the monitor (an interactive
 debugger that happens to ship with it). The monitor ends up a bank module, not a disk
 program: a program loads at $0800 and so collides with the very code it is meant to
@@ -572,7 +515,7 @@ or a sibling bank.
   $F000-$F610 = **1,553 bytes**, with 2,031 free below IORESV at $FE00. The move itself
   is recorded under "Memory map" below.
 
-### Memory map
+### Memory map (2026-07-31)
 - [x] **Kernel to a 4 KB window; banks grow to 16 KB.** With the monitor gone the BIOS
   is 1,562 bytes, so the kernel moved from $E000-$FFFF (8 KB) to $F000-$FFFF (4 KB) and
   the reclaimed $E000-$EFFF went to the module window, now $B000-$EFFF. Nothing needed
@@ -584,3 +527,31 @@ or a sibling bank.
     the machine sat at $0000 with no diagnostic. The base now comes from
     Memory::kKernelRomStart, the file size is checked against the window, and every
     segment is bounds-checked. testRomWindowBoundaries pins it.
+
+### Early monitor and BASIC fixes
+
+- [x] Z: & T: commands are updating the current address to 00FF and 01FF respectively and they shouldn't.
+- [x] Fix BASIC token parsing (e.g. enter 10 FOR I = 1 TO 10) and that is not what prints when you LIST
+
+### BASIC integration fixes
+- [x] LOAD/SAVE I/O vectors (PG2_TABS) pointed at $FF0F = the RNG routine. Resolved by implementing real BASIC SAVE/LOAD: SAVE writes the program as ASCII .bas text and LOAD reads it back (via a new byte-stream mode on the PIA file I/O). VEC_SV/VEC_LD now point at BASIC_SAVE/BASIC_LOAD, so the RNG bug is gone.
+- [x] INIT_BASIC_IO removed (dead code); PG2_TABS is the single source of truth for the BASIC I/O vectors.
+- [x] IRQ/NMI wired (v2.2): CPU IRQ/NMI dispatch + a ~60Hz PIA interval timer (BASIC ON IRQ) + NMI stop key (BASIC ON NMI / break to monitor). The kernel ISRs set EhBASIC's "happened" bit.
+
+### BASIC label rewrite
+- [x] Resolved via a glossary rather than a rename. EhBASIC's upstream is unmaintained (Lee Davison deceased) so parity is no longer a goal, but a full in-place rename of ~780 code labels was judged not worth the risk/effort. Instead, docs/basic_label_glossary.md (now part of docs/basic_internals.md) maps the cryptic LAB_<hex> labels (and the named handlers) to their meaning, drawn from the source comments. The ROM is left untouched. (Also added the required "Derived from EhBASIC" attribution: in the BASIC sign-on banner and the root NOTICE file.)
+
+### Kernel code-quality refactors (ROM has ~4KB free; these are maintainability, not space)
+- [x] Factor duplicated idioms: added PRINT_HEX_BYTE (byte->2 hex digits to screen), PRINT_MSG_AY (set MON_MSG_PTR from A/Y and print, replacing 13 inline copies), and shared SKIP_SPACES/EXPECT_COMMA parser helpers (replacing the skip-spaces/comma preamble duplicated across the F:, M: (x2), X:, and L:/S: filename parsers). CODE segment dropped from ~4185 to 3946 bytes; all tests pass.
+- [x] Remove dead code: deleted unreferenced NIBBLE_TO_HEX_CHAR/NIBBLE_DIGIT, unused constants (MON_HEX_DIGITS, CURSOR_CHAR, ASCII_0/9/A/F, FILE_IDLE, FILE_ERROR), and the MOVE copy-vs-move branch that printed identical text. HELP_MSG_COUNT was kept and wired into the help loop (replacing a magic #30) rather than deleted.
+
+### Documentation
+- [x] docs/kernel_memory_map.md (now consolidated into docs/architecture.md, Part 2) and the kernel.asm header rewritten to match the actual system ($E000 ROM, $14-$39 monitor ZP, relocated page-2 vars, PIA I/O, no C64 banking/VIC/SID). DEC_DIGIT_BUFFER now defined as "= MON_SEARCH_PATTERN" instead of a literal.
+- [x] Done via the #65 docs consolidation: docs/system_architecture.md was merged into docs/architecture.md (Part 1 — System overview) and its stale C64-style $D000 I/O / VIC-II / SID / CIA / banking description was dropped. The authoritative memory map now lives in docs/architecture.md, Part 2.
+
+### Bankable module slot (docs/architecture.md, Part 4)
+- [x] Phase 1 (v2.2.7/8): relocate I/O $DC00 -> $FE00, reserve the I/O page (IORESV), clean the $B000-$DFFF window.
+- [x] Phase 2 (v2.2.9): banking infrastructure - MODULE_BANK register ($FE23), emulator Memory window routing (bank 0=RAM, 1..255=ROM), host bank table (Memory::loadBank), RESET maps window to RAM. Behavior-preserving; BASIC still in bank-0 RAM. Covered by tests/test_memory_banking.cpp.
+- [x] Phase 3 (v3.0): BASIC is now module bank 1 (host installs basic.rom as a bank, not flat RAM). Added the kernel MODULE_DIR catalog + the B: bank menu/launcher; RETURN_FROM_BASIC -> RETURN_FROM_MODULE ($FF12) unmaps the bank on exit; RESET zeroes the $B000-$DFFF window so bank 0 boots clean. Factored FILL_RANGE_CORE out of F: and reused it. Covered by testBankMenu/testBankLaunch; integration harness now returns non-zero on failure so ctest catches regressions.
+- [x] Phase 4 (v3.1/3.1.1): DEV TOOLS module in bank 2 (src/kernel/devtools/, devtools.rom). Disassembler (D), line assembler (A), two-pass assembler (B) with labels/expressions/.ORG/.END/.BYTE/.WORD/.ASCII/=, host .s source load (L), and a build listing. Canonical 65C02 opcode table generated from CPU6502 (tools/gen_opcode_table.py) with a drift-guard test. Module ABI extended: K_READ_LINE/K_PARSE_HEX/K_PRINT_HEX_BYTE ($FF15/$FF18/$FF1B). Sub-steps 1-6 committed on feat/devtools-module.
+  - [x] In-machine generic text editor + resident filesystem: both shipped. MFC-DOS ($9000-$AFFF) is the resident FAT16 filesystem, and EDIT (programs/edit, docs/EDIT.md) is the full-screen editor. Self-hosting is complete — edit -> assemble -> SAVE -> run by name, all at the `]` prompt.
