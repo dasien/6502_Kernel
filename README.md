@@ -40,14 +40,12 @@ Start with [DOS.md](docs/DOS.md) to drive the machine, or
 
 | Dependency | Needed for | If missing |
 |---|---|---|
-| CMake 3.20+, Ninja | the build itself | nothing builds |
-| C++20 compiler (GCC 10+, Clang 10+, MSVC 2019+) | the emulator | nothing builds |
+| **CMake** 3.20+, **Ninja** | the build itself | nothing builds |
+| **C++20 compiler** (GCC 10+, Clang 10+, MSVC 2019+) | the emulator | nothing builds |
 | **cc65** (`ca65`, `ld65`, `cl65`) | assembling every ROM and `.PRG` | configuration fails — the emulator cannot run without its ROMs |
-| **Qt6** or Qt5 — Core, Widgets, **Network** | the GUI machine; Network drives TERM/IRC | you get a non-interactive console demo, not the computer |
+| **Qt6** or **Qt5** (Core, Widgets, Network) | the GUI machine; Network drives TERM/IRC | you get a non-interactive console demo, not the computer |
 | **Qt Multimedia** | SID audio | everything works, silently |
-| Python 3 | opcode-table drift test | that one test is skipped |
-
-GoogleTest is **not** a prerequisite — the build fetches v1.14.0 itself when tests are enabled.
+| **Python 3** | the two sync tests | these prevent assembler's opcode table and the monitor's kernel ABI from getting out of sync with the executable versions |
 
 ```bash
 # Debian / Ubuntu / Mint  (verified)
