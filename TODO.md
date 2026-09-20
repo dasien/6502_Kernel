@@ -2,6 +2,58 @@
 
 ## Open
 
+### GOPHER — a network document browser (2026-09-19)
+
+- [ ] **A Gopher client, `GOPHER.PRG`.** A web browser was considered first and
+  set aside: essentially all of the web is HTTPS, and a 4 MHz 65C02 cannot do an
+  ECDHE handshake plus AES-GCM per record. That is orders of magnitude, not a
+  tuning problem. Lynx specifically is out three times over — roughly 200k lines
+  against a 32 KB address space, dependencies on ncurses, libwww, zlib and
+  OpenSSL, and a GPLv2 licence this project does not port from (see reSID in
+  `docs/references.md`). Gopher has none of those problems: RFC 1436 is a dozen
+  lines, it is text-native, menus map exactly onto 80x25, gopherspace is alive,
+  and there is no TLS.
+  - **Standalone, not folded into TERM.** IRC and TERM both drive the ACIA, both
+    keep a server list, both share `programs/common/scrollback.c`, and they are
+    separate programs. This is the third of that family. TERM is a dumb terminal
+    that scrolls; Gopher needs a selection cursor on a menu, which is a different
+    interaction model. `programs/term/glue.s` already exports everything needed:
+    `acia_init/get/put`, the VIC primitives, `dopen_read`/`dputb`/`dgetb`/
+    `dclose`, `jiffies` and `INCH`.
+  - **Do not hold the document in RAM.** This is the decision that matters, and
+    it is the same one that sank HTTP. Storing display text, selector, host and
+    port per menu item runs about 180 bytes, so a 100-item menu is 18 KB of a
+    30 KB budget. Instead spool the response to a FAT16 temp file, keep only line
+    offsets, and parse a single line on demand when the cursor lands on it. RAM
+    then holds one screen plus the selected item. The disk is 2 MB and EDIT
+    already streams from it.
+  - **The protocol.** Connect to port 70, send the selector and CRLF, read until
+    close. A menu line is `<type><display>` TAB `<selector>` TAB `<host>` TAB
+    `<port>`, and the response ends with a lone `.`. Types to handle: `0` text,
+    `1` menu, `7` search, `i` info, `9` binary.
+  - **Phase 1, the spike: DONE 2026-09-19.** `GOPHER.PRG`, 3,169 bytes. Dials
+    `host:70`, sends a selector, and dumps the response into a scrolling body
+    region. Confirmed against `gopher.floodgap.com`: the menu arrives, the body
+    scrolls, and the response terminates cleanly. It reads a line at a time and
+    stops on either the Gopher `.` terminator or the bridge's `NO CARRIER`,
+    keeping both out of the body, with an idle counter only as a backstop.
+    Tabs render as spaces and non-printables as dots, deliberately, so the raw
+    wire format is visible.
+  - **Phases still to do.** 2: menus — split on tabs, render the display text
+    with a highlighted line, Enter to follow, a 16-deep back stack of
+    `(host, port, selector)`. 3: text files through the existing pager.
+    4: bookmarks in `SYSTEM/GOPHER.LST`, same format as `DIAL.LST` and
+    `IRC.LST`, plus a prompt for type `7`. A `docs/GOPHER.md` manual belongs
+    with phase 4, alongside `TERM.md` and `IRC.md`.
+  - **Known limit: no binary retrieval.** The modem bridge always runs a telnet
+    IAC filter, escaping outbound `$FF` as `IAC IAC` and reading inbound `$FF` as
+    negotiation. Gopher text is 7-bit so this is invisible, exactly as it is for
+    IRC, but type `9` transfers would be corrupted. Out of scope unless the modem
+    grows a raw mode.
+  - Size should land near IRC, 12-16 KB. Test it the way `tests/test_irc.cpp`
+    does: feed canned menu bytes through the ACIA headless and assert on the
+    rendered screen.
+
 ### DOS / filesystem — no seek, no bulk read
 
 - [ ] **The filesystem has no seek and no bulk read.** Investigated 2026-09-14 while

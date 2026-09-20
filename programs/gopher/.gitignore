@@ -1,0 +1,6 @@
+# cc65 build outputs -- the .PRG is built, not committed
+*.o
+*.bin
+*.map
+*.lbl
+*.PRG

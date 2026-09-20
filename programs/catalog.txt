@@ -55,6 +55,13 @@ program = TERM.PRG -> TERM.PRG
 data    = DIAL.LST -> SYSTEM/DIAL.LST
 desc    = ANSI/telnet terminal with XMODEM
 
+[gopher]
+dir     = programs/gopher
+sources = gopher.c glue.s
+config  = gopher.cfg
+program = GOPHER.PRG -> GOPHER.PRG
+desc    = Gopher client (spike)
+
 [irc]
 dir     = programs/irc
 sources = irc.c ../common/scrollback.c glue.s
