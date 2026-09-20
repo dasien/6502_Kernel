@@ -26,10 +26,16 @@ TERM                 launch, then dial from inside
 TERM host:port       launch and immediately dial that address
 ```
 
-The top line shows the reminder banner:
+TERM opens with a reminder of the hotkeys, in the same shape as IRC's and
+GOPHER's opening screens:
 
 ```
-MFC TERM v1.3  ^D dial  ^S/^R xfer  ^X hangup  ^Q quit  PgUp/PgDn scrollback
+MFC TERM v1.3   (^Q quits)
+
+  ^D          dial
+  ^S / ^R     send / receive XMODEM
+  ^X          hang up
+  PgUp/PgDn   scrollback
 ```
 
 Once connected, everything you type is sent to the remote host, and everything it

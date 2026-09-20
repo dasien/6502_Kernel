@@ -200,7 +200,7 @@ static void splash(void)
 {
     unsigned int t0;
 
-    vattr(ATTR_NORMAL | 0x40);              /* bright */
+    vattr(0x40 | 0x07);                     /* bright white, as TERM/IRC/GOPHER */
     vfill(' ');
     vcmd(1);                                /* chip-side clear */
     splash_puts(10 * COLS + 30, "M F C   E D I T O R");

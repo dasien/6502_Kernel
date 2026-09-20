@@ -192,7 +192,7 @@ static void splash(void)
 {
     unsigned int t0;
 
-    vattr(ATTR_DEFAULT | ATTR_BRIGHT);
+    vattr(ATTR_BRIGHT | 0x07);              /* bright white, as IRC and GOPHER */
     vfill(' ');
     vcmd(VCMD_CLEAR);
     splash_puts(10 * COLS + 32, "M F C   T E R M");
@@ -728,7 +728,11 @@ int main(void)
     sb_init(0, ROWS, COLS);       /* history ring covers the whole screen */
     sb_reset();
     histn = 0; reviewing = 0;
-    local_print("MFC TERM v1.3  ^D dial ^S/^R xfer ^X hangup ^Q quit  PgUp/PgDn scrollback\r\n\n");
+    local_print("MFC TERM v1.3   (^Q quits)\r\n\n");
+    local_print("  ^D          dial\r\n");
+    local_print("  ^S / ^R     send / receive XMODEM\r\n");
+    local_print("  ^X          hang up\r\n");
+    local_print("  PgUp/PgDn   scrollback\r\n\n");
 
     /* Launched as "TERM host:port"? DOS leaves the argument in DOS_ARGBUF ($0382);
        dial it right away, as if the user had just typed it at the ^D prompt. */
