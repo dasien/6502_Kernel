@@ -17,7 +17,7 @@ This project implements a complete 6502-based computer system kernel. The kernel
 - Cycle-stepped WDC 65C02 CPU emulator (full CMOS instruction set, validated against the Klaus2m5/amb5l functional, decimal, and 65C02-extended test suites)
 - **6502 Monitor**: A complete interactive debugging and programming environment that provides direct control over the computer's memory and execution. 
 - DOS shell with a resident FAT16 filesystem and launch-by-name for disk programs
-- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), plus games (**CHESS**, **KERNEL PANIC**, **VENTURE**, **The Sunless Vault** roguelike, and the Scott Adams adventures) 
+- Disk applications: **EDIT** (full-screen editor), **TERM** (ANSI/telnet terminal with XMODEM), **IRC** (chat client), **GOPHER** (Gopher document browser), plus games (**CHESS**, **KERNEL PANIC**, **VENTURE**, **The Sunless Vault** roguelike, and the Scott Adams adventures) 
 - Built-in **MFC BASIC** interpreter (derived from EhBASIC), launched by typing `BASIC` at the DOS prompt (with human-readable `.bas` LOAD/SAVE via a host file dialog)
 - Memory manipulation and program execution capabilities
 - File I/O operations for loading and saving programs
@@ -164,7 +164,7 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 
 For detailed development information and project context, see:
 
-- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, FORTH, EDIT, TERM, IRC), the architecture reference (architecture.md), and the internals docs (kernel_internals.md, monitor_internals.md,
+- **[docs/README.md](docs/README.md)** - Documentation index: program manuals (MONITOR, DOS, BASIC, FORTH, EDIT, TERM, IRC, GOPHER), the architecture reference (architecture.md), and the internals docs (kernel_internals.md, monitor_internals.md,
   dos_internals.md, basic_internals.md, host_gui.md)
 
 

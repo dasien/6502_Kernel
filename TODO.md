@@ -57,10 +57,18 @@
       and called the connection failed. Every request now drains the line first.
       And the "connection failed" notice was being painted before `draw_all()`,
       which promptly erased it, so a failure looked like a blank screen.
-  - **Phase 4 still to do.** Bookmarks in `SYSTEM/GOPHER.LST`, same format as
-    `DIAL.LST` and `IRC.LST`, and a `docs/GOPHER.md` manual alongside `TERM.md`
-    and `IRC.md`. Worth considering with it: a longer-menu pager, and showing
-    the current selector somewhere so you can see where you are.
+  - **Phase 4: DONE 2026-09-19.** Bookmarks in `SYSTEM/GOPHER.LST`, picked 1-9
+    from a numbered list after the splash exactly as IRC picks a server, with
+    `0` to type a host and a straight fall-through to the prompt when there is
+    no list file. The format follows `DIAL.LST` and `IRC.LST` -- address token,
+    rest of the line as the label -- extended to `host[:port][/selector]` so an
+    entry can point at something other than a root menu. `docs/GOPHER.md` is
+    written and indexed. The location bar now carries host and selector, which
+    was the other item noted here.
+  - **Left undone.** PgUp and PgDn step the selection one entry at a time in a
+    loop rather than paging, which is O(n) per press. Fine at 150 items, worth
+    tidying if a long menu ever feels sluggish. Binary retrieval (type `9`) is
+    still out of scope for the telnet-filter reason above.
   - **Known limit: no binary retrieval.** The modem bridge always runs a telnet
     IAC filter, escaping outbound `$FF` as `IAC IAC` and reading inbound `$FF` as
     negotiation. Gopher text is 7-bit so this is invisible, exactly as it is for

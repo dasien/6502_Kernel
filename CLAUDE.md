@@ -106,7 +106,7 @@ A full run takes roughly two and a half minutes.
    sprites and the cursor.
 
 6. **`programs/`** — cc65 C and assembly programs built to `.PRG` (EDIT, TERM, IRC,
-   VENTURE, KPANIC, the Sunless Vault, FRONTIER, CHESS...).
+   GOPHER, VENTURE, KPANIC, the Sunless Vault, FRONTIER, CHESS...).
 
 7. **`docs/`** — `architecture.md` is the consolidated internals reference (memory map,
    zero page, the `$FF00` ABI, bank switching); `board.md` is the chipset as a

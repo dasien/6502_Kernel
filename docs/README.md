@@ -14,6 +14,7 @@ For those looking for a deeper understanding of the design of the system, refere
 | [EDIT.md](EDIT.md) | The full-screen text editor |
 | [TERM.md](TERM.md) | The serial/telnet terminal + XMODEM |
 | [IRC.md](IRC.md) | The IRC client |
+| [GOPHER.md](GOPHER.md) | The Gopher document browser |
 
 Games are not documented here. A game's manual ships on the disk beside it, as plain
 ASCII that the machine itself can `TYPE`. A manual is no use on a web page when you are

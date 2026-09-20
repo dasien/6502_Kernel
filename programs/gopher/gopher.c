@@ -26,15 +26,18 @@
 
 #define COLS     80
 #define ROWS     25
-#define BODY_TOP 2                      /* rows 0-1: header */
+#define BODY_TOP 1                      /* row 0: where-you-are bar */
 #define BODY_BOT (ROWS - 2)             /* last row: status */
 #define BODY_H   (BODY_BOT - BODY_TOP + 1)
 
-#define A_NORM  0x02                    /* green on black */
-#define A_HDR   0x4A                    /* reverse + bright green */
-#define A_SEL   0x8A                    /* reverse: the highlighted line */
-#define A_INFO  0x07                    /* white: info text, not a link */
-#define A_WARN  0x43                    /* bright yellow */
+/* Attribute byte: bit7 reverse, bit6 bright, bits5-3 background, bits2-0
+   foreground, over black red green yellow blue magenta cyan white. Keep the
+   background bits clear unless a coloured panel is actually wanted. */
+#define A_NORM  0x02                    /* green on black, the system default */
+#define A_HDR   0x86                    /* reverse + cyan: black on cyan, as IRC */
+#define A_SEL   0x82                    /* reverse + green: the highlighted line */
+#define A_INFO  0x07                    /* white on black: info text, not a link */
+#define A_WARN  0x43                    /* bright yellow on black */
 
 #define ASCII_ESC 0x1B
 #define ASCII_CR  0x0D
@@ -55,6 +58,8 @@
 #define MAXITEM  150
 #define ARENA    10240
 #define DEPTH    16                     /* back-stack depth */
+#define MAXBM    9                      /* bookmarks offered, 1..9 */
+#define BMBUF    600
 #define HOSTMAX  48
 #define SELMAX   72
 
@@ -70,6 +75,10 @@ extern void          vfill(unsigned char ch);
 extern void          vcmd(unsigned char cmd);
 extern void          vscrolltop(unsigned char row);
 extern void          vscrollbot(unsigned char row);
+extern unsigned int  jiffies(void);
+extern char          dopen_read(char *name);  /* 0 = ok, 1 = error */
+extern int           dgetb(void);             /* next byte, or -1 at EOF */
+extern void          dclose(void);
 extern void          acia_init(void);
 extern int           acia_get(void);
 extern void          acia_put(unsigned char b);
@@ -97,6 +106,64 @@ static char bk_sel[DEPTH][SELMAX];
 static int  depth;
 
 static int top, sel;                    /* first visible item, selected item */
+
+/* ---- bookmarks (SYSTEM/GOPHER.LST) --------------------------------------
+ * One entry per line, "host[:port][/selector]  label", with '#' comments and
+ * blank lines ignored -- the same shape as TERM's DIAL.LST and IRC's IRC.LST,
+ * extended with the selector Gopher needs to point at anything but a root menu.
+ * The address is one whitespace-delimited token and the rest of the line is the
+ * label, so a label may contain spaces and a selector may not. */
+static char  bmbuf[BMBUF];
+static char *bm_host[MAXBM];
+static char *bm_sel[MAXBM];
+static unsigned int bm_port[MAXBM];
+static char *bm_name[MAXBM];
+static int   bm_count;
+
+static void load_bookmarks(void)
+{
+    int n = 0, c;
+    char *p;
+
+    bm_count = 0;
+    if (dopen_read("SYSTEM/GOPHER.LST")) return;
+    while ((c = dgetb()) >= 0 && n < BMBUF - 1) bmbuf[n++] = (char)c;
+    dclose();
+    bmbuf[n] = 0;
+
+    p = bmbuf;
+    while (*p && bm_count < MAXBM) {
+        char *line = p, *addr, *q;
+        while (*p && *p != '\n' && *p != '\r') p++;
+        if (*p) *p++ = 0;
+        while (*p == '\n' || *p == '\r') p++;
+        while (*line == ' ' || *line == '\t') line++;
+        if (*line == 0 || *line == '#') continue;
+
+        addr = line;                              /* the address token */
+        while (*line && *line != ' ' && *line != '\t') line++;
+        if (*line) { *line++ = 0; while (*line == ' ' || *line == '\t') line++; }
+        bm_name[bm_count] = line;                 /* rest of line = label */
+
+        /* Split the address into host, port and selector. The selector starts
+           at the first '/' after the host and port, as in a Gopher URL. */
+        bm_host[bm_count] = addr;
+        bm_port[bm_count] = 70;
+        bm_sel[bm_count]  = (char *)"";
+        for (q = addr; *q; q++) {
+            if (*q == ':') {
+                unsigned int pv = 0;
+                *q++ = 0;
+                while (*q >= '0' && *q <= '9') pv = pv * 10 + (unsigned int)(*q++ - '0');
+                if (pv) bm_port[bm_count] = pv;
+                if (*q == '/') { *q++ = 0; bm_sel[bm_count] = q; }
+                break;
+            }
+            if (*q == '/') { *q++ = 0; bm_sel[bm_count] = q; break; }
+        }
+        bm_count++;
+    }
+}
 
 /* ---- small helpers ------------------------------------------------------- */
 /* Bounded copy: the host and selector come off the wire, so a long field in a
@@ -132,6 +199,11 @@ static void put_at(unsigned int cell, const char *s, int pad)
     while (i < pad)        { vputc(' '); i++; }
 }
 
+/* Bit 7 of the cursor high byte hides it (VREG_CURSOR_HI). The browse view
+   shows the selection with reverse video, so the hardware cursor is only ever
+   wanted while a prompt is taking input. */
+static void hide_cursor(void) { vcursor(0x8000); }
+
 static void status(const char *s)
 {
     vattr(A_HDR);
@@ -139,12 +211,45 @@ static void status(const char *s)
     vattr(A_NORM);
 }
 
+/* One bar, showing where you are rather than what program this is. */
 static void header(void)
 {
+    char s[COLS + 1];
+    int n = 0;
+    const char *h = cur_host[0] ? cur_host : "(no host)";
+
+    s[n++] = ' ';
+    while (*h && n < COLS - 2) s[n++] = *h++;
+    if (cur_sel[0]) {
+        const char *q = cur_sel;
+        if (n < COLS - 2) s[n++] = ' ';
+        while (*q && n < COLS - 1) s[n++] = *q++;
+    }
+    s[n] = 0;
     vattr(A_HDR);
-    put_at(0, " MFC GOPHER 1.0", COLS);
-    put_at(COLS, cur_host[0] ? cur_host : " (no host)", COLS);
+    put_at(0, s, COLS);
     vattr(A_NORM);
+}
+
+/* ---- title card ---------------------------------------------------------
+ * Three seconds on a timer, and deliberately NOT dismissable by a keypress, for
+ * the reason IRC records: reading the keyboard to cut it short consumes the key
+ * with no way to hand it back, so anyone typing ahead loses their first
+ * keystroke. Unsigned subtraction against the start tick, so the 60 Hz counter
+ * wrapping every eighteen minutes cannot leave us waiting for one. */
+static void splash(void)
+{
+    unsigned int t0;
+
+    vattr(0x47);                            /* bright white */
+    vfill(' ');
+    vcmd(VCMD_CLEAR);
+    put_at(10 * COLS + 30, "M F C   G O P H E R", 0);
+    vattr(A_NORM);
+    put_at(12 * COLS + 28, "INTERNET GOPHER PROTOCOL", 0);
+
+    t0 = jiffies();
+    while ((unsigned int)(jiffies() - t0) < 180) { }
 }
 
 static int readkey(void)
@@ -378,18 +483,19 @@ static void first_selectable(void)
 }
 
 /* ---- prompts ------------------------------------------------------------- */
-static int prompt(const char *label, char *buf, int max)
+static int prompt_at(int row, unsigned char attr, const char *label,
+                     char *buf, int max)
 {
     int n = 0;
-    unsigned int base = (unsigned int)(ROWS - 1) * COLS;
+    unsigned int base = (unsigned int)row * COLS;
     unsigned int off = (unsigned int)strlen(label);
-    vattr(A_HDR);
+    vattr(attr);
     put_at(base, label, COLS);
     vcursor(base + off);
     for (;;) {
         int k = readkey();
-        if (k == ASCII_CR)  { buf[n] = 0; vattr(A_NORM); vcursor(0x8000); return n; }
-        if (k == K_ESC)     { buf[0] = 0; vattr(A_NORM); vcursor(0x8000); return -1; }
+        if (k == ASCII_CR)  { buf[n] = 0; vattr(A_NORM); hide_cursor(); return n; }
+        if (k == K_ESC)     { buf[0] = 0; vattr(A_NORM); hide_cursor(); return -1; }
         if (k == ASCII_BS) {
             if (n > 0) { n--; vaddr(base + off + (unsigned int)n); vputc(' '); vcursor(base + off + (unsigned int)n); }
             continue;
@@ -408,6 +514,7 @@ static void enter_page(const char *host, unsigned int port, const char *sel_s,
                        const char *query, int as_menu)
 {
     int ok;
+    hide_cursor();
     vfill(' '); vcmd(VCMD_CLEAR);
     copyn(cur_host, host, HOSTMAX);
     cur_port = port;
@@ -448,19 +555,67 @@ int main(void)
     static char host[HOSTMAX];
     static char sels[SELMAX];
     static char query[64];
+    static char start_sel[SELMAX];
+    unsigned int start_port;
 
     acia_init();
     vattr(A_NORM);
     vfill(' '); vcmd(VCMD_CLEAR);
     vscrolltop(0); vscrollbot(ROWS - 1);
 
+    splash();
+
+    /* Connection screen, in the same shape as IRC's: title line, blank, then
+       the options indented two spaces. */
+    vattr(A_NORM);
+    vfill(' '); vcmd(VCMD_CLEAR);
+    put_at(0 * COLS, "MFC GOPHER v1.0   (ESC quits)", COLS);
+    put_at(2 * COLS, "  Up/Down     move the selection", 0);
+    put_at(3 * COLS, "  Enter       open the selected item  ( / menu   ? search )", 0);
+    put_at(4 * COLS, "  Bksp        back to the previous page", 0);
+    put_at(5 * COLS, "  Home        top of the page", 0);
+    put_at(6 * COLS, "  Q           quit to DOS", 0);
+
     cur_host[0] = 0;
-    header();
-    if (prompt(" Host [gopher.floodgap.com]: ", host, (int)sizeof(host)) < 0) { QUITDOS(); return 0; }
+    start_port = 70;
+    start_sel[0] = 0;
+    host[0] = 0;
+
+    load_bookmarks();
+    if (bm_count) {
+        int row = 8, i, k;
+        put_at((unsigned int)row++ * COLS, "Gopher holes:", COLS);
+        for (i = 0; i < bm_count; i++) {
+            char ln[COLS + 1];
+            const char *nm = bm_name[i][0] ? bm_name[i] : bm_host[i];
+            int j = 0, m = 0;
+            ln[j++] = ' '; ln[j++] = ' ';
+            ln[j++] = (char)('1' + i); ln[j++] = ')'; ln[j++] = ' ';
+            while (nm[m] && j < COLS) ln[j++] = nm[m++];
+            ln[j] = 0;
+            put_at((unsigned int)row++ * COLS, ln, COLS);
+        }
+        put_at((unsigned int)row++ * COLS, "  0) Enter a host", COLS);
+        put_at((unsigned int)row * COLS, "Pick: ", 0);
+        vcursor((unsigned int)row * COLS + 6);
+        k = INCH();
+        row++;
+        if (k == ASCII_ESC) { QUITDOS(); return 0; }
+        if (k >= '1' && k < '1' + bm_count) {
+            copyn(host, bm_host[k - '1'], HOSTMAX);
+            copyn(start_sel, bm_sel[k - '1'], SELMAX);
+            start_port = bm_port[k - '1'];
+        }
+        if (!host[0] && prompt_at(row, A_NORM, "Host:     ",
+                                  host, (int)sizeof(host)) < 0) { QUITDOS(); return 0; }
+    } else {
+        if (prompt_at(8, A_NORM, "Host:     ",
+                      host, (int)sizeof(host)) < 0) { QUITDOS(); return 0; }
+    }
     if (!host[0]) strcpy(host, "gopher.floodgap.com");
 
     depth = 0;
-    enter_page(host, 70, "", 0, 1);
+    enter_page(host, start_port, start_sel, 0, 1);
 
     for (;;) {
         int k = readkey();
@@ -489,7 +644,7 @@ int main(void)
             if (!host[0]) { status(" That item has no host.  Q=quit"); continue; }
 
             if (t == '7') {
-                if (prompt(" Search: ", query, (int)sizeof(query)) < 0) { show_status(); continue; }
+                if (prompt_at(ROWS - 1, A_HDR, " Search: ", query, (int)sizeof(query)) < 0) { show_status(); continue; }
                 push();
                 enter_page(host, it_port[sel], sels, query, 1);
                 continue;

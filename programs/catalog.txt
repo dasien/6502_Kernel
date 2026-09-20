@@ -60,7 +60,8 @@ dir     = programs/gopher
 sources = gopher.c glue.s
 config  = gopher.cfg
 program = GOPHER.PRG -> GOPHER.PRG
-desc    = Gopher client (spike)
+data    = GOPHER.LST -> SYSTEM/GOPHER.LST
+desc    = Gopher document browser
 
 [irc]
 dir     = programs/irc
