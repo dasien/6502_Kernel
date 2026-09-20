@@ -39,12 +39,28 @@
     keeping both out of the body, with an idle counter only as a backstop.
     Tabs render as spaces and non-printables as dots, deliberately, so the raw
     wire format is visible.
-  - **Phases still to do.** 2: menus — split on tabs, render the display text
-    with a highlighted line, Enter to follow, a 16-deep back stack of
-    `(host, port, selector)`. 3: text files through the existing pager.
-    4: bookmarks in `SYSTEM/GOPHER.LST`, same format as `DIAL.LST` and
-    `IRC.LST`, plus a prompt for type `7`. A `docs/GOPHER.md` manual belongs
-    with phase 4, alongside `TERM.md` and `IRC.md`.
+  - **Phases 2 and 3: DONE 2026-09-19.** 7,309 bytes, confirmed navigating
+    floodgap. Menu lines split on tabs and show only the display text, with `/`
+    marking a submenu and `?` a search. Info lines render in white and are not
+    selectable. Arrows move the highlight, Enter or Right follows, Backspace or
+    Left unwinds a 16-deep stack of `(host, port, selector)`, Home returns to
+    the top, Q quits. Type `7` prompts and sends the query after a TAB. Type `0`
+    text came along nearly free, so phase 3 is folded in: every line becomes an
+    unselectable item and scrolls the same way.
+    - Menus live in a 10 KB arena with a 150-item cap rather than being spooled,
+      because the filesystem has no seek so line offsets would buy nothing.
+      Overflow marks the status line `[truncated]`. Info lines store only their
+      display text, which is what keeps a typical menu inside the budget.
+    - Two bugs worth remembering. Gopher closes the connection itself, so the
+      bridge's `NO CARRIER` and the modem's `OK` from our own `ATH` land in the
+      ACIA FIFO *after* the response terminator; the next dial then matched them
+      and called the connection failed. Every request now drains the line first.
+      And the "connection failed" notice was being painted before `draw_all()`,
+      which promptly erased it, so a failure looked like a blank screen.
+  - **Phase 4 still to do.** Bookmarks in `SYSTEM/GOPHER.LST`, same format as
+    `DIAL.LST` and `IRC.LST`, and a `docs/GOPHER.md` manual alongside `TERM.md`
+    and `IRC.md`. Worth considering with it: a longer-menu pager, and showing
+    the current selector somewhere so you can see where you are.
   - **Known limit: no binary retrieval.** The modem bridge always runs a telnet
     IAC filter, escaping outbound `$FF` as `IAC IAC` and reading inbound `$FF` as
     negotiation. Gopher text is 7-bit so this is invisible, exactly as it is for
