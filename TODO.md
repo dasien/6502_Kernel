@@ -92,10 +92,16 @@
     entry can point at something other than a root menu. `docs/GOPHER.md` is
     written and indexed. The location bar now carries host and selector, which
     was the other item noted here.
-  - **Left undone.** PgUp and PgDn step the selection one entry at a time in a
-    loop rather than paging, which is O(n) per press. Fine at 150 items, worth
-    tidying if a long menu ever feels sluggish. Binary retrieval (type `9`) is
-    still out of scope for the telnet-filter reason above.
+  - **Paging fixed 2026-09-20**, and it turned up a real bug behind it. A text
+    file is all info lines, so nothing in it is selectable, so the arrow keys
+    found no target and returned -- meaning a document longer than 23 lines
+    could not be read past the first screen. The arrows now pan the window when
+    there is no selection. PgUp and PgDn move a screenful in one repaint rather
+    than looping the single-step move, End was added, and a single step now
+    repaints the two rows that changed instead of the whole body. Play-tested
+    2026-09-20, including the paging via Fn+Up and Fn+Down on a MacBook.
+  - **Left undone.** Binary retrieval (type `9`), which needs the modem raw mode
+    logged separately above.
   - **Known limit: no binary retrieval.** The modem bridge always runs a telnet
     IAC filter, escaping outbound `$FF` as `IAC IAC` and reading inbound `$FF` as
     negotiation. Gopher text is 7-bit so this is invisible, exactly as it is for

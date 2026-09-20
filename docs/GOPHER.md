@@ -16,8 +16,8 @@ screen.
 | Up / Down | Move the selection |
 | Enter, Right | Open the selected item |
 | Bksp, Left | Back to the previous page |
-| Home | Top of the page |
-| PgUp / PgDn | Move the selection a screenful |
+| Home / End | First / last page |
+| PgUp / PgDn | Move a screenful |
 | `Q` | Quit to DOS |
 | ESC | Quit from the opening prompt; cancel a search |
 
@@ -53,8 +53,9 @@ Most Gopher menus carry a good deal of white information text, which is the
 server's own commentary rather than anything you can follow.
 
 Up and Down move between selectable entries, skipping the information lines.
-Enter or Right opens the highlighted one. Backspace or Left returns to the
-previous page, sixteen levels deep, after which the oldest is forgotten.
+PgUp and PgDn move a screenful at a time, and Home and End jump to the first and
+last page. Enter or Right opens the highlighted entry. Backspace or Left returns
+to the previous page, sixteen levels deep, after which the oldest is forgotten.
 
 ## Searching
 
@@ -64,9 +65,10 @@ the search and leaves you where you were.
 
 ## Reading a text file
 
-An unmarked entry is a document. Opening it fills the body with its text, which
-you scroll with the arrow keys as if it were a menu. Backspace returns to the
-menu you came from.
+An unmarked entry is a document. Opening it fills the body with its text. A
+document has nothing selectable in it, so the arrow keys scroll the text a line
+at a time and PgUp, PgDn, Home and End move by the screenful. Backspace returns
+to the menu you came from.
 
 ## Limits
 

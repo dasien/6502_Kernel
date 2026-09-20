@@ -463,14 +463,62 @@ static void scroll_to_sel(void)
     if (top < 0) top = 0;
 }
 
-static void move_sel(int delta)
+/* Next selectable item from i in direction delta, or -1 if there is none. */
+static int next_selectable(int i, int delta)
 {
-    int i = sel;
     for (;;) {
         i += delta;
-        if (i < 0 || i >= n_items) return;      /* no further selectable item */
-        if (selectable(i)) { sel = i; scroll_to_sel(); draw_all(); return; }
+        if (i < 0 || i >= n_items) return -1;
+        if (selectable(i)) return i;
     }
+}
+
+/* Move the window without touching the selection. This is the only way to read
+   a text file, which is all info lines and so has nothing selectable at all. */
+static void scroll_window(int delta)
+{
+    int nt = top + delta;
+    int maxtop = n_items - BODY_H;
+    if (maxtop < 0) maxtop = 0;
+    if (nt < 0) nt = 0;
+    if (nt > maxtop) nt = maxtop;
+    if (nt == top) return;
+    top = nt;
+    draw_all();
+}
+
+/* One step. Repaint only the two rows that changed unless the window moved --
+   a full body repaint is 23 rows of 80 cells, too much to spend on an arrow. */
+static void move_sel(int delta)
+{
+    int old = sel, oldtop = top, i;
+
+    if (sel < 0) { scroll_window(delta); return; }   /* nothing to select: pan */
+    i = next_selectable(sel, delta);
+    if (i < 0) return;
+    sel = i;
+    scroll_to_sel();
+    if (top != oldtop) { draw_all(); return; }
+    if (old >= top && old < top + BODY_H) draw_item(old - top, old);
+    draw_item(sel - top, sel);
+}
+
+/* Move the window by `rows` and put the selection on the first selectable item
+   now in view. One repaint, not BODY_H of them. */
+static void page_sel(int rows)
+{
+    int nt = top + rows, maxtop = n_items - BODY_H, j, first = -1;
+
+    if (maxtop < 0) maxtop = 0;
+    if (nt < 0) nt = 0;
+    if (nt > maxtop) nt = maxtop;
+    top = nt;
+    if (sel >= 0) {
+        for (j = top; j < top + BODY_H && j < n_items; j++)
+            if (selectable(j)) { first = j; break; }
+        if (first >= 0) sel = first;
+    }
+    draw_all();
 }
 
 static void first_selectable(void)
@@ -623,9 +671,10 @@ int main(void)
         if (k == 'q' || k == 'Q') break;
         if (k == K_UP)   { move_sel(-1); continue; }
         if (k == K_DOWN) { move_sel(+1); continue; }
-        if (k == K_PGUP) { int i; for (i = 0; i < BODY_H; i++) move_sel(-1); continue; }
-        if (k == K_PGDN) { int i; for (i = 0; i < BODY_H; i++) move_sel(+1); continue; }
+        if (k == K_PGUP) { page_sel(-BODY_H); continue; }
+        if (k == K_PGDN) { page_sel(+BODY_H); continue; }
         if (k == K_HOME) { first_selectable(); draw_all(); continue; }
+        if (k == K_END)  { page_sel(n_items); continue; }   /* clamps to the last page */
 
         if (k == ASCII_BS || k == K_LEFT) {
             if (depth == 0) { status(" Already at the first page.  Q=quit"); continue; }
