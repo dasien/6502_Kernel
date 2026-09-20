@@ -2,6 +2,33 @@
 
 ## Open
 
+### Modem: a raw mode for non-telnet connections (2026-09-20)
+
+- [ ] **The bridge applies telnet framing to connections that are not telnet.**
+  `ModemProtocol` does IAC doubling in both directions: a literal `$FF` from the
+  6502 goes out as `FF FF`, an inbound `FF FF` collapses to one `$FF`, and a
+  lone `FF` is read as the start of a negotiation command and consumed with the
+  byte after it.
+  - **That is correct telnet, and it is why TERM's XMODEM works.** A BBS is a
+    telnet server, so it un-doubles what the bridge doubles and doubles what the
+    bridge un-doubles. Binary survives end to end.
+  - **It is wrong for a raw-TCP peer.** A Gopher server on port 70 speaks raw
+    TCP, so binary content containing `$FF` loses two bytes to a negotiation
+    that was never sent. IRC is on the same footing and never trips it, because
+    IRC is 7-bit text -- and so is Gopher, right up until a type `9` item.
+  - **What it blocks.** GOPHER reports type `9` (binary files: images, archives)
+    as unsupported rather than transferring them. With a raw mode it could spool
+    one to a FAT16 file with `dputb`, which is most of the work already done.
+  - **Shape of the fix.** An `AT` command before dialling, which fits the
+    in-band Hayes control the bridge already parses (`ATD`, `ATDT`, `ATH`,
+    `ATZ`, `ATE`) -- `ATB1` for binary and `ATB0` to return, cleared on hangup
+    so a stale mode cannot leak into the next call. A port heuristic (70 means
+    raw) needs no protocol change but is implicit and would surprise anyone
+    running Gopher on another port.
+  - Host-side only, in `ModemProtocol` with a unit test through `ModemHost`; the
+    protocol logic is already Qt-free and tested that way. Fixes the same latent
+    hazard for any future raw-TCP client, not just Gopher.
+
 ### GOPHER — a network document browser (2026-09-19)
 
 - [ ] **A Gopher client, `GOPHER.PRG`.** A web browser was considered first and
