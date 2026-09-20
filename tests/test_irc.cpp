@@ -145,6 +145,9 @@ TEST_F(IrcTest, RegistersDisplaysAndPongs)
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
 
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            /* This test is the modem, so it drives /DCD as the real adapter
+               does. The client keys off carrier, not the CONNECT text. */
+            acia->setCarrier(true);
             for (char ch : std::string("CONNECT\r\n"))
                 acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
@@ -186,6 +189,7 @@ TEST_F(IrcTest, RendersEventsAndHandlesNickInUse)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -240,6 +244,7 @@ TEST_F(IrcTest, ChannelCommandsTransmitProperIrc)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -271,6 +276,7 @@ TEST_F(IrcTest, ServerCommandDisconnects)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -297,6 +303,7 @@ TEST_F(IrcTest, DisconnectAliasHangsUp)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -326,6 +333,7 @@ TEST_F(IrcTest, ListCommandSendsAndRenders)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -358,6 +366,7 @@ TEST_F(IrcTest, ListBurstRowsStayIntact)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -398,6 +407,7 @@ TEST_F(IrcTest, NewestLineAtBottomRow)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -438,6 +448,7 @@ TEST_F(IrcTest, ScrollbackPageUpShowsOlderLines)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -489,6 +500,7 @@ TEST_F(IrcTest, ReviewHoldsWhileNewLinesArrive)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -532,6 +544,7 @@ TEST_F(IrcTest, FoldsUtf8AndWrapsLongLines)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -579,6 +592,7 @@ TEST_F(IrcTest, ServerMenuPicksFromList)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT beta.irc:7000") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -614,6 +628,7 @@ TEST_F(IrcTest, ServerMenuReappearsAfterDisconnect)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT alpha.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }
@@ -648,6 +663,7 @@ TEST_F(IrcTest, NoCarrierInsideAMessageIsNotADisconnect)
         if (!cycle()) break;
         while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
         if (!connected && tx.find("ATDT test.irc:6667") != std::string::npos) {
+            acia->setCarrier(true);   // the fixture is the modem: raise /DCD
             for (char ch : std::string("CONNECT\r\n")) acia->hostSend(static_cast<uint8_t>(ch));
             connected = true;
         }

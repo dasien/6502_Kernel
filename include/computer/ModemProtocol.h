@@ -50,6 +50,27 @@ namespace Computer
      * Online it passes bytes both ways, escaping a literal $FF the 6502 sends as
      * telnet `IAC IAC`, and filtering inbound telnet negotiation (refusing all
      * options) so the 6502 sees a clean byte stream.
+     *
+     * RAW MODE (`ATB1`, cleared by `ATB0`, a hangup or a reset) turns that
+     * filter off. IAC doubling is correct against a telnet peer and is what
+     * makes TERM's XMODEM transparent: the BBS un-doubles what we double and
+     * doubles what we un-double. Against a peer that is NOT telnet it corrupts
+     * binary -- a Gopher server on port 70 sending a $FF loses it and the byte
+     * after it to a negotiation nobody sent. Raw mode is for those: the byte
+     * pipe becomes literal in both directions. It is off by default, so a
+     * client that never asks is unaffected, and it clears on hangup so a stale
+     * mode cannot leak into the next call.
+     *
+     * Command-mode input is echoed back to the 6502 (`ATE1`, the default;
+     * `ATE0` turns it off, `ATZ` restores it). A real modem does this and it is
+     * the only reason typing an AT command into TERM shows anything: TERM has
+     * no local echo, because a terminal relies on the far end for it.
+     *
+     * `ATQ1` suppresses result codes entirely (`ATQ0` restores them, `ATZ`
+     * resets). A program that watches /DCD wants a clean pipe and has no use
+     * for text aimed at a human -- GOPHER sets it, because a result code
+     * arriving between CONNECT and the server's reply would otherwise land in
+     * the middle of the response. TERM leaves codes on: someone is reading.
      */
     class ModemProtocol
     {
@@ -67,6 +88,12 @@ namespace Computer
         void onDisconnected();
 
         [[nodiscard]] bool isOnline() const { return state_ == State::Online; }
+        /// True when the telnet filter is off (ATB1). Public for tests.
+        [[nodiscard]] bool isRaw() const { return raw_; }
+        /// True when command-mode input is echoed (ATE1). Public for tests.
+        [[nodiscard]] bool isEcho() const { return echo_; }
+        /// True when result codes are suppressed (ATQ1). Public for tests.
+        [[nodiscard]] bool isQuiet() const { return quiet_; }
 
         /// Telnet protocol bytes (public for tests / the adapter).
         static constexpr uint8_t kIAC = 255;
@@ -92,6 +119,9 @@ namespace Computer
         std::string cmd_line_;        ///< AT command line accumulator (command mode)
         int plus_count_ = 0;          ///< consecutive '+' seen online (the +++ escape)
         bool suppress_no_carrier_ = false; ///< local ATH/ATZ hangup -> no NO CARRIER
+        bool raw_ = false;            ///< ATB1: pass $FF through untouched, both ways
+        bool echo_ = true;            ///< ATE1: echo command-mode input back to the CPU
+        bool quiet_ = false;          ///< ATQ1: emit no result codes at all
         Tn tn_ = Tn::Data;            ///< inbound telnet filter state
         std::vector<uint8_t> sb_;     ///< subnegotiation bytes collected between SB and SE
 

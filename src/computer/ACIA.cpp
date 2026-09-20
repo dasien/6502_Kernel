@@ -29,6 +29,8 @@ namespace Computer
             uint8_t status = kStatusTxEmpty; // TX is always ready in the model
             if (!rx_.empty())
                 status |= kStatusRxFull;
+            if (!carrier_)
+                status |= kStatusNoCarrier;  // active low: set means NO carrier
             return status;
         }
         case kRegCommand:

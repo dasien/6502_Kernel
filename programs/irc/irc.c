@@ -43,6 +43,7 @@ extern void vscrollbot(unsigned char row);/* scroll-region bottom row (rows 0..r
 extern void acia_init(void);
 extern int  acia_get(void);               /* non-blocking: byte 0..255, or -1 */
 extern void acia_put(unsigned char c);
+extern unsigned char acia_carrier(void);   /* /DCD: 1 while a call is up */
 extern char dopen_read(char *name);       /* DOS FAT16 read: 0 = ok, 1 = error */
 extern int  dgetb(void);                  /* next byte 0..255, or -1 at EOF */
 extern void dclose(void);
@@ -77,7 +78,7 @@ static char rxline[512];                /* one incoming IRC line being assembled
 static int  rxlen;
 static char nick[24];
 static char chan[34];                   /* current channel ("" = none joined) */
-static char online;                     /* 1 once the modem reports CONNECT */
+static char online;                     /* mirrors /DCD; see the main loop */
 static int  g_session;                  /* SESS_RUN / SESS_REDIAL / SESS_EXIT */
 
 /* Saved IRC server list (SYSTEM/IRC.LST), same format/parser as TERM's dial-
@@ -408,14 +409,11 @@ static void handle_line(char *s)
         aputs("PONG"); aputs(s + 4); acrlf();
         return;
     }
-    /* Link status lines from the modem (no ':' prefix). Anchored, like the ERROR
-       check below: a strstr() here matched the phrase ANYWHERE in the line, so when
-       another user typed "NO CARRIER" in the channel the client marked itself offline
-       and swallowed their message -- the line arrives as
-       ":nick!u@h PRIVMSG #chan :NO CARRIER". A real modem result code is its own
-       bare line. */
-    if (strncmp(s, "NO CARRIER", 10) == 0) { online = 0; status_repaint(); chat_add("* disconnected (NO CARRIER)"); return; }
-    if (strncmp(s, "ERROR", 5) == 0) { online = 0; status_repaint(); chat_add(s); return; }
+    /* Link state comes from /DCD, polled in the main loop, not from text on the
+       wire. This used to scan for "NO CARRIER" and a user typing that phrase in
+       a channel knocked the client offline and swallowed their message. ERROR is
+       still shown, as a message rather than as a signal. */
+    if (strncmp(s, "ERROR", 5) == 0) { chat_add(s); return; }
 
     if (s[0] == ':') {                          /* ":nick!user@host CMD ..." */
         i = 1; ns = 1;
@@ -600,17 +598,6 @@ static void send_input(void)
 }
 
 /* ---- connect flow -------------------------------------------------------- */
-/* Incremental substring matcher (for the modem's CONNECT result code). */
-static int feed_match(const char *pat, int *st, unsigned char b)
-{
-    if (b == (unsigned char)pat[*st]) {
-        (*st)++;
-        if (pat[*st] == 0) { *st = 0; return 1; }
-    } else {
-        *st = (b == (unsigned char)pat[0]) ? 1 : 0;
-    }
-    return 0;
-}
 
 /* Read a line at a screen cell, echoing as typed. Returns 0 on RETURN, or -1 if
    ESC cancelled (the caller treats that as "quit the app"). */
@@ -699,20 +686,17 @@ static int setup(void)
         online = 0;
         aputs("ATDT "); aputs(server); acrlf();
 
-        {   /* wait for CONNECT / failure (ERROR|NO CARRIER) / ESC / timeout */
-            int sc = 0, se = 0, sn = 0, res = 0;    /* 0 wait, 1 ok, 2 fail, 3 cancel */
+        {   /* Wait for /DCD, not for the word CONNECT. A result code is text
+               for a human, and reading it as a signal is what once let another
+               user type "NO CARRIER" in a channel and knock this client
+               offline. Carrier cannot be forged by anything on the wire. */
+            int res = 0;                            /* 0 wait, 1 ok, 2 fail, 3 cancel */
             long t = 12000000L;
             while (res == 0) {
-                int b = acia_get();
-                if (b >= 0) {
-                    if (feed_match("CONNECT", &sc, (unsigned char)b)) res = 1;
-                    else if (feed_match("ERROR", &se, (unsigned char)b)) res = 2;
-                    else if (feed_match("NO CARRIER", &sn, (unsigned char)b)) res = 2;
-                } else if (INCH_NB() == KEY_ESC) {
-                    res = 3;
-                } else if (--t == 0) {
-                    res = 2;
-                }
+                if (acia_carrier()) res = 1;
+                else if (acia_get() >= 0) { /* result-code chatter: discard */ }
+                else if (INCH_NB() == KEY_ESC) res = 3;
+                else if (--t == 0) res = 2;
             }
             if (res == 1) {
                 online = 1;
@@ -761,6 +745,15 @@ static int chat_session(void)
 
     g_session = SESS_RUN;
     while (g_session == SESS_RUN) {
+        /* Link state is /DCD, read from the chip, not inferred from the wire. */
+        {   const char up = (char)acia_carrier();
+            if (up != online) {
+                online = up;
+                if (!up) chat_add("* disconnected (carrier lost)");
+                status_repaint();
+            }
+        }
+
         b = acia_get();
         if (b >= 0) {                           /* each completed line scrolls in immediately */
             if (b == '\n') { rxline[rxlen] = 0; handle_line(rxline); rxlen = 0; }

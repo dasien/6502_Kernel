@@ -264,6 +264,14 @@ if(CA65_FOUND AND LD65_FOUND)
             MESSAGE  "KERNEL PANIC blob built ($0800)"
         )
 
+        # GOPHER, the Gopher document browser.
+        mfc_add_test_blob(gopher
+            DIR      ${CMAKE_SOURCE_DIR}/programs/gopher
+            CONFIG   gopher.cfg
+            SOURCES  gopher.c glue.s
+            MESSAGE  "GOPHER blob built ($0800)"
+        )
+
         # EDIT.
         mfc_add_test_blob(edit
             DIR      ${CMAKE_SOURCE_DIR}/programs/edit

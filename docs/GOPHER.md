@@ -70,17 +70,27 @@ document has nothing selectable in it, so the arrow keys scroll the text a line
 at a time and PgUp, PgDn, Home and End move by the screenful. Backspace returns
 to the menu you came from.
 
+## Downloading a binary
+
+An entry marked `#` is a binary file. Enter offers a name derived from the
+selector, squeezed into the 8.3 form the disk needs, which you can accept with
+Enter or type over. The transfer runs to a file on the disk, showing the size as
+it goes, and ESC abandons it.
+
+Two things happen underneath. The client puts the modem into raw mode for the
+duration, because the telnet framing that makes TERM's XMODEM work would eat a
+`$FF` byte and the one after it out of a binary file. And it reads until the
+carrier drops. Gopher gives a binary transfer no terminator at all, so the
+server simply closes the connection when the file ends.
+
 ## Limits
 
 A menu is held in memory, not spooled to disk, so it is capped at 150 entries and
 about 10 KB of text. A longer menu is truncated and the status line says so,
 and the entries shown still work.
 
-Binary items, Gopher type `9`, are not supported. The modem bridge runs a telnet
-filter that escapes a literal `$FF` byte, which is harmless for the 7-bit text
-Gopher normally carries but would corrupt a binary transfer.
-
-There is no bookmark list yet. Every session starts from a typed host.
+A Gopher menu carries no file size, so there is no way to know in advance whether
+a download will fit. A full disk shows as a write failure part way through.
 
 ## Connection details
 

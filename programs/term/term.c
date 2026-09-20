@@ -42,6 +42,7 @@ unsigned char vgetcolor(void);   /* read color/attr at the current cell (auto-in
 void acia_init(void);            /* init the 6551 */
 int  acia_get(void);             /* non-blocking RX byte 0..255, or -1 */
 void acia_put(unsigned char c);  /* transmit a byte */
+unsigned char acia_carrier(void); /* /DCD: 1 while a call is up */
 
 /* ---- DOS FAT16 file I/O (glue.s) for XMODEM transfers ---- */
 char dopen_read(char *name);     /* 0 = ok, 1 = error */
@@ -85,8 +86,7 @@ unsigned char attr = ATTR_DEFAULT;
 /* carrier state, tracked by spotting the modem's result codes in the RX stream.
    Used so we only emit the in-band "+++ATH" hangup while actually connected --
    sending it offline would be parsed by the modem as a bad AT line (ERROR). */
-char online = 0;
-int  m_connect = 0, m_nocar = 0; /* incremental substring match indices */
+char online = 0;                /* mirrors /DCD, polled in the main loop */
 
 /* ANSI parser state */
 #define MAXPARAM 8
@@ -101,18 +101,6 @@ static unsigned char cap_c[COLS], cap_a[COLS];               /* row being captur
 static unsigned char frame_c[ROWS * COLS], frame_a[ROWS * COLS]; /* saved live frame */
 static char reviewing = 0;              /* 1 = browsing history (input is held) */
 static unsigned int histn = 0;          /* rows ever pushed (is there history?) */
-
-/* Advance an incremental substring matcher; returns 1 when pat fully matches. */
-static int feed_match(const char *pat, int *idx, unsigned char c)
-{
-    if (c == (unsigned char)pat[*idx]) {
-        (*idx)++;
-        if (pat[*idx] == 0) { *idx = 0; return 1; }
-    } else {
-        *idx = (c == (unsigned char)pat[0]) ? 1 : 0;
-    }
-    return 0;
-}
 
 /* ------------------------------------------------------------------ */
 static void move_cursor(void) { vcursor((unsigned int)(cy * COLS + cx)); }
@@ -745,11 +733,16 @@ int main(void)
     }
 
     for (;;) {
+        /* Carrier is the machine's own signal that a call started or ended.
+         * This used to watch the data stream for the strings "CONNECT" and
+         * "NO CARRIER", which are result codes meant for a person reading a
+         * terminal -- a BBS echoing either word would have flipped the state,
+         * and no real machine works that way. */
+        online = acia_carrier();
+
         if (!reviewing) {         /* hold BBS input while reviewing (the host buffers it) */
             b = acia_get();
             if (b >= 0) {
-                if (feed_match("CONNECT", &m_connect, (unsigned char)b)) online = 1;
-                if (feed_match("NO CARRIER", &m_nocar, (unsigned char)b)) online = 0;
                 ansi_byte((unsigned char)b);
                 continue;
             }

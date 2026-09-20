@@ -13,7 +13,7 @@
 .export _INCH, _INCH_NB, _QUITDOS
 .export _jiffies
 .export _vaddr, _vputc, _vattr, _vcursor, _vfill, _vcmd, _vscrollbot
-.export _acia_init, _acia_get, _acia_put
+.export _acia_init, _acia_get, _acia_put, _acia_carrier
 .export _dopen_read, _dopen_write, _dgetb, _dputb, _dclose
 
 K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char
@@ -139,6 +139,21 @@ K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
         rts
 @none:  lda     #$ff
         ldx     #$ff
+        rts
+.endproc
+
+; unsigned char acia_carrier(void) -- 1 while /DCD says a call is up, else 0.
+; Status bit 5 is ACTIVE LOW on a 6551: set means NO carrier. This is the only
+; sound way to see a call end -- "NO CARRIER" is a result code for a human, and
+; a user typing that phrase in a channel once knocked this client offline.
+.proc _acia_carrier
+        ldx     #$00
+        lda     ACIA_STATUS
+        and     #$20            ; bit 5: set = no carrier
+        bne     @down
+        lda     #$01
+        rts
+@down:  lda     #$00
         rts
 .endproc
 

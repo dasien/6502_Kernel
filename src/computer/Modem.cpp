@@ -15,6 +15,7 @@ Modem::Modem(Computer::ACIA *acia, QObject *parent)
 {
     connect(socket_, &QTcpSocket::connected, this, [this]() {
         dialing_ = false;
+        acia_->setCarrier(true);        // /DCD asserts: the 6502 can see the call
         proto_.onConnected();
     });
     connect(socket_, &QTcpSocket::readyRead, this, [this]() {
@@ -25,10 +26,12 @@ Modem::Modem(Computer::ACIA *acia, QObject *parent)
     });
     connect(socket_, &QTcpSocket::disconnected, this, [this]() {
         dialing_ = false;
+        acia_->setCarrier(false);       // carrier drops, which is the end-of-call signal
         proto_.onDisconnected();
     });
     connect(socket_, &QAbstractSocket::errorOccurred, this,
             [this](QAbstractSocket::SocketError) {
+                acia_->setCarrier(false);
                 if (dialing_)
                 {
                     dialing_ = false;

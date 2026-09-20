@@ -2,32 +2,38 @@
 
 ## Open
 
-### Modem: a raw mode for non-telnet connections (2026-09-20)
+### Modem and ACIA: carrier detect, raw and quiet modes (DONE 2026-09-20)
 
-- [ ] **The bridge applies telnet framing to connections that are not telnet.**
-  `ModemProtocol` does IAC doubling in both directions: a literal `$FF` from the
-  6502 goes out as `FF FF`, an inbound `FF FF` collapses to one `$FF`, and a
-  lone `FF` is read as the start of a negotiation command and consumed with the
-  byte after it.
-  - **That is correct telnet, and it is why TERM's XMODEM works.** A BBS is a
-    telnet server, so it un-doubles what the bridge doubles and doubles what the
-    bridge un-doubles. Binary survives end to end.
-  - **It is wrong for a raw-TCP peer.** A Gopher server on port 70 speaks raw
-    TCP, so binary content containing `$FF` loses two bytes to a negotiation
-    that was never sent. IRC is on the same footing and never trips it, because
-    IRC is 7-bit text -- and so is Gopher, right up until a type `9` item.
-  - **What it blocks.** GOPHER reports type `9` (binary files: images, archives)
-    as unsupported rather than transferring them. With a raw mode it could spool
-    one to a FAT16 file with `dputb`, which is most of the work already done.
-  - **Shape of the fix.** An `AT` command before dialling, which fits the
-    in-band Hayes control the bridge already parses (`ATD`, `ATDT`, `ATH`,
-    `ATZ`, `ATE`) -- `ATB1` for binary and `ATB0` to return, cleared on hangup
-    so a stale mode cannot leak into the next call. A port heuristic (70 means
-    raw) needs no protocol change but is implicit and would surprise anyone
-    running Gopher on another port.
-  - Host-side only, in `ModemProtocol` with a unit test through `ModemHost`; the
-    protocol logic is already Qt-free and tested that way. Fixes the same latent
-    hazard for any future raw-TCP client, not just Gopher.
+- [x] **The bridge applied telnet framing to connections that are not telnet,
+  and every client inferred link state by reading text out of the data stream.**
+  Both are fixed.
+  - **Carrier detect.** The ACIA now reports /DCD in status bit 5, active low
+    as on a real 6551, driven by the modem's socket state. TERM, IRC and GOPHER
+    all poll it. They used to scan for the strings `CONNECT` and `NO CARRIER`,
+    which are result codes meant for a person reading a terminal. That had
+    already bitten IRC in production: a user typing "NO CARRIER" in a channel
+    knocked the client offline and swallowed their message, patched at the time
+    by anchoring the match rather than by fixing the mechanism.
+  - **Raw mode, `ATB1`.** Turns the IAC filter off. The doubling is correct
+    against a telnet peer and is exactly why TERM's XMODEM is transparent, but
+    it eats a `$FF` and the byte after it from a raw-TCP peer.
+  - **Quiet mode, `ATQ1`.** Suppresses result codes. A client keying off
+    carrier wants a clean pipe, and a code arriving between connect and the
+    server's first byte would otherwise land inside the response.
+  - **Echo, `ATE`.** On by default, as a real modem is. TERM has no local echo,
+    so without it typing an AT command showed nothing at all.
+  - **Binary retrieval works.** GOPHER downloads types `9`, `5`, `I` and `g`:
+    raw mode on, dial, stream to a FAT16 file with `dputb`, and stop when
+    carrier drops, which RFC 1436 makes the only possible end marker for
+    binary. The filename is derived from the selector into 8.3 and offered for
+    editing.
+  - Twelve new tests across `test_modem.cpp` (carrier semantics, `ATB`, `ATQ`,
+    `ATE`) and `test_gopher.cpp`, one of which pins the telnet default by
+    asserting an unpaired inbound `$FF` still eats the next byte, so the raw
+    path cannot be "fixed" by breaking the path XMODEM depends on.
+  - **Still open:** a Gopher menu carries no file size, so a download cannot be
+    refused before it starts and a full disk shows as a mid-transfer write
+    failure.
 
 ### GOPHER — a network document browser (2026-09-19)
 

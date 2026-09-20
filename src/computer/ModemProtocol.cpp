@@ -13,6 +13,7 @@ namespace Computer
 {
     void ModemProtocol::result(const char *code)
     {
+        if (quiet_) return;              // ATQ1: the caller is watching /DCD
         std::string s = "\r\n";
         s += code;
         s += "\r\n";
@@ -45,7 +46,7 @@ namespace Computer
             }
             plus_count_ = 0;
 
-            if (byte == kIAC)
+            if (byte == kIAC && !raw_)
             {
                 const uint8_t esc[2] = {kIAC, kIAC}; // telnet-escape a literal $FF
                 host_->sendToNetwork(esc, 2);
@@ -57,9 +58,10 @@ namespace Computer
             return;
         }
 
-        // Command mode: accumulate an AT line.
+        // Command mode: accumulate an AT line, echoing it if ATE1 (the default).
         if (byte == '\r' || byte == '\n')
         {
+            if (echo_) { const uint8_t cr = '\r'; host_->sendToCpu(&cr, 1); }
             if (!cmd_line_.empty())
             {
                 parseAt(cmd_line_);
@@ -69,12 +71,18 @@ namespace Computer
         }
         if (byte == 0x08 || byte == 0x7F) // backspace / delete
         {
-            if (!cmd_line_.empty()) cmd_line_.pop_back();
+            if (!cmd_line_.empty())
+            {
+                cmd_line_.pop_back();
+                // Erase it on the far screen too, or the line reads wrong.
+                if (echo_) { const uint8_t bs[3] = {0x08, ' ', 0x08}; host_->sendToCpu(bs, 3); }
+            }
             return;
         }
         if (byte >= 0x20 && byte < 0x7F && cmd_line_.size() < 64)
         {
             cmd_line_.push_back(static_cast<char>(byte));
+            if (echo_) host_->sendToCpu(&byte, 1);
         }
     }
 
@@ -138,11 +146,47 @@ namespace Computer
                 host_->hangup();
             }
             state_ = State::Command;
+            raw_ = false;                // a call's mode does not outlive the call
+            // ATZ is a reset, so it restores the defaults; ATH is only a hangup
+            // and leaves terminal settings where the user put them.
+            if (up.rfind("ATZ", 0) == 0) { echo_ = true; quiet_ = false; }
             result("OK");
             return;
         }
 
-        // ATE (echo), AT (bare), and anything else recognized-enough: answer OK.
+        // ATQ0 / ATQ1: result codes on and off. A driver keying off /DCD wants
+        // them off, so nothing meant for a human lands in its data stream.
+        if (up.rfind("ATQ", 0) == 0)
+        {
+            const char c = up.size() > 3 ? up[3] : '0';
+            if (c != '0' && c != '1') { result("ERROR"); return; }
+            quiet_ = (c == '1');
+            result("OK");            // suppressed by quiet_ itself when turning on
+            return;
+        }
+
+        // ATE0 / ATE1: command-mode echo. Bare ATE means ATE0, as on real modems.
+        if (up.rfind("ATE", 0) == 0)
+        {
+            const char c = up.size() > 3 ? up[3] : '0';
+            if (c != '0' && c != '1') { result("ERROR"); return; }
+            echo_ = (c == '1');
+            result("OK");
+            return;
+        }
+
+        // ATB1 / ATB0: raw (binary) mode on and off. See the class comment --
+        // IAC doubling is right for a telnet peer and wrong for a raw-TCP one.
+        if (up.rfind("ATB", 0) == 0)
+        {
+            const char c = up.size() > 3 ? up[3] : '0';
+            if (c != '0' && c != '1') { result("ERROR"); return; }
+            raw_ = (c == '1');
+            result("OK");
+            return;
+        }
+
+        // AT (bare) and anything else recognised-enough: answer OK.
         result("OK");
     }
 
@@ -184,6 +228,14 @@ namespace Computer
 
     void ModemProtocol::fromNetwork(const uint8_t *data, size_t n)
     {
+        // Raw mode: the peer is not telnet, so there is no negotiation to strip
+        // and no doubled IAC to collapse. Hand the bytes over untouched.
+        if (raw_)
+        {
+            if (n) host_->sendToCpu(data, n);
+            return;
+        }
+
         std::vector<uint8_t> out;
         out.reserve(n);
         for (size_t i = 0; i < n; ++i)
@@ -262,6 +314,8 @@ namespace Computer
         const bool wasConnected = connected_;
         connected_ = false;
         state_ = State::Command;
+        raw_ = false;                    // a mode belongs to one call, not the line
+        tn_ = Tn::Data;                  // and neither does a half-read IAC sequence
         if (wasConnected && !suppress_no_carrier_) result("NO CARRIER");
         suppress_no_carrier_ = false;
     }

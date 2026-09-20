@@ -301,6 +301,7 @@ target_compile_features(print_char_tests PRIVATE cxx_std_20)
 add_executable(modem_tests
     test_modem.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/ModemProtocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
 )
 
 target_link_libraries(modem_tests gtest_main gtest)
@@ -557,6 +558,35 @@ target_include_directories(irc_tests PRIVATE
 
 target_compile_features(irc_tests PRIVATE cxx_std_20)
 
+# GOPHER end-to-end test (runs the real gopher.bin blob). Stands in for the
+# modem and a Gopher server over the ACIA and asserts on the rendered screen.
+add_executable(gopher_tests
+    test_gopher.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(gopher_tests gtest_main gtest)
+
+target_include_directories(gopher_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(gopher_tests PRIVATE cxx_std_20)
+
 # VENTURE (programs/venture): drives the real 6502 blob through the PIA control
 # port and reads the screen back. A real-time game cannot be checked by
 # compiling it.
@@ -765,6 +795,9 @@ add_test(NAME term_xmodem
 # Add the IRC chat-client end-to-end test to CTest
 add_test(NAME irc
     COMMAND irc_tests)
+
+add_test(NAME gopher
+    COMMAND gopher_tests)
 
 add_test(NAME venture
     COMMAND venture_tests)

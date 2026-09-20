@@ -27,6 +27,16 @@ namespace Computer
      * Status bits follow the real 6551 well enough for polled drivers:
      *   bit 3 ($08) = receiver full  (a byte is waiting to be read)
      *   bit 4 ($10) = transmitter empty (always set here: TX is instant)
+     *   bit 5 ($20) = data carrier detect, and it is ACTIVE LOW like the real
+     *                 chip: CLEAR means a carrier is present, SET means none.
+     *                 /DCD is an active-low RS-232 line and the 6551 reports
+     *                 the pin, so a driver tests for zero to mean connected.
+     *
+     * Carrier is the only honest way for the 6502 to learn a call has ended.
+     * The modem's "NO CARRIER" is a result code meant for a human reading a
+     * terminal, and matching it in the data stream is wrong twice over: it
+     * cannot work for a binary transfer, where those ten bytes may be file
+     * content, and it is not what any real machine does.
      *
      * The 6502 side is the usual polled driver (e.g. the bundled XMODEM):
      *   send: wait for TX-empty, write ACIA_DATA.
@@ -51,6 +61,11 @@ namespace Computer
         /// Status register bits (6551-compatible subset).
         static constexpr uint8_t kStatusRxFull = 0x08;   ///< a received byte is waiting
         static constexpr uint8_t kStatusTxEmpty = 0x10;  ///< transmitter ready
+        static constexpr uint8_t kStatusNoCarrier = 0x20; ///< SET = no carrier (active low)
+
+        /// @brief Assert or drop carrier. Driven by the modem's socket state.
+        void setCarrier(bool present) { carrier_ = present; }
+        [[nodiscard]] bool carrier() const { return carrier_; }
 
         /// @brief Whether an address falls within the ACIA registers ($FE29-$FE2C).
         [[nodiscard]] static bool isAciaAddress(uint16_t address);
@@ -79,6 +94,7 @@ namespace Computer
         uint8_t hostRecv();
 
     private:
+        bool carrier_ = false;     ///< /DCD: true while a call is up
         std::deque<uint8_t> rx_;   ///< host -> 6502 (bytes awaiting ACIA_DATA reads)
         std::deque<uint8_t> tx_;   ///< 6502 -> host (bytes written to ACIA_DATA)
         uint8_t command_ = 0;      ///< last ACIA_COMMAND written

@@ -92,9 +92,12 @@ All emulated devices live in `src/computer/`, with their headers in
 - `PIA` provides keyboard input through a circular buffer, the host file I/O ports
   that DOS and the monitor use for `LOAD` and `SAVE`, and the interval-timer IRQ at
   roughly 60 Hz that the system calls the jiffy.
-- `ACIA` is an emulated 6551 serial port, and both the terminal and the IRC client
-  talk through it. On the GUI build it is paired with `Modem`, a Hayes-AT and telnet
-  bridge over `QTcpSocket`, so the machine can contact real BBSes and IRC servers.
+- `ACIA` is an emulated 6551 serial port, and the terminal, the IRC client and the
+  Gopher client all talk through it. On the GUI build it is paired with `Modem`, a
+  Hayes-AT and telnet bridge over `QTcpSocket`, so the machine can contact real
+  BBSes, IRC servers and Gopher holes. `ATB1` puts the bridge in raw mode, which
+  turns the telnet IAC filter off for a peer that does not speak telnet. `ATB0`,
+  a hangup or a reset restores it.
 - `SID` is a software MOS 6581 or 8580 with three voices, ADSR envelopes and a
   filter, at `$FE38-$FE54`. `SidAudio` streams its PCM to the host audio output when
   Qt Multimedia is present.

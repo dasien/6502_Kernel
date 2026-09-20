@@ -78,10 +78,13 @@ extern void          vscrollbot(unsigned char row);
 extern unsigned int  jiffies(void);
 extern char          dopen_read(char *name);  /* 0 = ok, 1 = error */
 extern int           dgetb(void);             /* next byte, or -1 at EOF */
-extern void          dclose(void);
+extern char          dopen_write(char *name);  /* 0 = ok, 1 = error */
+extern char          dputb(char c);            /* 0 = ok, 1 = write failed */
+extern char          dclose(void);             /* 0 = ok, 1 = flush failed */
 extern void          acia_init(void);
 extern int           acia_get(void);
 extern void          acia_put(unsigned char b);
+extern unsigned char acia_carrier(void);      /* /DCD: 1 while a call is up */
 
 #define VCMD_CLEAR 0x01
 
@@ -285,45 +288,36 @@ static unsigned int intern(const char *s)
     return off;
 }
 
-static int feed_match(const char *s, int *st, unsigned char b)
-{
-    if (b == (unsigned char)s[*st]) {
-        (*st)++;
-        if (s[*st] == 0) { *st = 0; return 1; }
-    } else {
-        *st = (b == (unsigned char)s[0]) ? 1 : 0;
-    }
-    return 0;
-}
-
 /* ---- dial ---------------------------------------------------------------- */
-/* 1 connected, 0 failed, -1 cancelled. */
+/* 1 connected, 0 failed, -1 cancelled.
+ *
+ * Waits for /DCD rather than for the string "CONNECT". Result codes are for a
+ * human reading a terminal; carrier is the signal the hardware actually has,
+ * it cannot be forged by the data, and it is the only thing that works for a
+ * binary transfer where any byte sequence is legal content. */
 static int dial(const char *host, unsigned int port)
 {
-    int sc = 0, se = 0, sn = 0, res = 0;
     long t = 12000000L;
     char pbuf[8];
     unsigned int p = port;
     int i = 0, j;
 
+    /* Quiet mode: no result codes. We key off /DCD, so text meant for a human
+       is pure noise -- and a code landing between CONNECT and the server's
+       reply would otherwise be parsed as part of the response. */
+    aputs("ATQ1"); acrlf();
     drain();
     do { pbuf[i++] = (char)('0' + p % 10); p /= 10; } while (p && i < 6);
     aputs("ATDT "); aputs(host); acia_put(':');
     for (j = i - 1; j >= 0; j--) acia_put((unsigned char)pbuf[j]);
     acrlf();
 
-    while (res == 0) {
-        int b = acia_get();
-        if (b >= 0) {
-            if (feed_match("CONNECT",    &sc, (unsigned char)b)) res = 1;
-            if (feed_match("ERROR",      &se, (unsigned char)b)) res = 2;
-            if (feed_match("NO CARRIER", &sn, (unsigned char)b)) res = 2;
-            continue;
-        }
-        if (INCH_NB() == ASCII_ESC) res = 3;
-        if (--t <= 0) res = 2;
+    while (!acia_carrier()) {
+        (void)acia_get();                 /* drop the result-code chatter */
+        if (INCH_NB() == ASCII_ESC) return -1;
+        if (--t <= 0) return 0;
     }
-    return (res == 1) ? 1 : (res == 3 ? -1 : 0);
+    return 1;
 }
 
 /* ---- fetch --------------------------------------------------------------- */
@@ -352,7 +346,11 @@ static int fetch(const char *host, unsigned int port, const char *selector,
         int b = acia_get();
         if (b < 0) {
             if (INCH_NB() == ASCII_ESC) break;
-            if (++idle > 400000L) break;
+            /* Carrier gone and the FIFO drained: the response is complete.
+             * Gopher closes the connection at the end of every response, so
+             * this is the protocol's own end marker. */
+            if (!acia_carrier()) break;
+            if (++idle > 400000L) break;      /* backstop for a server that hangs */
             continue;
         }
         idle = 0;
@@ -363,7 +361,10 @@ static int fetch(const char *host, unsigned int port, const char *selector,
         }
         line[ln] = 0; ln = 0;
         if (line[0] == '.' && line[1] == 0) break;
-        if (!strncmp(line, "NO CARRIER", 10)) break;
+        /* RFC 1436: a line that really begins with a period is sent with an
+           extra one prepended, so it cannot be mistaken for the terminator.
+           Strip it back off before the line is used. */
+        if (line[0] == '.') { char *d = line, *q = line + 1; while ((*d++ = *q++) != 0) ; }
         if (n_items >= MAXITEM) { truncated = 1; continue; }
 
         if (!as_menu) {
@@ -405,10 +406,14 @@ static int fetch(const char *host, unsigned int port, const char *selector,
 }
 
 /* ---- render -------------------------------------------------------------- */
+/* Types the client can actually open. Binary kinds are included because a
+   download is a real action; everything else, info lines most of all, is text
+   on the page and must not take the highlight. */
 static int selectable(int i)
 {
     unsigned char t = it_type[i];
-    return (t == '0' || t == '1' || t == '7');
+    return (t == '0' || t == '1' || t == '7' ||
+            t == '9' || t == '5' || t == 'I' || t == 'g');
 }
 
 static void draw_item(int row, int i)
@@ -425,6 +430,8 @@ static void draw_item(int row, int i)
     switch (it_type[i]) {
         case '1': strcpy(tag, "/ "); break;
         case '7': strcpy(tag, "? "); break;
+        case '9': case '5': case 'I': case 'g':
+                  strcpy(tag, "# "); break;      /* a download */
         default:  strcpy(tag, "  "); break;
     }
     vattr(i == sel ? A_SEL : A_NORM);
@@ -555,6 +562,138 @@ static int prompt_at(int row, unsigned char attr, const char *label,
         n++;
         vcursor(base + off + (unsigned int)n);
     }
+}
+
+/* ---- binary download (item type 9) ---------------------------------------
+ * RFC 1436: "the client must be prepared to read until the connection closes.
+ * There will be no period at the end of the file." So the end of a binary
+ * transfer is the end of the call, which the 6502 sees as /DCD dropping --
+ * nothing in the data can be trusted to mark it.
+ *
+ * ATB1 puts the modem in raw mode for the duration: its telnet IAC filter is
+ * correct against a telnet peer and would eat a $FF, and the byte after it,
+ * out of any binary coming from a Gopher server. */
+
+/* Derive an 8.3 name from a selector like "/pub/stuff/thing.zip". */
+static void name_from_selector(const char *sel, char *out)
+{
+    const char *base = sel, *p, *dot;
+    int n = 0, i;
+
+    for (p = sel; *p; p++) if (*p == '/') base = p + 1;
+    dot = 0;
+    for (p = base; *p; p++) if (*p == '.') dot = p;
+
+    for (p = base; *p && (dot ? p < dot : 1) && n < 8; p++) {
+        char c = *p;
+        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) out[n++] = c;
+    }
+    if (!n) { out[n++] = 'F'; out[n++] = 'I'; out[n++] = 'L'; out[n++] = 'E'; }
+    if (dot) {
+        out[n++] = '.';
+        for (i = 1, p = dot + 1; *p && i <= 3; p++, i++) {
+            char c = *p;
+            if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) out[n++] = c;
+        }
+    }
+    out[n] = 0;
+}
+
+static void download(const char *host, unsigned int port, const char *selector)
+{
+    static char fname[16];
+    static char typed[16];
+    char msg[COLS + 1];
+    long total = 0;
+    int stalled = 0;
+    char failed = 0;
+
+    name_from_selector(selector, fname);
+    vfill(' '); vcmd(VCMD_CLEAR);
+    header();
+    put_at((unsigned int)BODY_TOP * COLS, "  Save as (8.3), or ESC to cancel:", COLS);
+    /* Show the name derived from the selector, so Enter accepts it and the
+       user can see what they are about to get rather than guessing. */
+    {
+        char label[40];
+        strcpy(label, "  Name [");
+        strcat(label, fname);
+        strcat(label, "]: ");
+        if (prompt_at(BODY_TOP + 2, A_NORM, label, typed, (int)sizeof(typed)) < 0) return;
+        if (typed[0]) copyn(fname, typed, (int)sizeof(fname));
+    }
+
+    aputs("ATB1"); acrlf();               /* raw: no telnet filtering */
+    drain();
+
+    status(" Connecting...");
+    if (dial(host, port) != 1) {
+        vattr(A_WARN);
+        put_at((unsigned int)(BODY_TOP + 3) * COLS, "  Connection failed.", COLS);
+        vattr(A_NORM);
+        status(" Any key to continue.");
+        INCH();
+        return;
+    }
+
+    if (dopen_write(fname)) {
+        hangup(); drain();
+        vattr(A_WARN);
+        put_at((unsigned int)(BODY_TOP + 3) * COLS, "  Cannot create that file.", COLS);
+        vattr(A_NORM);
+        status(" Any key to continue.");
+        INCH();
+        return;
+    }
+
+    aputs(selector); acrlf();
+    status(" Receiving...  ESC aborts");
+
+    for (;;) {
+        int b = acia_get();
+        if (b >= 0) {
+            stalled = 0;
+            if (dputb((char)b)) { failed = 1; break; }   /* disk full */
+            if ((++total & 0x3FF) == 0) {                /* a line every 1 KB */
+                int n = 0;
+                long k = total >> 10;
+                char d[8];
+                int j = 0;
+                strcpy(msg, "  Received ");
+                n = (int)strlen(msg);
+                if (!k) d[j++] = '0';
+                while (k) { d[j++] = (char)('0' + (int)(k % 10)); k /= 10; }
+                while (j) msg[n++] = d[--j];
+                msg[n] = 0;
+                strcat(msg, " KB");
+                put_at((unsigned int)(BODY_TOP + 3) * COLS, msg, COLS);
+            }
+            continue;
+        }
+        if (INCH_NB() == ASCII_ESC) { failed = 2; break; }
+        /* Carrier gone and the FIFO empty: the server closed, so that is the
+           whole file. This is the protocol's only end-of-transfer marker. */
+        if (!acia_carrier()) break;
+        if (++stalled > 2000000) { failed = 3; break; }
+    }
+
+    if (dclose()) failed = failed ? failed : 1;
+    hangup();
+    drain();
+    aputs("ATB0"); acrlf();               /* back to telnet framing */
+    drain();
+
+    vattr(failed ? A_WARN : A_NORM);
+    put_at((unsigned int)(BODY_TOP + 5) * COLS,
+           failed == 1 ? "  Write failed - disk full?" :
+           failed == 2 ? "  Cancelled." :
+           failed == 3 ? "  Transfer stalled." :
+                         "  Saved.", COLS);
+    vattr(A_NORM);
+    status(" Any key to continue.");
+    INCH();
 }
 
 /* ---- navigation ---------------------------------------------------------- */
@@ -701,6 +840,16 @@ int main(void)
             if (t == '1' || t == '0') {
                 push();
                 enter_page(host, it_port[sel], sels, 0, (t == '1'));
+                continue;
+            }
+            if (t == '9' || t == '5' || t == 'I' || t == 'g') {
+                download(host, it_port[sel], sels);
+                /* The menu is still in the arena -- a download never touches
+                   it -- so redraw rather than fetching the page again. */
+                vfill(' '); vcmd(VCMD_CLEAR);
+                header();
+                draw_all();
+                show_status();
                 continue;
             }
             status(" Unsupported item type.  Q=quit");
