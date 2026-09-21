@@ -8,8 +8,9 @@ option(REQUIRE_CC65 "Fail configuration if the cc65 toolchain (ca65/ld65) is mis
 # Find cc65 toolchain
 find_program(CA65_FOUND ca65)
 find_program(LD65_FOUND ld65)
+find_program(AR65_FOUND ar65)
 
-if(CA65_FOUND AND LD65_FOUND)
+if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
     message(STATUS "Found cc65 toolchain - will build kernel ROM automatically")
     
     # Create kernel build directory in build tree
@@ -209,10 +210,12 @@ if(CA65_FOUND AND LD65_FOUND)
             add_custom_command(
                 OUTPUT ${_out}
                 # cl65, not bare ld65: the link needs the cc65 runtime library
-                # for the target, and cl65 is what supplies none.lib.
-                COMMAND cl65 -t none -C ${B_DIR}/${B_CONFIG} ${_objs} -o ${_out} ${_labels}
+                # for the target, and cl65 is what supplies none.lib. libmfcglue
+                # goes last, for the reason given in GlueLibrary.cmake.
+                COMMAND cl65 -t none -C ${B_DIR}/${B_CONFIG} ${_objs} ${MFC_GLUE_LIB}
+                        -o ${_out} ${_labels}
                 COMMAND ${CMAKE_COMMAND} -E echo "${B_MESSAGE}"
-                DEPENDS ${_objs} ${B_DIR}/${B_CONFIG}
+                DEPENDS ${_objs} ${B_DIR}/${B_CONFIG} ${MFC_GLUE_LIB}
                 COMMENT "ld65 kernel/${name}.bin"
                 VERBATIM
             )
@@ -225,7 +228,7 @@ if(CA65_FOUND AND LD65_FOUND)
         mfc_add_test_blob(term
             DIR      ${CMAKE_SOURCE_DIR}/programs/term
             CONFIG   term.cfg
-            SOURCES  term.c ${COMMON_DIR}/scrollback.c glue.s
+            SOURCES  term.c ${COMMON_DIR}/scrollback.c
             INCLUDE  ${COMMON_DIR}
             DEPENDS  ${COMMON_DIR}/scrollback.h
             MESSAGE  "TERM terminal blob built ($0800)"
@@ -235,7 +238,7 @@ if(CA65_FOUND AND LD65_FOUND)
         mfc_add_test_blob(irc
             DIR      ${CMAKE_SOURCE_DIR}/programs/irc
             CONFIG   irc.cfg
-            SOURCES  irc.c ${COMMON_DIR}/scrollback.c glue.s
+            SOURCES  irc.c ${COMMON_DIR}/scrollback.c
             INCLUDE  ${COMMON_DIR}
             DEPENDS  ${COMMON_DIR}/scrollback.h
             MESSAGE  "IRC chat-client blob built ($0800)"
@@ -276,7 +279,7 @@ if(CA65_FOUND AND LD65_FOUND)
         mfc_add_test_blob(edit
             DIR      ${CMAKE_SOURCE_DIR}/programs/edit
             CONFIG   edit.cfg
-            SOURCES  edit.c glue.s
+            SOURCES  edit.c
             MESSAGE  "EDIT blob built ($0800)"
         )
     else()
@@ -309,7 +312,7 @@ else()
     # No ROMs means no machine: 6502-kernel would still compile and link, then
     # abort at startup with "Could not open kernel.rom". Fail here instead.
     set(_cc65_help
-"cc65 toolchain not found (both ca65 and ld65 are required).
+"cc65 toolchain not found (ca65, ld65 and ar65 are all required).
 The emulator cannot run without the ROMs cc65 builds -- 6502-kernel would
 compile and then abort at startup on a missing kernel.rom.
 Install it:

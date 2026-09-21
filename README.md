@@ -152,8 +152,9 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 │   ├── ui/                # Qt GUI (MainWindow, DisplayWidget)
 │   └── kernel/            # 6502 assembly: kernel.asm, basic.asm, dos/, assembler/, forth/
 ├── include/               # C++ headers
-├── programs/              # cc65/asm disk programs: edit, term, irc, venture, kpanic,
-│                         #   chess, frontier, micromax, scottfree, vault, common
+├── programs/              # cc65/asm disk programs: edit, term, irc, gopher, venture,
+│                         #   kpanic, frontier, micromax, scottfree, vault
+│                         #   common/ holds mfc.inc and the shared glue library
 │                         #   (catalog.txt lists every one and where it lands on disk)
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)
 ├── vendor/                # Pristine upstream sources we port/derive from

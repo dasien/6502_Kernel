@@ -32,6 +32,7 @@
 #include "computer/Computer6502.h"
 #include "computer/Memory.h"
 #include "computer/PIA.h"
+#include "computer/RTC.h"
 #include "computer/VIC.h"
 
 namespace {
@@ -53,6 +54,14 @@ protected:
         cpu = c.getCpu();
         mem = c.getMemory();
         pia = c.getPia();
+
+        // Pin the clock. KPANIC seeds its xorshift from rng_seed(), which folds
+        // the RTC, so on the real clock every run lays out different terrain --
+        // and an assertion like "the ship is not dead after startRun" then
+        // depends on whether this run happened to drop an obstacle in the way.
+        // A fixed instant makes the whole run reproducible.
+        c.getRtc()->setTimeProvider([] { return static_cast<std::time_t>(1'000'000'000); });
+        c.getRtc()->latch();
 
         std::ifstream f("../kernel/kpanic.bin", std::ios::binary);
         ASSERT_TRUE(f.good()) << "kpanic.bin not found - build the kpanic_bin target";

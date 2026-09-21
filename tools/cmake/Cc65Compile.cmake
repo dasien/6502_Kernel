@@ -11,7 +11,9 @@
 # ask, so no two steps share a path and nothing lands in the source tree.
 # Assembly sources go straight to ca65, which has no intermediate at all.
 #
-# The flags every program shares are applied here, in one place.
+# The flags every program shares are applied here, in one place. That includes
+# -I programs/common on the ca65 side, so every glue.s can include mfc.inc -- the
+# kernel and DOS ABI addresses and the I/O registers, stated once.
 #
 # --cpu 65C02 matters more than it looks. The machine's CPU is a WDC W65C02S and
 # the kernel, monitor and DOS all say so with a .PC02 directive, but the program
@@ -29,6 +31,9 @@
 #
 # Declares the rule; the caller depends on <out-object>. Callers must ensure two
 # sources never map to the same object path.
+set(MFC_COMMON_INC ${CMAKE_CURRENT_LIST_DIR}/../../programs/common
+    CACHE INTERNAL "directory holding mfc.inc, on every ca65 include path")
+
 function(mfc_cc65_object obj)
     cmake_parse_arguments(C "" "SOURCE;INCLUDE" "DEPENDS" ${ARGN})
 
@@ -65,17 +70,21 @@ function(mfc_cc65_object obj)
             OUTPUT ${obj}
             COMMAND cc65 -t none --cpu 65C02 --signed-chars -O ${_inc} ${_dep_cmd}
                     -o ${_asm} ${C_SOURCE}
-            COMMAND ca65 -t none --cpu 65C02 -o ${obj} ${_asm}
+            COMMAND ca65 -t none --cpu 65C02 -I ${MFC_COMMON_INC} -o ${obj} ${_asm}
             DEPENDS ${C_SOURCE} ${C_DEPENDS}
             ${_depfile_arg}
             COMMENT "cc65 ${_label}"
             VERBATIM
         )
     else()
+        # ca65 takes --create-dep on the same terms as cc65, and needs it:
+        # without one, editing an included .inc rebuilds nothing at all.
         add_custom_command(
             OUTPUT ${obj}
-            COMMAND ca65 -t none --cpu 65C02 -o ${obj} ${C_SOURCE}
+            COMMAND ca65 -t none --cpu 65C02 -I ${MFC_COMMON_INC} ${_dep_cmd}
+                    -o ${obj} ${C_SOURCE}
             DEPENDS ${C_SOURCE} ${C_DEPENDS}
+            ${_depfile_arg}
             COMMENT "ca65 ${_label}"
             VERBATIM
         )

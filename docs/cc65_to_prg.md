@@ -34,10 +34,13 @@ file's `STARTADDRESS`, so the two cannot drift apart.
 ## The four pieces
 
 1. The C source is ordinary C, but mind the cc65 gotchas described below.
-2. `glue.s` maps the kernel and DOS ABI onto the C runtime. A character-oriented
-   program needs `INCH` and a quit path at minimum, and the two legacy ports
-   also export `OUTCH` and `CLS`. Everything written since drives the VIC port
-   directly instead, through `vaddr`, `vputc`, `vattr`, `vfill` and `vcmd`.
+2. **Glue** maps the kernel and DOS ABI onto the C runtime, and most of it is
+   already written. `programs/common/glue/` builds `libmfcglue.lib`, which
+   every program links: the kernel calls, the VIC port, the DOS file calls,
+   the ACIA, the RNG. A program writes a `glue.s` of its own only for
+   something the library has no business carrying, such as KERNEL PANIC's
+   sprite control or GOPHER's assembly download loop. Four programs need no
+   `glue.s` at all.
    Exports carry a leading underscore because that is the cc65 calling convention, so
    `OUTCH` is exported as `_OUTCH`. A char argument arrives in `A`, a char result
    returns in `A`, and an int result returns in `A` and `X`.
@@ -46,7 +49,23 @@ file's `STARTADDRESS`, so the two cannot drift apart.
 4. An entry in `programs/catalog.txt` names the `sources`, the `config` and the
    `program` line giving the `.PRG`. That is the whole build definition.
 
+### Writing a local glue.s
+
+Define the symbol in the program's own `glue.s` and it wins: `ld65` consults a
+library only for symbols still undefined, so the library's copy is never
+pulled. micro-Max and ScottFree both replace `INCH` that way, because reading
+a key is where input policy lives.
+
+The catch is that a library member is pulled **whole**. A symbol a program
+might override therefore has to sit alone in its module, or overriding it
+while calling something that shared its module fails on a duplicate symbol.
+That is why `inch.s` and `quitdos.s` are modules of one routine each.
+
 ### Kernel / DOS ABI used by glue
+
+The addresses are stated once, in `programs/common/mfc.inc`, which every glue
+file includes. A test compares the overlap against `src/kernel/kernel_vars.inc`
+so the program side and the ROM side cannot drift.
 
 | Symbol            | Addr    | Use                                   |
 |-------------------|---------|---------------------------------------|
@@ -98,7 +117,7 @@ and the tables live in the loaded (writable) image as the working copy.
 
 ```
 dat/advNN.dat ──(host: dat2c)──▶ game_data.c ──┐
-                                                ├─ cl65 ─▶ NAME.PRG
+                                                ├─ cl65 + libmfcglue ─▶ NAME.PRG
 scott.c + glue.s ───────────────────────────────┘
 ```
 

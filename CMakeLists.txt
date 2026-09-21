@@ -45,6 +45,7 @@ add_subdirectory(src)
 
 # Kernel ROM build (if cc65 available)
 include(Cc65Compile)
+include(GlueLibrary)
 include(BuildKernel)
 
 # Testing support

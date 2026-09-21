@@ -44,14 +44,14 @@ desc    = boot config: DOS commands run before the sign-on
 
 [edit]
 dir     = programs/edit
-sources = edit.c glue.s
+sources = edit.c
 config  = edit.cfg
 program = EDIT.PRG -> EDIT.PRG
 desc    = full-screen text editor
 
 [term]
 dir     = programs/term
-sources = term.c ../common/scrollback.c glue.s
+sources = term.c ../common/scrollback.c
 config  = term.cfg
 include = ../common
 program = TERM.PRG -> TERM.PRG
@@ -68,7 +68,7 @@ desc    = Gopher document browser
 
 [irc]
 dir     = programs/irc
-sources = irc.c ../common/scrollback.c glue.s
+sources = irc.c ../common/scrollback.c
 config  = irc.cfg
 include = ../common
 program = IRC.PRG -> IRC.PRG
@@ -79,7 +79,7 @@ desc    = IRC chat client
 
 [vault]
 dir     = programs/vault
-sources = vault.c map.c draw.c player.c monster.c combat.c item.c spell.c data.c glue.s
+sources = vault.c map.c draw.c player.c monster.c combat.c item.c spell.c data.c
 config  = vault.cfg
 program = VAULT.PRG -> SVAULT/VAULT.PRG
 doc     = VAULT.TXT -> SVAULT/VAULT.TXT

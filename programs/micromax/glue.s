@@ -10,31 +10,16 @@
 ; or A/X (int).
 ; ============================================================================
 
-.export _OUTCH, _INCH, _RND, _CLS, _SETATTR
+.export _INCH, _SETATTR
 
-K_PRINT_CHAR    = $FF00         ; A = char -> screen
-K_PRINT_NEWLINE = $FF06         ; CR/LF
-K_GET_KEYSTROKE = $FF09         ; non-blocking: C set + A=char (uppercased)
-K_CLEAR_SCREEN  = $FF0C         ; clear screen + home cursor
-K_SET_ATTR      = $FF2D         ; A = color/attribute latch for next chars
-DOS_WARM        = $AF1E         ; clean exit back to the DOS ] prompt
+.include "mfc.inc"
 
-.segment "DATA"
-rndseed:        .word   $ACE1   ; nonzero LFSR seed (DATA = loaded into RAM)
 
 .PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
                                 ; Stated here as well as on the ca65 command line so
                                 ; the file is right however it is assembled.
 
 .segment "CODE"
-
-; ---- void OUTCH(char c) -- c in A ------------------------------------------
-.proc _OUTCH
-        cmp     #10             ; engine prints LF for newline
-        bne     @ch
-        jmp     K_PRINT_NEWLINE ; tail call: its RTS returns to the C caller
-@ch:    jmp     K_PRINT_CHAR
-.endproc
 
 ; ---- void SETATTR(char a) -- set the color/attribute latch (a in A) ---------
 ; Reverse-video now lives in the attribute, not char bit 7, so white pieces wrap
@@ -76,22 +61,4 @@ rndseed:        .word   $ACE1   ; nonzero LFSR seed (DATA = loaded into RAM)
         rts
 @quit:  jsr     K_PRINT_NEWLINE ; drop to a fresh line so the returning ] prompt
         jmp     DOS_WARM        ; isn't jammed against the board / current line
-.endproc
-
-; ---- void CLS(void) -- clear screen + home cursor (for the strobe redraw) --
-.proc _CLS
-        jmp     K_CLEAR_SCREEN  ; tail call: its RTS returns to the C caller
-.endproc
-
-; ---- int RND(void) -- 16-bit Galois LFSR (poly $B400), returns A/X ----------
-.proc _RND
-        lsr     rndseed+1
-        ror     rndseed
-        bcc     @nofb
-        lda     rndseed+1
-        eor     #$B4
-        sta     rndseed+1
-@nofb:  lda     rndseed
-        ldx     rndseed+1
-        rts
 .endproc

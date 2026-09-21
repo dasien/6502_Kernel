@@ -874,6 +874,15 @@ add_test(NAME validate_memory_layout
     -DMAP_FILE=${CMAKE_BINARY_DIR}/kernel/kernel.map
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/validate_memory_layout.cmake)
 
+# Drift guard: the I/O register addresses appear in both src/kernel/kernel_vars.inc
+# (the ROM side) and programs/common/mfc.inc (the program side). Neither file is a
+# subset of the other, so neither can include the other; this compares the overlap.
+add_test(NAME io_equates_agree
+    COMMAND ${CMAKE_COMMAND}
+    -DKERNEL_VARS=${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc
+    -DMFC_INC=${CMAKE_SOURCE_DIR}/programs/common/mfc.inc
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_io_equates.cmake)
+
 # Drift guard: the canonical 65C02 opcode table (docs/opcode_table_65c02.md and
 # src/kernel/assembler/opcodes_65c02.inc) is generated from CPU6502's handler map.
 # This test regenerates in --check mode and fails if the committed table is stale,

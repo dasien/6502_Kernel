@@ -124,11 +124,13 @@ function(mfc_add_catalog_program entry out_target)
         list(APPEND _objs ${_obj})
     endforeach()
 
+    # libmfcglue goes last: ld65 consults a library only for symbols still
+    # undefined, so anything the program declares itself wins (see GlueLibrary).
     set(_bin "${_outdir}/${entry}.bin")
     add_custom_command(
         OUTPUT ${_bin}
-        COMMAND cl65 -t none -C ${_config} ${_objs} -o ${_bin}
-        DEPENDS ${_objs} ${_config}
+        COMMAND cl65 -t none -C ${_config} ${_objs} ${MFC_GLUE_LIB} -o ${_bin}
+        DEPENDS ${_objs} ${_config} ${MFC_GLUE_LIB}
         COMMENT "ld65 ${_dir}/${entry}.bin"
         VERBATIM
     )

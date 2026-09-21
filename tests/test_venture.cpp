@@ -34,6 +34,7 @@
 #include "computer/CPU6502.h"
 #include "computer/Memory.h"
 #include "computer/PIA.h"
+#include "computer/RTC.h"
 #include "computer/SID.h"
 #include "computer/Cp437Font.h"
 #include "computer/VIC.h"
@@ -450,6 +451,12 @@ protected:
         cpu = c.getCpu();
         mem = c.getMemory();
         pia = c.getPia();
+
+        // Pin the clock. VENTURE seeds its generator from rng_seed(), which
+        // folds the RTC, so on the real clock no two runs lay out the same
+        // maze and an assertion about what is on screen depends on luck.
+        c.getRtc()->setTimeProvider([] { return static_cast<std::time_t>(1'000'000'000); });
+        c.getRtc()->latch();
 
         std::ifstream f("../kernel/venture.bin", std::ios::binary);
         ASSERT_TRUE(f.good()) << "venture.bin not found - build the venture_bin target";
