@@ -45,6 +45,10 @@ ACIA_STATUS     = $FE2A
 ACIA_COMMAND    = $FE2B
 ACIA_CONTROL    = $FE2C
 
+.PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
+                                ; Stated here as well as on the ca65 command line so
+                                ; the file is right however it is assembled.
+
 .segment "CODE"
 
 ; char INCH(void) -- blocking key read; returns the key as typed (X=0).

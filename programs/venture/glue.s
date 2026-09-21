@@ -59,6 +59,10 @@ RTC_HOUR        = $FE58         ; BCD hours
 RTC_FATTIME_LO  = $FE5D         ; host-packed FAT time low (sub-second-ish bits)
 RTC_FATTIME_HI  = $FE5E         ; host-packed FAT time high
 
+.PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
+                                ; Stated here as well as on the ca65 command line so
+                                ; the file is right however it is assembled.
+
 .segment "CODE"
 
 ; unsigned int jiffies(void) -- read the kernel's 60 Hz monotonic tick counter.

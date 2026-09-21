@@ -11,7 +11,15 @@
 # ask, so no two steps share a path and nothing lands in the source tree.
 # Assembly sources go straight to ca65, which has no intermediate at all.
 #
-# The flags every 6502 program shares are applied here, in one place.
+# The flags every program shares are applied here, in one place.
+#
+# --cpu 65C02 matters more than it looks. The machine's CPU is a WDC W65C02S and
+# the kernel, monitor and DOS all say so with a .PC02 directive, but the program
+# toolchain said nothing -- so every .PRG was built for a plain 6502 and gave up
+# the CMOS additions. cc65 emits "stz _g" for a 65C02 where it needs
+# "lda #$00 / sta _g" for a 6502, and the assembly glue could not use bra, stz,
+# phx/phy or zero-page indirect at all.
+#
 # --signed-chars is NOT optional: cc65 defaults to unsigned char and several of
 # these ports (micro-Max most visibly) assume signed, failing silently if it is
 # dropped. -t none is the bare 6502 target -- the .cfg supplies the layout at
@@ -55,9 +63,9 @@ function(mfc_cc65_object obj)
         set(_asm ${_dir}/${_base}.s)
         add_custom_command(
             OUTPUT ${obj}
-            COMMAND cc65 -t none --signed-chars -O ${_inc} ${_dep_cmd}
+            COMMAND cc65 -t none --cpu 65C02 --signed-chars -O ${_inc} ${_dep_cmd}
                     -o ${_asm} ${C_SOURCE}
-            COMMAND ca65 -t none -o ${obj} ${_asm}
+            COMMAND ca65 -t none --cpu 65C02 -o ${obj} ${_asm}
             DEPENDS ${C_SOURCE} ${C_DEPENDS}
             ${_depfile_arg}
             COMMENT "cc65 ${_label}"
@@ -66,7 +74,7 @@ function(mfc_cc65_object obj)
     else()
         add_custom_command(
             OUTPUT ${obj}
-            COMMAND ca65 -t none -o ${obj} ${C_SOURCE}
+            COMMAND ca65 -t none --cpu 65C02 -o ${obj} ${C_SOURCE}
             DEPENDS ${C_SOURCE} ${C_DEPENDS}
             COMMENT "ca65 ${_label}"
             VERBATIM

@@ -47,6 +47,10 @@ RTC_HOUR        = $FE58
 RTC_FATTIME_LO  = $FE5D
 RTC_FATTIME_HI  = $FE5E
 
+.PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
+                                ; Stated here as well as on the ca65 command line so
+                                ; the file is right however it is assembled.
+
 .segment "CODE"
 
 ; void vaddr(unsigned int cell) -- point the data port at a cell (A=lo, X=hi).

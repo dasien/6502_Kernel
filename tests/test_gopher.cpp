@@ -163,6 +163,13 @@ protected:
         }
         return screen().find(want) != std::string::npos;
     }
+
+    /* Wait for the fetch to FINISH, not merely for some item to appear. The
+     * status line carries the key hints only once the client is back at the
+     * menu, so it is the completion signal; waiting on a menu entry races the
+     * rest of the response still arriving -- which is exactly what surfaced
+     * when the 65C02 build made the client faster. */
+    bool runUntilIdle() { return runUntilScreen("Enter=open"); }
 };
 
 TEST_F(GopherTest, DialsSendsSelectorAndRendersAMenu)
@@ -179,7 +186,7 @@ TEST_F(GopherTest, DialsSendsSelectorAndRendersAMenu)
          "1Sub menu here\t/sub\ttest.gopher\t70\r\n"
          "0A document\t/doc.txt\ttest.gopher\t70\r\n"
          ".\r\n");
-    ASSERT_TRUE(runUntilScreen("Sub menu here")) << screen();
+    ASSERT_TRUE(runUntilIdle()) << screen();
 
     const std::string s = screen();
     // Display text is rendered; the selector, host and port are not.
@@ -207,7 +214,7 @@ TEST_F(GopherTest, StripsTheStuffedLeadingPeriodInATextFile)
     carrier(true);   // GOPHER sets ATQ1, so a real modem sends no text
     send("0A document\t/doc.txt\ttest.gopher\t70\r\n"
          ".\r\n");
-    ASSERT_TRUE(runUntilScreen("A document")) << screen();
+    ASSERT_TRUE(runUntilIdle()) << screen();
 
     // Open it: a new call, so a new dial and carrier again.
     tx.clear();
@@ -219,7 +226,7 @@ TEST_F(GopherTest, StripsTheStuffedLeadingPeriodInATextFile)
     send("plain line\r\n"
          "..dotted line here\r\n"
          ".\r\n");
-    ASSERT_TRUE(runUntilScreen("dotted line here")) << screen();
+    ASSERT_TRUE(runUntilIdle()) << screen();
 
     const std::string s = screen();
     EXPECT_NE(s.find(".dotted line here"), std::string::npos) << s;
@@ -242,7 +249,7 @@ TEST_F(GopherTest, BinaryItemGoesToRawModeAndEndsOnCarrierLoss)
     carrier(true);   // GOPHER sets ATQ1, so a real modem sends no text
     send("9An archive\t/pub/thing.zip\ttest.gopher\t70\r\n"
          ".\r\n");
-    ASSERT_TRUE(runUntilScreen("An archive")) << screen();
+    ASSERT_TRUE(runUntilIdle()) << screen();
 
     // Enter opens the save prompt, pre-filled from the selector.
     tx.clear();
@@ -267,6 +274,49 @@ TEST_F(GopherTest, BinaryItemGoesToRawModeAndEndsOnCarrierLoss)
     EXPECT_NE(tx.find("ATB0"), std::string::npos) << tx;
 }
 
+/* ESC must abandon a download that is still receiving. The read loop used to
+ * poll the keyboard only when the ACIA FIFO ran dry, which on a fast transfer
+ * it never does -- so a large file could not be abandoned at all. */
+TEST_F(GopherTest, EscAbortsADownloadWhileBytesAreStillArriving)
+{
+    mountDisk({});
+    type("test.gopher\r");
+
+    ASSERT_TRUE(runUntilTx("ATDT test.gopher:70")) << tx;
+    carrier(true);
+    send("9An archive\t/pub/thing.zip\ttest.gopher\t70\r\n"
+         ".\r\n");
+    ASSERT_TRUE(runUntilIdle()) << screen();
+
+    type("\r");                                   // open it
+    ASSERT_TRUE(runUntilScreen("Save as")) << screen();
+    type("\r");                                   // accept the derived name
+    ASSERT_TRUE(runUntilTx("/pub/thing.zip")) << tx;
+
+    /* Keep the FIFO fed but not flooded: one byte every 40 instructions, which
+       is faster than the client can write them to FAT16, so it falls behind and
+       the FIFO never empties. That is the condition a real download creates and
+       the one the old code could not escape -- with the keyboard polled only on
+       the empty path, that path is never reached. Carrier stays up throughout,
+       so ESC is the only way out. */
+    c.getPia()->addKeypress(0x1B);
+    bool cancelled = false;
+    for (int i = 0; i < 8'000'000 && !cancelled; ++i) {
+        /* Feed until the client hangs up, then stop -- a real modem drops the
+           line and the bytes stop with it. Keeping the fixture talking past
+           the hangup would leave the client's post-transfer drain spinning for
+           ever, which is a property of this stub and not of the client. */
+        if (tx.find("ATH") == std::string::npos)
+            acia->hostSend(static_cast<uint8_t>(i & 0xFF));
+        if (!cycle()) break;
+        while (acia->hostHasTx()) tx += static_cast<char>(acia->hostRecv());
+        if ((i & 0xFFF) == 0 && screen().find("Cancelled") != std::string::npos)
+            cancelled = true;
+    }
+    ASSERT_TRUE(cancelled) << "ESC never took effect while data was arriving\n" << screen();
+    EXPECT_TRUE(acia->carrier()) << "the test never dropped carrier; ESC ended it";
+}
+
 TEST_F(GopherTest, FollowingALinkSendsItsSelector)
 {
     mountDisk({});
@@ -276,7 +326,7 @@ TEST_F(GopherTest, FollowingALinkSendsItsSelector)
     carrier(true);   // GOPHER sets ATQ1, so a real modem sends no text
     send("1Sub menu here\t/sub/thing\ttest.gopher\t70\r\n"
          ".\r\n");
-    ASSERT_TRUE(runUntilScreen("Sub menu here")) << screen();
+    ASSERT_TRUE(runUntilIdle()) << screen();
 
     /* Following a link is a whole new call -- Gopher closes after every
      * response -- so the client dials again and needs carrier again. */

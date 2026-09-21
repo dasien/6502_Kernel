@@ -37,6 +37,10 @@ VREG_SCROLL_BOT = $FE37         ; scroll-region bottom row (scroll affects rows 
 VREG_CURSOR_HI  = $FE35         ; cursor cell high; bit7 = hidden
 K_GET_JIFFIES   = $FF39         ; 60 Hz monotonic counter -> A=lo, X=hi
 
+.PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
+                                ; Stated here as well as on the ca65 command line so
+                                ; the file is right however it is assembled.
+
 .segment "CODE"
 
 ; void vaddr(unsigned int cell) -- point the data port at a cell (A=lo, X=hi).

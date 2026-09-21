@@ -22,6 +22,10 @@ DOS_WARM        = $AF1E         ; clean exit back to the DOS ] prompt
 .segment "DATA"
 rndseed:        .word   $ACE1   ; nonzero LFSR seed (DATA = loaded into RAM)
 
+.PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
+                                ; Stated here as well as on the ca65 command line so
+                                ; the file is right however it is assembled.
+
 .segment "CODE"
 
 ; ---- void OUTCH(char c) -- c in A ------------------------------------------

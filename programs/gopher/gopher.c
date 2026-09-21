@@ -80,6 +80,7 @@ extern char          dopen_read(char *name);  /* 0 = ok, 1 = error */
 extern int           dgetb(void);             /* next byte, or -1 at EOF */
 extern char          dopen_write(char *name);  /* 0 = ok, 1 = error */
 extern char          dputb(char c);            /* 0 = ok, 1 = write failed */
+extern int           dl_chunk(void);          /* bulk ACIA->file; -1 = write failed */
 extern char          dclose(void);             /* 0 = ok, 1 = flush failed */
 extern void          acia_init(void);
 extern int           acia_get(void);
@@ -329,6 +330,7 @@ static int fetch(const char *host, unsigned int port, const char *selector,
     static char line[256];
     int ln = 0, r;
     long idle = 0;
+    unsigned int seen = 0;
 
     n_items = 0; arena_used = 0; truncated = 0;
     arena[arena_used++] = 0;            /* offset 0 = "" */
@@ -354,6 +356,9 @@ static int fetch(const char *host, unsigned int port, const char *selector,
             continue;
         }
         idle = 0;
+        /* Same reason as the download loop: a long response keeps the FIFO
+           busy, so ESC has to be checked on the receiving path too. */
+        if ((++seen & 0xFF) == 0 && INCH_NB() == ASCII_ESC) break;
         if (b == ASCII_CR) continue;
         if (b != ASCII_LF) {
             if (ln < (int)sizeof(line) - 1) line[ln++] = (char)b;
@@ -606,7 +611,7 @@ static void download(const char *host, unsigned int port, const char *selector)
     static char fname[16];
     static char typed[16];
     char msg[COLS + 1];
-    long total = 0;
+    long total = 0, shown = 0;
     int stalled = 0;
     char failed = 0;
 
@@ -652,31 +657,35 @@ static void download(const char *host, unsigned int port, const char *selector)
     status(" Receiving...  ESC aborts");
 
     for (;;) {
-        int b = acia_get();
-        if (b >= 0) {
+        int n = dl_chunk();                 /* up to 256 bytes, in assembly */
+        if (n < 0) { failed = 1; break; }   /* disk full */
+        if (n > 0) {
             stalled = 0;
-            if (dputb((char)b)) { failed = 1; break; }   /* disk full */
-            if ((++total & 0x3FF) == 0) {                /* a line every 1 KB */
-                int n = 0;
+            total += n;
+            if (total - shown >= 1024L) {   /* a line every 1 KB */
+                int c = 0;
                 long k = total >> 10;
                 char d[8];
                 int j = 0;
+                shown = total;
                 strcpy(msg, "  Received ");
-                n = (int)strlen(msg);
+                c = (int)strlen(msg);
                 if (!k) d[j++] = '0';
                 while (k) { d[j++] = (char)('0' + (int)(k % 10)); k /= 10; }
-                while (j) msg[n++] = d[--j];
-                msg[n] = 0;
+                while (j) msg[c++] = d[--j];
+                msg[c] = 0;
                 strcat(msg, " KB");
                 put_at((unsigned int)(BODY_TOP + 3) * COLS, msg, COLS);
             }
-            continue;
         }
+        /* Once per chunk is often enough to stay responsive, and it keeps the
+           32-bit counter arithmetic out of the per-byte path where it was
+           costing several hundred cycles a byte. */
         if (INCH_NB() == ASCII_ESC) { failed = 2; break; }
-        /* Carrier gone and the FIFO empty: the server closed, so that is the
-           whole file. This is the protocol's only end-of-transfer marker. */
-        if (!acia_carrier()) break;
-        if (++stalled > 2000000) { failed = 3; break; }
+        if (n == 0) {
+            if (!acia_carrier()) break;     /* server closed: end of file */
+            if (++stalled > 2000000) { failed = 3; break; }
+        }
     }
 
     if (dclose()) failed = failed ? failed : 1;
@@ -688,7 +697,7 @@ static void download(const char *host, unsigned int port, const char *selector)
     vattr(failed ? A_WARN : A_NORM);
     put_at((unsigned int)(BODY_TOP + 5) * COLS,
            failed == 1 ? "  Write failed - disk full?" :
-           failed == 2 ? "  Cancelled." :
+           failed == 2 ? "  Cancelled - the partial file was kept." :
            failed == 3 ? "  Transfer stalled." :
                          "  Saved.", COLS);
     vattr(A_NORM);

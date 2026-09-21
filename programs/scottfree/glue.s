@@ -30,6 +30,10 @@ DOS_ENTRY       = $0320         ; 32-byte current dir entry (name = first 11 byt
 .segment "DATA"
 rndseed:        .word   $C0DE
 
+.PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
+                                ; Stated here as well as on the ca65 command line so
+                                ; the file is right however it is assembled.
+
 .segment "CODE"
 
 ; ---- void OUTCH(char c) -- c in A ------------------------------------------
