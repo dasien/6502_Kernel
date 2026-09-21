@@ -22,7 +22,7 @@ extern unsigned char dopen_read(const char *name);    /* 0 = ok */
 extern unsigned char dopen_write(const char *name);   /* 0 = ok */
 extern int           dgetb(void);                     /* byte, or -1 at EOF */
 extern unsigned char dputb(unsigned char c);          /* 0 = ok */
-extern void          dclose(void);
+extern char          dclose(void);         /* 0 = ok, 1 = the file on disk is wrong */
 
 /* ---- high scores ----
  * Kept beside the game in whatever drawer it was launched from. The magic and

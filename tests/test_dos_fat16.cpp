@@ -183,6 +183,39 @@ protected:
         return true;
     }
 
+    // Build an image with a chosen number of 512-byte data clusters, for the
+    // tests that need to run the volume out of space.
+    void writeImageWithClusters(const std::vector<Fat16File> &files,
+                                uint32_t dataClusters) {
+        const std::vector<uint8_t> img = Fat16ImageBuilder::build(
+            files, dataClusters, Fat16ImageBuilder::kNumFats,
+            Fat16ImageBuilder::kRootEntries);
+        std::ofstream f(image_path_, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char *>(img.data()),
+                static_cast<std::streamsize>(img.size()));
+    }
+
+    // Write a file the way a careless caller does: stream every byte without
+    // looking at the result, then close. `close_failed` returns what FS_CLOSE
+    // reported, which is the only thing such a caller can act on.
+    // Returns false if the open itself failed.
+    bool fsWriteIgnoringPutbErrors(const std::string &name,
+                                   const std::vector<uint8_t> &data,
+                                   bool &close_failed) {
+        for (size_t i = 0; i < name.size(); ++i)
+            mem_->write(kNameAddr + i, static_cast<uint8_t>(name[i]));
+        mem_->write(kNameAddr + name.size(), 0);
+
+        bool carry = true;
+        if (!callRoutine(kFsOpen, carry, kNameAddr & 0xFF, kNameAddr >> 8, /*mode=*/1) || carry)
+            return false;
+        for (uint8_t b : data)
+            callRoutine(kFsPutb, carry, b);         // deliberately unchecked
+        callRoutine(kFsClose, carry);
+        close_failed = carry;
+        return true;
+    }
+
     // Delete a file through the 6502 FS_DELETE path. Returns true on success.
     bool fsDelete(const std::string &name) {
         for (size_t i = 0; i < name.size(); ++i)
@@ -478,6 +511,44 @@ TEST_F(DosFat16Test, WritesToHostSizedFat16Image) {
     std::vector<uint8_t> parsed;
     ASSERT_TRUE(reader.read("NEW.TXT", parsed));
     EXPECT_EQ(parsed, content);
+}
+
+/* Running out of room has to be visible at close.
+ *
+ * FS_PUTB reports a failed allocation in carry, but a program that streams a
+ * file out -- a high-score table, a saved game -- checks the open and the
+ * close and not each of several hundred bytes. Without a sticky flag the close
+ * sees nothing wrong: the last full sector flushed cleanly and the directory
+ * entry it writes carries an honest count of the bytes that landed, so it
+ * reports success on a file that is short. The program then tells the player
+ * the game is saved.
+ *
+ * Four 512-byte clusters, and more than four clusters of data. */
+TEST_F(DosFat16Test, CloseReportsAWriteThatRanOutOfSpace) {
+    writeImageWithClusters({}, 4);
+
+    bool close_failed = false;
+    ASSERT_TRUE(fsWriteIgnoringPutbErrors("BIG.DAT", pattern(3000, 0x5A), close_failed));
+    EXPECT_TRUE(close_failed)
+        << "the volume ran out of clusters mid-write and FS_CLOSE said the file was fine";
+}
+
+/* The flag is per-open, not per-session: a failed write must not condemn the
+ * next one on a volume with room. */
+TEST_F(DosFat16Test, AFailedWriteDoesNotPoisonTheNextFile) {
+    writeImageWithClusters({}, 8);
+
+    bool close_failed = false;
+    ASSERT_TRUE(fsWriteIgnoringPutbErrors("BIG.DAT", pattern(6000, 0x5A), close_failed));
+    ASSERT_TRUE(close_failed);
+
+    ASSERT_TRUE(fsDelete("BIG.DAT"));
+    const auto small = pattern(300, 0x22);
+    EXPECT_TRUE(fsWriteFile("SMALL.DAT", small)) << "a later write inherited the failure";
+    Fat16ImageReader reader(readImageFile());
+    std::vector<uint8_t> parsed;
+    ASSERT_TRUE(reader.read("SMALL.DAT", parsed));
+    EXPECT_EQ(parsed, small);
 }
 
 // --- Erase (FS_DELETE) ----------------------------------------------------

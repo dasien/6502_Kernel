@@ -203,6 +203,13 @@ DOS_W_FREE_IDX   = $03B8
 DOS_CFG_LINE     = $03B9                ; index of the config line to run next
 DOS_CFG_PAGE     = $03BA                ; saved PAGE_ENABLE, restored when done
 DOS_CFG_EOF      = $03BB                ; the last read stopped at EOF, not a newline
+; Sticky write error, the ferror() rule: once a write on the open file has
+; failed the stream stays failed, and FS_CLOSE reports it. Without this a full
+; volume is invisible to any caller that does not test every single FS_PUTB --
+; the last whole sector flushed cleanly and the directory entry carries an
+; honest count of the bytes that landed, so the close looks like a success on a
+; file that is short. Cleared by FS_OPEN in write mode.
+DOS_W_ERR        = $03BC                ; non-zero: a write failed since FS_OPEN
 
 ; A config may not be longer than this many lines, so a binary file mistakenly
 ; named STARTUP.CFG cannot spin the boot forever.
@@ -294,8 +301,17 @@ DOS_SIGNATURE:
 ;        stops the processor for battery reasons and leaves the system powered; the
 ;        handler ends with one anyway, so a host that ignored the register gets a
 ;        halted machine rather than a running one
+;   1.22 a failed write is sticky, and FS_CLOSE reports it. FS_PUTB always
+;        answered in carry, but a program streaming a file out checks the open
+;        and the close, not each of several hundred bytes -- and the close saw
+;        nothing wrong, because the last whole sector had flushed cleanly and the
+;        directory entry carried an honest count of the bytes that landed. A full
+;        volume was therefore invisible: the file was simply short, and FRONTIER
+;        wrote a corrupt score table while ScottFree told the player the game was
+;        saved. DOS_W_ERR follows the ferror() rule -- once a write on the open
+;        file fails the stream stays failed until the next FS_OPEN
 DOS_VERSION:
-    .BYTE $01, $15                      ; version 1.21 (major, minor)
+    .BYTE $01, $16                      ; version 1.22 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -3119,6 +3135,7 @@ _FS_CLOSE:
 _FS_OPEN_WRITE:
     JSR _FS_ENSURE_MOUNT
     BCS @err
+    STZ DOS_W_ERR                       ; a fresh stream starts clean
     LDA #$20                            ; files carry the archive attribute
     STA DOS_W_ATTR
     JSR _DOS_DIR_FIND_FOR_WRITE         ; sets DOS_W_DIRENT_* in DOS_TGT_CLUS
@@ -3189,6 +3206,8 @@ _FS_PUTB:
     RTS
 @err:
     PLA
+    LDA #$01                            ; remember it: the close has to report this
+    STA DOS_W_ERR
     SEC
     RTS
 
@@ -3215,10 +3234,13 @@ _FS_CLOSE_WRITE:
     JSR _DOS_DIR_WRITE_ENTRY            ; final first-cluster + size
     BCS @err
     STZ DOS_W_MODE
+    LDA DOS_W_ERR                       ; did any byte fail on the way here?
+    BNE @failed                         ; then the file is short; say so
     CLC
     RTS
 @err:
     STZ DOS_W_MODE
+@failed:
     SEC
     RTS
 

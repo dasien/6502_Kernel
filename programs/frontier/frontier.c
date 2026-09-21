@@ -946,10 +946,11 @@ static void hs_load(void) {
     hs_n = ok ? count : i;
 }
 
-static void hs_save(void) {
+/* 0 = written, 1 = the table on disk is now wrong (full disk, or no disk). */
+static char hs_save(void) {
     unsigned char i, j;
 
-    if (dopen_write(SCORE_FILE) != 0) return;     /* read-only disk: just skip */
+    if (dopen_write(SCORE_FILE) != 0) return 1;
     dputb(SCORE_MAGIC);
     dputb(SCORE_VER);
     dputb(hs_n);
@@ -959,7 +960,9 @@ static void hs_save(void) {
         put_long(hs_score[i]);
         dputb((unsigned char)hs_days[i]);
     }
-    dclose();
+    /* Only the close is tested, not each of the ~200 bytes: the DOS keeps a
+       failed write sticky, so one check at the end catches a full volume. */
+    return dclose();
 }
 
 /* Where this score would land, or NSCORES if it does not place. */
@@ -1011,7 +1014,7 @@ static void read_name(unsigned char x, unsigned char y, char *out) {
                     out[4] = 'E'; out[5] = 'R'; out[6] = 0; }
 }
 
-static void hs_screen(unsigned char highlight) {
+static void hs_screen(unsigned char highlight, char save_failed) {
     unsigned char i;
     char buf[8];
 
@@ -1034,6 +1037,8 @@ static void hs_screen(unsigned char highlight) {
         put_money(26, 6 + i, hs_score[i], 18, hs_score[i] >= 0 ? A_CASH : A_DEBT);
         put_num(48, 6 + i, hs_days[i], 4, a);
     }
+    if (save_failed)
+        put_str(9, 15, "Disk full - this table was not written.", A_WARN);
     press_any(17);
 }
 
@@ -1042,6 +1047,7 @@ static void end_screen(const char *why) {
     Money net   = net_worth();
     unsigned int days = (day - 1 > TOTAL_DAYS) ? TOTAL_DAYS : day - 1;
     unsigned char rank;
+    char save_failed = 0;
     char name[NAMELEN + 1];
 
     cls();
@@ -1073,11 +1079,11 @@ static void end_screen(const char *why) {
         put_str(4, 19, "You have made the book. Your name?", A_TITLE);
         read_name(4, 21, name);
         hs_insert(rank, name, net, days);
-        hs_save();
+        save_failed = hs_save();
     } else {
         rank = NSCORES;             /* nothing to highlight */
     }
-    hs_screen(rank);
+    hs_screen(rank, save_failed);
     running = 0;
 }
 

@@ -46,7 +46,7 @@ extern void acia_put(unsigned char c);
 extern unsigned char acia_carrier(void);   /* /DCD: 1 while a call is up */
 extern char dopen_read(char *name);       /* DOS FAT16 read: 0 = ok, 1 = error */
 extern int  dgetb(void);                  /* next byte 0..255, or -1 at EOF */
-extern void dclose(void);
+extern char dclose(void);       /* 0 = ok, 1 = flush/finalize failed */
 
 #define COLS         80
 #define CHATROWS     23            /* rows 0..22 chat; row 23 input; row 24 status */

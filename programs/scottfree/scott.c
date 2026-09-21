@@ -26,7 +26,7 @@ char dopen_read(char *name);    /* 0 = ok, 1 = error */
 char dopen_write(char *name);   /* 0 = ok, 1 = error */
 int  dgetb(void);               /* next byte 0..255, or -1 at EOF */
 char dputb(char c);             /* 0 = ok, 1 = error */
-void dclose(void);
+char dclose(void);              /* 0 = ok, 1 = flush/finalize failed */
 char dir_first(char *dst11);    /* enumerate dir: 0 = entry in dst, 1 = none */
 char dir_next(char *dst11);
 
@@ -331,7 +331,10 @@ void SaveGame(void)
     for (i = 0; i < 16; i++) wint(Counters[i]);
     for (i = 0; i < 16; i++) wint(RoomSaved[i]);
     for (ct = 0; ct <= GameHeader.NumItems; ct++) dputb((char)Items[ct].Location);
-    dclose();
+    /* Only the close is tested, not each of the several hundred bytes: the DOS
+       keeps a failed write sticky, so one check at the end catches a full disk.
+       Saying "Saved" on a save that did not fit is the worst thing this can do. */
+    if (dclose()) { Output("\nDisk full - the save did not finish.\n"); return; }
     Output("\nSaved to "); Output(savename); Output("\n");
 }
 
