@@ -85,8 +85,9 @@ ninja -C cmake-build-debug run          # ...then boot the machine
 ```
 
 The `.PRG` files are build outputs, not committed artifacts — they are produced into
-`cmake-build-debug/programs/<name>/` and staged from there, exactly like the ROMs.
-The exception to this are th twelve Scott Adams games under `disk/GAMES/`.  They *are* committed as they are content, not built from sources in this repo.
+`cmake-build-debug/programs/<name>/<entry>/` and staged from there, exactly like the
+ROMs. That includes the twelve Scott Adams adventures, which are twelve builds of one
+engine against twelve committed game databases.
 
 Configuration ends with a summary of what was actually enabled — check it before
 filing a bug about missing sound or a missing window:
@@ -155,9 +156,8 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 │                         #   chess, frontier, micromax, scottfree, vault, common
 │                         #   (catalog.txt lists every one and where it lands on disk)
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)
-├── disk/                  # committed disk content (GAMES/ Scott Adams .PRGs)
 ├── vendor/                # Pristine upstream sources we port/derive from
-├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, mkprg
+├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, mkprg, dat2c
 ├── docs/                  # Documentation
 └── tests/                 # Unit and integration tests (GoogleTest)
 ```
@@ -182,11 +182,11 @@ or studied:
 - **ScottFree** by **Alan Cox** / Swansea University Computer Society — the
   GPL Scott Adams adventure interpreter we port to run the classic Adventure
   International games on MFC-DOS. The interpreter is in `programs/scottfree`;
-  the host tool `dat2c` pre-parses a game `.dat` into linkable C tables.
+  the host tool `tools/dat2c` pre-parses a game `.dat` into linkable C tables.
 - **Scott Adams** / **Adventure International** — author and publisher of the
   twelve classic text adventures (Adventureland, Pirate Adventure, … The Golden
-  Voyage). The shareware `.dat` databases are obtained separately and are not
-  redistributed here.
+  Voyage). The shareware `.dat` databases are freely shareable and are committed
+  under `programs/scottfree/dat/`.
 - **kilo** by **Salvatore Sanfilippo (antirez)** — the inspiration for the
   `EDIT` text editor. EDIT is our own implementation (it renders straight to
   screen RAM rather than a terminal), but its structure and the incremental

@@ -13,9 +13,12 @@
 # An entry the build compiles adds a recipe. OMIT all three for committed content:
 # that is what marks an entry as staged-as-is rather than built.
 #
-#   sources =    what cl65 compiles, relative to dir (.c and .s, space separated)
-#   config  =    the ld65 config, relative to dir
-#   include =    optional -I directory, relative to dir
+#   sources  =   what cl65 compiles, relative to dir (.c and .s, space separated)
+#   config   =   the ld65 config, relative to dir
+#   include  =   optional -I directory, relative to dir
+#   generate =   "DATA -> OUT.c", optional: run a host tool over DATA to produce
+#                OUT.c in the build tree and compile it with the sources. This is
+#                what lets one engine build several programs from several databases.
 #
 # The .PRG comes out of that recipe -- its name is the `program` source below, and
 # it lands in the build tree, never here. There is no build script: CMake compiles
@@ -114,68 +117,117 @@ doc     = FRONTIER.TXT -> GAMES/FRONTIER.TXT
 desc    = Frontier Fortune, a Wild-West trading game
 
 # ---- Scott Adams adventures ------------------------------------------------
-# Committed rather than built: programs/scottfree/build.sh is a generator, not a
-# program -- it takes a .dat game file and an output name, and the .dat files are not
-# ours to ship. Run it by hand to regenerate one; the .PRG it writes is what lives
-# here. It is the one build script left in the tree, and it stays a script because
-# nothing in a normal build runs it.
+# Twelve games, one engine. Each entry builds programs/scottfree/scott.c against a
+# different database: `generate` runs the dat2c host tool over the .dat to produce
+# the C tables, which compile alongside the engine. That is why one directory backs
+# twelve entries, and why each needs its own object directory in the build tree.
+#
+# The .dat databases are shareware and are committed under programs/scottfree/dat/.
 
 [advland]
-dir     = disk/GAMES
-program = ADVLAND.PRG -> GAMES/ADVLAND.PRG
-desc    = Adventureland (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv01.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = ADVLAND.PRG -> GAMES/ADVLAND.PRG
+desc     = Adventureland (Scott Adams)
 
 [pirate]
-dir     = disk/GAMES
-program = PIRATE.PRG -> GAMES/PIRATE.PRG
-desc    = Pirate Adventure (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv02.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = PIRATE.PRG -> GAMES/PIRATE.PRG
+desc     = Pirate Adventure (Scott Adams)
 
 [secret]
-dir     = disk/GAMES
-program = SECRET.PRG -> GAMES/SECRET.PRG
-desc    = Secret Mission (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv03.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = SECRET.PRG -> GAMES/SECRET.PRG
+desc     = Secret Mission (Scott Adams)
 
 [voodoo]
-dir     = disk/GAMES
-program = VOODOO.PRG -> GAMES/VOODOO.PRG
-desc    = Voodoo Castle (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv04.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = VOODOO.PRG -> GAMES/VOODOO.PRG
+desc     = Voodoo Castle (Scott Adams)
 
 [count]
-dir     = disk/GAMES
-program = COUNT.PRG -> GAMES/COUNT.PRG
-desc    = The Count (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv05.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = COUNT.PRG -> GAMES/COUNT.PRG
+desc     = The Count (Scott Adams)
 
 [odyssey]
-dir     = disk/GAMES
-program = ODYSSEY.PRG -> GAMES/ODYSSEY.PRG
-desc    = Strange Odyssey (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv06.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = ODYSSEY.PRG -> GAMES/ODYSSEY.PRG
+desc     = Strange Odyssey (Scott Adams)
 
 [funhouse]
-dir     = disk/GAMES
-program = FUNHOUSE.PRG -> GAMES/FUNHOUSE.PRG
-desc    = Mystery Fun House (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv07.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = FUNHOUSE.PRG -> GAMES/FUNHOUSE.PRG
+desc     = Mystery Fun House (Scott Adams)
 
 [pyramid]
-dir     = disk/GAMES
-program = PYRAMID.PRG -> GAMES/PYRAMID.PRG
-desc    = Pyramid of Doom (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv08.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = PYRAMID.PRG -> GAMES/PYRAMID.PRG
+desc     = Pyramid of Doom (Scott Adams)
 
 [ghosttwn]
-dir     = disk/GAMES
-program = GHOSTTWN.PRG -> GAMES/GHOSTTWN.PRG
-desc    = Ghost Town (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv09.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = GHOSTTWN.PRG -> GAMES/GHOSTTWN.PRG
+desc     = Ghost Town (Scott Adams)
 
 [savage1]
-dir     = disk/GAMES
-program = SAVAGE1.PRG -> GAMES/SAVAGE1.PRG
-desc    = Savage Island part I (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv10.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = SAVAGE1.PRG -> GAMES/SAVAGE1.PRG
+desc     = Savage Island part I (Scott Adams)
 
 [savage2]
-dir     = disk/GAMES
-program = SAVAGE2.PRG -> GAMES/SAVAGE2.PRG
-desc    = Savage Island part II (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv11.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = SAVAGE2.PRG -> GAMES/SAVAGE2.PRG
+desc     = Savage Island part II (Scott Adams)
 
 [voyage]
-dir     = disk/GAMES
-program = VOYAGE.PRG -> GAMES/VOYAGE.PRG
-desc    = The Golden Voyage (Scott Adams)
+dir      = programs/scottfree
+sources  = scott.c glue.s
+generate = dat/adv12.dat -> game_data.c
+config   = scott.cfg
+include  = .
+program  = VOYAGE.PRG -> GAMES/VOYAGE.PRG
+desc     = The Golden Voyage (Scott Adams)

@@ -46,7 +46,10 @@ endfunction()
 function(mfc_add_catalog_program entry out_target)
     set(_dir    "${MFC_CAT_${entry}_DIR}")
     set(_srcdir "${CMAKE_SOURCE_DIR}/${_dir}")
-    set(_outdir "${CMAKE_BINARY_DIR}/${_dir}")
+    # Per ENTRY, not per directory. programs/scottfree backs twelve entries that
+    # share scott.c, glue.s and scott.cfg, so a directory-keyed object path would
+    # have twelve link steps writing one scott.o.
+    set(_outdir "${CMAKE_BINARY_DIR}/${_dir}/${entry}")
     set(_config "${_srcdir}/${MFC_CAT_${entry}_CONFIG}")
 
     if(NOT EXISTS "${_config}")
@@ -61,6 +64,23 @@ function(mfc_add_catalog_program entry out_target)
     # Every object gets an explicit home in the build tree. mfc_cc65_object()
     # places the intermediates too; see Cc65Compile.cmake.
     file(MAKE_DIRECTORY "${_outdir}")
+
+    # A `generate` entry runs a host tool over a data file to produce one more C
+    # source. The generated file lands in the entry's own build directory, so the
+    # twelve adventures do not share a game_data.c the way they once shared one in
+    # the source tree -- building a second game overwrote the first's.
+    set(_gen_srcs "")
+    if(MFC_CAT_${entry}_GEN_IN)
+        set(_gen_out "${_outdir}/${MFC_CAT_${entry}_GEN_OUT}")
+        add_custom_command(
+            OUTPUT ${_gen_out}
+            COMMAND dat2c ${_srcdir}/${MFC_CAT_${entry}_GEN_IN} ${_gen_out}
+            DEPENDS dat2c ${_srcdir}/${MFC_CAT_${entry}_GEN_IN}
+            COMMENT "dat2c ${_dir}/${MFC_CAT_${entry}_GEN_IN}"
+            VERBATIM
+        )
+        list(APPEND _gen_srcs ${_gen_out})
+    endif()
 
     set(_objs "")
     set(_seen "")
@@ -82,6 +102,24 @@ function(mfc_add_catalog_program entry out_target)
                             INCLUDE "${_srcdir}/${MFC_CAT_${entry}_INCLUDE}")
         else()
             mfc_cc65_object(${_obj} SOURCE ${_abs})
+        endif()
+        list(APPEND _objs ${_obj})
+    endforeach()
+
+    foreach(_src IN LISTS _gen_srcs)
+        get_filename_component(_base "${_src}" NAME_WE)
+        if(_base IN_LIST _seen)
+            message(FATAL_ERROR
+                "catalog [${entry}]: the generated source '${_base}' collides with "
+                "a declared source of the same name. Rename one.")
+        endif()
+        list(APPEND _seen "${_base}")
+        set(_obj "${_outdir}/${_base}.o")
+        if(MFC_CAT_${entry}_INCLUDE)
+            mfc_cc65_object(${_obj} SOURCE ${_src}
+                            INCLUDE "${_srcdir}/${MFC_CAT_${entry}_INCLUDE}")
+        else()
+            mfc_cc65_object(${_obj} SOURCE ${_src})
         endif()
         list(APPEND _objs ${_obj})
     endforeach()

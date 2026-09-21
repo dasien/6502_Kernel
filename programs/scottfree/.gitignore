@@ -1,12 +1,7 @@
-# Host build tool + cc65 intermediates
-dat2c
+# cc65 intermediates from an ad-hoc build in this directory. A normal build puts
+# everything under cmake-build-*/programs/scottfree/<game>/ instead.
 *.o
 *.bin
 *.map
 *.lbl
-# Generated per-game data + built programs (rebuild via build.sh from a .dat;
-# the canonical game .PRGs for the disk live in disk/GAMES/)
-game_data.c
 *.PRG
-# The Scott Adams .dat databases ARE committed (dat/): they are shareware and
-# freely shareable. build_games.sh builds the twelve .PRGs from them.

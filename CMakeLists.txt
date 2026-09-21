@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(6502-kernel 
     VERSION 1.0.0
     DESCRIPTION "6502 Microprocessor Emulator with Interactive Monitor"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # Set C++ standard
@@ -84,6 +84,17 @@ target_compile_features(mkdisk PRIVATE cxx_std_20)
 add_executable(mkprg tools/mkprg/mkprg.cpp)
 target_compile_features(mkprg PRIVATE cxx_std_20)
 
+# ----------------------------------------------------------------
+# dat2c - pre-parse a Scott Adams .dat database into a C file of initialized
+# tables, so the 6502 binary carries no parser and no heap.
+#   ./bin/dat2c dat/adv01.dat game_data.c
+#
+# C, not C++: it is adapted from ScottFree's LoadDatabase (Alan Cox, GPL) and
+# shares scott.h with the 6502 engine, so the struct layouts cannot drift.
+# ----------------------------------------------------------------
+add_executable(dat2c tools/dat2c/dat2c.c)
+target_include_directories(dat2c PRIVATE ${CMAKE_SOURCE_DIR}/programs/scottfree)
+
 # Assemble the default disk.img the GUI loads (${CMAKE_BINARY_DIR}/disk.img).
 # Explicit target -- NOT part of `ninja`/ALL -- so routine builds never rewrite the
 # disk. The programs are ordinary targets, so `ninja disk` rebuilds whichever of
@@ -114,10 +125,10 @@ foreach(entry IN LISTS MFC_CAT_NAMES)
         list(GET parts 2 kind)
         # A built entry's `program` IS the build output, so it comes from the build
         # tree; its `data`/`doc` are committed content and still come from the source
-        # tree. Entries with no build script (the Scott Adams games) are committed
-        # whole and unaffected.
+        # tree. The build path is keyed by entry, not by directory, because one
+        # directory can back several entries -- see tools/cmake/Programs.cmake.
         if(MFC_CAT_${entry}_CONFIG AND kind STREQUAL "program")
-            set(srcroot ${CMAKE_BINARY_DIR}/${MFC_CAT_${entry}_DIR})
+            set(srcroot ${CMAKE_BINARY_DIR}/${MFC_CAT_${entry}_DIR}/${entry})
         else()
             set(srcroot ${CMAKE_SOURCE_DIR}/${MFC_CAT_${entry}_DIR})
         endif()

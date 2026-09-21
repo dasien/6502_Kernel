@@ -13,6 +13,8 @@
 #   MFC_CAT_<name>_SOURCES     cl65 inputs relative to DIR, or "" for committed content
 #   MFC_CAT_<name>_CONFIG      ld65 config relative to DIR, or "" likewise
 #   MFC_CAT_<name>_INCLUDE     optional -I directory relative to DIR, or ""
+#   MFC_CAT_<name>_GEN_IN      optional generator input relative to DIR, or ""
+#   MFC_CAT_<name>_GEN_OUT     the C file that generator input produces, or ""
 #   MFC_CAT_<name>_DESC        one-line description
 #   MFC_CAT_<name>_FILES       list of "SRC|DISKPATH|KIND", KIND in program/data/doc
 #
@@ -38,6 +40,8 @@ macro(mfc_read_catalog _catalog)
             set(MFC_CAT_${_mfc_cur}_SOURCES "")
             set(MFC_CAT_${_mfc_cur}_CONFIG "")
             set(MFC_CAT_${_mfc_cur}_INCLUDE "")
+            set(MFC_CAT_${_mfc_cur}_GEN_IN "")
+            set(MFC_CAT_${_mfc_cur}_GEN_OUT "")
             set(MFC_CAT_${_mfc_cur}_DESC "")
             set(MFC_CAT_${_mfc_cur}_DIR "")
 
@@ -59,6 +63,20 @@ macro(mfc_read_catalog _catalog)
                 set(MFC_CAT_${_mfc_cur}_CONFIG "${_mfc_val}")
             elseif(_mfc_key STREQUAL "include")
                 set(MFC_CAT_${_mfc_cur}_INCLUDE "${_mfc_val}")
+            elseif(_mfc_key STREQUAL "generate")
+                # "INPUT -> OUTPUT.c": dat2c reads INPUT and writes OUTPUT.c into
+                # the build tree, where it compiles as one more source.
+                string(REPLACE "->" ";" _mfc_gen "${_mfc_val}")
+                list(LENGTH _mfc_gen _mfc_n)
+                if(NOT _mfc_n EQUAL 2)
+                    message(FATAL_ERROR
+                        "catalog [${_mfc_cur}]: 'generate = ${_mfc_val}' "
+                        "is not INPUT -> OUTPUT")
+                endif()
+                list(GET _mfc_gen 0 _mfc_gi)
+                list(GET _mfc_gen 1 _mfc_go)
+                string(STRIP "${_mfc_gi}" MFC_CAT_${_mfc_cur}_GEN_IN)
+                string(STRIP "${_mfc_go}" MFC_CAT_${_mfc_cur}_GEN_OUT)
             elseif(_mfc_key STREQUAL "desc")
                 set(MFC_CAT_${_mfc_cur}_DESC "${_mfc_val}")
             elseif(_mfc_key MATCHES "^(program|data|doc)$")
@@ -95,6 +113,8 @@ macro(mfc_read_catalog _catalog)
             message(FATAL_ERROR "catalog [${_mfc_e}]: has 'config' but no 'sources'")
         elseif(MFC_CAT_${_mfc_e}_INCLUDE AND NOT MFC_CAT_${_mfc_e}_CONFIG)
             message(FATAL_ERROR "catalog [${_mfc_e}]: has 'include' but nothing to build")
+        elseif(MFC_CAT_${_mfc_e}_GEN_IN AND NOT MFC_CAT_${_mfc_e}_CONFIG)
+            message(FATAL_ERROR "catalog [${_mfc_e}]: has 'generate' but nothing to build")
         endif()
     endforeach()
 
@@ -108,17 +128,13 @@ endmacro()
 # marks a directory as one: nothing else in programs/ has one, and a program cannot
 # be linked without it.
 #
-# scottfree is exempt and stays exempt: it is a generator, not a program. It takes a
-# Scott Adams .dat file and an output name, the .dat files are not ours to ship, and
-# its twelve outputs are committed under disk/GAMES with catalog entries of their own.
+# A directory may back more than one entry: programs/scottfree builds twelve, one
+# per Scott Adams database, from a single engine and config.
 function(mfc_check_catalog_covers_builds)
     file(GLOB _configs ${CMAKE_SOURCE_DIR}/programs/*/*.cfg)
     foreach(_config IN LISTS _configs)
         get_filename_component(_dir "${_config}" DIRECTORY)
         file(RELATIVE_PATH _rel "${CMAKE_SOURCE_DIR}" "${_dir}")
-        if(_rel STREQUAL "programs/scottfree")
-            continue()
-        endif()
         set(_found FALSE)
         foreach(_name IN LISTS MFC_CAT_NAMES)
             if(MFC_CAT_${_name}_DIR STREQUAL _rel)

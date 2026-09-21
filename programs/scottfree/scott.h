@@ -4,11 +4,10 @@
  *  Derived from ScottFree 1.14 by Swansea University Computer Society
  *  (Alan Cox), distributed under the GNU GPL. See README/Acknowledgments.
  *
- *  The game database is NOT parsed on the 6502. Instead the host tool
- *  `dat2c` pre-parses a Scott Adams TRS-80 .dat into C initializers (see
- *  programs/scottfree/build.sh, the one build script left in the tree because
- *  nothing in a normal build runs it); this header declares the tables both
- *  sides share.
+ *  The game database is NOT parsed on the 6502. The host tool tools/dat2c
+ *  pre-parses a Scott Adams TRS-80 .dat into C initializers, which compile
+ *  alongside the engine; this header declares the tables both sides share, so
+ *  it is included by the 6502 engine and by the host tool alike.
  */
 #ifndef SCOTT_H
 #define SCOTT_H

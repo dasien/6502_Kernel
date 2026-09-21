@@ -1,18 +1,14 @@
 # Porting C programs to MFC-DOS `.PRG` with cc65
 
 This documents the pipeline for compiling C into a disk program the DOS can
-launch by name. Eight programs are built this way, every catalog entry that
-carries a build recipe. Those are EDIT, TERM, IRC, the Sunless Vault, CHESS,
-KERNEL PANIC, VENTURE and FRONTIER FORTUNE. Two shapes recur:
+launch by name. Every catalog entry carrying a build recipe comes through it:
+EDIT, TERM, IRC, GOPHER, the Sunless Vault, CHESS, KERNEL PANIC, VENTURE,
+FRONTIER FORTUNE and the twelve Scott Adams adventures. Two shapes recur:
 
 | Program       | Source            | Pattern                              |
 |---------------|-------------------|--------------------------------------|
 | `CHESS.PRG`   | `programs/micromax` | self-contained (engine + UI in C)  |
 | Scott Adams   | `programs/scottfree`| engine in C + host-pre-parsed data |
-
-The Scott Adams port is the exception to everything below. It is committed
-rather than built, and `programs/scottfree/build.sh` is the one build script
-left in the tree.
 
 ## Toolchain
 
@@ -101,10 +97,15 @@ with the engine, so the 6502 binary carries no parser, no `fscanf`, no heap,
 and the tables live in the loaded (writable) image as the working copy.
 
 ```
-game.dat ──(host: dat2c)──▶ game_data.c ──┐
-                                           ├─ cl65 --signed-chars ─▶ NAME.PRG
-scott.c + glue.s ──────────────────────────┘
+dat/advNN.dat ──(host: dat2c)──▶ game_data.c ──┐
+                                                ├─ cl65 ─▶ NAME.PRG
+scott.c + glue.s ───────────────────────────────┘
 ```
+
+A catalog entry asks for this with a `generate` line, and the twelve adventures are
+twelve entries over one engine and one `ld65` config, differing only in which `.dat`
+they name. Because one source directory then backs twelve builds, each entry compiles
+into its own directory under the build tree.
 
 This pattern is the right call whenever a program would otherwise parse a large text
 database at run time. It trades a little disk space, since the engine is duplicated
