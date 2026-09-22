@@ -1553,9 +1553,23 @@ static void casino_screen(void) {
     set_msg("");
 }
 
+/* Assert our own background.
+ *
+ * Attributes name palette slots, so a theme loaded by the shell reaches into
+ * any program that has not said otherwise. The ledger is meant to read as ink
+ * on a dark counter, not as whatever colour the prompt was wearing.
+ *
+ * Nothing to undo: the shell reloads the theme when it takes the screen back,
+ * which is why asserting costs a program four lines and no teardown. */
+static void own_colours(void) {
+    vpseek(0);                          /* slot 0, the background */
+    vpwrite(0); vpwrite(0); vpwrite(0);
+}
+
 void main(void) {
     unsigned char k;
 
+    own_colours();
     rngv = rng_seed();
     if (rngv == 0) rngv = 0xACE1;       /* xorshift must never start at zero */
 

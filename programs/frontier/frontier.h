@@ -16,6 +16,8 @@ extern void          vattr(unsigned char a);
 extern void          vfill(unsigned char ch);
 extern void          vcmd(unsigned char cmd);
 extern void          vhidecur(void);
+extern void          vpseek(unsigned char index);  /* palette byte index */
+extern void          vpwrite(unsigned char b);     /* palette byte; port advances */
 extern void          vshowcur(unsigned int cell);
 extern unsigned int  rng_seed(void);
 extern unsigned char dopen_read(const char *name);    /* 0 = ok */
