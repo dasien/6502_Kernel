@@ -287,7 +287,7 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
     endif()
 
     # ================================================================
-    # MFC-DOS Resident ROM Build Target ($9000-$AFFF, always mapped)
+    # MFC-DOS Resident ROM Build Target ($8800-$AFFF, always mapped)
     # ================================================================
 
     set(DOS_DIR ${CMAKE_SOURCE_DIR}/src/kernel/dos)
@@ -301,7 +301,7 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
     add_custom_target(dos_rom ALL
         COMMAND ca65 ${DOS_ASM_SOURCE} -I ${DOS_DIR} -o ${DOS_OBJECT}
         COMMAND ld65 -C ${DOS_CONFIG} ${DOS_OBJECT} -o ${DOS_ROM} -m ${DOS_MAP}
-        COMMAND ${CMAKE_COMMAND} -E echo "MFC-DOS resident ROM built ($9000-$AFFF)"
+        COMMAND ${CMAKE_COMMAND} -E echo "MFC-DOS resident ROM built ($8800-$AFFF)"
         COMMENT "Building MFC-DOS resident ROM"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${DOS_ASM_SOURCE} ${DOS_CONFIG}

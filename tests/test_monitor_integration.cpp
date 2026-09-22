@@ -47,6 +47,14 @@ static constexpr uint16_t kBasicVecOut = 0x0207;
 // the backing image, so the DOS re-reads the BPB instead of reusing cached geometry.
 static constexpr uint16_t kDosMounted = 0x0300;
 
+// DOS_VERSION: two bytes, major then minor, immediately after the eight-byte
+// "MFC-DOS\0" signature at the ROM base. The VERSION command prints them, and
+// this test derives its expectation from them rather than restating the number
+// -- a literal here would fail on every version bump while still not checking
+// the thing it claims to, since a hardcoded string in the print routine would
+// satisfy it just as well.
+static constexpr uint16_t kDosVersion = 0x8808;
+
 // MODULE_BANK ($FE23): which bank is mapped into $B000-$DFFF. 0 = window is RAM.
 // The monitor is bank 4, so this is how the harness sees it come and go.
 static constexpr uint16_t kModuleBank = 0xFE23;
@@ -617,8 +625,11 @@ public:
                    {"LONG.TXT",  std::vector<uint8_t>(longtxt.begin(), longtxt.end())}});
 
         // VERSION / MEMMAP are static info commands.
+        const std::string version =
+            "MFC/OS " + std::to_string(computer.getMemory()->read(kDosVersion)) +
+            "." + std::to_string(computer.getMemory()->read(kDosVersion + 1));
         sendCommand("VERSION");
-        verifyResponse("MFC/OS 1.22", "VERSION reports the OS version from DOS_VERSION");
+        verifyResponse(version, "VERSION reports the OS version from DOS_VERSION");
         sendCommand("MEMMAP");
         verifyResponse("USER RAM", "MEMMAP shows the memory map");
 
