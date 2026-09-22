@@ -255,6 +255,27 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
             MESSAGE  "VENTURE blob built ($0800)"
         )
 
+        # VAULT and FRONTIER, for the colour assertions only -- no LABELS, because
+        # those tests read the VIC rather than the game's own variables and so need
+        # no symbol table. Both games are otherwise untested; these blobs are the
+        # thing a real harness for either would start from.
+        mfc_add_test_blob(vault
+            DIR      ${CMAKE_SOURCE_DIR}/programs/vault
+            CONFIG   vault.cfg
+            SOURCES  vault.c map.c draw.c player.c monster.c combat.c item.c
+                     spell.c data.c
+            DEPENDS  ${CMAKE_SOURCE_DIR}/programs/vault/vault.h
+            MESSAGE  "VAULT blob built ($0800)"
+        )
+
+        mfc_add_test_blob(frontier
+            DIR      ${CMAKE_SOURCE_DIR}/programs/frontier
+            CONFIG   frontier.cfg
+            SOURCES  frontier.c
+            DEPENDS  ${CMAKE_SOURCE_DIR}/programs/frontier/frontier.h
+            MESSAGE  "FRONTIER blob built ($0800)"
+        )
+
         # KERNEL PANIC. Same shape as VENTURE, including the labels: steps 7-8 are
         # juice and balance, and the only way to hold a scroller's simulation still
         # while judging either is to read its own state by name.

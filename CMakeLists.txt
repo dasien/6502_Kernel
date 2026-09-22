@@ -209,7 +209,8 @@ add_custom_target(everything
 )
 set(EVERYTHING_DEPS disk mkdisk 6502-kernel)
 foreach(t kernel_rom dos_rom basic_rom forth_rom monitor_rom
-          xmodem_bin term_bin irc_bin edit_bin venture_bin kpanic_bin)
+          xmodem_bin term_bin irc_bin edit_bin venture_bin kpanic_bin
+          vault_bin frontier_bin)
     if(TARGET ${t})
         list(APPEND EVERYTHING_DEPS ${t})
     endif()

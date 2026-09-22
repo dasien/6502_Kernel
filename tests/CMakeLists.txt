@@ -656,6 +656,45 @@ endforeach()
 
 add_test(NAME dos_startup COMMAND dos_startup_tests)
 
+# VAULT and FRONTIER assert their own background at startup. Neither game has a
+# harness of its own, so these went in untested; what is at risk is the CALL
+# still being there after someone rearranges main(), not the mechanism, which
+# VENTURE and KPANIC already prove. Device-level, no label files needed.
+add_executable(game_colour_tests
+    test_game_colours.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+
+target_link_libraries(game_colour_tests gtest_main gtest)
+
+target_include_directories(game_colour_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(game_colour_tests PRIVATE cxx_std_20)
+
+foreach(_b vault_bin frontier_bin)
+    if(TARGET ${_b})
+        add_dependencies(game_colour_tests ${_b})
+    endif()
+endforeach()
+
+add_test(NAME game_colours COMMAND game_colour_tests)
+
 add_executable(kpanic_tests
     test_kpanic.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
