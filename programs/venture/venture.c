@@ -696,8 +696,8 @@ static void load_font(void)
     unsigned char row;
 
     while (*p) {
-        vfontaddr((unsigned int)*p++ * 16);
-        for (row = 0; row < 16; row++) vfontput(*p++);
+        vfseek((unsigned int)*p++ * 16);
+        for (row = 0; row < 16; row++) vfwrite(*p++);
     }
     vcmd(VCMD_FONTRAM);
 }

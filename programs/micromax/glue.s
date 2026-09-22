@@ -1,32 +1,21 @@
 ; ============================================================================
 ; micro-Max on MFC-DOS -- cc65 runtime glue
 ; ============================================================================
-; The compiled engine (umax_mfc.c) imports exactly three functions; we map
-; them onto the kernel character-console ABI:
-;   void OUTCH(char c)  -- print a char  (LF -> newline)
-;   char INCH(void)     -- blocking read, echoed (RETURN -> LF; Q/ESC -> quit)
-;   int  RND(void)      -- 16-bit Galois LFSR pseudo-random number
-; cc65 convention: the single char arg arrives in A; results return in A (char)
-; or A/X (int).
+; OUTCH, CLS, SETATTR and RND come from libmfcglue. Only INCH is here, because
+; reading a key is where this port's input policy lives: the engine wants a
+; lowercase file letter, an echoed keystroke, LF rather than CR at end of line,
+; and Q or ESC to leave. None of that belongs in a shared routine.
 ; ============================================================================
 
-.export _INCH, _SETATTR
+.export _INCH
 
 .include "mfc.inc"
-
 
 .PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
                                 ; Stated here as well as on the ca65 command line so
                                 ; the file is right however it is assembled.
 
 .segment "CODE"
-
-; ---- void SETATTR(char a) -- set the color/attribute latch (a in A) ---------
-; Reverse-video now lives in the attribute, not char bit 7, so white pieces wrap
-; their glyph with SETATTR(reverse) / SETATTR(normal).
-.proc _SETATTR
-        jmp     K_SET_ATTR      ; tail call: its RTS returns to the C caller
-.endproc
 
 ; ---- char INCH(void) -- returns char in A (X=0) ----------------------------
 .proc _INCH

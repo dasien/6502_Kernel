@@ -1,52 +1,8 @@
 ; ============================================================================
-; KERNEL PANIC -- cc65 runtime glue
+; sprite.s -- cc65 glue for the VIC sprite block
 ; ============================================================================
-; The 80x25 screen lives behind the VIC register port (not in the 64K map), so
-; all drawing goes through the video helpers: set the cell index with vaddr(),
-; then stream glyphs with vputc() (the port auto-increments).
+; Part of libmfcglue; see kernel.s for how the library is linked.
 ;
-; Game-specific additions over the VAULT glue:
-;   jiffies()    -- the kernel's 60 Hz monotonic tick counter (K_GET_JIFFIES,
-;                   kernel v3.23). This is what paces the fixed-tick loop.
-;   vscrollbot() -- set the scroll-region bottom row, so chip-side scrolls move
-;                   the playfield and leave the HUD rows below it pinned.
-; ============================================================================
-
-.export _spr_sel, _spr_x, _spr_x_px, _spr_y, _spr_y_px, _spr_glyph, _spr_attr, _spr_on
-.export _vfseek, _vfread, _vfwrite
-
-.include "mfc.inc"
-
-.PC02                           ; WDC 65C02, as the kernel, monitor and DOS declare.
-                                ; Stated here as well as on the ca65 command line so
-                                ; the file is right however it is assembled.
-
-.segment "CODE"
-
-; void vfseek(unsigned int index) -- point the font data port at a byte (A=lo, X=hi).
-.proc _vfseek
-        sta     VREG_FONT_LO
-        stx     VREG_FONT_HI
-        rts
-.endproc
-
-; unsigned char vfread(void) -- read a font byte; the port then advances.
-.proc _vfread
-        lda     VREG_FONT_DATA
-        ldx     #$00
-        rts
-.endproc
-
-; void vfwrite(unsigned char b) -- write a font byte; the port then advances.
-.proc _vfwrite
-        sta     VREG_FONT_DATA
-        rts
-.endproc
-
-; void vscrollbot(unsigned char row) -- bound the scroll region to rows 0..row.
-; NOTE: a clear command resets this to the full screen, so always set it AFTER
-; clearing, never before.
-; ---- sprites ------------------------------------------------------------
 ; A sprite is pixel-positioned and does NOT ride the scroll region, which is the whole
 ; reason these exist: anything in the cell plane rides the fine-scroll offset, so a
 ; screen-fixed object sawtooths by a cell on every scroll.
@@ -55,6 +11,16 @@
 ; with no C-stack handling at all. spr_sel() converts a sprite index into a byte offset
 ; once; the setters then index the register block with it. Positions are given in CELLS
 ; and converted here -- the chip wants nominal pixels on the 8x16 grid.
+; ============================================================================
+
+.export _spr_sel, _spr_x, _spr_x_px, _spr_y, _spr_y_px
+.export _spr_glyph, _spr_attr, _spr_on
+
+.include "mfc.inc"
+
+.PC02
+.segment "CODE"
+
 SPR_X_LO        = SPR0+0
 SPR_X_HI        = SPR0+1        ; bits 1-0
 SPR_Y_LO        = SPR0+2

@@ -41,6 +41,8 @@
 
 ; void vscrollbot(unsigned char row) -- scroll-region bottom row. Scroll
 ; commands then affect only rows top..row; anything outside stays put.
+; NOTE: a clear command resets the region to the full screen, so set this
+; AFTER clearing, never before.
 .proc _vscrollbot
         sta     VREG_SCROLL_BOT
         rts

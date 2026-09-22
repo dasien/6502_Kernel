@@ -10,7 +10,7 @@
 ; jiffies() or INCH_NB() does not link output routines it never calls.
 ; ============================================================================
 
-.export _OUTCH, _CLS
+.export _OUTCH, _CLS, _SETATTR
 
 .include "mfc.inc"
 
@@ -28,4 +28,12 @@
 ; void CLS(void) -- clear the screen and home the cursor.
 .proc _CLS
         jmp     K_CLEAR_SCREEN  ; tail call: its RTS returns to the C caller
+.endproc
+
+; void SETATTR(unsigned char a) -- set the colour/attribute latch applied to
+; characters printed from here on. Reverse video lives in the attribute rather
+; than in glyph bit 7, so a caller highlights by bracketing its output with two
+; of these.
+.proc _SETATTR
+        jmp     K_SET_ATTR      ; tail call: its RTS returns to the C caller
 .endproc

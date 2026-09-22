@@ -14,8 +14,8 @@ extern int           INCH_NB(void);            /* next key, or -1 if none ready 
 extern void          QUITDOS(void);
 extern void          vaddr(unsigned int cell); /* point the data port at a cell */
 extern void          vputc(unsigned char ch);  /* write a glyph; auto-increments */
-extern void          vfontaddr(unsigned int idx); /* point the font port at glyph*16 */
-extern void          vfontput(unsigned char bits);/* write one scanline; auto-increments */
+extern void          vfseek(unsigned int idx); /* point the font port at glyph*16 */
+extern void          vfwrite(unsigned char bits);/* write one scanline; auto-increments */
 extern void          vattr(unsigned char a);   /* colour latch for later writes */
 extern void          vfill(unsigned char ch);  /* fill char for clear/fill-row */
 extern void          vcmd(unsigned char cmd);  /* chip-side block op */

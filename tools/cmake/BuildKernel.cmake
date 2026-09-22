@@ -249,7 +249,7 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         mfc_add_test_blob(venture
             DIR      ${CMAKE_SOURCE_DIR}/programs/venture
             CONFIG   venture.cfg
-            SOURCES  venture.c glue.s
+            SOURCES  venture.c
             LABELS
             DEPENDS  ${CMAKE_SOURCE_DIR}/programs/venture/venture.h
             MESSAGE  "VENTURE blob built ($0800)"
@@ -261,7 +261,7 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         mfc_add_test_blob(kpanic
             DIR      ${CMAKE_SOURCE_DIR}/programs/kpanic
             CONFIG   kpanic.cfg
-            SOURCES  kpanic.c glue.s
+            SOURCES  kpanic.c
             LABELS
             DEPENDS  ${CMAKE_SOURCE_DIR}/programs/kpanic/kpanic.h
             MESSAGE  "KERNEL PANIC blob built ($0800)"

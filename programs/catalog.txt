@@ -94,7 +94,7 @@ desc    = micro-Max chess
 
 [kpanic]
 dir     = programs/kpanic
-sources = kpanic.c glue.s
+sources = kpanic.c
 config  = kpanic.cfg
 program = KPANIC.PRG -> GAMES/KPANIC.PRG
 doc     = KPANIC.TXT -> GAMES/KPANIC.TXT
@@ -102,7 +102,7 @@ desc    = KERNEL PANIC, a vertical scroller
 
 [venture]
 dir     = programs/venture
-sources = venture.c glue.s
+sources = venture.c
 config  = venture.cfg
 program = VENTURE.PRG -> GAMES/VENTURE.PRG
 doc     = VENTURE.TXT -> GAMES/VENTURE.TXT
@@ -110,7 +110,7 @@ desc    = Venture (Exidy 1981) port
 
 [frontier]
 dir     = programs/frontier
-sources = frontier.c glue.s
+sources = frontier.c
 config  = frontier.cfg
 program = FRONTIER.PRG -> GAMES/FRONTIER.PRG
 doc     = FRONTIER.TXT -> GAMES/FRONTIER.TXT

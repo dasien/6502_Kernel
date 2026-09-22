@@ -10,7 +10,7 @@
 ; this one and never moves it again.
 ; ============================================================================
 
-.export _vcursor, _vhidecur
+.export _vcursor, _vhidecur, _vshowcur
 
 .include "mfc.inc"
 
@@ -29,5 +29,14 @@
 .proc _vhidecur
         lda     #$80
         sta     VREG_CURSOR_HI
+        rts
+.endproc
+
+; void vshowcur(unsigned int cell) -- park the hardware cursor on a cell and
+; show it (A=lo, X=hi). For a program that hid it and now wants a real caret,
+; while typing into a field.
+.proc _vshowcur
+        sta     VREG_CURSOR_LO
+        stx     VREG_CURSOR_HI          ; bit7 clear -> visible
         rts
 .endproc
