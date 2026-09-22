@@ -210,4 +210,35 @@ TEST_F(DosStartupTest, ACommentOnlyConfigBarelyCostsAnything)
         << "reader is re-opening the file per line again";
 }
 
+/* A theme in the boot config, which is the whole persistence story: the machine
+   has no settings file of its own and does not need one, because STARTUP.CFG is
+   already a list of commands it runs at boot. */
+TEST_F(DosStartupTest, AThemeInTheConfigIsLoadedAtBoot)
+{
+    bootWith("THEME AMBER\r\n");
+
+    uint8_t r = 0, g = 0, b = 0;
+    box_.getVideoChip()->paletteColor(2, r, g, b);   // normal text
+    EXPECT_EQ(r, 0xff); EXPECT_EQ(g, 0xcc); EXPECT_EQ(b, 0x2f)
+        << "the config did not load the theme";
+
+    box_.getVideoChip()->paletteColor(0, r, g, b);   // background
+    EXPECT_EQ(r, 0x2c); EXPECT_EQ(g, 0x1c); EXPECT_EQ(b, 0x15);
+
+    // ...and the machine still got to a prompt wearing it.
+    EXPECT_NE(screen().find("OPERATIONAL"), std::string::npos);
+}
+
+/* No theme named means the machine's own colours, so an untouched disk boots
+   looking exactly as it always has. */
+TEST_F(DosStartupTest, WithNoThemeTheMachineKeepsItsOwnColours)
+{
+    bootWith("");
+    uint8_t r = 0, g = 0, b = 0;
+    box_.getVideoChip()->paletteColor(2, r, g, b);
+    EXPECT_EQ(r, 0x00); EXPECT_EQ(g, 0xff); EXPECT_EQ(b, 0x00) << "green moved";
+    box_.getVideoChip()->paletteColor(0, r, g, b);
+    EXPECT_EQ(r, 0x00); EXPECT_EQ(g, 0x00); EXPECT_EQ(b, 0x00) << "black moved";
+}
+
 } // namespace

@@ -103,6 +103,11 @@ ASCII_COMMA      = $2C
 FIO_COMMAND      = $FE10                ; file command register
 FIO_STATUS       = $FE11                ; file status register
 FIO_DATA         = $FE22                ; byte-stream data register
+VREG_CMD         = $FE32                ; VIC command engine
+VREG_PAL_IDX     = $FECB                ; palette byte index (0..47)
+VREG_PAL_DATA    = $FECC                ; palette data port (auto-increments)
+VCMD_PAL_RESET   = $0D                  ; restore the VIC's built-in colours
+
 FIO_NAME         = $FE14                ; $FE14-$FE1F: host filename (12 bytes)
 FIO_OPEN_RD      = $03                  ; open host file for reading
 FIO_OPEN_WR      = $04                  ; open host file for writing
@@ -203,6 +208,7 @@ DOS_W_FREE_IDX   = $03B8
 DOS_CFG_LINE     = $03B9                ; index of the config line to run next
 DOS_CFG_PAGE     = $03BA                ; saved PAGE_ENABLE, restored when done
 DOS_CFG_EOF      = $03BB                ; the last read stopped at EOF, not a newline
+DOS_THEME        = $03BC                ; index of the active theme in DOS_THEME_TAB
 ; Sticky write error, the ferror() rule: once a write on the open file has
 ; failed the stream stays failed, and FS_CLOSE reports it. Without this a full
 ; volume is invisible to any caller that does not test every single FS_PUTB --
@@ -626,10 +632,15 @@ _DOS_WARM:
     JSR K_PRINT_NEWLINE                 ; one blank line on return so the prompt
                                         ; clears row 0 (a program just cleared+homed)
 _DOS_PROMPT:
-    LDA #$02                            ; reclaim the default colour (green on black):
-    JSR K_SET_ATTR                     ; a launched program (TERM following a BBS's
-                                       ; ANSI colours, EDIT, a game) may have left the
-                                       ; VIC attribute latch on another colour
+    ; Reclaim the screen's colours. A launched program (TERM following a BBS's
+    ; ANSI colours, EDIT, a game) may have left the attribute latch somewhere
+    ; else -- and now may also have loaded a palette of its own, which is how a
+    ; game asserts colours the theme must not override. Putting the theme back
+    ; here means an overriding program never has to restore anything, and one
+    ; that forgets cannot leave the shell wearing its colours.
+    JSR _DOS_APPLY_THEME
+    LDA #$02                            ; the default attribute: slot 2 on slot 0
+    JSR K_SET_ATTR
     LDA DOS_CWD_NAME                    ; in a drawer? show its name before ']'
     BEQ @bracket
     LDA #<DOS_CWD_NAME
@@ -1516,6 +1527,195 @@ _DOS_DO_EXPORT:
 @notfound:
     JMP _DOS_PERR_NOFILE
 
+; ================================================================
+; THEME - the display colours
+; ================================================================
+; Every attribute byte names PALETTE SLOTS rather than colours, so loading the
+; palette changes what the whole machine looks like without any program knowing
+; it happened. A theme is just a short list of slots to restate.
+;
+; A program that has an opinion about its colours loads its own palette and the
+; shell puts the theme back when it gets the screen again (see _DOS_PROMPT). A
+; program with no opinion inherits the theme, which is what you want from
+; anything that is mostly text -- the Scott Adams adventures should follow the
+; machine, not fight it.
+;
+; Record layout: a NUL-terminated name, a slot count, then that many
+; (slot, r, g, b) quads. A count of zero means "the built-in colours", which is
+; what makes GREEN a theme like any other rather than a special case.
+DOS_THEME_TAB:
+    .word THEME_GREEN
+    .word THEME_AMBER
+    .word THEME_PAPER
+    .word THEME_SLATE
+    .word $0000                         ; terminator
+
+THEME_GREEN: .BYTE "GREEN", 0
+    .byte 0                             ; the machine's own colours
+THEME_AMBER: .BYTE "AMBER", 0
+    .byte 2
+    .byte 0, $2c, $1c, $15              ; background: dark brown
+    .byte 2, $ff, $cc, $2f              ; normal text: amber
+THEME_PAPER: .BYTE "PAPER", 0
+    .byte 2
+    .byte 0, $fe, $f4, $9c              ; background: cream
+    .byte 2, $00, $00, $00              ; normal text: black
+THEME_SLATE: .BYTE "SLATE", 0
+    .byte 2
+    .byte 0, $20, $20, $20              ; background: near-black grey
+    .byte 2, $d0, $d0, $d0              ; normal text: light grey
+
+; ----------------------------------------------------------------
+; _DOS_THEME_REC - point DOS_PTR at record number A
+; ----------------------------------------------------------------
+_DOS_THEME_REC:
+    ASL                                 ; two bytes per entry
+    TAY
+    LDA DOS_THEME_TAB,Y
+    STA DOS_PTR
+    LDA DOS_THEME_TAB+1,Y
+    STA DOS_PTR+1
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_APPLY_THEME - load the active theme into the VIC palette
+; ----------------------------------------------------------------
+; Resets to the built-in colours first, so a theme only has to state what it
+; changes and a program's leftovers cannot survive underneath it.
+_DOS_APPLY_THEME:
+    LDA #VCMD_PAL_RESET
+    STA VREG_CMD
+
+    LDA DOS_THEME
+    JSR _DOS_THEME_REC
+    LDY #$00
+@skipname:
+    LDA (DOS_PTR),Y                     ; step over the name
+    BEQ @count
+    INY
+    BRA @skipname
+@count:
+    INY
+    LDA (DOS_PTR),Y                     ; slot count
+    BEQ @done                           ; zero: the built-in colours, already loaded
+    TAX
+@slot:
+    INY
+    LDA (DOS_PTR),Y                     ; slot number -> byte index = slot*3
+    STA DOS_TMP
+    ASL
+    CLC
+    ADC DOS_TMP
+    STA VREG_PAL_IDX
+    INY
+    LDA (DOS_PTR),Y                     ; R, then G, then B; the port advances
+    STA VREG_PAL_DATA
+    INY
+    LDA (DOS_PTR),Y
+    STA VREG_PAL_DATA
+    INY
+    LDA (DOS_PTR),Y
+    STA VREG_PAL_DATA
+    DEX
+    BNE @slot
+@done:
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_THEME_MATCH - does the argument at X name the theme at DOS_PTR?
+; ----------------------------------------------------------------
+; Y walks the name and X the command buffer; they advance together, which is
+; what keeps this to one index each.
+; Out: carry clear on a match.
+_DOS_THEME_MATCH:
+    LDY #$00
+@loop:
+    LDA (DOS_PTR),Y
+    BEQ @nameend
+    CMP MON_CMDBUF,X
+    BNE @no
+    INY
+    INX
+    BRA @loop
+@nameend:
+    CPX MON_CMDLEN                      ; the name ended; the argument must too
+    BCS @yes
+    LDA MON_CMDBUF,X
+    BEQ @yes
+    CMP #ASCII_SPACE
+    BEQ @yes
+@no:
+    SEC
+    RTS
+@yes:
+    CLC
+    RTS
+
+; ----------------------------------------------------------------
+; _DOS_DO_THEME - THEME [name]
+; ----------------------------------------------------------------
+; With no argument, list what there is. With one, load it.
+_DOS_DO_THEME:
+    JSR _DOS_ARGSTART
+    BCS _DOS_THEME_LIST                 ; bare THEME: show the names
+
+    TYA
+    TAX                                 ; X = argument index
+    LDA #$00
+    STA DOS_TMP2                        ; candidate record number
+@try:
+    LDA DOS_TMP2
+    JSR _DOS_THEME_REC
+    LDA DOS_PTR
+    ORA DOS_PTR+1
+    BEQ @unknown                        ; hit the terminator
+    PHX
+    JSR _DOS_THEME_MATCH
+    PLX
+    BCC @found
+    INC DOS_TMP2
+    BRA @try
+@found:
+    LDA DOS_TMP2
+    STA DOS_THEME
+    JSR _DOS_APPLY_THEME
+    JMP K_PRINT_NEWLINE                 ; quiet on success, like OPEN
+@unknown:
+    LDA #<MSG_DOS_NOTHEME
+    LDX #>MSG_DOS_NOTHEME
+    JMP _DOS_PERR
+
+; List the theme names, marking the active one.
+_DOS_THEME_LIST:
+    JSR K_PRINT_NEWLINE
+    LDA #$00
+    STA DOS_TMP2
+@each:
+    LDA DOS_TMP2
+    JSR _DOS_THEME_REC
+    LDA DOS_PTR
+    ORA DOS_PTR+1
+    BEQ @end
+    LDA DOS_TMP2                        ; '*' against the active one
+    CMP DOS_THEME
+    BNE @space
+    LDA #'*'
+    BRA @mark
+@space:
+    LDA #ASCII_SPACE
+@mark:
+    JSR K_PRINT_CHAR
+    LDA #ASCII_SPACE
+    JSR K_PRINT_CHAR
+    LDA DOS_PTR
+    LDX DOS_PTR+1
+    JSR _DOS_PMSG                       ; the name
+    JSR K_PRINT_NEWLINE
+    INC DOS_TMP2
+    BRA @each
+@end:
+    RTS
+
 ; ----------------------------------------------------------------
 ; _DOS_DO_VER - print the OS version, read from the DOS_VERSION bytes
 ; ----------------------------------------------------------------
@@ -2306,7 +2506,8 @@ MSG_DOS_HELP_HDR: .BYTE "MFC/OS COMMANDS", $0D, $0A, 0
 DOS_HELP_TABLE:
     .WORD DH_CAT, DH_TYPE, DH_MORE, DH_LOAD, DH_SAVE, DH_COPY, DH_MOVE
     .WORD DH_REN, DH_ERASE, DH_IMPORT, DH_EXPORT, DH_NEWD, DH_OPEN, DH_CLOSE
-    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_VER, DH_DATE, DH_CLS, DH_MON, DH_HELP
+    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_THEME, DH_VER, DH_DATE, DH_CLS
+    .WORD DH_MON, DH_HELP
 DOS_HELP_COUNT = (* - DOS_HELP_TABLE) / 2
 
 DH_SHUTDOWN: .BYTE "SHUTDOWN", $09, "switch the machine off", 0
@@ -2327,6 +2528,7 @@ DH_CLOSE:  .BYTE "CLOSE", $09, "leave the drawer", 0
 DH_DROPD:  .BYTE "DROPDRAWER name", $09, "remove an empty drawer", 0
 DH_FREE:   .BYTE "DISKFREE", $09, "show free space", 0
 DH_MEMMAP: .BYTE "MEMMAP", $09, "show the memory map", 0
+DH_THEME:  .BYTE "THEME [name]", $09, "set the display colours", 0
 DH_VER:    .BYTE "VERSION", $09, "show the OS version", 0
 DH_DATE:   .BYTE "DATE", $09, "show the date and time", 0
 DH_CLS:    .BYTE "CLS", $09, "clear the screen", 0
@@ -2347,6 +2549,7 @@ MSG_DOS_IMPORTED:.BYTE "IMPORTED", $0D, $0A, 0
 MSG_DOS_EXPORTED:.BYTE "EXPORTED", $0D, $0A, 0
 MSG_DOS_WRITEERR:.BYTE "WRITE ERROR (DISK FULL?)", $0D, $0A, 0
 MSG_DOS_HOSTERR: .BYTE "HOST I/O ERROR", $0D, $0A, 0
+MSG_DOS_NOTHEME: .BYTE "NO SUCH THEME", $0D, $0A, 0
 ; The boot config. In SYSTEM/ with the other machine-owned data files
 ; (DIAL.LST, IRC.LST) rather than at the root; _FS_OPEN resolves the drawer.
 MSG_CFG_NAME:    .BYTE "SYSTEM/STARTUP.CFG", 0
@@ -2383,6 +2586,7 @@ DOS_VERB_TAB:
     .word KW_CLS,         _DOS_DO_CLS
     .word KW_CLEAR,       _DOS_DO_CLS
     .word KW_BANKS,       _DOS_DO_BANKS
+    .word KW_THEME,       _DOS_DO_THEME
     .word KW_HELP,        _DOS_DO_HELP
     .word KW_MON,         _DOS_DO_MON
     .word KW_CATALOG,     _DOS_DO_CAT
@@ -2412,6 +2616,7 @@ KW_SHUTDOWN:     .BYTE "SHUTDOWN", 0
 KW_CLS:          .BYTE "CLS", 0
 KW_CLEAR:        .BYTE "CLEAR", 0
 KW_BANKS:        .BYTE "BANKS", 0
+KW_THEME:        .BYTE "THEME", 0
 KW_HELP:         .BYTE "HELP", 0
 KW_MON:          .BYTE "MON", 0
 KW_CATALOG:      .BYTE "CATALOG", 0

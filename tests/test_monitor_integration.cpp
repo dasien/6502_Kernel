@@ -25,6 +25,7 @@
 #endif
 #include "computer/Computer6502.h"
 #include "computer/PowerSwitch.h"
+#include "computer/VIC.h"
 #include "support/fat16_image.h"
 
 // Repository examples/ directory, passed in by CMake so the suite can build the
@@ -117,6 +118,7 @@ public:
         testPromptColorReset();
         testPagerLongType();
         testDosRemainingVerbs();
+        testTheme();
         testDosMissingArgUsage();
         testDosFileVerbs();
         testDosSaveDiskFullReclaims();
@@ -297,10 +299,60 @@ public:
         verifyResponse("MONITOR COMMANDS", "MON launches the monitor");
         // Q returns to the DOS shell (HELP's built-in list proves we're back).
         sendCommand("Q");
-        sendCommand("HELP", 500000);   // the two-column list prints one line per verb
+        sendHelp();
         verifyResponse("RENAME", "Q returns to the DOS shell");
         // HELP is now a two-column verb/description list (like the monitor's ?).
         verifyResponse("clear the screen", "HELP shows command descriptions");
+    }
+
+    // THEME: the display colours.
+    //
+    // Attributes name palette slots, so loading the palette changes what the
+    // machine looks like without any program knowing. A program with an opinion
+    // about its colours loads its own and the shell puts the theme back, which is
+    // the mechanism that lets a game assert colours a theme must not override.
+    void testTheme() {
+        auto slot = [&](int i, uint8_t &r, uint8_t &g, uint8_t &b) {
+            computer.getVideoChip()->paletteColor(static_cast<uint8_t>(i), r, g, b);
+        };
+        uint8_t r = 0, g = 0, b = 0;
+
+        sendCommand("THEME AMBER", 400000);
+        slot(2, r, g, b);
+        verifyTrue(r == 0xff && g == 0xcc && b == 0x2f, "THEME sets the text colour");
+        slot(0, r, g, b);
+        verifyTrue(r == 0x2c && g == 0x1c && b == 0x15, "THEME sets the background");
+
+        // Bare THEME lists what there is, marking the active one.
+        clearScreen();
+        sendCommand("THEME", 400000);
+        verifyResponse("AMBER", "bare THEME lists the themes");
+        verifyResponse("PAPER", "...all of them");
+
+        // The shell reclaims the palette, so a program that loads its own colours
+        // need not restore them -- and one that forgets cannot leave the shell
+        // wearing them. Stand in for such a program by writing the port directly.
+        computer.getMemory()->write(Computer::VIC::kRegPaletteIdx, 6);   // slot 2
+        computer.getMemory()->write(Computer::VIC::kRegPaletteData, 0x11);
+        computer.getMemory()->write(Computer::VIC::kRegPaletteData, 0x22);
+        computer.getMemory()->write(Computer::VIC::kRegPaletteData, 0x33);
+        slot(2, r, g, b);
+        verifyTrue(r == 0x11, "the stand-in program's palette took effect");
+
+        sendCommand("CLS", 400000);          // any command returns us to the prompt
+        slot(2, r, g, b);
+        verifyTrue(r == 0xff && g == 0xcc && b == 0x2f,
+                   "the prompt restored the theme after a program changed it");
+
+        // An unknown name says so rather than silently doing nothing.
+        clearScreen();
+        sendCommand("THEME NOSUCH", 400000);
+        verifyResponse("NO SUCH THEME", "an unknown theme is reported");
+
+        // Back to the machine's own colours for the tests that follow.
+        sendCommand("THEME GREEN", 400000);
+        slot(2, r, g, b);
+        verifyTrue(r == 0x00 && g == 0xff && b == 0x00, "THEME GREEN restores the default");
     }
 
     // The two verbs no other test drives. _DOS_DISPATCH is table-driven, so every
@@ -560,7 +612,7 @@ public:
             std::cout << std::endl;
         }
         // Back at the DOS prompt and responsive (program RTS'd to DOS_WARM).
-        sendCommand("HELP", 500000);   // the two-column list prints one line per verb
+        sendHelp();
         verifyResponse("RENAME", "Returned to the DOS prompt after the program");
     }
 
@@ -1231,6 +1283,18 @@ private:
         }
         std::cout << std::endl;
         return ok;
+    }
+
+    /* HELP, resuming past the page break.
+     *
+     * The verb list outgrew a 24-line page, so HELP now stops at --MORE-- like
+     * any other long output. That is the pager working rather than a fault, but
+     * a test that does not resume it leaves the machine waiting for a keypress
+     * and every command after this one is swallowed. */
+    void sendHelp() {
+        for (char c : std::string("HELP\r")) computer.getPia()->addKeypress(c);
+        computer.getPia()->addKeypress(' ');   // resume past the page break
+        computer.runInstructions(900000);
     }
 
     // Hand the current disk image to the host's own FAT checker.
