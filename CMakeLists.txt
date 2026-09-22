@@ -106,6 +106,7 @@ target_include_directories(dat2c PRIVATE ${CMAKE_SOURCE_DIR}/programs/scottfree)
 include(${CMAKE_SOURCE_DIR}/tools/cmake/DiskCatalog.cmake)
 mfc_read_catalog(${CMAKE_SOURCE_DIR}/programs/catalog.txt)
 mfc_check_catalog_covers_builds()
+mfc_check_catalog_files_exist()
 
 set(DISKROOT ${CMAKE_BINARY_DIR}/diskroot)
 set(GENERATED_DISKMAP ${CMAKE_BINARY_DIR}/diskmap.generated.txt)

@@ -130,6 +130,55 @@ endmacro()
 #
 # A directory may back more than one entry: programs/scottfree builds twelve, one
 # per Scott Adams database, from a single engine and config.
+# Every file the catalog names must actually be there, or the disk build dies
+# halfway through with a copy error and no image.
+#
+# This is not hypothetical, and the failure is nastier than it sounds. The disk
+# target is ONE shell command: remove the staging tree, make the drawers, copy
+# each file, then run mkdisk -- all joined by &&, so the first missing file
+# aborts the chain before mkdisk ever runs and disk.img is silently left exactly
+# as it was. Meanwhile the ROMs keep building, because they are separate
+# targets. You end up running current ROMs against a frozen disk, and nothing
+# says so.
+#
+# That happened: programs/gopher/GOPHER.LST was declared here but never
+# committed, ninja disk failed for weeks, and the symptom that got reported was
+# "the Scott Adams games stopped working" -- they were the oldest binaries on
+# the stale image and the first to fall out of step with the ROMs.
+#
+# Only source-tree files can be checked. A built entry's `program` is the build
+# output and does not exist until it is built; everything else -- `data`, `doc`,
+# and the `program` of a committed entry -- is in the repo and must be present
+# now. Mirrors the srcroot choice the staging commands make.
+function(mfc_check_catalog_files_exist)
+    set(_missing "")
+    foreach(_entry IN LISTS MFC_CAT_NAMES)
+        foreach(_spec IN LISTS MFC_CAT_${_entry}_FILES)
+            string(REPLACE "|" ";" _parts "${_spec}")
+            list(GET _parts 0 _src)
+            list(GET _parts 2 _kind)
+
+            if(MFC_CAT_${_entry}_CONFIG AND _kind STREQUAL "program")
+                continue()          # a build output; not here yet, by design
+            endif()
+
+            set(_path "${CMAKE_SOURCE_DIR}/${MFC_CAT_${_entry}_DIR}/${_src}")
+            if(NOT EXISTS "${_path}")
+                list(APPEND _missing
+                     "[${_entry}] ${_kind} = ${_src} (no ${MFC_CAT_${_entry}_DIR}/${_src})")
+            endif()
+        endforeach()
+    endforeach()
+
+    if(_missing)
+        string(REPLACE ";" "\n  " _report "${_missing}")
+        message(FATAL_ERROR
+            "programs/catalog.txt names files that do not exist:\n  ${_report}\n"
+            "Every declared file has to be in the repo, or `ninja disk` fails "
+            "part-way through and leaves the previous disk.img in place.")
+    endif()
+endfunction()
+
 function(mfc_check_catalog_covers_builds)
     file(GLOB _configs ${CMAKE_SOURCE_DIR}/programs/*/*.cfg)
     foreach(_config IN LISTS _configs)
