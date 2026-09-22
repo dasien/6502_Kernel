@@ -323,11 +323,31 @@ public:
         slot(0, r, g, b);
         verifyTrue(r == 0x2c && g == 0x1c && b == 0x15, "THEME sets the background");
 
-        // Bare THEME lists what there is, marking the active one.
+        // Bare THEME lists what there is, marking the active one. Checking every
+        // name matters more than it looks: the table is data, and a theme whose
+        // record is mistyped simply never appears rather than failing loudly.
         clearScreen();
         sendCommand("THEME", 400000);
-        verifyResponse("AMBER", "bare THEME lists the themes");
-        verifyResponse("PAPER", "...all of them");
+        for (const char *name : {"GREEN", "MONO", "AMBER", "SLATE",
+                                 "TURBO", "CYAN", "PAPER", "LINEN"}) {
+            verifyResponse(name, std::string("THEME lists ") + name);
+        }
+
+        // Spot-check one dark and one light for their actual values -- a
+        // mistyped hex digit would otherwise only show up by eye.
+        sendCommand("THEME MONO", 400000);
+        slot(2, r, g, b);
+        verifyTrue(r == 0xff && g == 0xff && b == 0xff, "MONO is white text");
+        slot(0, r, g, b);
+        verifyTrue(r == 0x00 && g == 0x00 && b == 0x00, "MONO is a black ground");
+
+        sendCommand("THEME LINEN", 400000);
+        slot(0, r, g, b);
+        verifyTrue(r == 0xef && g == 0xf1 && b == 0xf5, "LINEN is a light ground");
+        slot(2, r, g, b);
+        verifyTrue(r == 0x4c && g == 0x4f && b == 0x69, "LINEN is slate ink");
+
+        sendCommand("THEME AMBER", 400000);   // back to where the rest expects
 
         // The shell reclaims the palette, so a program that loads its own colours
         // need not restore them -- and one that forgets cannot leave the shell

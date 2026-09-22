@@ -1549,9 +1549,13 @@ _DOS_DO_EXPORT:
 ; what makes GREEN a theme like any other rather than a special case.
 DOS_THEME_TAB:
     .word THEME_GREEN
+    .word THEME_MONO
     .word THEME_AMBER
-    .word THEME_PAPER
     .word THEME_SLATE
+    .word THEME_TURBO
+    .word THEME_CYAN
+    .word THEME_PAPER
+    .word THEME_LINEN
     .word $0000                         ; terminator
 
 THEME_GREEN: .BYTE "GREEN", 0
@@ -1568,6 +1572,22 @@ THEME_SLATE: .BYTE "SLATE", 0
     .byte 2
     .byte 0, $20, $20, $20              ; background: near-black grey
     .byte 2, $d0, $d0, $d0              ; normal text: light grey
+THEME_MONO:  .BYTE "MONO", 0
+    .byte 2
+    .byte 0, $00, $00, $00              ; background: black
+    .byte 2, $ff, $ff, $ff              ; normal text: white
+THEME_TURBO: .BYTE "TURBO", 0
+    .byte 2
+    .byte 0, $00, $00, $a3              ; background: deep blue
+    .byte 2, $ff, $ff, $4d              ; normal text: yellow
+THEME_CYAN:  .BYTE "CYAN", 0
+    .byte 2
+    .byte 0, $16, $10, $21              ; background: near-black violet
+    .byte 2, $00, $ff, $ff              ; normal text: cyan
+THEME_LINEN: .BYTE "LINEN", 0
+    .byte 2
+    .byte 0, $ef, $f1, $f5              ; background: cool off-white
+    .byte 2, $4c, $4f, $69              ; normal text: slate ink
 
 ; ----------------------------------------------------------------
 ; _DOS_THEME_REC - point DOS_PTR at record number A
