@@ -902,6 +902,7 @@ add_test(NAME io_equates_agree
     COMMAND ${CMAKE_COMMAND}
     -DKERNEL_VARS=${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc
     -DMFC_INC=${CMAKE_SOURCE_DIR}/programs/common/mfc.inc
+    -DDOS_ASM=${CMAKE_SOURCE_DIR}/src/kernel/dos/dos.asm
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_io_equates.cmake)
 
 # Drift guard: no two DOS page-3 variables may share an address. They are
