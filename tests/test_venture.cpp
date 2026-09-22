@@ -1847,6 +1847,45 @@ TEST_F(VentureTest, SoundCuesGateVoiceOneAndReleaseIt)
         << "the death cue was never gated off";
 }
 
+/* The title screen says what it is waiting for.
+ *
+ * Both banners stop on wait_key() and neither said so, which on the title
+ * screen reads as a game that has hung rather than one waiting for you. Its own
+ * machine, because the fixture presses through the title before a test body
+ * runs -- the same reason as the colour test below. */
+TEST(VentureTitle, ItSaysToPressAKey)
+{
+    Computer::Computer6502 box;
+    box.power_on();
+
+    std::ifstream f("../kernel/venture.bin", std::ios::binary);
+    ASSERT_TRUE(f.good()) << "venture.bin not found - build the venture_bin target";
+    const std::vector<uint8_t> blob((std::istreambuf_iterator<char>(f)),
+                                    std::istreambuf_iterator<char>());
+    for (size_t i = 0; i < blob.size(); ++i)
+        box.getMemory()->write(static_cast<uint16_t>(0x0800 + i), blob[i]);
+
+    box.getCpu()->reg.SP = 0xFF;
+    box.getCpu()->pushByte(0xFF);
+    box.getCpu()->pushByte(0xFF);
+    box.getCpu()->reg.PC = 0x0800;
+    box.getCpu()->setFlag(Computer::CPU6502::kInterrupt, false);
+    box.getMemory()->write(kSoundEnable, 0x01);
+    box.runInstructions(200000);        // reach the title, and stop there
+
+    std::string screen;
+    for (int y = 0; y < 25; y++)
+        for (int x = 0; x < 80; x++)
+            screen.push_back(static_cast<char>(
+                box.getVideoChip()->getCharacterAt(static_cast<uint16_t>(x),
+                                                   static_cast<uint16_t>(y))));
+
+    EXPECT_NE(screen.find("V E N T U R E"), std::string::npos)
+        << "not on the title screen, so the prompt check below proves nothing";
+    EXPECT_NE(screen.find("PRESS ANY KEY"), std::string::npos)
+        << "the title screen waits for a key without saying so";
+}
+
 /* VENTURE asserts its own background rather than wearing the machine's theme.
  *
  * Attributes name palette slots, so a theme loaded by the shell reaches into

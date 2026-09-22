@@ -1858,6 +1858,10 @@ static void banner(const char *line)
     vfill(' ');
     clear_screen();
     put_str(33, 11, line, A_HUD);
+    /* Say so. Both banners stop dead on wait_key() and neither said what it was
+     * waiting for, so the title screen read as a game that had hung. Thirteen
+     * characters, the same width as the title above it, so the two line up. */
+    put_str(33, 14, "PRESS ANY KEY", A_TEXT);
     wait_key();
 }
 
