@@ -37,15 +37,20 @@
 
 ### GOPHER — a network document browser (2026-09-19)
 
-- [ ] **A Gopher client, `GOPHER.PRG`.** A web browser was considered first and
-  set aside: essentially all of the web is HTTPS, and a 4 MHz 65C02 cannot do an
-  ECDHE handshake plus AES-GCM per record. That is orders of magnitude, not a
-  tuning problem. Lynx specifically is out three times over — roughly 200k lines
-  against a 32 KB address space, dependencies on ncurses, libwww, zlib and
-  OpenSSL, and a GPLv2 licence this project does not port from (see reSID in
-  `docs/references.md`). Gopher has none of those problems: RFC 1436 is a dozen
-  lines, it is text-native, menus map exactly onto 80x25, gopherspace is alive,
-  and there is no TLS.
+- [x] **A Gopher client, `GOPHER.PRG`.** **Done 2026-09-21**, 12,928 bytes, on the
+  disk with `SYSTEM/GOPHER.LST` and `docs/GOPHER.md`, five tests in
+  `test_gopher.cpp`. All four phases below shipped, and binary retrieval -- the
+  one thing this entry used to list as outstanding -- shipped with the modem raw
+  mode above. Nothing is left. The reasoning is kept because the decision NOT to
+  build a web browser is the durable part.
+  - **Why not a web browser.** Essentially all of the web is HTTPS, and a 4 MHz
+    65C02 cannot do an ECDHE handshake plus AES-GCM per record. That is orders of
+    magnitude, not a tuning problem. Lynx specifically is out three times over --
+    roughly 200k lines against a 32 KB address space, dependencies on ncurses,
+    libwww, zlib and OpenSSL, and a GPLv2 licence this project does not port from
+    (see reSID in `docs/references.md`). Gopher has none of those problems: RFC
+    1436 is a dozen lines, it is text-native, menus map exactly onto 80x25,
+    gopherspace is alive, and there is no TLS.
   - **Standalone, not folded into TERM.** IRC and TERM both drive the ACIA, both
     keep a server list, both share `programs/common/scrollback.c`, and they are
     separate programs. This is the third of that family. TERM is a dumb terminal
@@ -106,8 +111,10 @@
     than looping the single-step move, End was added, and a single step now
     repaints the two rows that changed instead of the whole body. Play-tested
     2026-09-20, including the paging via Fn+Up and Fn+Down on a MacBook.
-  - **Left undone.** Binary retrieval (type `9`), which needs the modem raw mode
-    logged separately above.
+  - **Binary retrieval: DONE**, with the modem raw mode it was waiting on -- see
+    the bridge entry above. Types `9`, `5`, `I` and `g` stream to a FAT16 file
+    and stop on carrier drop, which RFC 1436 makes the only possible end marker
+    for binary. This entry listed it as outstanding for longer than it was.
   - **Known limit: no binary retrieval.** The modem bridge always runs a telnet
     IAC filter, escaping outbound `$FF` as `IAC IAC` and reading inbound `$FF` as
     negotiation. Gopher text is 7-bit so this is invisible, exactly as it is for
