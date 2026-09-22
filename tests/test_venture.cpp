@@ -1847,4 +1847,53 @@ TEST_F(VentureTest, SoundCuesGateVoiceOneAndReleaseIt)
         << "the death cue was never gated off";
 }
 
+/* VENTURE asserts its own background rather than wearing the machine's theme.
+ *
+ * Attributes name palette slots, so a theme loaded by the shell reaches into
+ * any program that has not said otherwise -- and A_TEXT is the default pair, so
+ * the dungeon would be lit by whatever colour the prompt was wearing.
+ *
+ * NOT a fixture test, deliberately. VentureTest::SetUp boots the game through
+ * its title screen, so by the time a test body runs, startup is long past and
+ * a theme loaded there would be loaded AFTER the thing under test. Written that
+ * way first, and it failed for that reason rather than the game's. The theme
+ * has to be in place before the first instruction, which means owning the
+ * machine. */
+TEST(VentureColours, ItAssertsABlackBackgroundOverAnyTheme)
+{
+    Computer::Computer6502 box;
+    box.power_on();
+
+    std::ifstream f("../kernel/venture.bin", std::ios::binary);
+    ASSERT_TRUE(f.good()) << "venture.bin not found - build the venture_bin target";
+    const std::vector<uint8_t> blob((std::istreambuf_iterator<char>(f)),
+                                    std::istreambuf_iterator<char>());
+    ASSERT_GE(blob.size(), 0x100u);
+    for (size_t i = 0; i < blob.size(); ++i)
+        box.getMemory()->write(static_cast<uint16_t>(0x0800 + i), blob[i]);
+
+    // A theme is already loaded, exactly as it would be arriving from the prompt.
+    box.getMemory()->write(Computer::VIC::kRegPaletteIdx, 0);
+    box.getMemory()->write(Computer::VIC::kRegPaletteData, 0x2c);
+    box.getMemory()->write(Computer::VIC::kRegPaletteData, 0x1c);
+    box.getMemory()->write(Computer::VIC::kRegPaletteData, 0x15);
+
+    uint8_t r = 0, g = 0, b = 0;
+    box.getVideoChip()->paletteColor(0, r, g, b);
+    ASSERT_EQ(r, 0x2c) << "the stand-in theme did not load";
+
+    box.getCpu()->reg.SP = 0xFF;
+    box.getCpu()->pushByte(0xFF);
+    box.getCpu()->pushByte(0xFF);
+    box.getCpu()->reg.PC = 0x0800;
+    box.getCpu()->setFlag(Computer::CPU6502::kInterrupt, false);
+    box.getMemory()->write(kSoundEnable, 0x01);
+
+    box.runInstructions(60000);         // startup is all this needs
+
+    box.getVideoChip()->paletteColor(0, r, g, b);
+    EXPECT_EQ(r, 0x00); EXPECT_EQ(g, 0x00); EXPECT_EQ(b, 0x00)
+        << "VENTURE inherited the theme's background instead of stating its own";
+}
+
 } // namespace

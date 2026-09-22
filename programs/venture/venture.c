@@ -690,6 +690,23 @@ static const unsigned char FONT_ART[] = {
  * Font RAM is seeded from the CP437 ROM, so writing only our glyphs leaves the other
  * 240-odd alone -- the HUD text, the score digits and the wall block all still render
  * exactly as before. */
+/* Assert our own background.
+ *
+ * Attributes name palette slots, so a theme loaded by the shell reaches into
+ * any program that has not said otherwise -- and A_TEXT is the default pair, so
+ * a dungeon would be lit by whatever colour the prompt happened to be wearing.
+ * The same reasoning as load_font() below: the machine lends us the screen and
+ * we say what it looks like while we have it.
+ *
+ * Nothing to undo. restore_font() exists because the font has a ROM to go back
+ * to; the palette does not need one, because the shell reloads the theme when
+ * it takes the screen back. */
+static void own_colours(void)
+{
+    vpseek(0);                  /* slot 0, the background */
+    vpwrite(0); vpwrite(0); vpwrite(0);
+}
+
 static void load_font(void)
 {
     const unsigned char *p = FONT_ART;
@@ -1970,6 +1987,7 @@ int main(void)
     rng = rng_seed();
     if (!rng) rng = 0xACE1;
 
+    own_colours();              /* our background, before a theme decides it for us */
     vhidecur();
     load_font();                /* our glyphs, before anything is drawn with them */
     banner("V E N T U R E");
