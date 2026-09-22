@@ -2044,9 +2044,19 @@ static unsigned char play_run(void) {
     return 0;                           /* quit out mid-run */
 }
 
+/* Assert our own background -- see the note in VAULT. The conduit is a hole in
+ * a machine, and A_BOARD is the default pair, so a theme would otherwise decide
+ * what the inside of a computer looks like. The shell restores the theme when
+ * this exits, so there is nothing to put back. */
+static void own_colours(void) {
+    vpseek(0);                      /* slot 0, the background */
+    vpwrite(0); vpwrite(0); vpwrite(0);
+}
+
 void main(void) {
     unsigned char i;
 
+    own_colours();
     rngv = rng_seed();
     if (rngv == 0) rngv = 0xACE1;       /* xorshift must never start at zero */
 

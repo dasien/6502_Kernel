@@ -26,6 +26,8 @@ extern void          vattr(unsigned char a);
 extern void          vfill(unsigned char ch);        /* fill char for chip block ops */
 extern void          vcmd(unsigned char cmd);         /* chip-side clear / fill-row */
 extern void          vhidecur(void);
+extern void          vpseek(unsigned char index);   /* palette byte index */
+extern void          vpwrite(unsigned char b);       /* palette byte; port advances */
 extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy */
 extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for change */
 

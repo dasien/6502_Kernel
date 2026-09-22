@@ -16,6 +16,8 @@ extern void          vfill(unsigned char ch);
 extern void          vcmd(unsigned char cmd);
 extern void          vscrollbot(unsigned char row);   /* set AFTER a clear, not before */
 extern void          vhidecur(void);
+extern void          vpseek(unsigned char index);   /* palette byte index */
+extern void          vpwrite(unsigned char b);       /* palette byte; port advances */
 extern void          vfseek(unsigned int index);      /* soft-font byte index */
 extern unsigned char vfread(void);                    /* ...read, auto-increments */
 extern void          vfwrite(unsigned char b);        /* ...write, auto-increments */

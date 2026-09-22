@@ -354,4 +354,33 @@ TEST_F(KpanicTest, NoSpriteEverSetsTheReverseBit)
                               "attribute under test was never exercised";
 }
 
+/* KPANIC asserts its own background rather than wearing the machine's theme.
+ *
+ * Attributes name palette slots, so a theme loaded by the DOS reaches into any
+ * program that has not said otherwise -- and A_BOARD is the default pair, so
+ * the inside of the conduit would be whatever colour the shell was wearing.
+ * Stating it is one seek and three writes at startup, with nothing to undo: the
+ * shell reloads the theme when it takes the screen back.
+ *
+ * Simulated here by loading a non-black background BEFORE the game runs, which
+ * is exactly what arriving from a themed prompt looks like. */
+TEST_F(KpanicTest, ItAssertsABlackBackgroundOverAnyTheme)
+{
+    // A theme is already loaded when the game starts.
+    mem->write(Computer::VIC::kRegPaletteIdx, 0);
+    mem->write(Computer::VIC::kRegPaletteData, 0x2c);
+    mem->write(Computer::VIC::kRegPaletteData, 0x1c);
+    mem->write(Computer::VIC::kRegPaletteData, 0x15);
+
+    uint8_t r = 0, g = 0, b = 0;
+    c.getVideoChip()->paletteColor(0, r, g, b);
+    ASSERT_EQ(r, 0x2c) << "the stand-in theme did not load";
+
+    run(20);            // the game's startup is all this needs
+
+    c.getVideoChip()->paletteColor(0, r, g, b);
+    EXPECT_EQ(r, 0x00); EXPECT_EQ(g, 0x00); EXPECT_EQ(b, 0x00)
+        << "KPANIC inherited the theme's background instead of stating its own";
+}
+
 } // namespace

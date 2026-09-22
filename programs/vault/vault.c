@@ -196,9 +196,24 @@ static void outcome_screen(unsigned char won) {
     flush_input(); INCH();
 }
 
+/* Assert our own background.
+ *
+ * Attributes name palette slots, so a theme loaded by the DOS would otherwise
+ * reach in here and repaint the dungeon floor -- A_FLOOR is the default pair.
+ * A vault is meant to be unlit and underground, so the background is ours to
+ * state rather than the machine's to decide.
+ *
+ * Nothing to undo on the way out: the shell reloads the theme when it takes the
+ * screen back, which is what lets a program assert colours without teardown. */
+static void own_colours(void) {
+    vpseek(0);                      /* slot 0, the background */
+    vpwrite(0); vpwrite(0); vpwrite(0);
+}
+
 void main(void) {
     int k;
     unsigned char moved;
+    own_colours();
     vhidecur();
     rngv = rng_seed();                 /* seed from the RTC so each run differs */
     if (rngv == 0) rngv = 0xACE1;      /* xorshift must not start at zero */
