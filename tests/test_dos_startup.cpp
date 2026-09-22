@@ -241,4 +241,29 @@ TEST_F(DosStartupTest, WithNoThemeTheMachineKeepsItsOwnColours)
     EXPECT_EQ(r, 0x00); EXPECT_EQ(g, 0x00); EXPECT_EQ(b, 0x00) << "black moved";
 }
 
+/* The theme survives a disk write.
+ *
+ * DOS_THEME was first placed at $03BC, which is DOS_W_ERR -- the write-error
+ * flag -- so every SAVE stamped the theme index back to zero and the machine
+ * silently reverted to GREEN. It showed up as "FRONTIER resets the theme when
+ * you quit", because that game writes a high-score file on the way out; any
+ * write does it. Page 3 is nearly full and the two were allocated weeks apart,
+ * which is exactly the collision a test can hold shut and a survey cannot. */
+TEST_F(DosStartupTest, AThemeSurvivesADiskWrite)
+{
+    bootWith("THEME AMBER\r\n");
+
+    uint8_t r = 0, g = 0, b = 0;
+    box_.getVideoChip()->paletteColor(2, r, g, b);
+    ASSERT_EQ(r, 0xff) << "the config did not set the theme in the first place";
+
+    for (char c : std::string("SAVE T.BIN,0900-090F\r"))
+        box_.getPia()->addKeypress(c);
+    box_.runInstructions(1500000);
+
+    box_.getVideoChip()->paletteColor(2, r, g, b);
+    EXPECT_EQ(r, 0xff); EXPECT_EQ(g, 0xcc); EXPECT_EQ(b, 0x2f)
+        << "a disk write reverted the theme -- DOS_THEME is sharing an address";
+}
+
 } // namespace

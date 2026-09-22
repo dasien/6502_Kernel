@@ -208,7 +208,11 @@ DOS_W_FREE_IDX   = $03B8
 DOS_CFG_LINE     = $03B9                ; index of the config line to run next
 DOS_CFG_PAGE     = $03BA                ; saved PAGE_ENABLE, restored when done
 DOS_CFG_EOF      = $03BB                ; the last read stopped at EOF, not a newline
-DOS_THEME        = $03BC                ; index of the active theme in DOS_THEME_TAB
+; NOT $03BC -- that is DOS_W_ERR, and every disk write stamps over it. Placed
+; here from a survey of page 3 taken before the write-error flag existed, which
+; is why re-checking rather than remembering is the rule: any write turned the
+; theme back to GREEN, and it looked like the game that happened to save a file.
+DOS_THEME        = $03BD                ; index of the active theme in DOS_THEME_TAB
 ; Sticky write error, the ferror() rule: once a write on the open file has
 ; failed the stream stays failed, and FS_CLOSE reports it. Without this a full
 ; volume is invisible to any caller that does not test every single FS_PUTB --

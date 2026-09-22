@@ -1,0 +1,5 @@
+# MFC Gopher bookmarks: host[:port][/selector]  label
+# Up to nine; '#' comments and blank lines are ignored.
+gopher.floodgap.com  Floodgap
+gopher.quux.org  Quux
+sdf.org  SDF Public Access

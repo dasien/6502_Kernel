@@ -904,6 +904,15 @@ add_test(NAME io_equates_agree
     -DMFC_INC=${CMAKE_SOURCE_DIR}/programs/common/mfc.inc
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_io_equates.cmake)
 
+# Drift guard: no two DOS page-3 variables may share an address. They are
+# allocated by reading the list and taking the next free byte, which fails
+# silently when two are added weeks apart -- DOS_THEME landed on DOS_W_ERR that
+# way, so every disk write reverted the display colours.
+add_test(NAME dos_vars_unique
+    COMMAND ${CMAKE_COMMAND}
+    -DDOS_ASM=${CMAKE_SOURCE_DIR}/src/kernel/dos/dos.asm
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_dos_vars.cmake)
+
 # Drift guard: the canonical 65C02 opcode table (docs/opcode_table_65c02.md and
 # src/kernel/assembler/opcodes_65c02.inc) is generated from CPU6502's handler map.
 # This test regenerates in --check mode and fails if the committed table is stale,
