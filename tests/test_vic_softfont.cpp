@@ -60,11 +60,13 @@ TEST(VicSoftFont, PortAddressesAreRoutedToTheVic)
 
 TEST(VicSoftFont, NeighboursAreNotClaimed)
 {
-    // $FE61 below is the PowerSwitch. Above, $FE65 is no longer free -- the sprite
-    // block starts there -- so the boundary that matters now is the end of that block.
+    // $FE61 below is the PowerSwitch. Above, the page has filled up twice over:
+    // $FE65 starts the sprite block, and the palette port took the two bytes above
+    // that, so the boundary that matters now is the end of the palette.
     EXPECT_FALSE(VIC::isVideoRegAddress(0xFE61));
     EXPECT_TRUE(VIC::isVideoRegAddress(0xFE65)) << "sprite 0 lives here now";
-    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegSpriteLast + 1))
+    EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegSpriteLast + 1)) << "the palette port";
+    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegPaletteLast + 1))
         << "first free byte in the I/O page";
     // The original block is still intact and the SID after it is still not ours.
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegAddrLo));

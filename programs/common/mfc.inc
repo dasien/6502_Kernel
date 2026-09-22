@@ -118,6 +118,18 @@ VREG_FONT_LO       = $FE62      ; font byte index low
 VREG_FONT_HI       = $FE63      ; font byte index high
 VREG_FONT_DATA     = $FE64      ; font data port; auto-increments
 
+; ---- VIC soft palette ------------------------------------------------------
+; Sixteen colour slots, three bytes each. Every attribute byte names SLOTS, not
+; colours, so these decide what the whole machine looks like. The index counts
+; bytes, so restating one slot is a seek and three writes.
+;
+; A program only touches this if it has an opinion about its colours: load them
+; on entry and the DOS puts the theme back when it gets the screen again. A
+; program with no opinion inherits whatever is loaded, which is what you want
+; from anything that is mostly text.
+VREG_PAL_IDX       = $FECB      ; palette byte index (0..47)
+VREG_PAL_DATA      = $FECC      ; palette data port; auto-increments
+
 ; ---- VIC sprites -----------------------------------------------------------
 ; 17 sprites of SPR_STRIDE bytes each, $FE65-$FECA.
 SPR0               = $FE65

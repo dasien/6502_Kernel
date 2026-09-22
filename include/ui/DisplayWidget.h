@@ -33,8 +33,6 @@ public:
     // Integer zoom: cell = (8*factor) x (16*factor) px, glyphs nearest-neighbor
     // scaled so text stays crisp. factor 1 = native 640x400.
     void setScale(int factor);
-    void setBackgroundColor(const QColor& color);
-    void setForegroundColor(const QColor& color);
     void setFont(const QFont& font);
 
     // Refresh control
@@ -76,8 +74,6 @@ private:
     
     // Display settings
     QFont character_font_;
-    QColor background_color_;
-    QColor foreground_color_;
     int char_width_;
     int char_height_;
     int refresh_rate_hz_;
@@ -101,15 +97,17 @@ private:
     int  sel_cursor_cell_;
     
     // 16-entry color palette (8 base + 8 bright) for the attribute planes.
-    QColor palette_[16];
 
     // Helper methods
     void setupFont();
     void calculateCharacterSize();
-    void initPalette();
     // Resolve a cell's foreground/background QColors from its glyph + attribute
     // byte (handles reverse-video, bright, and the legacy char-bit7 reverse).
     void resolveCellColors(uint8_t glyph, uint8_t attr, QColor& fg, QColor& bg) const;
+
+    /// One VIC palette slot as a QColor. Asked of the chip per cell rather than
+    /// cached here, so loading a palette takes effect on the next repaint.
+    [[nodiscard]] QColor paletteSlot(uint8_t slot) const;
     // Blit one 8x16 CP437 glyph (from the character ROM) into a cell. `scale` is 1
     // for a normal cell and 2 for one on a double-size row.
     // y_offset is a PIXEL shift applied to this cell only -- never a painter

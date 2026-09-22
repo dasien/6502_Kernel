@@ -188,6 +188,14 @@ VREG_CURSOR_LO     = $FE34         ; cursor cell low
 VREG_CURSOR_HI     = $FE35         ; cursor cell high (bit7 = hidden)
 VREG_CMD_PARAM     = $FE36         ; command parameter / fill char
 
+; VIC soft palette: sixteen colour slots of three bytes, reached through an
+; index/data pair. Attributes name slots, so loading these changes what every
+; colour on the machine means. The DOS writes them for THEME; a program that
+; wants its own colours writes them too, and the shell restores the theme when
+; it takes the screen back.
+VREG_PAL_IDX       = $FECB         ; palette byte index (0..47)
+VREG_PAL_DATA      = $FECC         ; palette data port (auto-increments)
+
 ; RTC (real-time clock) registers in the I/O page. Writing RTC_LATCH snapshots the
 ; live clock into the read registers. Used here only to seed the RNG at boot so
 ; random sequences differ from run to run.

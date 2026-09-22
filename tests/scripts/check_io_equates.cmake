@@ -9,6 +9,12 @@
 # This compares every name the two files share and fails on the first
 # disagreement. A register that moves has to move in both.
 
+# Run with `cmake -P`, which starts with no policies set, so IN_LIST below is
+# parsed as a plain argument rather than an operator and the script dies before
+# it compares anything. Stating the project's minimum sets the policies this
+# needs (CMP0057 among them) and makes the guard actually run.
+cmake_minimum_required(VERSION 3.20)
+
 foreach(_var KERNEL_VARS MFC_INC)
     if(NOT ${_var})
         message(FATAL_ERROR "${_var} must be specified")

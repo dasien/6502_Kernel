@@ -13,6 +13,7 @@ namespace Computer
     VIC::VIC() : cursor_x_(0), cursor_y_(0), dirty_flag_(false)
     {
         font_ram_.resize(kFontRamSize);
+        seedPalette();
         seedFontRam();
         clearScreen();
     }
@@ -20,6 +21,48 @@ namespace Computer
     // Every set starts as a copy of the CP437 ROM, so a program that redefines a
     // handful of glyphs keeps readable text everywhere else -- and cannot leave the
     // shell with an unreadable font however badly it exits.
+    // The machine's built-in colours: the standard sixteen, eight base plus their
+    // bright halves. Every attribute names slots in here, so this is what the
+    // display means by "red" until something loads a palette over it.
+    void VIC::seedPalette()
+    {
+        // Slot 2 is pure green rather than CGA's (0,170,0), and deliberately so.
+        // The renderer used to special-case the default attribute and paint it in
+        // Qt::green, while palette index 2 was the darker CGA green -- so the machine
+        // had two greens, and which one you got depended on whether your background
+        // happened to be black. Everything anyone has actually looked at came out of
+        // the first path, so that is the one preserved here. Folding them the other
+        // way would quietly darken the boot prompt and every game that draws with the
+        // default attribute.
+        static constexpr uint8_t kCga[kPaletteBytes] = {
+              0,   0,   0,   // 0  black
+            170,   0,   0,   // 1  red
+              0, 255,   0,   // 2  green -- see below
+            170,  85,   0,   // 3  yellow / brown
+              0,   0, 170,   // 4  blue
+            170,   0, 170,   // 5  magenta
+              0, 170, 170,   // 6  cyan
+            170, 170, 170,   // 7  white
+             85,  85,  85,   // 8  bright black (grey)
+            255,  85,  85,   // 9  bright red
+             85, 255,  85,   // 10 bright green
+            255, 255,  85,   // 11 bright yellow
+             85,  85, 255,   // 12 bright blue
+            255,  85, 255,   // 13 bright magenta
+             85, 255, 255,   // 14 bright cyan
+            255, 255, 255,   // 15 bright white
+        };
+        std::copy(std::begin(kCga), std::end(kCga), palette_.begin());
+    }
+
+    void VIC::paletteColor(const uint8_t slot, uint8_t &r, uint8_t &g, uint8_t &b) const
+    {
+        const size_t base = static_cast<size_t>(slot % kPaletteSlots) * 3;
+        r = palette_[base];
+        g = palette_[base + 1];
+        b = palette_[base + 2];
+    }
+
     void VIC::seedFontRam()
     {
         for (uint8_t set = 0; set < kFontSets; ++set)
@@ -50,7 +93,8 @@ namespace Computer
     {
         return (address >= kRegFirst && address <= kRegLast) ||
                (address >= kRegFontFirst && address <= kRegFontLast) ||
-               (address >= kRegSpriteFirst && address <= kRegSpriteLast);
+               (address >= kRegSpriteFirst && address <= kRegSpriteLast) ||
+               (address >= kRegPaletteFirst && address <= kRegPaletteLast);
     }
 
     const VIC::Sprite &VIC::sprite(const uint8_t index) const
@@ -93,6 +137,16 @@ namespace Computer
         {
             const uint8_t value = font_ram_[font_index_ % kFontRamSize];
             font_index_ = (font_index_ + 1) % kFontRamSize;
+            return value;
+        }
+        case kRegPaletteIdx:
+            return palette_index_;
+        case kRegPaletteData:
+        {
+            // Readable so a program can save the palette it is about to replace,
+            // the same way the font port reads back.
+            const uint8_t value = palette_[palette_index_ % kPaletteBytes];
+            palette_index_ = static_cast<uint8_t>((palette_index_ + 1) % kPaletteBytes);
             return value;
         }
         case kRegFontLo:
@@ -165,6 +219,14 @@ namespace Computer
         // Font index: unlike the cell index this wraps on each byte, because it has
         // no equivalent of the low/high ordering hazard -- the data port is the only
         // thing that consumes it.
+        case kRegPaletteIdx:
+            palette_index_ = static_cast<uint8_t>(value % kPaletteBytes);
+            break;
+        case kRegPaletteData:
+            palette_[palette_index_ % kPaletteBytes] = value;
+            palette_index_ = static_cast<uint8_t>((palette_index_ + 1) % kPaletteBytes);
+            dirty_flag_ = true;
+            break;
         case kRegFontLo:
             font_index_ = (font_index_ & 0xFF00u) | value;
             break;
@@ -201,6 +263,7 @@ namespace Computer
             case kCmdFontRom: font_ram_active_ = false; dirty_flag_ = true; break;
             case kCmdFontRam: font_ram_active_ = true;  dirty_flag_ = true; break;
             case kCmdFontReset: seedFontRam(); dirty_flag_ = true; break;
+            case kCmdPaletteReset: seedPalette(); dirty_flag_ = true; break;
             case kCmdFontSet:
                 // Out-of-range is ignored rather than clamped: a wild value is a bug,
                 // and silently rendering someone else's set hides it worse than

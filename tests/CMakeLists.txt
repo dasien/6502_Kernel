@@ -347,6 +347,27 @@ target_include_directories(vic_softfont_tests PRIVATE
 
 target_compile_features(vic_softfont_tests PRIVATE cxx_std_20)
 
+# VIC soft-palette unit test: sixteen loadable colour slots. Every attribute
+# names slots rather than colours, so the palette is what decides how the whole
+# machine looks -- and it is chip state, like the font, because whoever owns the
+# screen owns it. Device-only, no Qt.
+add_executable(vic_palette_tests
+    test_vic_palette.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+)
+
+target_link_libraries(vic_palette_tests gtest_main gtest)
+
+target_include_directories(vic_palette_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(vic_palette_tests PRIVATE cxx_std_20)
+
+add_test(NAME vic_palette COMMAND vic_palette_tests)
+
 # VIC fine-scroll unit test: the chip-side contract the renderer reads, and that
 # fine scrolling is off unless a program asks for it. Device-only, no Qt.
 add_executable(vic_finescroll_tests

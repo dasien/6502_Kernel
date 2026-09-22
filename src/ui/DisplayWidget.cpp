@@ -36,8 +36,6 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, Computer::Memory* memory
     , video_chip_(video_chip)
     , memory_(memory)
     , refresh_timer_(new QTimer(this))
-    , background_color_(Qt::black)
-    , foreground_color_(Qt::green)
     , char_width_(8)    // 80 cols × 8px = 640 (classic VGA 80×25 text geometry)
     , char_height_(16)  // 25 rows × 16px = 400
     , refresh_rate_hz_(60)
@@ -50,7 +48,6 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, Computer::Memory* memory
     , sel_anchor_cell_(0)
     , sel_cursor_cell_(0)
 {
-    initPalette();
     // Glyphs render from the embedded CP437 character ROM (no QFont).
     calculateCharacterSize();
 
@@ -69,10 +66,9 @@ DisplayWidget::DisplayWidget(Computer::VIC* video_chip, Computer::Memory* memory
     cursor_timer_->start(500);
     
     // Widget properties
-    setAutoFillBackground(true);
-    QPalette palette = this->palette();
-    palette.setColor(QPalette::Window, background_color_);
-    setPalette(palette);
+    // paintEvent fills the whole widget from palette slot 0, so Qt never needs
+    // a background of its own.
+    setAutoFillBackground(false);
     
     // Enable keyboard input
     setFocusPolicy(Qt::StrongFocus);
@@ -98,23 +94,6 @@ void DisplayWidget::setScale(int factor)
     // Native cell is 8x16 (classic VGA 80x25). Zoom multiplies both; the glyph
     // blit nearest-neighbor scales into the cell, so integer factors stay crisp.
     setCharacterSize(8 * factor, 16 * factor);
-}
-
-void DisplayWidget::setBackgroundColor(const QColor& color)
-{
-    background_color_ = color;
-    QPalette palette = this->palette();
-    palette.setColor(QPalette::Window, background_color_);
-    setPalette(palette);
-    needs_full_redraw_ = true;
-    update();
-}
-
-void DisplayWidget::setForegroundColor(const QColor& color)
-{
-    foreground_color_ = color;
-    needs_full_redraw_ = true;
-    update();
 }
 
 void DisplayWidget::setFont(const QFont& font)
@@ -154,7 +133,9 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
     }
     
     QPainter painter(this);
-    painter.fillRect(rect(), background_color_);
+    // The letterbox around the grid follows slot 0, so it matches whatever
+    // the machine currently calls background.
+    painter.fillRect(rect(), paletteSlot(0));
 
     /* Glyphs are blitted from the CP437 character ROM (see drawCharacterAt); no QFont
      * is involved.
@@ -293,58 +274,43 @@ void DisplayWidget::calculateCharacterSize()
     // char_width_ and char_height_ are set in the constructor - don't change them.
 }
 
-void DisplayWidget::initPalette()
-{
-    // Standard 8-color ANSI palette (indices 0-7) plus bright variants (8-15).
-    // The attribute byte selects fg (bits 0-2) and bg (bits 3-5); bit 6 brightens
-    // the foreground. Index 2 (green) is the system default to match the classic
-    // green-on-black look.
-    palette_[0]  = QColor(0,   0,   0);   // black
-    palette_[1]  = QColor(170, 0,   0);   // red
-    palette_[2]  = QColor(0,   170, 0);   // green
-    palette_[3]  = QColor(170, 85,  0);   // yellow/brown
-    palette_[4]  = QColor(0,   0,   170); // blue
-    palette_[5]  = QColor(170, 0,   170); // magenta
-    palette_[6]  = QColor(0,   170, 170); // cyan
-    palette_[7]  = QColor(170, 170, 170); // white/gray
-    palette_[8]  = QColor(85,  85,  85);  // bright black (gray)
-    palette_[9]  = QColor(255, 85,  85);  // bright red
-    palette_[10] = QColor(85,  255, 85);  // bright green
-    palette_[11] = QColor(255, 255, 85);  // bright yellow
-    palette_[12] = QColor(85,  85,  255); // bright blue
-    palette_[13] = QColor(255, 85,  255); // bright magenta
-    palette_[14] = QColor(85,  255, 255); // bright cyan
-    palette_[15] = QColor(255, 255, 255); // bright white
-}
 
 void DisplayWidget::resolveCellColors(const uint8_t glyph, const uint8_t attr,
                                       QColor& fg, QColor& bg) const
 {
     Q_UNUSED(glyph) // the glyph is a full 8-bit CP437 code point now; all
                     // styling (reverse/bright/color) lives in the attribute.
-    const bool reverse = (attr & Computer::VIC::kAttrReverse) != 0;
 
-    if (attr == Computer::VIC::kDefaultAttr)
-    {
-        // Exact default attribute: use the configured colors so the display is
-        // pixel-identical to the pre-color era (green on black).
-        fg = foreground_color_;
-        bg = background_color_;
-        return;
-    }
-
+    // Both indices are looked up in the VIC's palette, which is chip state a
+    // program can load over -- so a theme, or a game asserting its own colours,
+    // needs nothing here. There is deliberately no special case for the default
+    // attribute: it is an ordinary pair of slots like any other, and treating it
+    // as special is what made "the default" and "green on black" indistinguishable.
+    //
+    // The bright bit widens only the foreground, so there are sixteen foreground
+    // colours and eight background ones. That is the CGA text model, copied.
     const int fg_index = (attr & Computer::VIC::kAttrFgMask) +
                          ((attr & Computer::VIC::kAttrBright) ? 8 : 0);
     const int bg_index = (attr & Computer::VIC::kAttrBgMask) >> Computer::VIC::kAttrBgShift;
-    fg = palette_[fg_index & 0x0F];
-    bg = palette_[bg_index & 0x07];
 
-    if (reverse)
+    fg = paletteSlot(static_cast<uint8_t>(fg_index & 0x0F));
+    bg = paletteSlot(static_cast<uint8_t>(bg_index & 0x07));
+
+    if ((attr & Computer::VIC::kAttrReverse) != 0)
     {
         const QColor tmp = fg;
         fg = bg;
         bg = tmp;
     }
+}
+
+// One palette slot as a QColor. Asked of the chip per cell rather than cached,
+// so a palette write shows up on the next repaint with nothing to invalidate.
+QColor DisplayWidget::paletteSlot(const uint8_t slot) const
+{
+    uint8_t r = 0, g = 0, b = 0;
+    video_chip_->paletteColor(slot, r, g, b);
+    return {r, g, b};
 }
 
 // Blit one glyph into a cell: each scanline byte's bits select fg (1) or bg (0).

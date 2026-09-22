@@ -128,10 +128,31 @@ namespace Computer
                                                           ///< scroll affects rows 0..this. Reset
                                                           ///< to the last row on clear.
 
+        // Soft-palette port, in the free space above the sprites. Same idiom as the
+        // font: an index and an auto-incrementing data port, so loading colours is a
+        // seek followed by a run of writes.
+        //
+        // The palette is chip state, exactly like the font, and for the same reason:
+        // whoever owns the screen owns it. The machine boots with the CGA sixteen, a
+        // theme is whatever the DOS loads over them, and a program with an opinion
+        // about its colours loads its own -- the Scott Adams games have no opinion
+        // and inherit whatever is there, which is the behaviour you want from them.
+        //
+        // The index counts BYTES, not slots, so a theme that only wants to restate
+        // the background and the normal text writes two short runs instead of the
+        // whole table.
+        static constexpr uint16_t kRegPaletteIdx = 0xFECB;  ///< palette byte index (W)
+        static constexpr uint16_t kRegPaletteData = 0xFECC; ///< palette data, auto-inc (R/W)
+
+        static constexpr uint8_t kPaletteSlots = 16;        ///< as many as the attribute can name
+        static constexpr uint8_t kPaletteBytes = kPaletteSlots * 3;  ///< R, G, B per slot
+
         static constexpr uint16_t kRegFirst = kRegAddrLo;
         static constexpr uint16_t kRegLast = kRegScrollBot;
         static constexpr uint16_t kRegFontFirst = kRegFontLo;
         static constexpr uint16_t kRegFontLast = kRegFontData;
+        static constexpr uint16_t kRegPaletteFirst = kRegPaletteIdx;
+        static constexpr uint16_t kRegPaletteLast = kRegPaletteData;
 
         /// Sprite registers, six per sprite, immediately after the font port.
         /// Positions are in NOMINAL pixels on an 8x16 cell grid (so 0..639 x 0..399);
@@ -189,6 +210,7 @@ namespace Computer
         static constexpr uint8_t kCmdFillRow = 0x04;    ///< fill the row of the current cell
         static constexpr uint8_t kCmdRowSize = 0x05;    ///< param: bit7 = double, bits4-0 = row
         static constexpr uint8_t kCmdRowsNormal = 0x06; ///< every row back to 8x16
+        static constexpr uint8_t kCmdPaletteReset = 0x0D; ///< restore the built-in CGA sixteen
         static constexpr uint8_t kCmdFineY = 0x0C;      ///< param: 0..cell height-1.
                                                         ///< Slides the scroll region
                                                         ///< down that many PIXELS, and
@@ -261,6 +283,11 @@ namespace Computer
         };
         [[nodiscard]] const Sprite &sprite(uint8_t index) const;
 
+        /// One palette slot as 8-bit R, G, B. The renderer asks per cell rather than
+        /// keeping a copy, so a palette write takes effect on the next repaint with
+        /// nothing to invalidate.
+        void paletteColor(uint8_t slot, uint8_t &r, uint8_t &g, uint8_t &b) const;
+
         /// Pixel offset the scroll region is currently slid down by, and whether fine
         /// scrolling is on at all. Off means the renderer draws exactly as before --
         /// a program that never issues kCmdFineY is completely unaffected.
@@ -309,6 +336,9 @@ namespace Computer
         std::array<Sprite, kSpriteCount> sprites_{};
 
         // Soft font. Not in the 6502's address space -- see the class comment.
+        std::array<uint8_t, kPaletteBytes> palette_{};  ///< R,G,B per slot
+        mutable uint8_t palette_index_ = 0;      ///< byte index for the data port
+
         std::vector<uint8_t> font_ram_;          ///< kFontSets x kFontSize
         mutable uint32_t font_index_ = 0;        ///< byte index for the data port
         uint8_t font_set_ = 0;                   ///< which set the renderer reads
@@ -327,6 +357,7 @@ namespace Computer
         void cmdFillRow();
         void cmdRowSize();
         void seedFontRam();
+        void seedPalette();                      ///< the built-in CGA sixteen
         void shiftRowFlags(bool up);
         void advanceIndex() const;
 
