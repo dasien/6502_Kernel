@@ -263,47 +263,58 @@
       a number. A persistent score *table* is also still absent and would need the game
       to open a disk file, which it never does today.
 
-### Display themes (potential, not planned)
-- [ ] **Colour themes for the display, from kitty theme files.** Investigated
-  2026-09-03; logged rather than started. The fit is a 1:1 map, not a conversion:
-  `DisplayWidget::initPalette()` hardcodes `palette_[16]` in standard ANSI/CGA order
-  (black, red, green, yellow, blue, magenta, cyan, white, then eight brights), which
-  is exactly what a kitty `.conf` lists as `color0`..`color15`. The VIC attribute byte
-  can only select those sixteen anyway -- bits 2-0 fg, bits 5-3 bg, bit 6 brightens.
-  `github.com/dexpota/kitty-themes` is MIT, ported from iTerm2-Color-Schemes with
-  authors cited per file, so vendoring a handful means carrying the licence and
-  attribution in `NOTICE` the way EhBASIC already is. `selection_background` and
-  `selection_foreground` have no meaning here; `cursor` is optional.
-  - **There is no DOS command for this and there never was.** Checked the command
-    table and searched history for `THEME`/`SETTINGS` across `src/kernel/`: nothing.
-    Recollection of one is probably of a conversation. This matters because it is what
-    decides the shape below.
-  - **There is also no palette register.** The VIC exposes $FE2D-$FE37, the font port
-    at $FE62-$FE64 and sprites at $FE65-$FECA; nothing lets the 6502 say what RGB an
-    index means. So the two options are genuinely different pieces of work:
-    - *Host-only*: the GUI reads a `.conf` into `palette_`, driven by a menu item or a
-      `--theme` flag. ~50 lines, no new hardware, no ABI -- and no DOS verb is possible,
-      because the guest cannot reach it.
-    - *A palette port, then a real `THEME` verb.* An index/data register triple in the
-      idiom the soft font already proved. Historically right (the VGA DAC and Amiga
-      copper both worked this way) and it buys effects the index model cannot express:
-      KPANIC's per-sector board colour becomes an actual fade rather than an index swap.
-      **Preferred**, with one trick to keep the 6502 cheap -- do not parse `.conf` on
-      the 6502. Keep the kitty file as the repo's source of truth, convert it at build
-      time to 48 bytes (16 x RGB) with a host tool shaped like `mkprg`, stage it through
-      the disk catalog, and let the DOS command blit 48 bytes at the port. Text parsing
-      would otherwise be the expensive part of an otherwise cheap feature.
-  - **Open question if this is built:** kitty separates `background` from `color0`
-    (Dracula is `#1e1f28` against `#000000`), but here a cell with bg bits 0 *is* the
-    background. Mapping bg 0 to `color0` is faithful to the attribute model; mapping it
-    to `background` is what terminals do and what makes a theme look like its
-    screenshot. The second is probably right and it changes how every theme reads.
-  - **Two things to respect rather than solve:** green-on-black is the machine's face
-    (the default attribute is $02, so a theme decides what the boot screen looks like),
-    and programs pick colours by index deliberately -- VENTURE's per-level recolour,
-    KPANIC's per-sector board, EDIT's status line, all tuned against the CGA palette.
-    A low-contrast theme can make a game element hard to read, which is a reason to
-    curate a few themes rather than ship the 200+ in that repo.
+### Display themes
+- [x] **Colour themes.** **Built 2026-09-22.** Landed as a *soft palette* rather than
+  anything the investigation predicted, and the difference is worth recording because
+  four wrong turns were taken first.
+  - **What shipped.** Sixteen loadable colour slots on the VIC at `$FECB` (byte index)
+    and `$FECC` (auto-incrementing data), with command `$0D` to restore the built-in
+    set -- the same index/data idiom as the soft font, and for the same reason: whoever
+    owns the screen owns it. `THEME [name]` in the DOS, eight themes, and
+    `_DOS_PROMPT` reloading the active one when the shell regains the screen. VAULT,
+    KPANIC, VENTURE and FRONTIER each state their own background at startup.
+  - **Attributes name SLOTS, not colours**, which is the whole mechanism. Nothing needed
+    to know a theme existed: no program-facing API, no query, no opt-out flag, and not
+    one line changed in EDIT, TERM, IRC or GOPHER. The renderer got *smaller* -- the
+    default-attribute special case, the hardcoded table, `background_color_`,
+    `foreground_color_` and two setters nothing had ever called all came out.
+  - **Persistence needed nothing.** `THEME AMBER` in `SYSTEM/STARTUP.CFG`.
+  - **The four wrong turns, so they are not retaken.** (1) A host-side menu reading
+    `.conf` files -- wrong, because it made a machine feature into an emulator
+    preference. (2) Theming a *family* of attribute values -- wrong, because every game
+    already uses those values as ordinary colours. (3) Hunting for a spare encoding to
+    mark "themed" cells, then an opt-out bit in the VIC -- both solving a coexistence
+    problem that does not exist, since only one program owns the screen at a time.
+    (4) Treating `$02` as "overloaded" between "the default" and "green on black" --
+    it is not overloaded, it is unnamed, and the default is simply the theme that ships.
+  - **The rule that fell out:** a program that wants its own colours loads a palette; a
+    program that does not care inherits the theme. Not games versus applications -- the
+    Scott Adams adventures are pure text and *should* follow the machine. Asserting
+    costs four lines and no teardown, because the shell restores the theme.
+  - **Eight themes, all above 7:1 contrast** (WCAG AAA for body text): GREEN, MONO,
+    AMBER, SLATE, TURBO, CYAN, PAPER, LINEN. Six dark, two light, no two close in hue.
+    66 bytes for the last four, since a theme only states the slots it changes.
+  - **Still open.** All four games state only the BACKGROUND, so their foreground
+    still follows the theme -- under AMBER, VENTURE's text and VAULT's floor come out
+    amber on black. That may be right; a single `vcmd(VCMD_PAL_RESET)` instead makes a
+    game identical under every theme. VAULT's and FRONTIER's assertions are untested
+    (neither has a harness); KPANIC's and VENTURE's are, and were proved to fail
+    without them.
+  - **Found on the way, all unrelated to themes.** `DOS_THEME` was placed on top of
+    `DOS_W_ERR` at `$03BC` from a survey of page 3 taken before that flag existed, so
+    every disk write reverted the colours -- reported as "FRONTIER resets the theme on
+    quit", because that game writes a high-score file on the way out. Guarded now by
+    `check_dos_vars.cmake`. `io_equates_agree` had been dead since it arrived: run under
+    `cmake -P` it starts with no policies set, so `IN_LIST` parsed as a plain argument
+    and the script died before comparing anything. And `programs/gopher/GOPHER.LST` was
+    declared in the catalog but never committed, so `ninja disk` had been failing for
+    weeks -- which is why the Scott Adams games appeared to break: current ROMs against
+    months-old programs.
+  - **Two guard gaps this exposed, not yet closed.** The catalog checks that every
+    program directory has an entry but not that a declared `data` file exists, which is
+    exactly how the missing `GOPHER.LST` broke the disk build silently. And `dos.asm` is
+    a third, unguarded copy of the I/O addresses alongside `mfc.inc` and
+    `kernel_vars.inc`.
 
 ### Memory map (future, not urgent)
 
