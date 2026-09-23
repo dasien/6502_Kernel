@@ -28,7 +28,7 @@ set(MFC_GLUE_DIR ${CMAKE_SOURCE_DIR}/programs/common/glue)
 set(MFC_GLUE_LIB ${CMAKE_BINARY_DIR}/lib/libmfcglue.lib
     CACHE INTERNAL "shared cc65 glue, linked by every program")
 
-set(_glue_modules kernel console inch quitdos dir
+set(_glue_modules kernel frame console inch quitdos dir
                   vic_write vic_read vic_cursor vic_cmd font sprite palette
                   file acia rng rngseed rtc pia sound)
 

@@ -40,6 +40,16 @@ public:
     void startRefresh() const;
     void stopRefresh() const;
 
+public slots:
+    /// Present the plane if anything changed. Called on the emulated frame
+    /// boundary while the machine runs, so the picture is only ever taken
+    /// between frames and a program that paints after waiting for $FECD cannot
+    /// be caught mid-update. The wall-clock timer drives it only when the
+    /// machine is not running.
+    void refreshDisplay();
+
+public:
+
 signals:
     void keyPressed(uint8_t ascii_code);
     /// Live control-key state changed; carries the full PIA::kKey* bitmask.
@@ -64,7 +74,6 @@ private:
     void updateKeyState(uint8_t bit, bool down);
 
 private slots:
-    void refreshDisplay();
     void blinkCursor();
 
 private:

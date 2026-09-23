@@ -6,6 +6,7 @@
 #include "DisplayWidget.h"
 #include "Cp437Font.h"
 #include "computer/PIA.h"   // kKey* bit definitions for the live key-state port
+#include "host/LatencyProbe.h"
 #include <QImage>
 #include <QPainter>
 #include <QFontMetrics>
@@ -126,6 +127,14 @@ void DisplayWidget::stopRefresh() const
 void DisplayWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
+
+    // Bracket the whole paint for the latency probe. A guard rather than two
+    // calls, so the end is recorded whichever return this takes.
+    struct PaintSpan
+    {
+        PaintSpan() { Host::LatencyProbe::get().paintBegin(); }
+        ~PaintSpan() { Host::LatencyProbe::get().paintEnd(); }
+    } const paint_span;
     
     if (!video_chip_)
     {
@@ -458,6 +467,7 @@ void DisplayWidget::updateKeyState(const uint8_t bit, const bool down)
         return; // auto-repeat re-press of a key already down: nothing to report
     }
     key_state_ = updated;
+    Host::LatencyProbe::get().keyChanged(key_state_);
     emit keyStateChanged(key_state_);
 }
 
@@ -655,7 +665,10 @@ void DisplayWidget::blinkCursor()
     if (has_focus_)
     {
         show_cursor_ = !show_cursor_;
-        update();
+        // Mark, do not paint. Painting here would be a second, unsynchronised
+        // route to the screen -- exactly the thing the frame boundary exists to
+        // remove. The next boundary picks it up, at most 16 ms later.
+        needs_full_redraw_ = true;
     }
 }
 

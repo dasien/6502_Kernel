@@ -54,6 +54,7 @@ protected:
         cpu = c.getCpu();
         mem = c.getMemory();
         pia = c.getPia();
+        vic = c.getVideoChip();
 
         // Pin the clock. KPANIC seeds its xorshift from rng_seed(), which folds
         // the RTC, so on the real clock every run lays out different terrain --
@@ -92,7 +93,7 @@ protected:
         for (int i = 0; i < jiffies; i++) {
             const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
             while (cpu->getCycles() < until) c.runInstructions(1);
-            pia->pulseTimerIrq();
+            tick();
         }
     }
 
@@ -202,7 +203,14 @@ protected:
     Computer::Computer6502 c;
     Computer::CPU6502 *cpu = nullptr;
     Computer::Memory *mem = nullptr;
+    /* One 60 Hz boundary. The PIA's timer IRQ and the VIC's end-of-frame are a
+       single event in the machine -- Computer6502::runCycles ticks them together
+       -- so a harness faking one must fake the other, or a program blocked in
+       K_WAIT_FRAME never wakes. One helper so no site can forget half of it. */
+    void tick() { pia->pulseTimerIrq(); vic->endFrame(); }
+
     Computer::PIA *pia = nullptr;
+    Computer::VIC *vic = nullptr;
 };
 
 /* The blob boots to its own title screen rather than the DOS. This is the

@@ -157,7 +157,9 @@ namespace Computer
         /// Sprite registers, six per sprite, immediately after the font port.
         /// Positions are in NOMINAL pixels on an 8x16 cell grid (so 0..639 x 0..399);
         /// the renderer scales them by the window zoom.
-        /// 17 x 6 bytes ends at $FECA, leaving 53 bytes of the I/O page free. 25 fitted
+        /// 17 x 6 bytes ends at $FECA. The palette takes $FECB-$FECC and the frame
+        /// counter $FECD, leaving 50 free.
+        /// 25 sprites fitted
         /// too, but left only 5 -- a poor price for a shot count that only occurs at one
         /// weapon's peak, and this page is the only address space new devices have.
         static constexpr uint8_t kSpriteCount = 17;
@@ -165,6 +167,33 @@ namespace Computer
         static constexpr uint8_t kSpriteStride = 6;
         static constexpr uint16_t kRegSpriteLast =
             kRegSpriteFirst + static_cast<uint16_t>(kSpriteCount) * kSpriteStride - 1;
+
+        /// FRAME COUNTER ($FECD). Reading returns it; writing any value PRESENTS.
+        ///
+        /// Read: increments once per displayed frame.
+        ///
+        /// A counter and not a flag, and deliberately NOT cleared by reading. The
+        /// VIC-II's collision registers clear on read, which means exactly one
+        /// consumer: a second reader -- a debugger, a monitor, another subsystem --
+        /// silently destroys the value for the first. A counter has no such problem,
+        /// any number of readers see the same thing, and a delta greater than one
+        /// tells a program it missed frames rather than hiding it.
+        ///
+        /// Eight bits wraps every 4.3 seconds at 60 Hz. That is ample for "has the
+        /// frame changed since I looked", which is the only question it answers;
+        /// durations are what the kernel's 16-bit jiffy counter is for.
+        ///
+        /// Write: "this frame is finished, show it". Without it the host can only
+        /// show the plane at a frame boundary, and a program that paints after
+        /// waking at one is always a frame behind -- measured at 15 ms of VENTURE's
+        /// 23. A program that presents is shown at once, and for any frame it
+        /// presented the boundary repaint is skipped, because that repaint would
+        /// catch its next frame half drawn. A frame that passes with no present puts
+        /// the boundary repaint back, so a program that never presents -- or stops,
+        /// by exiting -- is shown exactly as before. The same address as the counter
+        /// because the two are one conversation: ask which frame it is, say you are
+        /// done with it.
+        static constexpr uint16_t kRegFrame = 0xFECD;
         // Offsets within a sprite's block.
         static constexpr uint8_t kSprXLo = 0;
         static constexpr uint8_t kSprXHi = 1;   ///< bits 1-0 pos; bits 4-2 WIDTH-1
@@ -249,6 +278,29 @@ namespace Computer
 
         // --- Register port (the real interface) ---
         [[nodiscard]] static bool isVideoRegAddress(uint16_t address);
+
+        /// End the current frame: advance the frame counter. Called by the machine
+        /// at the same 60 Hz boundary that raises the jiffy interrupt, so the two
+        /// cannot drift apart. The host repaints on this boundary, which is what
+        /// makes "wait for the counter to change, then paint" actually tear-free --
+        /// a program that starts painting at a boundary has the whole frame interval
+        /// to finish before anything reads the plane again.
+        void endFrame();
+
+        /// The frame counter's current value, as the guest sees it at $FECD.
+        [[nodiscard]] uint8_t frame() const { return frame_; }
+
+        /// Whether the program presented since the host last asked, then clear it.
+        bool takePresent()
+        {
+            const bool p = present_pending_;
+            present_pending_ = false;
+            return p;
+        }
+
+        /// Whether the frame that last ended was presented. While it is, the host
+        /// leaves the boundary alone and paints only on a present.
+        [[nodiscard]] bool presentDriven() const { return presented_last_frame_; }
         // Reading a data port advances the cell index, so the internal index is
         // mutable and read() stays const (preserving Memory::read's const contract).
         [[nodiscard]] uint8_t read(uint16_t address) const;
@@ -334,6 +386,10 @@ namespace Computer
         bool fine_active_ = false;
 
         std::array<Sprite, kSpriteCount> sprites_{};
+        uint8_t frame_ = 0;                        ///< $FECD, wraps every 256 frames
+        bool present_pending_ = false;             ///< a present the host has not seen
+        bool presented_this_frame_ = false;        ///< a present since the last boundary
+        bool presented_last_frame_ = false;        ///< the frame just ended had one
 
         // Soft font. Not in the 6502's address space -- see the class comment.
         std::array<uint8_t, kPaletteBytes> palette_{};  ///< R,G,B per slot

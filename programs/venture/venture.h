@@ -25,6 +25,8 @@ extern void          vpwrite(unsigned char b);     /* palette byte; port advance
 extern unsigned int  rng_seed(void);           /* RTC-derived entropy */
 extern unsigned char rtc_sec(void);            /* BCD seconds */
 extern unsigned int  jiffies(void);            /* 60 Hz monotonic counter */
+extern void          wait_frame(void);           /* block until the next frame begins */
+extern void          present(void);              /* this frame is finished: show it now */
 extern unsigned char keystate(void);           /* live held-key mask ($FE0F) */
 extern void          sound_tone(unsigned int freq);  /* SID voice 1 on */
 extern void          sound_off(void);                /* SID voice 1 off */

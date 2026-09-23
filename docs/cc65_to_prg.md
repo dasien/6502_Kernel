@@ -73,6 +73,8 @@ so the program side and the ROM side cannot drift.
 | `K_PRINT_NEWLINE` | `$FF06` | newline                               |
 | `K_GET_KEYSTROKE` | `$FF09` | non-blocking: C set + A=char, case preserved |
 | `K_CLEAR_SCREEN`  | `$FF0C` | clear + home                          |
+| `K_GET_JIFFIES`   | `$FF39` | 60 Hz tick counter, A=lo X=hi         |
+| `K_WAIT_FRAME`    | `$FF42` | block until the next frame begins     |
 | `FS_OPEN`         | `$AF03` | open file by name (ptr in `DOS_PTR` `$3C`) |
 | `FS_GETB`         | `$AF06` | read next byte of open file           |
 | `FS_PUTB`         | `$AF09` | write byte (create/append)            |
@@ -82,6 +84,43 @@ so the program side and the ROM side cannot drift.
 
 A program is entered with `JMP`, runs at `$0800`, and returns to DOS via
 `JMP DOS_WARM` (or by `RTS` if launched that way).
+
+### Pacing and painting
+
+A program that animates has three questions to answer, and the library gives it
+one call for each.
+
+`wait_frame()` answers *when to start*. It returns as a frame begins.
+
+`present()` answers *when it is done*. It tells the host the frame is finished,
+and the host shows it at once. Without it the host can only show the plane at the
+next boundary, which is a whole frame away for a program that started drawing
+after the last one. In VENTURE that was 15 ms of every key press. After
+`present()`, write nothing to the VIC until `wait_frame()` returns, because the
+host reads the plane shortly after the present and anything written in the gap
+can land in the picture. A program that never presents is still shown at every
+boundary, as before.
+
+`jiffies()` answers *how much time has passed*. `wait_frame()` says a frame started, not how
+many went by, so it cannot make up a backlog after the host stalls. Keep a
+fixed-timestep accumulator against the jiffy counter for that, as VENTURE and
+KPANIC do:
+
+```c
+for (;;) {
+    wait_frame();
+    now = jiffies();
+    for (catchup = 0; (unsigned)(now - last) >= tickrate && catchup < MAX_CATCHUP; catchup++) {
+        step();
+        last += tickrate;
+    }
+    draw();
+    present();
+}
+```
+
+A delay that is only a duration, a splash screen held for three seconds, needs
+neither discipline. Compare `jiffies()` against a mark and leave it at that.
 
 ### Memory map (`.cfg`)
 

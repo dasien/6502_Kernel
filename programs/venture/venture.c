@@ -1713,49 +1713,36 @@ void draw_movers(void)
     else spr_off(SPR_ARROW);
 }
 
-/* ---- one simulation step ----------------------------------------------
- * Not static, for the same reason as draw_movers: the harness measures what a tick
- * costs by watching this function's entry and return, and a static symbol never
- * reaches the label file. */
-void step(unsigned char ks)
+/* ---- Winky, on his own clock ------------------------------------------
+ * Winky moves on his own clock, not the world's. The world steps every tickrate
+ * jiffies whether or not a key is held, and while his move was part of that step a
+ * press had to wait for the next one before anything happened -- up to a tenth of a
+ * second, and measured at 45 ms on average. Now he moves on the first frame a
+ * direction is held, provided a whole tick has gone by since his last move, and every
+ * tick after that while it stays held. The rate cap is the same tickrate, so his top
+ * speed is unchanged and tapping cannot outrun walking; only the phase is his own.
+ * The monsters, the hall and the intruder's patience stay on the world's tick.
+ *
+ * Everything his move can land him in is settled here, where it happens: a door, the
+ * treasure, an exit, something lethal. Returns nonzero if the move ended the frame --
+ * he entered a room, left one, or died -- so the caller skips the world step. */
+static unsigned char winky_act(unsigned char ks)
 {
-    unsigned char i, slot;
+    unsigned char slot;
 
-    /* Erase everything that can move, from the grid underneath it. */
     restore(wx, wy);
-    if (f_live) restore(f_x, f_y);
-    if (a_live) restore(a_x, a_y);
-    for (i = 0; i < MAX_MON; i++)  if (m_live[i]) restore(m_x[i], m_y[i]);
-    for (i = 0; i < MAX_HALL; i++) if (h_live[i]) restore(h_x[i], h_y[i]);
-
-    tick_count++;
-    cue_tick();
-
-    /* Snapshot what the next frames will slide FROM, before anything moves. */
     pw_x = wx; pw_y = wy;
-    pf_x0 = f_x; pf_y0 = f_y;
-    pa_x = a_x; pa_y = a_y;
-
     winky_move(ks);
     spr_launch(SPR_WINKY, CL_FAST, pw_x, pw_y, wx, wy);
 
     if (mode == MODE_MAP) {
         /* Walking onto an entrance is the commitment. enter_room() rebuilds the
-         * whole board underneath us, so this step ends here. */
+         * whole board underneath us, so this frame ends here. */
         slot = door_at(wx, wy);
         if (slot != 0xFF && !slot_done[slot]) {
             ret_x = wx; ret_y = wy;      /* where to put us back if we die in there */
             enter_room(slot, notch_index(wx, wy, slot));
-            return;
-        }
-        if (lethal(wx, wy)) { dead = 1; return; }
-        if (!(tick_count % HALL_EVERY)) {
-            for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
-            hall_at = tick_count;
-            hall_advance();
-            for (i = 0; i < MAX_HALL; i++)
-                spr_launch((unsigned char)(SPR_HALL0 + i), CL_HALL,
-                           ph_x[i], ph_y[i], h_x[i], h_y[i]);
+            return 1;
         }
     } else {
         if (grid[wy][wx] == T_TREAS) {
@@ -1776,13 +1763,99 @@ void step(unsigned char ks)
             ret_x = sl_x[slot_entered][exit_used];
             ret_y = sl_y[slot_entered][exit_used];
             left_room = 1;
-            return;
+            return 1;
         }
-        if (lethal(wx, wy)) { dead = 1; return; }
+    }
+    if (lethal(wx, wy)) { dead = 1; return 1; }
+    draw_facing();
+    return 0;
+}
 
-        if (ks & KS_FIRE) fire();
-        arrow_advance();
-        spr_launch(SPR_ARROW, CL_TICK, pa_x, pa_y, a_x, a_y);
+/* ---- the arrow, on its own clock ---------------------------------------
+ * Like Winky, and for the same reason. Fire used to be read inside the world step,
+ * which runs every 100 ms, and it tested whether the key was HELD at that instant:
+ * a press waited up to a tick, and a quick tap that fell between two ticks never
+ * fired at all. Now fire is read every frame and the arrow leaves on the frame it
+ * is loosed, then flies one leg a tick from there. Its speed is unchanged.
+ *
+ * Snapshotting the start here, not at the top of the world step, also fixes where
+ * a new arrow's slide began: the step took the snapshot before fire() ran, so a
+ * fresh arrow slid out from wherever the LAST one had died. Its collisions need no
+ * shared clock -- arrow_advance() tests each cell against the monsters as they stand,
+ * and a monster stepping into it is caught in monsters_advance(). */
+static void arrow_tick(void)
+{
+    pa_x = a_x; pa_y = a_y;
+    arrow_advance();
+    spr_launch(SPR_ARROW, CL_TICK, pa_x, pa_y, a_x, a_y);
+}
+
+/* ---- a catch you can see ----------------------------------------------
+ * The grid decides a catch the instant the catcher's cell becomes Winky's, but its
+ * sprite has only just started sliding in from the next cell -- a room monster takes
+ * three ticks to cross a tile, so at that instant the two are edge to edge at best
+ * and often a whole tile apart. The player sees himself caught by something that
+ * never reached him. So with the world stopped, keep drawing until the catcher's
+ * sprite is within half a tile of Winky's, or MEET_FRAMES have gone by. The outcome
+ * was settled on the grid; only the moment it is shown moves. A body needs none of
+ * this: it was already lying in the cell. */
+#define MEET_FRAMES 12
+static void meet_catcher(void)
+{
+    unsigned char i, f, slot = 0xFF;
+    int dx, dy;
+
+    for (i = 0; i < MAX_MON && slot == 0xFF; i++)
+        if (m_live[i] && m_x[i] == wx && m_y[i] == wy) slot = (unsigned char)(SPR_MON0 + i);
+    for (i = 0; i < MAX_HALL && slot == 0xFF; i++)
+        if (h_live[i] && h_x[i] == wx && h_y[i] == wy) slot = (unsigned char)(SPR_HALL0 + i);
+    if (slot == 0xFF) return;
+
+    for (f = 0; f < MEET_FRAMES; f++) {
+        dx = (int)(sp_x[slot] >> SUB) - (int)(sp_x[SPR_WINKY] >> SUB);
+        dy = (int)(sp_y[slot] >> SUB) - (int)(sp_y[SPR_WINKY] >> SUB);
+        if (dx < 0) dx = -dx;
+        if (dy < 0) dy = -dy;
+        if (dx <= 8 && dy <= 16) break;      /* half a tile: 16 wide, 32 tall */
+        wait_frame();
+        draw_movers();
+        present();
+    }
+}
+
+/* ---- one simulation step ----------------------------------------------
+ * Not static, for the same reason as draw_movers: the harness measures what a tick
+ * costs by watching this function's entry and return, and a static symbol never
+ * reaches the label file. */
+void step(void)
+{
+    unsigned char i;
+
+    /* Erase everything that can move, from the grid underneath it. */
+    restore(wx, wy);
+    if (f_live) restore(f_x, f_y);
+    if (a_live) restore(a_x, a_y);
+    for (i = 0; i < MAX_MON; i++)  if (m_live[i]) restore(m_x[i], m_y[i]);
+    for (i = 0; i < MAX_HALL; i++) if (h_live[i]) restore(h_x[i], h_y[i]);
+
+    tick_count++;
+    cue_tick();
+
+    /* Snapshot what the next frames will slide FROM, before anything moves.
+       Winky and the arrow are not in this: each moves on its own clock, in
+       winky_act() and arrow_tick(). */
+    pf_x0 = f_x; pf_y0 = f_y;
+
+    if (mode == MODE_MAP) {
+        if (!(tick_count % HALL_EVERY)) {
+            for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
+            hall_at = tick_count;
+            hall_advance();
+            for (i = 0; i < MAX_HALL; i++)
+                spr_launch((unsigned char)(SPR_HALL0 + i), CL_HALL,
+                           ph_x[i], ph_y[i], h_x[i], h_y[i]);
+        }
+    } else {
         if (!(tick_count % MON_EVERY)) {
             for (i = 0; i < MAX_MON; i++) { pm_x[i] = m_x[i]; pm_y[i] = m_y[i]; }
             mon_at = tick_count;
@@ -1984,7 +2057,7 @@ static void new_game(void)
 
 int main(void)
 {
-    unsigned int last, now, lastdraw, earned, total;
+    unsigned int last, now, lastdraw, earned, total, winky_last, arrow_last = 0;
     unsigned char ks, catchup, i, mult;
     int k;
 
@@ -2004,17 +2077,50 @@ int main(void)
         left_room = 0;
         last = jiffies();
         lastdraw = last - 1;          /* force a first draw */
+        winky_last = last - tickrate; /* so the first press moves him at once */
 
         for (;;) {
+            /* Block until the frame begins, so everything below runs at the start
+             * of an interval and has the whole of it to paint in before the host
+             * next reads the plane. Replaces a spin on jiffies(). */
+            wait_frame();
+
             /* Fixed-timestep accumulator, all integer, unsigned subtraction so
-             * the 60 Hz counter wrapping every ~18 minutes does not matter. */
+             * the 60 Hz counter wrapping every ~18 minutes does not matter. It
+             * stays: wait_frame() says a frame began, not how many were missed,
+             * and only the accumulator can make up a backlog. */
             now = jiffies();
+
+            /* Winky first, on his own clock, so a press is acted on this frame
+             * rather than at the world's next step -- see winky_act(). Set, not
+             * advanced, after a move: a stalled host must not bank moves for him. */
+            ks = keystate();
+            if ((ks & (KS_UP | KS_DOWN | KS_LEFT | KS_RIGHT)) &&
+                (unsigned int)(now - winky_last) >= tickrate) {
+                winky_last = now;
+                if (winky_act(ks)) {
+                    if (dead || left_room) break;
+                    continue;               /* he entered a room: that is this frame */
+                }
+            }
+
+            /* The arrow, also on its own clock -- see arrow_tick(). fire() refuses
+             * while one is already in flight, and in the hall. */
+            if (mode == MODE_ROOM) {
+                if (!a_live && (ks & KS_FIRE)) {
+                    fire();
+                    if (a_live) { arrow_last = now; arrow_tick(); }
+                } else if (a_live && (unsigned int)(now - arrow_last) >= tickrate) {
+                    arrow_last = now;
+                    arrow_tick();
+                }
+            }
+
             if ((unsigned int)(now - last) >= tickrate) {
-                ks = keystate();
                 for (catchup = 0;
                      (unsigned int)(now - last) >= tickrate && catchup < MAX_CATCHUP;
                      catchup++) {
-                    step(ks);
+                    step();
                     last += tickrate;
                     if (dead || left_room) break;
                 }
@@ -2052,7 +2158,16 @@ int main(void)
                     last = jiffies();
                 }
             }
+
+            /* The frame is finished: show it now rather than at the next boundary,
+             * which is a whole frame away because everything above ran after the
+             * last one. Last in the loop so the message line and the HUD are in it.
+             * A pause spins above without presenting, and the boundary repaint
+             * takes over for as long as it lasts. */
+            present();
         }
+
+        if (dead) meet_catcher();
 
         sound_off();
         snd_left = 0;

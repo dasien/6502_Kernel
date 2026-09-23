@@ -147,12 +147,44 @@ Seventeen was chosen against the I/O page rather than a theoretical peak.
 Twenty-five fitted and left five free bytes of the only address space new
 devices have, where 17 leaves 53.
 
+## The frame counter
+
+`$FECD` counts frames, wrapping, and `K_WAIT_FRAME` ($FF42) blocks until it
+changes. The point is not timing, which the jiffy counter already gave: it is
+that the host presents the plane on the same boundary, so a program returning
+from the wait owns the whole interval and cannot be photographed mid-update.
+
+It is a counter and not a flag, and reading does not clear it. The VIC-II's
+collision registers clear on read, which leaves room for exactly one consumer --
+a debugger looking at the value destroys it for the program. A counter also
+says how many frames went by, so a program that fell behind can tell, where a
+flag would hide it.
+
+The boundary is the same event as the jiffy interrupt; they are ticked together
+so they cannot drift. Waiting is still not pacing. `wait_frame()` says a frame
+began, not how many were missed, so a game keeps a fixed-timestep accumulator
+against the jiffy counter to make up a backlog after the host stalls.
+
+Writing `$FECD`, any value, presents. It says the frame is finished and should
+be shown now. Without it the host can only show the plane at a boundary, and a
+program that paints after waking at one is always a frame behind. In VENTURE
+that was 15 ms of a 23 ms press. The host shows a present at once, and for any
+frame that was presented it skips the boundary repaint, because that repaint
+would catch the next frame half drawn. A frame that goes by with no present puts
+the boundary repaint back, so a program that never presents is shown exactly as
+before, and one that stops presenting, by exiting, cannot freeze the screen.
+
+A program that presents takes on one rule in return: nothing is written to the
+VIC between the present and the next `wait_frame()`. The host reads the plane
+shortly after the present rather than at the instant of it, and anything written
+in that gap can land in the picture.
+
 ## What is still missing
 
-- There is no raster register and no vblank signal. Three independent 60 Hz
-  timers run in the host and nothing locks them, so a program cannot sync to the
-  display and an occasional step is painted twice or skipped. This is the most
-  obvious gap.
+- There is no raster register. A program can tell when a frame begins but not
+  where the beam is within one, so a mid-screen split -- two scroll regions, a
+  status bar that does not move with the playfield -- has nothing to hang off.
+  This is now the most obvious gap.
 - There is no bitmap mode. The display is text only, though giving a small
   region unique glyph codes per cell yields a pixel framebuffer of 128x256,
   which is the classic MSX and Amstrad trick.

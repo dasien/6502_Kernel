@@ -69,11 +69,12 @@ TEST(VicSprites, BlockIsRoutedToTheVicAndDoesNotOverrunThePage)
 
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegSpriteFirst));
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegSpriteLast));
-    // The font port below it is ours, and so is the palette port above it; the
-    // first byte the chip does NOT claim is the one past the palette.
+    // The font port below it is ours, and so are the palette port and the frame
+    // counter above it; the first byte the chip does NOT claim is past both.
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegFontData));
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegSpriteLast + 1));
-    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegPaletteLast + 1));
+    EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegPaletteLast + 1));
+    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegFrame + 1));
 }
 
 // --- defaults -------------------------------------------------------------

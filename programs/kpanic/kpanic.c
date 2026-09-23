@@ -1980,8 +1980,16 @@ static unsigned char play_run(void) {
     last = jiffies();
 
     for (;;) {
+        /* Block until the frame begins, so the work below happens at the start of
+         * an interval and has the whole of it to paint in before the host next
+         * reads the plane. This replaces a spin on jiffies(): same cadence, but
+         * the loop now runs once per frame instead of as fast as it can. */
+        wait_frame();
+
         /* --- fixed-timestep accumulator, all integer. Unsigned subtraction
-         * makes the counter's ~18-minute wrap harmless. --- */
+         * makes the counter's ~18-minute wrap harmless. The accumulator stays:
+         * wait_frame() says when a frame started, not how many were missed, and
+         * only the accumulator can make up a backlog after a host stall. --- */
         now = jiffies();
         if (!paused && (unsigned int)(now - last) >= tickrate) {
             catchup = 0;
@@ -2039,6 +2047,10 @@ static unsigned char play_run(void) {
         if (quit) break;
 
         if (paused) last = jiffies();   /* don't bank a backlog while paused */
+
+        /* The frame is finished: show it now rather than at the next boundary.
+         * Last in the loop so the HUD redraw and anything a key changed are in it. */
+        present();
     }
 
     return 0;                           /* quit out mid-run */

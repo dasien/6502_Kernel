@@ -127,6 +127,23 @@ namespace Computer
          * @return VIC* Pointer to the VIC video chip for screen operations
          * @note Used primarily for testing and screen buffer access
          */
+        /// Frame boundaries crossed since the last call, then reset. The host uses
+        /// this to repaint in step with emulated frames instead of on a wall-clock
+        /// timer of its own -- the two used to drift, so a program had no instant it
+        /// could know was safe to paint in. Coalescing is deliberate: a stalled host
+        /// that crossed four boundaries still only needs one repaint.
+        unsigned takeFramesElapsed();
+
+        /// Whether the host should repaint now, then reset. The whole rule lives
+        /// here rather than in the GUI so it can be tested headless:
+        ///   - a program presented ($FECD written): yes, at once;
+        ///   - a frame boundary passed and the frame before it was NOT presented:
+        ///     yes, as before presenting existed;
+        ///   - a boundary passed but that frame was presented: no. The program
+        ///     paints only after waking at the boundary, so repainting there would
+        ///     catch its next frame half drawn.
+        bool takeRepaintDue();
+
         VIC *getVideoChip()
         {
             return &video_chip;
@@ -231,6 +248,7 @@ namespace Computer
         PIA pia; ///< Peripheral Interface Adapter for I/O
         uint32_t clock_hz_ = kDefaultClockHz;  ///< the machine's stated speed
         uint64_t next_jiffy_ = 0;              ///< cycle count the next jiffy IRQ is due
+        unsigned frames_elapsed_ = 0;          ///< frame boundaries since the host last painted
         BlockDevice block_device; ///< Block device backing the FAT16 disk image
         ACIA acia; ///< Serial ACIA ($FE29-$FE2C) for XMODEM/serial transfers
         SID sid; ///< SID sound chip ($FE38-$FE54)

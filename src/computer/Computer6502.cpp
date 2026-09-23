@@ -285,6 +285,23 @@ namespace Computer
         }
     }
 
+    /* How many frame boundaries runCycles() crossed, for the host's repaint. Reading
+     * it clears it: the caller wants "did anything change since I last painted", and a
+     * stalled host that crossed four boundaries still only needs one repaint. */
+    unsigned Computer6502::takeFramesElapsed()
+    {
+        const unsigned n = frames_elapsed_;
+        frames_elapsed_ = 0;
+        return n;
+    }
+
+    bool Computer6502::takeRepaintDue()
+    {
+        const bool presented = video_chip.takePresent();
+        const unsigned frames = takeFramesElapsed();   // taken either way, to clear it
+        return presented || (frames > 0 && !video_chip.presentDriven());
+    }
+
     /* Run a slice of the machine's time, and generate the interval-timer IRQ from the
      * emulated clock rather than from a host timer ticking alongside it.
      *
@@ -312,6 +329,14 @@ namespace Computer
             {
                 next_jiffy_ += cycles_per_jiffy;
                 pia.pulseTimerIrq();
+                /* The frame boundary IS the jiffy boundary, ticked here so the two
+                 * cannot drift. The guest sees it as $FECD changing; the host repaints
+                 * on it. Separate register rather than "read the jiffy counter"
+                 * because a PIA interval timer and a video signal are different
+                 * things, and a raster split would want to move one without the
+                 * other. */
+                video_chip.endFrame();
+                frames_elapsed_++;
             }
         }
     }

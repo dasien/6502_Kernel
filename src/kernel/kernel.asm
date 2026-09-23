@@ -3,8 +3,8 @@
 ; ================================================================
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
-; Date:         2026-06-08
-; Version:      4.0
+; Date:         2026-09-23
+; Version:      4.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -18,7 +18,7 @@
 ; ROM (Used):      1625 bytes of the 4 KB window
 ;   CODE segment:  $F000-$F610 (1553 bytes)
 ;   IORESV segment:$FE00-$FEFF (256 bytes) - reserved I/O page (shadowed by host)
-;   JUMPS segment: $FF00-$FF41 (66 bytes) - kernel API jump table (22 entries)
+;   JUMPS segment: $FF00-$FF44 (69 bytes) - kernel API jump table (23 entries)
 ;   VECS segment:  $FFFA-$FFFF (6 bytes)  - NMI/RESET/IRQ vectors
 ;
 ; Zero Page:    placed above EhBASIC's $00-$13 and below its ~$5B-$FF (~21 bytes used)
@@ -36,7 +36,7 @@
 ; Screen:       not in the 64K map. The 80x25 CP437 character and colour planes
 ;               live inside the VIC and are reached through the register port at
 ;               $FE2D-$FE37 (see docs/board.md).
-; I/O page:     $FE00-$FECA (PIA, BlockDevice, ACIA, VIC, SID, RTC, PowerSwitch;
+; I/O page:     $FE00-$FECD (PIA, BlockDevice, ACIA, VIC, SID, RTC, PowerSwitch;
 ;               $FE23 MODULE_BANK). Sited inside the kernel region so that
 ;               $B000-$EFFF stays a clean, bankable module window
 ;               (see docs/architecture.md, Part 2).
@@ -261,6 +261,18 @@
 ;                   monotonic tick counter (JIFFY_LO/HI at $31/$32) that programs
 ;                   read for frame pacing. The read is SEI-guarded so the two
 ;                   bytes can't tear. First consumer: real-time games.
+; 2026-09-23  v4.1  K_WAIT_FRAME ($FF42) blocks until the VIC starts a new frame,
+;                   reading the new frame counter at $FECD. The machine had two
+;                   60 Hz clocks that were never phase-locked -- the jiffy IRQ came
+;                   off emulated cycles, the host repainted on a wall-clock timer of
+;                   its own -- so no instant existed that a program could know was
+;                   safe to paint in, and under host stall the jiffies bunched while
+;                   the display showed one frame. The frame boundary is now ticked
+;                   with the jiffy and the host presents on it, so a program that
+;                   waits here owns the whole interval. Separate register rather than
+;                   reusing the jiffy count because a PIA interval timer and a video
+;                   signal are different things, and a raster split would want to
+;                   move one without the other.
 ; 2026-07-31  v4.0  The monitor left the kernel. kernel.asm is now the BIOS and
 ;                   nothing else -- screen, keyboard, hex/decimal conversion, the
 ;                   pager, IRQ/NMI, sound, bank launching, the $FF00 ABI and the
@@ -1657,6 +1669,27 @@ SOUND_OFF:
 ; is made atomic (SEI) to avoid tearing between the two bytes; PHP/PLP preserves
 ; the caller's interrupt-enable state. Real-time programs use this for frame
 ; pacing (a fixed-tick accumulator loop).
+;; WAIT_FRAME - block until the VIC starts a new frame.
+;;
+;; Returns when VREG_FRAME ($FECD) differs from the value it had on entry. The
+;; counter wraps every 256 frames and that is harmless: the test is inequality,
+;; not ordering.
+;;
+;; A program that returns from here has the whole frame interval to paint before
+;; the host takes its next picture of the plane, which is what makes an update
+;; tear-free. It does NOT pace a game on its own -- a fixed-timestep accumulator
+;; against the jiffy counter still does that, because it can tell how many frames
+;; it missed and this cannot.
+;;
+;; Preserves X and Y. Returns the new frame number in A.
+WAIT_FRAME:
+    LDA VREG_FRAME              ; the frame we are in now
+@wait:
+    CMP VREG_FRAME
+    BEQ @wait                   ; still the same one
+    LDA VREG_FRAME
+    RTS
+
 GET_JIFFIES:
     PHP                         ; save the caller's I flag
     SEI                         ; block the timer IRQ across the 16-bit read
@@ -1787,6 +1820,7 @@ K_SOUND_OFF:     JMP SOUND_OFF          ; $FF36 - stop voice 1 (gate off)
 K_GET_JIFFIES:   JMP GET_JIFFIES        ; $FF39 - read the 60 Hz tick counter (A=lo, X=hi)
 K_HEX_PAIR:      JMP HEX_PAIR_TO_BYTE   ; $FF3C - 2 hex digits -> byte (K_PARSE_HEX does 4)
 K_PARSE_DEC_VAL: JMP PARSE_DECIMAL_VALUE; $FF3F - decimal digits -> DEC_RESULT, no side effects
+K_WAIT_FRAME:    JMP WAIT_FRAME         ; $FF42 - block until the next frame boundary
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

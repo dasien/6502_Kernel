@@ -4,6 +4,7 @@
  */
 
 #include "VIC.h"
+#include "host/LatencyProbe.h"
 #include "Cp437Font.h"
 
 #include <algorithm>
@@ -94,7 +95,16 @@ namespace Computer
         return (address >= kRegFirst && address <= kRegLast) ||
                (address >= kRegFontFirst && address <= kRegFontLast) ||
                (address >= kRegSpriteFirst && address <= kRegSpriteLast) ||
-               (address >= kRegPaletteFirst && address <= kRegPaletteLast);
+               (address >= kRegPaletteFirst && address <= kRegPaletteLast) ||
+               address == kRegFrame;
+    }
+
+    void VIC::endFrame()
+    {
+        frame_++;   // wrapping is the contract; callers compare for change
+        presented_last_frame_ = presented_this_frame_;
+        presented_this_frame_ = false;
+        Host::LatencyProbe::get().frame();
     }
 
     const VIC::Sprite &VIC::sprite(const uint8_t index) const
@@ -127,6 +137,8 @@ namespace Computer
             advanceIndex();
             return value;
         }
+        case kRegFrame:
+            return frame_;
         case kRegStatus:
             return 0x00; // synchronous command engine: always ready
         case kRegAddrLo:
@@ -216,6 +228,11 @@ namespace Computer
         case kRegScrollBot:
             scroll_bot_ = (value < kScreenHeight) ? value : (kScreenHeight - 1);
             break;
+        case kRegFrame:
+            // Any value presents; the counter itself is not writable.
+            present_pending_ = true;
+            presented_this_frame_ = true;
+            break;
         // Font index: unlike the cell index this wraps on each byte, because it has
         // no equivalent of the low/high ordering hazard -- the data port is the only
         // thing that consumes it.
@@ -294,6 +311,7 @@ namespace Computer
             {
                 const uint8_t i = static_cast<uint8_t>((address - kRegSpriteFirst) / kSpriteStride);
                 Sprite &sp = sprites_[i];
+                const uint16_t old_x = sp.x, old_y = sp.y;
                 switch ((address - kRegSpriteFirst) % kSpriteStride)
                 {
                 case kSprXLo: sp.x = static_cast<uint16_t>((sp.x & 0x0300) | value); break;
@@ -314,6 +332,10 @@ namespace Computer
                 case kSprGlyph: sp.glyph = value; break;
                 default:        sp.attr = value; break;
                 }
+                // Sprite 0 is the player in both action games, so a change in its
+                // position is the moment a key press becomes visible motion.
+                if (i == 0 && (sp.x != old_x || sp.y != old_y))
+                    Host::LatencyProbe::get().playerMoved();
                 dirty_flag_ = true;
             }
             break;

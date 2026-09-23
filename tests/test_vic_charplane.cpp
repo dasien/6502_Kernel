@@ -163,3 +163,80 @@ TEST(VicCharPlane, ClearResetsScrollRegion)
     v.write(VIC::kRegCmd, VIC::kCmdScrollUp);
     EXPECT_EQ(v.getCharacterAt(0, VIC::kScreenHeight - 2), 'Z'); // full-screen scroll moved it up
 }
+
+// ---- frame counter ($FECD) ------------------------------------------------
+// The signal a program waits on to know it owns the frame interval. A counter
+// rather than a flag so that reading it costs nothing and cannot hide a missed
+// frame; see VIC.h for why it is not clear-on-read.
+
+TEST(VicFrameCounter, AdvancesOncePerFrame)
+{
+    VIC v;
+    const uint8_t start = v.read(VIC::kRegFrame);
+    v.endFrame();
+    EXPECT_EQ(v.read(VIC::kRegFrame), static_cast<uint8_t>(start + 1));
+    v.endFrame();
+    v.endFrame();
+    EXPECT_EQ(v.read(VIC::kRegFrame), static_cast<uint8_t>(start + 3));
+}
+
+// Reading is not clearing. The VIC-II's collision registers clear on read, which
+// leaves room for exactly one consumer -- a debugger or a second subsystem
+// destroys the value for whoever else wanted it.
+TEST(VicFrameCounter, ReadingDoesNotChangeIt)
+{
+    VIC v;
+    v.endFrame();
+    const uint8_t a = v.read(VIC::kRegFrame);
+    EXPECT_EQ(v.read(VIC::kRegFrame), a);
+    EXPECT_EQ(v.read(VIC::kRegFrame), a);
+}
+
+// Wrapping is the contract, not a defect: callers test for inequality, never
+// ordering, so 255 -> 0 is just another change.
+TEST(VicFrameCounter, WrapsCleanly)
+{
+    VIC v;
+    for (int i = 0; i < 255; i++) v.endFrame();
+    EXPECT_EQ(v.read(VIC::kRegFrame), 255);
+    v.endFrame();
+    EXPECT_EQ(v.read(VIC::kRegFrame), 0);
+}
+
+// It answers at its own address, which is outside the main register block.
+TEST(VicFrameCounter, IsDecodedAsAVicAddress)
+{
+    EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegFrame));
+    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegFrame + 1));
+}
+
+// ---- presenting (write $FECD) ----------------------------------------------
+
+// A write presents; the counter itself does not move, since it counts frames and
+// not presents.
+TEST(VicPresent, AWritePresentsAndLeavesTheCounterAlone)
+{
+    VIC v;
+    v.endFrame();
+    const uint8_t f = v.read(VIC::kRegFrame);
+    EXPECT_FALSE(v.takePresent());
+    v.write(VIC::kRegFrame, 0x5A);
+    EXPECT_EQ(v.read(VIC::kRegFrame), f);
+    EXPECT_TRUE(v.takePresent());
+    EXPECT_FALSE(v.takePresent()) << "taking the present must clear it";
+}
+
+// Whether the frame that just ended was presented is what the host keys off, and
+// it has to come back off by itself once a frame goes by without one -- otherwise
+// a program that stops presenting (by exiting to DOS) freezes the screen.
+TEST(VicPresent, PresentDrivenFollowsTheLastFrame)
+{
+    VIC v;
+    EXPECT_FALSE(v.presentDriven());
+    v.write(VIC::kRegFrame, 0);
+    EXPECT_FALSE(v.presentDriven()) << "only a boundary settles the frame";
+    v.endFrame();
+    EXPECT_TRUE(v.presentDriven());
+    v.endFrame();                        // a whole frame with no present
+    EXPECT_FALSE(v.presentDriven());
+}

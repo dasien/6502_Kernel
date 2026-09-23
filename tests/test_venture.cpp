@@ -424,7 +424,14 @@ protected:
     Computer6502 c;
     Computer::CPU6502 *cpu = nullptr;
     Computer::Memory *mem = nullptr;
+    /* One 60 Hz boundary. The PIA's timer IRQ and the VIC's end-of-frame are a
+       single event in the machine -- Computer6502::runCycles ticks them together
+       -- so a harness faking one must fake the other, or a program blocked in
+       K_WAIT_FRAME never wakes. One helper so no site can forget half of it. */
+    void tick() { pia->pulseTimerIrq(); vic->endFrame(); }
+
     Computer::PIA *pia = nullptr;
+    Computer::VIC *vic = nullptr;
 
     /* Cycles per 60 Hz tick on a nominal 1 MHz machine. The CPU's cycle counts are
      * datasheet-exact, so pumping the timer off the counter gives a true 60 Hz
@@ -451,6 +458,7 @@ protected:
         cpu = c.getCpu();
         mem = c.getMemory();
         pia = c.getPia();
+        vic = c.getVideoChip();
 
         // Pin the clock. VENTURE seeds its generator from rng_seed(), which
         // folds the RTC, so on the real clock no two runs lay out the same
@@ -508,7 +516,7 @@ protected:
         for (int i = 0; i < jiffy_count; i++) {
             const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
             while (cpu->getCycles() < until) c.runInstructions(1);
-            pia->pulseTimerIrq();
+            tick();
         }
     }
 
@@ -594,13 +602,20 @@ protected:
     }
     void walkOnMap(uint8_t mask, int cells)  { walk(mask, cells, true); }
 
-    // Hold control bits for `ticks` game ticks. TICK_RATE is 4 jiffies per tick.
+    /* Hold a direction for exactly `ticks` moves, then let go.
+     *
+     * Winky moves on his own clock: on the first frame a direction is held, then once a
+     * tick while it stays held, never faster. So `ticks` moves take (ticks - 1) ticks
+     * plus a few frames of slack for the frame the key is first seen. ticks * kTickRate
+     * would be one move too many. The release is followed by a whole tick so his clock
+     * is due again, and the next hold starts with a move instead of waiting out the rate
+     * cap. */
     void hold(uint8_t mask, int ticks)
     {
         pia->setKeyState(mask);
-        run(ticks * kTickRate + 2);
+        run((ticks - 1) * kTickRate + 3);
         pia->setKeyState(0);
-        run(2);
+        run(kTickRate);
     }
 
     uint8_t glyphAt(int col, int row)
@@ -801,6 +816,19 @@ protected:
      * to go (the clear) and then come back is unambiguous. */
     bool waitForHall()
     {
+        /* Already out? Winky moves the moment a direction is held, so the step through
+         * the doorway -- and the whole synchronous redraw in enter_map() -- can finish
+         * inside the hold that walked him out, before this is called, and the clear
+         * below would never be seen. The game's mode says which board is up without
+         * the ambiguity the screen has, so trust it, then give the board the same
+         * settling time the transition path gets. */
+        if (!inRoom()) {
+            for (int i = 0; i < 20 && !hudUp() && !caught(); i++) run(5);
+            if (caught()) { pressKey('\r'); run(240); return false; }
+            run(20);
+            return hudUp();
+        }
+
         bool cleared = false;
         for (int i = 0; i < 140; i++) {
             run(5);
@@ -1136,12 +1164,12 @@ TEST_F(VentureTest, AFrameOfDrawingStaysWithinItsBudget)
         const uint8_t sp0 = cpu->reg.SP;
         const uint64_t c0 = cpu->getCycles();
         if (!cpu->executeSingleInstruction()) break;
-        if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+        if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; tick(); }
         if (!at_entry) continue;
         for (int g = 0; g < 200000; ++g) {          // run to the matching RTS
             if (cpu->reg.SP > sp0) break;
             if (!cpu->executeSingleInstruction()) break;
-            if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+            if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; tick(); }
         }
         total += cpu->getCycles() - c0;
         calls++;
@@ -1175,12 +1203,12 @@ TEST_F(VentureTest, ATickStaysWithinItsBudget)
         const uint8_t sp0 = cpu->reg.SP;
         const uint64_t c0 = cpu->getCycles();
         if (!cpu->executeSingleInstruction()) break;
-        if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+        if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; tick(); }
         if (!at) continue;
         for (int g = 0; g < 400000; ++g) {          // run to the matching RTS
             if (cpu->reg.SP > sp0) break;
             if (!cpu->executeSingleInstruction()) break;
-            if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; pia->pulseTimerIrq(); }
+            if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; tick(); }
         }
         total += cpu->getCycles() - c0;
         calls++;
@@ -1213,7 +1241,7 @@ TEST_F(VentureTest, AShotFliesRatherThanJumps)
     for (int i = 0; i < 60; i++) {
         const uint64_t until = cpu->getCycles() + real_jiffy;
         while (cpu->getCycles() < until) c.runInstructions(1);
-        pia->pulseTimerIrq();
+        tick();
         const Computer::VIC::Sprite &a = c.getVideoChip()->sprite(1);
         if (!a.enabled) continue;
         seen++;
@@ -1245,7 +1273,7 @@ TEST_F(VentureTest, WinkyMovesEveryFrameWhileWalking)
     for (int i = 0; i < 24; i++) {
         const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
         while (cpu->getCycles() < until) c.runInstructions(1);
-        pia->pulseTimerIrq();
+        tick();
         const unsigned x = c.getVideoChip()->sprite(0).x;
         if (prev != 0xFFFF) { frames++; if (x == prev) held++; }
         prev = x;
@@ -1358,7 +1386,7 @@ TEST_F(VentureTest, AnArrowLooksAndMovesTheSameInEveryDirection)
         for (int i = 0; i < 20; i++) {
             const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
             while (cpu->getCycles() < until) c.runInstructions(1);
-            pia->pulseTimerIrq();
+            tick();
             const Computer::VIC::Sprite &a = c.getVideoChip()->sprite(1);
             if (!a.enabled) { prev = -1; continue; }
             const int v = k ? a.y : a.x;

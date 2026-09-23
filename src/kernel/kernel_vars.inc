@@ -196,6 +196,14 @@ VREG_CMD_PARAM     = $FE36         ; command parameter / fill char
 VREG_PAL_IDX       = $FECB         ; palette byte index (0..47)
 VREG_PAL_DATA      = $FECC         ; palette data port (auto-increments)
 
+; Frame counter ($FECD). READ: increments once per displayed frame, wrapping; a
+; counter rather than a flag, and NOT cleared by reading, so any number of readers
+; see the same value and a delta greater than one says frames were missed. WRITE
+; any value: present -- the frame is finished, show it now instead of at the next
+; boundary. The kernel itself never presents, so everything it draws is shown at
+; each boundary as before.
+VREG_FRAME         = $FECD
+
 ; RTC (real-time clock) registers in the I/O page. Writing RTC_LATCH snapshots the
 ; live clock into the read registers. Used here only to seed the RNG at boot so
 ; random sequences differ from run to run.

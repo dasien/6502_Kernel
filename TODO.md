@@ -2,6 +2,55 @@
 
 ## Open
 
+### VIC frame counter and K_WAIT_FRAME (DONE 2026-09-23)
+
+- [x] **A program had no instant it could know was safe to paint in.** The jiffy
+  IRQ came off emulated cycles while the host repainted on a wall-clock timer of
+  its own, so the two drifted, and after a host stall the jiffies arrived in a
+  burst while the display showed one frame.
+  - `VREG_FRAME` at `$FECD` counts frames, wrapping. A counter rather than a
+    flag, and not cleared by reading, so any number of readers see the same value
+    and a delta above one reports missed frames.
+  - `K_WAIT_FRAME` at `$FF42` blocks until it changes. Kernel 4.1.
+  - The frame boundary is ticked with the jiffy, and `MainWindow` presents on
+    it, coalescing when one slice crosses several. The cursor blink marks the
+    screen instead of painting it, so there is one route to the screen.
+  - VENTURE and KPANIC call `wait_frame()` at the top of their loops and keep
+    their jiffy accumulators, which are still what makes up a backlog.
+  - The program-test harnesses fake the jiffy by hand, so they now call a
+    `tick()` helper that ends the frame too. Without it a game blocked in
+    `K_WAIT_FRAME` never wakes.
+  - Writing `$FECD` presents: the frame is finished, show it now. A program that
+    paints after waking at a boundary was otherwise a whole frame behind. The
+    boundary repaint is skipped for a frame that was presented and comes back as
+    soon as one is not, so a program that never presents is shown as before and
+    one that exits cannot freeze the screen. The rule is
+    `Computer6502::takeRepaintDue()`, tested headless.
+- [x] **VENTURE made a press wait for the world's next step.** Winky's move was
+  part of the world tick, which runs every 100 ms whether a key is held or not,
+  so a press waited up to a tick before anything happened: 64.5 ms on average,
+  measured. He now has his own clock. He moves on the first frame a direction
+  is held if a tick has passed since his last move, and every tick after that,
+  while the monsters stay on the world's. Top speed is unchanged. Press latency
+  fell to 23.5 ms, nearly all of it one frame of presenting, which `present()`
+  addresses. Releases are unchanged at about 70 ms: that is Winky finishing the
+  cell he has already committed to, which on a grid is the rule rather than lag.
+- [x] **A latency probe.** `MFC_LATENCY=<file>` (or `=1` for stderr) logs each
+  key press and release from the host event to the paint, split into the game's
+  wait, its logic and the host's share, plus the real execution-timer interval.
+  Off by default. The compositor and panel after the paint are not visible to it.
+- [ ] **`term_ansi` and `gopher` are sometimes very slow.** Normally about 18 s
+  and 14 s; one run took 652 s and 128 s while every other test ran at its usual
+  speed. The work is cycle-counted and identical each run, so the time went
+  somewhere outside the test. Not reproduced run alone. Suite totals of 504,
+  923 and 1,705 s earlier were put down to host load before per-test times
+  showed they concentrate here.
+- [ ] **Raster register.** A program can tell when a frame begins but not where
+  the beam is inside one, so there is nothing to hang a mid-screen split on, such
+  as a status bar that does not scroll with the playfield, two scroll regions or
+  a colour change partway down. This is now the most obvious gap in the VIC, and
+  collision hardware, if it is ever wanted, would latch on the same boundary.
+
 ### Modem and ACIA: carrier detect, raw and quiet modes (DONE 2026-09-20)
 
 - [x] **The bridge applied telnet framing to connections that are not telnet,

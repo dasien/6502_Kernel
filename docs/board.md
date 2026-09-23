@@ -67,7 +67,7 @@ $B000 ├═══════════════════════�
 $F000 ├════════════════════════════════════════════════┤
       │  KERNEL BIOS ROM (4 KB)                        │
       │    $FE00-$FEFF  I/O page  ── decoded below     │
-      │    $FF00        ABI jump table (22 entries)    │
+      │    $FF00        ABI jump table (23 entries)    │
       │    $FFFA        NMI / RESET / IRQ vectors      │
 $FFFF └────────────────────────────────────────────────┘
 ```
@@ -81,7 +81,7 @@ One 256-byte page holds every chip's registers. It is carved out of the kernel R
 window and reserved by the `IORESV` linker segment, so kernel code can never grow
 into it by accident.
 
-The decode runs from `$FE00` to `$FECA`, and each chip claims one span. The ranges in
+The decode runs from `$FE00` to `$FECD`, and each chip claims one span. The ranges in
 the table below are taken from the `is*Address()` predicate in each class rather than
 paraphrased from it. The decode is contiguous and gapless with a single exception.
 The VIC answers two separate ranges, because the soft-font port and the sprite block
@@ -100,12 +100,14 @@ range. `isVideoRegAddress()` is therefore three tests rather than one.
 | `$FE61` | PWR | `PowerSwitch` | The soft power switch |
 | `$FE62-$FE64` | VIC | `VIC` | Soft-font index and data port, which is the second of the VIC's two ranges |
 | `$FE65-$FECA` | VIC | `VIC` | Seventeen sprite records of six bytes each |
+| `$FECB-$FECC` | VIC | `VIC` | Soft palette: byte index, then an auto-incrementing data port |
+| `$FECD` | VIC | `VIC` | Frame counter on read; a write presents the finished frame |
 
 The RTC reaches `$FE60` because the FAT date registers sit above the clock
 registers proper. The authority for every range here is the chip's own
 `is*Address()` predicate.
 
-`$FECB-$FEFF` is unclaimed. That leaves 53 bytes, and it is where the next chip goes.
+`$FECE-$FEFF` is unclaimed. That leaves 50 bytes, and it is where the next chip goes.
 The size of the sprite block was chosen against that figure rather than against a
 theoretical peak. Twenty-five sprites would have fitted but would have left only five
 free bytes, so seventeen were taken instead.

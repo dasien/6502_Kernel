@@ -4,6 +4,7 @@
  */
 
 #include "MainWindow.h"
+#include "host/LatencyProbe.h"
 #include <QApplication>
 #include <QMenuBar>
 #include <QStatusBar>
@@ -52,7 +53,9 @@ MainWindow::MainWindow(QWidget* parent)
     sid_audio_ = new SidAudio(computer_->getSid(), this);
 #endif
 
-    display_widget_->startRefresh();
+    // Not startRefresh(): while the machine runs, the emulated frame boundary
+    // drives the repaint (see the execution timer below). The wall-clock timer
+    // would be a second, unsynchronised route to the screen.
     display_widget_->setFocus();
     is_running_ = true;
     wall_clock_.start();
@@ -377,6 +380,19 @@ void MainWindow::connectSignals()
 
             computer_->runCycles(budget);
             execution_cycle_count_ += budget;
+            Host::LatencyProbe::get().slice(static_cast<double>(delta_ns) / 1e6, budget);
+
+            /* Repaint when the program says its frame is finished, or at a frame
+             * boundary if it does not say. Never on a timer of the host's own: the
+             * two used to be independent 60 Hz clocks that drifted, so there was no
+             * instant a program could know was safe to paint in. The rule itself is
+             * Computer6502::takeRepaintDue(). Coalesced deliberately: after a stall
+             * this slice may have crossed several boundaries, and the display still
+             * has only one frame to show. */
+            if (computer_->takeRepaintDue())
+            {
+                display_widget_->refreshDisplay();
+            }
             // Pump the modem once per tick: drain the ACIA TX into the
             // protocol (inbound socket data arrives via Qt signals).
             if (modem_) modem_->poll();

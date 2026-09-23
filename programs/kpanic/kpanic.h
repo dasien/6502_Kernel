@@ -24,6 +24,8 @@ extern void          vfwrite(unsigned char b);        /* ...write, auto-incremen
 extern unsigned int  rng_seed(void);                  /* RTC-derived RNG entropy */
 extern unsigned char rtc_sec(void);                   /* BCD seconds; tested for change */
 extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick counter */
+extern void          wait_frame(void);           /* block until the next frame begins */
+extern void          present(void);              /* this frame is finished: show it now */
 extern unsigned char keystate(void);                  /* live held-key bitmask ($FE0F) */
 /* Sprites. Pixel-positioned and, crucially, NOT riding the scroll region -- the only
  * place a screen-fixed object can live once the world scrolls in sub-cell steps.

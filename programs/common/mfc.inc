@@ -20,7 +20,7 @@
 MFC_INC = 1
 
 ; ---- kernel ABI, $FF00-$FF41 ----------------------------------------------
-; 22 entries, three bytes each. Call these rather than reaching into the ROM:
+; 23 entries, three bytes each. Call these rather than reaching into the ROM:
 ; the addresses are the contract, the routines behind them are not.
 K_PRINT_CHAR       = $FF00      ; A = char -> screen
 K_PRINT_MESSAGE    = $FF03      ; A/Y = null-terminated string
@@ -44,6 +44,7 @@ K_SOUND_OFF        = $FF36      ; gate voice 1 off
 K_GET_JIFFIES      = $FF39      ; 60 Hz monotonic counter -> A = lo, X = hi
 K_HEX_PAIR         = $FF3C      ; 2 hex digits -> byte
 K_PARSE_DEC_VAL    = $FF3F      ; decimal digits -> DEC_RESULT, no side effects
+K_WAIT_FRAME       = $FF42      ; block until the VIC starts a new frame
 
 ; ---- DOS ABI, $AF00-$AF23 --------------------------------------------------
 ; The FS_ entries report failure in carry and leave X undefined.
@@ -91,6 +92,13 @@ VREG_CURSOR_LO     = $FE34      ; displayed cursor cell low
 VREG_CURSOR_HI     = $FE35      ; cursor cell high; bit7 = hidden
 VREG_CMD_PARAM     = $FE36      ; fill char for clear / fill-row / scroll
 VREG_SCROLL_BOT    = $FE37      ; scroll-region bottom row
+
+; Frame counter. READ: increments once per frame, wrapping; not a flag and not
+; cleared by reading, so any number of readers see the same value and a delta above
+; one says frames were missed. WRITE any value: present -- this frame is finished,
+; show it now rather than at the next boundary. A program that presents is shown a
+; frame sooner; one that never does is repainted at every boundary as before.
+VREG_FRAME         = $FECD
 
 ; The commands a .PRG issues. The VIC answers more of them -- row sizing, font
 ; bank select, fine scroll -- which only the kernel drives; see docs/board.md.

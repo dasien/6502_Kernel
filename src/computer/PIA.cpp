@@ -4,6 +4,7 @@
  */
 
 #include "PIA.h"
+#include "host/LatencyProbe.h"
 #include "Memory.h"
 #include "CPU6502.h"
 #include <cstdio>
@@ -181,6 +182,7 @@ uint8_t PIA::readPia(const uint16_t address)
             // Live "which control keys are held" bitmask. Unlike kPortAData this is
             // non-destructive: a game polls it every frame and must keep seeing the
             // key until the host reports the release.
+            Host::LatencyProbe::get().keyStateRead(key_state_);
             return key_state_;
 
         case kPortADdr:
