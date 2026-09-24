@@ -45,6 +45,13 @@
   somewhere outside the test. Not reproduced run alone. Suite totals of 504,
   923 and 1,705 s earlier were put down to host load before per-test times
   showed they concentrate here.
+- [ ] **The host file-I/O registers have two names.** `kernel_vars.inc` calls them
+  `FILE_COMMAND`, `FILE_STATUS` and `FILE_NAME_BUF`; `dos.asm`, `basic.asm` and the
+  assembler call them `FIO_COMMAND`, `FIO_STATUS` and `FIO_NAME`. `check_io_equates`
+  matches by name, so it cannot compare them, and `io_addresses_unique` carries the
+  three pairs as known aliases and checks they still share an address. Renaming the
+  kernel's three to `FIO_*` would retire both workarounds; it touches every file that
+  includes `kernel_vars.inc`.
 - [ ] **Raster register.** A program can tell when a frame begins but not where
   the beam is inside one, so there is nothing to hang a mid-screen split on, such
   as a status bar that does not scroll with the playfield, two scroll regions or

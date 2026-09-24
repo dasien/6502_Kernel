@@ -944,6 +944,17 @@ add_test(NAME io_equates_agree
     -DDOS_ASM=${CMAKE_SOURCE_DIR}/src/kernel/dos/dos.asm
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_io_equates.cmake)
 
+# Drift guard: no two names may claim one I/O register or ABI entry. The name
+# comparison above cannot see two different names landing on one address, which is
+# how the frame counter and the palette both took $FECB on different branches.
+file(GLOB _io_headers ${CMAKE_SOURCE_DIR}/include/computer/*.h)
+string(REPLACE ";" "|" _io_headers "${_io_headers}")
+add_test(NAME io_addresses_unique
+    COMMAND ${CMAKE_COMMAND}
+    "-DASM_FILES=${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc|${CMAKE_SOURCE_DIR}/programs/common/mfc.inc|${CMAKE_SOURCE_DIR}/src/kernel/dos/dos.asm"
+    "-DCPP_FILES=${_io_headers}"
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_io_unique.cmake)
+
 # Drift guard: no two DOS page-3 variables may share an address. They are
 # allocated by reading the list and taking the next free byte, which fails
 # silently when two are added weeks apart -- DOS_THEME landed on DOS_W_ERR that
