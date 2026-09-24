@@ -491,11 +491,11 @@ models.
 | `$FE02` | `PIA_CONTROL` | Status flags (bit 0 = data available) |
 | `$FE0E` | `TIMER_IRQ_ACK` | Write to acknowledge the ~60 Hz periodic timer IRQ |
 | `$FE0F` | `KEY_STATE` | A read-only bitmask of the keys held right now. Described below |
-| `$FE10` | `FILE_COMMAND` | The file operation. Load and save are block operations, and open-read, open-write and close are stream operations |
-| `$FE11` | `FILE_STATUS` | Idle / in-progress / success / stream-open / EOF / error |
-| `$FE12-$FE13` | `FILE_ADDR_LO/HI` | Block load/save target/start address |
-| `$FE14-$FE1F` | `FILE_NAME_BUF` | Filename buffer (12 bytes) |
-| `$FE20-$FE21` | `FILE_END_ADDR_LO/HI` | Block save end address |
+| `$FE10` | `FIO_COMMAND` | The file operation. Load and save are block operations, and open-read, open-write and close are stream operations |
+| `$FE11` | `FIO_STATUS` | Idle / in-progress / success / stream-open / EOF / error |
+| `$FE12-$FE13` | `FIO_ADDR_LO/HI` | Block load/save target/start address |
+| `$FE14-$FE1F` | `FIO_NAME` | Filename buffer (12 bytes) |
+| `$FE20-$FE21` | `FIO_END_ADDR_LO/HI` | Block save end address |
 | `$FE22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
 | `$FE23` | `MODULE_BANK` | Selects the module bank. Bank 0 is RAM, and banks 1 to 255 are ROM modules mapped at `$B000-$EFFF` |
 | `$FE24-$FE25` | `BLK_LBA` | The block device's 16-bit sector number, little-endian |

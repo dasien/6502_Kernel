@@ -45,13 +45,18 @@
   somewhere outside the test. Not reproduced run alone. Suite totals of 504,
   923 and 1,705 s earlier were put down to host load before per-test times
   showed they concentrate here.
-- [ ] **The host file-I/O registers have two names.** `kernel_vars.inc` calls them
-  `FILE_COMMAND`, `FILE_STATUS` and `FILE_NAME_BUF`; `dos.asm`, `basic.asm` and the
-  assembler call them `FIO_COMMAND`, `FIO_STATUS` and `FIO_NAME`. `check_io_equates`
-  matches by name, so it cannot compare them, and `io_addresses_unique` carries the
-  three pairs as known aliases and checks they still share an address. Renaming the
-  kernel's three to `FIO_*` would retire both workarounds; it touches every file that
-  includes `kernel_vars.inc`.
+- [ ] **The PIA's block load/save mode is dead code.** Commands `$01`/`$02` load or
+  save a whole memory range in one operation, using the address registers at
+  `$FE12`-`$FE13` and `$FE20`-`$FE21`. Nothing on the 6502 side has issued them since
+  the monitor's `L:`/`S:` were removed, and no test exercises them -- about 150 lines
+  of `PIA.cpp` (424-571) plus the register handling and two constants in `PIA.h`.
+  The live file-I/O registers (command, status, name, data) are unaffected; the DOS,
+  BASIC and the assembler use them. Freeing the four registers is worth little: they
+  are two holes inside the PIA's span, and `$FECE`-`$FEFF` is already free. Either
+  remove block mode along with the kernel's `FIO_ADDR_*`, `FIO_END_ADDR_*`,
+  `FILE_LOAD_CMD` and `FILE_SAVE_CMD`, or keep it and give it a test -- the case for
+  keeping it is a kernel service that runs a freshly built `.PRG` straight from the
+  host, skipping `ninja disk`.
 - [ ] **Raster register.** A program can tell when a frame begins but not where
   the beam is inside one, so there is nothing to hang a mid-screen split on, such
   as a status bar that does not scroll with the playfield, two scroll regions or

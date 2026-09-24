@@ -62,8 +62,8 @@ ASM2_TRUNC       = $02E3            ; non-zero: the current source line was cut 
 DISASM_COUNT     = 16               ; instructions disassembled per D command
 
 ; Byte-stream file I/O (host), same registers/protocol BASIC's LOAD uses.
-FIO_COMMAND      = $FE10
-FIO_STATUS       = $FE11
+; FIO_COMMAND and FIO_STATUS come from kernel_vars.inc, which the monitor includes
+; first; declaring them here as well would define them twice.
 FIO_DATA         = $FE22
 FIO_OPEN_RD      = $03              ; command: open input stream (host open dialog)
 FIO_CLOSE        = $05              ; command: close stream

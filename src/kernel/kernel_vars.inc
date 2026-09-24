@@ -144,15 +144,15 @@ PIA_CONTROL        = $FE02         ; PIA control register for keyboard
 PIA_DATA_AVAIL     = $01           ; Bit mask for data available flag
 
 ; File I/O interface addresses
-FILE_COMMAND       = $FE10         ; File operation command
-FILE_STATUS        = $FE11         ; File operation status
-FILE_ADDR_LO       = $FE12         ; Target address low byte
-FILE_ADDR_HI       = $FE13         ; Target address high byte
-FILE_NAME_BUF      = $FE14         ; Filename buffer start ($FE14-$FE1F)
+FIO_COMMAND        = $FE10         ; File operation command
+FIO_STATUS         = $FE11         ; File operation status
+FIO_ADDR_LO        = $FE12         ; Target address low byte
+FIO_ADDR_HI        = $FE13         ; Target address high byte
+FIO_NAME           = $FE14         ; Filename buffer start ($FE14-$FE1F)
 
 ; Additional file I/O registers for save operations
-FILE_END_ADDR_LO   = $FE20         ; End address low byte for save range
-FILE_END_ADDR_HI   = $FE21         ; End address high byte for save range
+FIO_END_ADDR_LO    = $FE20         ; End address low byte for save range
+FIO_END_ADDR_HI    = $FE21         ; End address high byte for save range
 
 ; Module-slot bank select. Writing n maps bank n into the $B000-$EFFF module
 ; window: 0 = RAM (boot/default), 1..255 = read-only ROM modules. Reading returns

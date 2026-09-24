@@ -44,28 +44,15 @@ function(in_guarded_range hex out)
     endif()
 endfunction()
 
-# Known aliases: one register, two names. Each is a wart to remove, not a pattern to
-# copy. The kernel calls the host file-I/O registers FILE_*, while the DOS, BASIC and
-# the assembler call them FIO_*, so check_io_equates, which matches by name, cannot
-# see one of them move while the other stays put. Listing them here turns that blind
-# spot into a check: each pair must still name the same address, below.
-set(_aliases
-    "FILE_COMMAND=FIO_COMMAND"
-    "FILE_STATUS=FIO_STATUS"
-    "FILE_NAME_BUF=FIO_NAME")
-
 # Record NAME at HEX in namespace NS; report a second, different name there.
 macro(claim ns hex name where)
     string(TOUPPER "${hex}" _h)
-    set(_addr_${ns}_${name} "${_h}")
     in_guarded_range("${_h}" _in)
     if(_in)
         math(EXPR _counted_${ns} "${_counted_${ns}} + 1")
         if(DEFINED _owner_${ns}_${_h})
-            set(_o "${_owner_${ns}_${_h}}")
-            if(NOT _o STREQUAL "${name}" AND
-               NOT "${_o}=${name}" IN_LIST _aliases AND NOT "${name}=${_o}" IN_LIST _aliases)
-                list(APPEND _bad "$${_h}: ${_o} (${_where_${ns}_${_h}}) and ${name} (${where})")
+            if(NOT _owner_${ns}_${_h} STREQUAL "${name}")
+                list(APPEND _bad "$${_h}: ${_owner_${ns}_${_h}} (${_where_${ns}_${_h}}) and ${name} (${where})")
             endif()
         else()
             set(_owner_${ns}_${_h} "${name}")
@@ -100,21 +87,6 @@ foreach(_f IN LISTS CPP_FILES)
             claim(cpp "${CMAKE_MATCH_2}" "${CMAKE_MATCH_1}" "${_leaf}")
         endif()
     endforeach()
-endforeach()
-
-# The aliases have to stay aliases. If one name moves and its partner does not, the
-# pair no longer collides above and would pass silently, so check it here.
-foreach(_pair IN LISTS _aliases)
-    string(REPLACE "=" ";" _names "${_pair}")
-    list(GET _names 0 _n1)
-    list(GET _names 1 _n2)
-    if(NOT DEFINED _addr_asm_${_n1} OR NOT DEFINED _addr_asm_${_n2})
-        list(APPEND _bad "alias ${_pair}: one name is no longer declared -- drop the entry, "
-                         "or restore the name")
-    elseif(NOT _addr_asm_${_n1} STREQUAL _addr_asm_${_n2})
-        list(APPEND _bad "alias ${_pair}: ${_n1} is $${_addr_asm_${_n1}} but ${_n2} is "
-                         "$${_addr_asm_${_n2}} -- one register, and it moved under one name")
-    endif()
 endforeach()
 
 # A guard that parses nothing passes everything. Both sides hold dozens of
