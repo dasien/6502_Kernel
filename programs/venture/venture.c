@@ -717,6 +717,27 @@ static void own_colours(void)
     vpwrite(0); vpwrite(0); vpwrite(0);
 }
 
+/* Three red flashes between the catch and CAUGHT. A catch is declared on the frame
+ * the sprites touch, and the banner used to follow at once, so there was no beat in
+ * which the player saw what had happened. The background slot turns red and back,
+ * and whatever colour it held is put back after, rather than assumed. */
+#define FLASH_TIMES   3
+#define FLASH_FRAMES  6         /* a tenth of a second on, a tenth off */
+#define FLASH_RED     0xC0
+static void caught_flash(void)
+{
+    unsigned char n, f, r, g, b;
+
+    vpseek(0);                  /* slot 0, the background */
+    r = vpread(); g = vpread(); b = vpread();
+    for (n = 0; n < FLASH_TIMES; n++) {
+        vpseek(0); vpwrite(FLASH_RED); vpwrite(0); vpwrite(0);
+        for (f = 0; f < FLASH_FRAMES; f++) { present(); wait_frame(); }
+        vpseek(0); vpwrite(r); vpwrite(g); vpwrite(b);
+        for (f = 0; f < FLASH_FRAMES; f++) { present(); wait_frame(); }
+    }
+}
+
 static void load_font(void)
 {
     const unsigned char *p = FONT_ART;
@@ -1111,14 +1132,15 @@ static unsigned char taxi(unsigned char ax, unsigned char ay,
 }
 
 /* Taxicab distance from the level-start square. */
-static unsigned int post_dist(unsigned char x, unsigned char y)
+static unsigned int post_dist(unsigned char x, unsigned char y,
+                              unsigned char sx, unsigned char sy)
 {
-    return (unsigned int)(x > MAP_START_X ? x - MAP_START_X : MAP_START_X - x)
-         + (unsigned int)(y > MAP_START_Y ? y - MAP_START_Y : MAP_START_Y - y);
+    return (unsigned int)(x > sx ? x - sx : sx - x)
+         + (unsigned int)(y > sy ? y - sy : sy - y);
 }
 
-/* Order the posts so the ones woken first are clear of the square the player starts
- * a level on AND spread across the hall.
+/* Order the posts so the ones woken first are clear of where Winky arrives AND spread
+ * across the hall.
  *
  * They are numbered in the order they appear in the layout art, which is scan order
  * and says nothing about either. With one Hallmonster awake that did not matter.
@@ -1128,12 +1150,19 @@ static unsigned int post_dist(unsigned char x, unsigned char y)
  * together at the west wall, straight across the first room's south approach, which
  * made that entrance close to unreachable.
  *
- * So: farthest-point ordering seeded with the start square. Each post in turn is the
- * one whose nearest neighbour -- among the start and everything already chosen -- is
- * as far off as possible. That keeps them off the player at level start and spread
- * over the hall rather than bunched in one corner, and it stays a rule rather than a
- * property of how the art happens to be typed. */
-static void order_hall_posts(void)
+ * So: farthest-point ordering seeded with where Winky arrives. Each post in turn is
+ * the one whose nearest neighbour -- among his arrival cell and everything already
+ * chosen -- is as far off as possible. That keeps them off him and spread over the
+ * hall rather than bunched in one corner, and it stays a rule rather than a property
+ * of how the art happens to be typed.
+ *
+ * The seed used to be the level's start square on every entry. That is where he
+ * arrives only at the start of a level: out of a room, or after a death, he comes back
+ * beside that room's entrance, and the posts woken for the start square could be the
+ * ones flanking it. Leaving the lower-right room by its south door put him between two
+ * of them with nowhere to go -- and every death returned him to the same cell with the
+ * same posts awake, so the game was effectively over. */
+static void order_hall_posts(unsigned char sx, unsigned char sy)
 {
     unsigned char n = 0, i, j, k, best, t;
     unsigned int bestd, d, dd;
@@ -1142,7 +1171,7 @@ static void order_hall_posts(void)
     for (i = 0; i < n; i++) {
         best = i; bestd = 0;
         for (j = i; j < n; j++) {
-            d = post_dist(h_x[j], h_y[j]);
+            d = post_dist(h_x[j], h_y[j], sx, sy);
             for (k = 0; k < i; k++) {
                 dd = (unsigned int)(h_x[j] > h_x[k] ? h_x[j] - h_x[k] : h_x[k] - h_x[j])
                    + (unsigned int)(h_y[j] > h_y[k] ? h_y[j] - h_y[k] : h_y[k] - h_y[j]);
@@ -1193,12 +1222,11 @@ static void enter_map(void)
     mode = MODE_MAP;
     load_board(map_layout[hall_of_level], MAP_W, MAP_H, MAP_X, MAP_Y);
     cut_notches();
-    order_hall_posts();
-    set_hall_count();
 
     /* Back beside the entrance we went in by, never on it: standing on it would
      * re-enter the room instantly, and after a death in an unfinished room that is
-     * a loop with no way out. */
+     * a loop with no way out. Worked out before the posts are chosen, because which
+     * Hallmonsters wake depends on where he arrives -- see order_hall_posts(). */
     wx = MAP_START_X;
     wy = MAP_START_Y;
     if (slot_entered < ROOMS_PER_LEVEL) {
@@ -1207,6 +1235,8 @@ static void enter_map(void)
         else if (ret_y + 1 < MAP_H && !blocked(ret_x, ret_y + 1)) { wx = ret_x; wy = ret_y + 1; }
         else if (ret_y && !blocked(ret_x, ret_y - 1))        { wx = ret_x; wy = ret_y - 1; }
     }
+    order_hall_posts(wx, wy);
+    set_hall_count();
     face_dx = 0; face_dy = -1;
     dawdle = 0;
     settle_movers();
@@ -2363,6 +2393,7 @@ int main(void)
             enter_map();
         } else {
             cue(SND_DEATH);
+            caught_flash();
             if (lives) lives--;
             if (!lives) {
                 sound_off();

@@ -57,11 +57,10 @@
   `FILE_LOAD_CMD` and `FILE_SAVE_CMD`, or keep it and give it a test -- the case for
   keeping it is a kernel service that runs a freshly built `.PRG` straight from the
   host, skipping `ninja disk`.
-- [ ] **VENTURE: flash the screen red three times when Winky is caught.** Now that a
-  catch is declared on the frame the sprites touch, the CAUGHT screen follows almost at
-  once, and there is no beat in which the player sees what happened. Three red flashes
-  between the contact frame and CAUGHT would give that moment. The palette or the VIC's
-  clear command can do it without touching the board.
+- [x] **VENTURE: flash the screen red three times when Winky is caught.** Done
+  2026-09-24. `caught_flash()` turns the background palette slot red and back three
+  times, a tenth of a second each way, between the contact frame and CAUGHT, and puts
+  back whatever colour the slot held rather than assuming black.
 - [ ] **Raster register.** A program can tell when a frame begins but not where
   the beam is inside one, so there is nothing to hang a mid-screen split on, such
   as a status bar that does not scroll with the playfield, two scroll regions or

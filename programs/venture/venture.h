@@ -22,6 +22,7 @@ extern void          vcmd(unsigned char cmd);  /* chip-side block op */
 extern void          vhidecur(void);           /* hide the kernel's cursor */
 extern void          vpseek(unsigned char index);  /* palette byte index */
 extern void          vpwrite(unsigned char b);     /* palette byte; port advances */
+extern unsigned char vpread(void);                 /* palette byte; port advances */
 extern unsigned int  rng_seed(void);           /* RTC-derived entropy */
 extern unsigned char rtc_sec(void);            /* BCD seconds */
 extern unsigned int  jiffies(void);            /* 60 Hz monotonic counter */
