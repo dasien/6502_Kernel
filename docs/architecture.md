@@ -170,8 +170,13 @@ comfortable.
 
 ### Data flow
 
+Each path below crosses from the host into the machine at a chip.
+`docs/board.md`, under "Where the chips meet the host", draws that line in full.
+
 - A keyboard press travels from the host key event into the PIA input buffer, out
   through the kernel's `K_GET_KEYSTROKE` at `$FF09`, and into the running program.
+  Nothing raises an interrupt: the kernel polls the buffer, and games poll the
+  held-key port at `$FE0F`.
 - Display output goes from the program through the `PRINT_CHAR` or blit ABI to the VIC
   register port, into the chip's screen buffer, and finally to `DisplayWidget`, which
   renders it.

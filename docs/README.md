@@ -32,7 +32,7 @@ sitting at the machine wondering what a key does.
 | Doc | Covers |
 |-----|--------|
 | [architecture.md](architecture.md) | System overview, full memory/zero-page map, the `$FF00` kernel ABI, and the bank-switched module design (the consolidated internals reference) |
-| [board.md](board.md) | The virtual chipset drawn as a single-board computer: bus, chips, I/O decode, interrupt lines, and what backs each chip on the host |
+| [board.md](board.md) | The virtual chipset drawn as a single-board computer: bus, chips, I/O decode, interrupt lines, and the line between the emulated machine and the host |
 | [opcode_table_65c02.md](opcode_table_65c02.md) | 65C02 opcode table |
 | [sound_design.md](sound_design.md) | SID sound-chip design |
 | [video_design.md](video_design.md) | Why the VIC used to scroll in whole cells, and the three features that fixed it: a redefinable character set, fine vertical scroll, and sprites |

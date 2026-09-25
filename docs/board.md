@@ -141,17 +141,79 @@ zeroes the module window so that bank 0 boots as clean scratch.
 
 ## Where the chips meet the host
 
-The chips along the right-hand side of the diagram are only half the story. Each one
-has a host-side backing that would be a physical connector on a real board.
+This section is the authoritative account of where the emulated machine ends and the
+host begins. The rule is simple.
+
+- **The machine** is the 6502 software and the chip models in `src/computer/`. All of
+  it runs on machine time, counted in CPU cycles. The 60 Hz jiffy and the frame
+  boundary come from the cycle count, so a second of machine time holds sixty of
+  each whatever the host is doing. A test can run the machine with no window,
+  no clock and no network.
+- **The host** is everything that touches the real world: the Qt run loop in
+  `src/ui/`, the window, the speakers, the wall clock, the network and the Mac's
+  files. It decides how many cycles to run, at most 50 ms of catch-up per slice
+  (`MainWindow`), and it carries data across at the chips' edges.
+
+The chips are the only doors between the two. Each one exposes registers to the
+6502 on one side and has a host-side backing on the other. On a real board that
+backing would be a connector with a peripheral plugged into it.
 
 | Chip | Backed by | Stands in for |
 |---|---|---|
 | BLK | `disk.img`, a FAT16 image | An IDE or CF card |
-| PIA file I/O | The host open and save dialogs | A parallel port |
 | ACIA | `Modem`, over a TCP socket | An RS-232 port and a Hayes modem |
 | SID | `SidAudio`, over a `QAudioSink` | The audio jack |
 | VIC | `DisplayWidget` | The video connector |
 | PIA keyboard | Qt key events | The keyboard connector |
+| RTC | The host's local time | A battery-backed clock chip |
+| PowerSwitch | Closing the window | A soft-power supply |
+| PIA file I/O | The host filesystem and its open and save dialogs | Nothing: see below |
+
+### Interfaces from the period, devices without delays
+
+Most of those rows are period hardware. A 6551 on RS-232 driving an external
+Hayes modem is how a home computer went online, and only the far end differs, a TCP
+connection instead of a phone line. A sector-addressed disk controller is what a SASI
+or IDE adapter gave a late 8-bit machine. What the host adds is speed. **No backing
+models the time its real counterpart took**, and that is deliberate.
+
+- The ACIA takes a baud rate but does not pace bytes at it. Data moves as fast as
+  the 6502 can handle it, not at 300 or 19200 baud.
+- A sector read or write completes at once, with no seek or rotation time.
+- The RTC reads the host clock at the moment it is latched.
+
+The interfaces are faithful, so the software drives them the way it would drive the
+real thing. Only the waiting is gone.
+
+### Keyboard: decoded and polled
+
+There is no keyboard interrupt. `DisplayWidget` turns a Qt key event into an ASCII
+byte, and the PIA queues it in a FIFO. The kernel's `K_GET_KEYSTROKE` polls that
+queue. Games read the live held-key port at `$FE0F` instead, which the host updates
+on every press and release. The machine therefore sees an encoded keyboard with a
+buffer, as on an Apple II with a type-ahead queue. It never sees a key matrix, and
+there is no scan loop in the jiffy handler.
+
+### The one exception: host file I/O
+
+The PIA's file registers at `$FE10-$FE22` are not an interface to a device. A
+program writes a filename and an open command, and a file on the Mac opens. There is
+no bus protocol and nothing on the far end to talk to. Emulators call this a **trap**,
+and VICE's virtual-device traps do the same for C64 disk access. The nearest real
+equivalent would be a serial link to a second computer running a file server. BASIC's
+`LOAD`/`SAVE`, the monitor's `L:`, and DOS's `IMPORT`/`EXPORT` all use it. Everything
+on `disk.img` goes through the BlockDevice instead.
+
+### The display
+
+The VIC's plane is machine state. Showing it is host work. `MainWindow` repaints
+through `Computer6502::takeRepaintDue()`:
+
+- at once when a program presents a finished frame by writing `$FECD`;
+- at a frame boundary, if the frame before it was not presented;
+- at every boundary, if a whole frame passes without a present.
+
+The host has no display clock of its own. `docs/video_design.md` explains why.
 
 The screen is worth calling out, because it is not in the 64K map at all. There is no
 frame buffer to poke. The VIC owns a plane of 80 by 25 characters and attributes, and

@@ -49,7 +49,10 @@ Two run in the host.
   and the CPU speed cannot drift apart.
 - A 100 ms status timer refreshes the register sidebar.
 
-`DisplayWidget` repaints on its own refresh timer, independent of both.
+`DisplayWidget` has no clock of its own. The execution timer repaints it after a
+slice when `Computer6502::takeRepaintDue()` says so, which is on a present or at an
+emulated frame boundary. `docs/board.md` has the rule and the rest of the line
+between the machine and the host.
 
 ## Rendering
 
