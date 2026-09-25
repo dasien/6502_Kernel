@@ -116,6 +116,13 @@ program = FRONTIER.PRG -> GAMES/FRONTIER.PRG
 doc     = FRONTIER.TXT -> GAMES/FRONTIER.TXT
 desc    = Frontier Fortune, a Wild-West trading game
 
+[sprdemo]
+dir     = programs/sprdemo
+sources = sprdemo.c
+config  = sprdemo.cfg
+program = SPRDEMO.PRG -> DEMOS/SPRDEMO.PRG
+desc    = bitmap sprites from the VIC's pattern RAM
+
 # ---- Scott Adams adventures ------------------------------------------------
 # Twelve games, one engine. Each entry builds programs/scottfree/scott.c against a
 # different database: `generate` runs the dat2c host tool over the .dat to produce

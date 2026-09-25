@@ -203,11 +203,12 @@ TEST(VicFrameCounter, WrapsCleanly)
     EXPECT_EQ(v.read(VIC::kRegFrame), 0);
 }
 
-// It answers at its own address, which is outside the main register block.
+// It answers at its own address, which is outside the main register block. The
+// sprite pattern port follows it directly.
 TEST(VicFrameCounter, IsDecodedAsAVicAddress)
 {
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegFrame));
-    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegFrame + 1));
+    EXPECT_EQ(VIC::kRegFrame + 1, VIC::kRegSprPatFirst);
 }
 
 // ---- presenting (write $FECD) ----------------------------------------------

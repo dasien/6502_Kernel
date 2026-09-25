@@ -14,6 +14,7 @@ namespace Computer
     VIC::VIC() : cursor_x_(0), cursor_y_(0), dirty_flag_(false)
     {
         font_ram_.resize(kFontRamSize);
+        sprpat_ram_.resize(kSprPatRamSize);   // zero: no images until a program loads them
         seedPalette();
         seedFontRam();
         clearScreen();
@@ -87,16 +88,17 @@ namespace Computer
     // Register port ($FE2D-$FE36) -- the real interface to the planes.
     // ---------------------------------------------------------------------
 
-    // Three ranges: the original port block, then the soft-font port and the sprite
-    // registers, which had to go above the RTC because $FE38 (the SID) sits
-    // immediately after the first block.
+    // The original port block, then the soft-font port, the sprite registers, the
+    // palette, the frame counter and the sprite pattern port, all above the RTC
+    // because $FE38 (the SID) sits immediately after the first block.
     bool VIC::isVideoRegAddress(const uint16_t address)
     {
         return (address >= kRegFirst && address <= kRegLast) ||
                (address >= kRegFontFirst && address <= kRegFontLast) ||
                (address >= kRegSpriteFirst && address <= kRegSpriteLast) ||
                (address >= kRegPaletteFirst && address <= kRegPaletteLast) ||
-               address == kRegFrame;
+               address == kRegFrame ||
+               (address >= kRegSprPatFirst && address <= kRegSprPatLast);
     }
 
     void VIC::endFrame()
@@ -110,6 +112,17 @@ namespace Computer
     const VIC::Sprite &VIC::sprite(const uint8_t index) const
     {
         return sprites_[index < kSpriteCount ? index : 0];
+    }
+
+    uint8_t VIC::spritePixel(const Sprite &sp, const uint16_t x, const uint16_t y) const
+    {
+        const uint16_t sx = x / kSprPatDim, sy = y / kSprPatDim;
+        if (sx >= sp.w || sy >= sp.h) return 0;
+        const uint8_t slot = static_cast<uint8_t>(sp.glyph + sy * sp.w + sx);
+        const uint16_t px = x % kSprPatDim, py = y % kSprPatDim;
+        const uint8_t pair = sprpat_ram_[static_cast<size_t>(slot) * kSprPatBytes +
+                                         py * kSprPatRowBytes + px / 2];
+        return (px & 1) ? (pair & 0x0F) : (pair >> 4);
     }
 
     void VIC::advanceIndex() const
@@ -161,6 +174,16 @@ namespace Computer
             palette_index_ = static_cast<uint8_t>((palette_index_ + 1) % kPaletteBytes);
             return value;
         }
+        case kRegSprPatLo:
+            return static_cast<uint8_t>(sprpat_index_ & 0xFF);
+        case kRegSprPatHi:
+            return static_cast<uint8_t>(sprpat_index_ >> 8);
+        case kRegSprPatData:
+        {
+            const uint8_t value = sprpat_ram_[sprpat_index_];
+            sprpat_index_ = static_cast<uint16_t>((sprpat_index_ + 1) % kSprPatRamSize);
+            return value;
+        }
         case kRegFontLo:
             return static_cast<uint8_t>(font_index_ & 0xFF);
         case kRegFontHi:
@@ -180,6 +203,7 @@ namespace Computer
                 case kSprYHi:  return static_cast<uint8_t>(((sp.y >> 8) & 0x03) |
                                                            ((sp.h - 1) << kSprSizeShift) |
                                                            (sp.magy ? kSprMagY : 0) |
+                                                           (sp.bitmap ? kSprBitmap : 0) |
                                                            (sp.enabled ? kSprEnable : 0));
                 case kSprGlyph: return sp.glyph;
                 default:        return sp.attr;
@@ -242,6 +266,20 @@ namespace Computer
         case kRegPaletteData:
             palette_[palette_index_ % kPaletteBytes] = value;
             palette_index_ = static_cast<uint8_t>((palette_index_ + 1) % kPaletteBytes);
+            dirty_flag_ = true;
+            break;
+        // The pattern index wraps as the font index does, and for the same reason.
+        case kRegSprPatLo:
+            sprpat_index_ = static_cast<uint16_t>((sprpat_index_ & 0xFF00u) | value);
+            break;
+        case kRegSprPatHi:
+            sprpat_index_ = static_cast<uint16_t>(
+                ((sprpat_index_ & 0x00FFu) | (static_cast<uint32_t>(value) << 8)) %
+                kSprPatRamSize);
+            break;
+        case kRegSprPatData:
+            sprpat_ram_[sprpat_index_] = value;
+            sprpat_index_ = static_cast<uint16_t>((sprpat_index_ + 1) % kSprPatRamSize);
             dirty_flag_ = true;
             break;
         case kRegFontLo:
@@ -327,6 +365,7 @@ namespace Computer
                               (static_cast<uint16_t>(value & 0x03) << 8));
                     sp.h = static_cast<uint8_t>(((value & kSprSizeMask) >> kSprSizeShift) + 1);
                     sp.magy = (value & kSprMagY) != 0;
+                    sp.bitmap = (value & kSprBitmap) != 0;
                     sp.enabled = (value & kSprEnable) != 0;
                     break;
                 case kSprGlyph: sp.glyph = value; break;
@@ -361,6 +400,7 @@ namespace Computer
             sp.h = 1;
             sp.magx = false;
             sp.magy = false;
+            sp.bitmap = false;             // back to glyphs; pattern RAM is kept
         }
         dirty_flag_ = true;
     }

@@ -96,6 +96,22 @@ namespace Computer
      * kCmdClear disables all of them, for the same reason it resets row sizes and the
      * font: no program can leave something stranded on the shell's screen.
      *
+     * BITMAP SPRITES. A glyph is one colour and shares its code with the text, so a
+     * sprite can instead take its picture from PATTERN RAM: 256 image slots of 16x16
+     * pixels at 4 bits a pixel, 32 KB of video RAM inside the chip and, like the font,
+     * reached only through an index/data port ($FECE-$FED0). This is the TMS9918's
+     * sprite pattern table in shape. Setting kSprBitmap in a sprite's Y high byte makes
+     * its glyph register name a slot instead of a character code; size then composes
+     * consecutive SLOTS rather than codes, and magnify still doubles.
+     *
+     * Pixel index 0 is transparent and 1-15 name palette slots, so a palette effect
+     * reaches bitmap sprites as it reaches everything else. The cost is that palette
+     * slot 0 cannot be drawn by one; art that wants it maps it to another slot.
+     *
+     * Pattern RAM is zero at power-on and survives kCmdClear, which turns bitmap mode
+     * off with the rest of the sprite state but leaves the images alone -- a program
+     * uploads its art once and a screen clear should not cost it the upload.
+     *
      * @see Memory, BlockDevice, Computer6502
      */
     class VIC
@@ -157,8 +173,8 @@ namespace Computer
         /// Sprite registers, six per sprite, immediately after the font port.
         /// Positions are in NOMINAL pixels on an 8x16 cell grid (so 0..639 x 0..399);
         /// the renderer scales them by the window zoom.
-        /// 17 x 6 bytes ends at $FECA. The palette takes $FECB-$FECC and the frame
-        /// counter $FECD, leaving 50 free.
+        /// 17 x 6 bytes ends at $FECA. The palette takes $FECB-$FECC, the frame
+        /// counter $FECD and the sprite pattern port $FECE-$FED0, leaving 47 free.
         /// 25 sprites fitted
         /// too, but left only 5 -- a poor price for a shot count that only occurs at one
         /// weapon's peak, and this page is the only address space new devices have.
@@ -194,15 +210,35 @@ namespace Computer
         /// because the two are one conversation: ask which frame it is, say you are
         /// done with it.
         static constexpr uint16_t kRegFrame = 0xFECD;
+
+        /// Sprite pattern port: a byte index into pattern RAM, low then high, and an
+        /// auto-incrementing data port that reads back. Slot n starts at n * 128.
+        static constexpr uint16_t kRegSprPatLo = 0xFECE;   ///< pattern byte index low (W/R)
+        static constexpr uint16_t kRegSprPatHi = 0xFECF;   ///< pattern byte index high (W/R)
+        static constexpr uint16_t kRegSprPatData = 0xFED0; ///< pattern data, auto-inc (R/W)
+        static constexpr uint16_t kRegSprPatFirst = kRegSprPatLo;
+        static constexpr uint16_t kRegSprPatLast = kRegSprPatData;
+
+        /// Pattern RAM geometry. Two pixels a byte, the LEFT pixel in the high nibble,
+        /// 8 bytes a row, rows top to bottom.
+        static constexpr uint16_t kSprPatSlots = 256;
+        static constexpr uint8_t kSprPatDim = 16;                           ///< pixels a side
+        static constexpr uint16_t kSprPatRowBytes = kSprPatDim / 2;         ///< 8
+        static constexpr uint16_t kSprPatBytes = kSprPatRowBytes * kSprPatDim; ///< 128
+        static constexpr uint32_t kSprPatRamSize =
+            static_cast<uint32_t>(kSprPatBytes) * kSprPatSlots;             ///< 32 KB
         // Offsets within a sprite's block.
         static constexpr uint8_t kSprXLo = 0;
         static constexpr uint8_t kSprXHi = 1;   ///< bits 1-0 pos; bits 4-2 WIDTH-1
         static constexpr uint8_t kSprYLo = 2;
         static constexpr uint8_t kSprYHi = 3;   ///< bits 1-0 pos; bits 4-2 HEIGHT-1;
-                                                ///< bit 7 = ENABLE
+                                                ///< bit 6 = BITMAP; bit 7 = ENABLE
         static constexpr uint8_t kSprGlyph = 4;
         static constexpr uint8_t kSprAttr = 5;  ///< fg/bright as in a cell attribute
         static constexpr uint8_t kSprEnable = 0x80;
+        /// The glyph register names a pattern-RAM slot, not a character code. See the
+        /// class comment; the attribute byte is ignored and reserved in this mode.
+        static constexpr uint8_t kSprBitmap = 0x40;     ///< bit 6 of the Y high byte
 
         /// Size in CELLS, held in the spare bits of the two position high bytes: a
         /// position needs 10 bits of a 16-bit pair, so bits 4-2 of each were being
@@ -225,7 +261,8 @@ namespace Computer
 
         /// Glyphs per font, bytes per glyph, and how many complete fonts are held.
         /// 16 sets is enough for 2 px phase steps of a 32 px double-height cell; the
-        /// whole thing is 64 KB of host memory and zero guest address space.
+        /// whole thing is 64 KB of video RAM inside the chip and zero of the CPU's
+        /// address space.
         static constexpr uint16_t kGlyphCount = 256;
         static constexpr uint16_t kGlyphBytes = 16;
         static constexpr uint16_t kFontSize = kGlyphCount * kGlyphBytes; // 4096
@@ -332,8 +369,18 @@ namespace Computer
             uint8_t h = 1;
             bool magx = false;   ///< each pattern pixel drawn 2x wide
             bool magy = false;   ///< ...and/or 2x tall
+            /// Picture from pattern RAM rather than the font. w and h then count
+            /// 16x16 slots, so the pattern is w*16 by h*16 pixels.
+            bool bitmap = false;
         };
         [[nodiscard]] const Sprite &sprite(uint8_t index) const;
+
+        /// One pixel of a BITMAP sprite's pattern, as a palette index; 0 is
+        /// transparent. x and y are pattern pixels, before magnify, in 0..w*16-1 and
+        /// 0..h*16-1. Slots compose row-major from the base, as glyph codes do, and
+        /// wrap at 255. The decoding lives in the chip rather than the renderer so the
+        /// format has one owner and can be tested without a window.
+        [[nodiscard]] uint8_t spritePixel(const Sprite &sp, uint16_t x, uint16_t y) const;
 
         /// One palette slot as 8-bit R, G, B. The renderer asks per cell rather than
         /// keeping a copy, so a palette write takes effect on the next repaint with
@@ -391,7 +438,8 @@ namespace Computer
         bool presented_this_frame_ = false;        ///< a present since the last boundary
         bool presented_last_frame_ = false;        ///< the frame just ended had one
 
-        // Soft font. Not in the 6502's address space -- see the class comment.
+        // Palette and soft font. Not in the 6502's address space -- see the class
+        // comment.
         std::array<uint8_t, kPaletteBytes> palette_{};  ///< R,G,B per slot
         mutable uint8_t palette_index_ = 0;      ///< byte index for the data port
 
@@ -399,6 +447,9 @@ namespace Computer
         mutable uint32_t font_index_ = 0;        ///< byte index for the data port
         uint8_t font_set_ = 0;                   ///< which set the renderer reads
         bool font_ram_active_ = false;           ///< false = render from the ROM
+
+        std::vector<uint8_t> sprpat_ram_;        ///< kSprPatSlots x kSprPatBytes
+        mutable uint16_t sprpat_index_ = 0;      ///< byte index for the data port
         uint16_t cursor_index_ = 0;
         bool cursor_hidden_ = false;
 

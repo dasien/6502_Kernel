@@ -360,6 +360,39 @@ void DisplayWidget::drawCharacterAt(QPainter& painter, const int x, const int y,
     blitGlyph(painter, x, y, glyph, fg, bg, scale, y_offset);
 }
 
+// One pattern pixel is one nominal pixel, like a glyph's, so a 16x16 slot covers
+// two cells across and one down, and the zoom scales it the same way. The chip
+// decodes the pixels (VIC::spritePixel); all this does is look them up in the palette.
+void DisplayWidget::drawBitmapSprite(QPainter& painter, const Computer::VIC::Sprite& sp)
+{
+    QRgb colour[16];
+    colour[0] = 0;                       // transparent, whatever slot 0 holds
+    for (uint8_t i = 1; i < 16; ++i)
+    {
+        uint8_t r, g, b;
+        video_chip_->paletteColor(i, r, g, b);
+        colour[i] = qRgb(r, g, b);
+    }
+
+    const int w = sp.w * Computer::VIC::kSprPatDim;
+    const int h = sp.h * Computer::VIC::kSprPatDim;
+    QImage img(w, h, QImage::Format_ARGB32);
+    for (int y = 0; y < h; ++y)
+    {
+        QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < w; ++x)
+        {
+            line[x] = colour[video_chip_->spritePixel(sp, static_cast<uint16_t>(x),
+                                                      static_cast<uint16_t>(y))];
+        }
+    }
+
+    const int mx = sp.magx ? 2 : 1;
+    const int my = sp.magy ? 2 : 1;
+    painter.drawImage(QRect(sp.x * char_width_ / 8, sp.y * char_height_ / 16,
+                            w * mx * char_width_ / 8, h * my * char_height_ / 16), img);
+}
+
 // Sprites sit above the character planes at pixel positions, with the glyph's
 // background bits transparent so the terrain shows through. No clip and no fine
 // offset: a sprite must NOT move with the scroll region, which is what makes it the
@@ -371,6 +404,12 @@ void DisplayWidget::drawSprites(QPainter& painter)
         const Computer::VIC::Sprite& sp = video_chip_->sprite(i);
         if (!sp.enabled)
         {
+            continue;
+        }
+
+        if (sp.bitmap)
+        {
+            drawBitmapSprite(painter, sp);
             continue;
         }
 

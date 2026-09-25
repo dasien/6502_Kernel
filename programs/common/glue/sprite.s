@@ -15,6 +15,8 @@
 
 .export _spr_sel, _spr_x, _spr_x_px, _spr_y, _spr_y_px
 .export _spr_glyph, _spr_attr, _spr_on
+.export _spr_w, _spr_h, _spr_mag
+.export spr_off                 ; for sprimg.s, which sets the bitmap bit
 
 .include "mfc.inc"
 
@@ -153,6 +155,60 @@ SPR_ATTR        = SPR0+5
 @off:   lda     SPR_Y_HI,x
         and     #$7F
         sta     SPR_Y_HI,x
+        rts
+.endproc
+
+; void spr_w(unsigned char cells) / spr_h(unsigned char cells) -- size, 1..8. Glyph
+; sprites count 8x16 cells, bitmap sprites 16x16 slots; either way the chip draws
+; consecutive codes or slots from the base, row-major. Bits 4-2 of each high byte,
+; stored as size-1; the position, magnify and enable bits are kept.
+.proc _spr_w
+        jsr     size_bits
+        ldx     spr_off
+        lda     SPR_X_HI,x
+        and     #$E3
+        ora     spr_tmp
+        sta     SPR_X_HI,x
+        rts
+.endproc
+
+.proc _spr_h
+        jsr     size_bits
+        ldx     spr_off
+        lda     SPR_Y_HI,x
+        and     #$E3
+        ora     spr_tmp
+        sta     SPR_Y_HI,x
+        rts
+.endproc
+
+; A = size 1..8 -> spr_tmp = (size-1) << 2, confined to bits 4-2.
+.proc size_bits
+        dec     a
+        and     #$07
+        asl     a
+        asl     a
+        sta     spr_tmp
+        rts
+.endproc
+
+; void spr_mag(unsigned char axes) -- bit 0 doubles X, bit 1 doubles Y. Bit 5 of the
+; matching high byte; everything else in both bytes is kept.
+.proc _spr_mag
+        ldx     spr_off
+        sta     spr_tmp
+        lda     SPR_X_HI,x
+        and     #$DF
+        lsr     spr_tmp         ; bit 0 -> carry
+        bcc     :+
+        ora     #$20
+:       sta     SPR_X_HI,x
+        lda     SPR_Y_HI,x
+        and     #$DF
+        lsr     spr_tmp         ; bit 1 -> carry
+        bcc     :+
+        ora     #$20
+:       sta     SPR_Y_HI,x
         rts
 .endproc
 

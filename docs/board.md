@@ -81,12 +81,13 @@ One 256-byte page holds every chip's registers. It is carved out of the kernel R
 window and reserved by the `IORESV` linker segment, so kernel code can never grow
 into it by accident.
 
-The decode runs from `$FE00` to `$FECD`, and each chip claims one span. The ranges in
+The decode runs from `$FE00` to `$FED0`, and each chip claims one span. The ranges in
 the table below are taken from the `is*Address()` predicate in each class rather than
 paraphrased from it. The decode is contiguous and gapless with a single exception.
-The VIC answers two separate ranges, because the soft-font port and the sprite block
-were both added after the SID and the RTC had taken the addresses next to its first
-range. `isVideoRegAddress()` is therefore three tests rather than one.
+The VIC answers two separate ranges, because the soft-font port, the sprite block
+and everything after them were added once the SID and the RTC had taken the addresses
+next to its first range. `isVideoRegAddress()` is therefore several tests rather than
+one.
 
 | Range | Chip | Class | Registers |
 |---|---|---|---|
@@ -102,12 +103,13 @@ range. `isVideoRegAddress()` is therefore three tests rather than one.
 | `$FE65-$FECA` | VIC | `VIC` | Seventeen sprite records of six bytes each |
 | `$FECB-$FECC` | VIC | `VIC` | Soft palette: byte index, then an auto-incrementing data port |
 | `$FECD` | VIC | `VIC` | Frame counter on read; a write presents the finished frame |
+| `$FECE-$FED0` | VIC | `VIC` | Sprite pattern RAM: byte index low and high, then an auto-incrementing data port |
 
 The RTC reaches `$FE60` because the FAT date registers sit above the clock
 registers proper. The authority for every range here is the chip's own
 `is*Address()` predicate.
 
-`$FECE-$FEFF` is unclaimed. That leaves 50 bytes, and it is where the next chip goes.
+`$FED1-$FEFF` is unclaimed. That leaves 47 bytes, and it is where the next chip goes.
 The size of the sprite block was chosen against that figure rather than against a
 theoretical peak. Twenty-five sprites would have fitted but would have left only five
 free bytes, so seventeen were taken instead.
@@ -224,9 +226,10 @@ monitor and the assembler to use.
 
 The same is true of everything else the chip holds. Its font is RAM rather than a
 fixed ROM, and it holds sixteen complete sets of 256 glyphs that a program can switch
-between with a single write. Its seventeen sprites are pixel-positioned glyphs drawn
-over the cell planes. None of it is addressable, and all of it is reached through
-ports.
+between with a single write. Its seventeen sprites are pixel-positioned objects drawn
+over the cell planes, each showing either a glyph or a 16x16 picture from 32 KB of
+sprite pattern RAM, at 4 bits a pixel through the palette. None of it is addressable,
+and all of it is reached through ports.
 
 That makes the VIC a chip in the mould of the TMS9918 or the C128 VDC rather than the
 C64 VIC-II, which read the CPU's own RAM and paid for it in bus contention. The trade

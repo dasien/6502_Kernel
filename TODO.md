@@ -52,7 +52,7 @@
   of `PIA.cpp` (424-571) plus the register handling and two constants in `PIA.h`.
   The live file-I/O registers (command, status, name, data) are unaffected; the DOS,
   BASIC and the assembler use them. Freeing the four registers is worth little: they
-  are two holes inside the PIA's span, and `$FECE`-`$FEFF` is already free. Either
+  are two holes inside the PIA's span, and `$FED1`-`$FEFF` is already free. Either
   remove block mode along with the kernel's `FIO_ADDR_*`, `FIO_END_ADDR_*`,
   `FILE_LOAD_CMD` and `FILE_SAVE_CMD`, or keep it and give it a test -- the case for
   keeping it is a kernel service that runs a freshly built `.PRG` straight from the

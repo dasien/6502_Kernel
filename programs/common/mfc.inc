@@ -143,4 +143,16 @@ VREG_PAL_DATA      = $FECC      ; palette data port; auto-increments
 SPR0               = $FE65
 SPR_STRIDE         = 6
 
+; ---- VIC sprite pattern RAM ------------------------------------------------
+; 256 image slots of 16x16 pixels at 4 bits a pixel, 128 bytes each, inside the
+; chip like the font and reached through this index/data pair. Slot n starts at
+; byte n*128. Two pixels a byte, the LEFT one in the high nibble; 0 is
+; transparent, 1-15 are palette slots. A sprite shows a slot instead of a glyph
+; when SPR_BITMAP is set in its Y high byte (offset 3), and size then counts
+; 16x16 slots rather than 8x16 cells.
+VREG_SPRPAT_LO     = $FECE      ; pattern byte index low
+VREG_SPRPAT_HI     = $FECF      ; pattern byte index high
+VREG_SPRPAT_DATA   = $FED0      ; pattern data port; auto-increments
+SPR_BITMAP         = $40        ; Y high byte: glyph register names a pattern slot
+
 .endif

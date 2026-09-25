@@ -58,7 +58,7 @@ The rest of this part describes those components and how they connect.
         ┌─────────────────────────────────────────────────┴────────────────┐
         │                          Memory (64K)                            │
         │  RAM  •  ROM overlay ($F000-$FFFF)  •  bank window ($B000-$EFFF) │
-        │  •  I/O page routed to peripherals ($FE00-$FECD)                 │
+        │  •  I/O page routed to peripherals ($FE00-$FED0)                 │
         └───┬──────┬───────┬───────┬───────┬───────┬───────────────────────┘
             ▼      ▼       ▼       ▼       ▼       ▼
         ┌──────┐┌─────┐┌──────┐┌─────┐┌─────┐┌───────────┐
@@ -125,8 +125,8 @@ $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
 $B000-$EFFF  Bank-switched module window (BASIC 1, FORTH 3, MONITOR 4; 2 free)
 $F000-$FFFF  Kernel BIOS; jump table at $FF00, vectors at $FFFA
-$FE00-$FECD  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font, sprites, palette, frame
-             (carved out of the ROM window; $FECE-$FEFF free)
+$FE00-$FED0  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font, sprites, palette,
+             frame, sprite patterns (carved out of the ROM window; $FED1-$FEFF free)
 ```
 
 See `Part 2 (Memory and zero-page map)` for the full zero-page allocation, the I/O
@@ -220,7 +220,7 @@ ASCII rather than PETSCII, a 64K address space whose only banked region is the
 | `$8800-$AFFF` | 10 KB | The DOS ROM, which is always mapped and holds the FAT16 filesystem and the DOS shell |
 | `$B000-$EFFF` | 16 KB | The module window. Bank 0 is RAM and banks 1 to 255 are ROM modules, of which BASIC is bank 1 |
 | `$F000-$FFFF` | 4 KB | The kernel BIOS. The monitor is module bank 4 and is not here |
-| `$FE00-$FECD` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
+| `$FE00-$FED0` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
 
 There is no CIA, and the SID is not a Commodore part. The VIC is an 80 by 25 colour
 text chip whose character and colour planes live inside the chip rather than in the
@@ -345,15 +345,18 @@ itself.
 | `$FE62` | `VREG_FONT_LO` | Font byte index low |
 | `$FE63` | `VREG_FONT_HI` | Font byte index high (spans all font sets) |
 | `$FE64` | `VREG_FONT_DATA` | Font data port; auto-increments |
-| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0 pos, bits 4–2 width−1, bit 5 magnify X), Y lo, Y hi (bits 1–0 pos, bits 4–2 height−1, bit 5 magnify Y, bit 7 = enable), glyph, attribute |
+| `$FE65-$FECA` | sprites | 17 records of 6 bytes: X lo, X hi (bits 1–0 pos, bits 4–2 width−1, bit 5 magnify X), Y lo, Y hi (bits 1–0 pos, bits 4–2 height−1, bit 5 magnify Y, bit 6 = bitmap, bit 7 = enable), glyph or pattern slot, attribute |
 | `$FECB` | `VREG_PAL_IDX` | Palette byte index (0..47): sixteen slots of three bytes |
 | `$FECC` | `VREG_PAL_DATA` | Palette data port; auto-increments |
 | `$FECD` | `VREG_FRAME` | Read: frame counter, increments once per displayed frame and wraps; not cleared by reading. Write any value: present the finished frame now |
+| `$FECE` | `VREG_SPRPAT_LO` | Sprite pattern byte index low |
+| `$FECF` | `VREG_SPRPAT_HI` | Sprite pattern byte index high (0..32767; slot n starts at n*128) |
+| `$FED0` | `VREG_SPRPAT_DATA` | Sprite pattern data port; auto-increments |
 
-The soft-font port, the sprite block, the palette and the frame counter sit above the RTC
-rather than beside the rest because the port block ends at `$FE37` with the SID
-immediately after.
-`$FECE-$FEFF` is the remaining free space in the I/O page.
+The soft-font port, the sprite block, the palette, the frame counter and the pattern
+port sit above the RTC rather than beside the rest because the port block ends at
+`$FE37` with the SID immediately after.
+`$FED1-$FEFF` is the remaining free space in the I/O page.
 
 A sprite occupies one cell of 8 by 16 nominal pixels unless its size bits say
 otherwise, and it may reach 8 by 8 cells. A multi-cell sprite draws consecutive glyph
@@ -364,6 +367,10 @@ remains a single sprite with one position to update. The size is stored as size 
 one, in bits that a position never uses, so code written before sizes existed leaves
 them zero and still gets a single cell. A clear returns every sprite to one cell and
 switches it off.
+
+A sprite with the bitmap bit set shows a 16 by 16 picture from the VIC's sprite
+pattern RAM instead of a glyph, and its size bits then count 16 by 16 slots rather
+than cells. `docs/video_design.md` has the format.
 
 Sprite positions are nominal pixels on an 8 by 16 grid and take no account of row
 doubling. On a screen with double-size rows, the cell plane and the sprite plane do not

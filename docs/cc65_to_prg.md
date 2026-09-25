@@ -122,6 +122,35 @@ for (;;) {
 A delay that is only a duration, a splash screen held for three seconds, needs
 neither discipline. Compare `jiffies()` against a mark and leave it at that.
 
+### Sprites
+
+Select a sprite, then set its fields. Every setter takes one argument, so none
+of them touches the C stack.
+
+| Call | Does |
+|---|---|
+| `spr_sel(i)` | pick sprite `i` (0 to 16) for the calls that follow |
+| `spr_x(col)`, `spr_y(row)` | position in cells |
+| `spr_x_px(px)`, `spr_y_px(py)` | position in nominal pixels, 0 to 639 and 0 to 399 |
+| `spr_glyph(g)`, `spr_attr(a)` | the glyph and its colour; for a bitmap sprite, `g` is the pattern slot |
+| `spr_w(n)`, `spr_h(n)` | size, 1 to 8 cells, or slots for a bitmap sprite |
+| `spr_mag(axes)` | bit 0 doubles X, bit 1 doubles Y |
+| `spr_on(on)` | show or hide it, leaving everything else alone |
+| `spr_bitmap(on)` | take the picture from pattern RAM rather than the font |
+
+A bitmap sprite's pictures are loaded once, at start-up:
+
+```c
+spr_img_seek(SLOT_HERO);         /* slot n is bytes n*128 .. n*128+127 */
+spr_img_load(hero_art);          /* 128 bytes: 16 rows of 8, left pixel high nibble */
+spr_sel(0); spr_glyph(SLOT_HERO); spr_bitmap(1); spr_on(1);
+```
+
+`spr_img_load()` streams one slot and leaves the port at the next, so frames in
+consecutive slots load with one seek. `spr_img_read()` and `spr_img_write()` move
+a single byte. `docs/video_design.md` has the pattern format; SPRDEMO is a worked
+example.
+
 ### Memory map (`.cfg`)
 
 User RAM is `$0800–$87FF` (32 KB). The standard layout:

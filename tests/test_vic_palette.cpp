@@ -157,9 +157,9 @@ TEST(VicPalette, TheChipClaimsItsPaletteRegisters)
 {
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegPaletteIdx));
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegPaletteData));
-    // The byte after the palette is the frame counter, which the VIC answers too;
-    // past that the claim has to stop.
+    // The byte after the palette is the frame counter and after that the sprite
+    // pattern port, which the VIC answers too; past those the claim has to stop.
     EXPECT_EQ(VIC::kRegPaletteData + 1, VIC::kRegFrame);
-    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegFrame + 1))
-        << "the claim is wider than the palette and the frame counter";
+    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegSprPatLast + 1))
+        << "the claim is wider than the palette, the frame counter and the pattern port";
 }

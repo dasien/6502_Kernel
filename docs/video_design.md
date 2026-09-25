@@ -127,9 +127,9 @@ Seventeen sprites, six bytes each, at `$FE65-$FECA`.
 | 0 | X low |
 | 1 | X high: bits 1-0 position, bits 4-2 width−1, bit 5 magnify X |
 | 2 | Y low |
-| 3 | Y high: bits 1-0 position, bits 4-2 height−1, bit 5 magnify Y, bit 7 enable |
-| 4 | Glyph |
-| 5 | Attribute, foreground and bright as in a cell |
+| 3 | Y high: bits 1-0 position, bits 4-2 height−1, bit 5 magnify Y, bit 6 bitmap, bit 7 enable |
+| 4 | Glyph, or pattern slot when bit 6 of offset 3 is set |
+| 5 | Attribute, foreground and bright as in a cell; ignored for a bitmap sprite |
 
 Positions are nominal pixels on the 8x16 cell grid, so 0 to 639 by 0 to 399, and
 the renderer scales them by the window zoom. The background is transparent.
@@ -146,6 +146,42 @@ leaves those bits zero and still gets a 1x1 sprite.
 Seventeen was chosen against the I/O page rather than a theoretical peak.
 Twenty-five fitted and left five free bytes of the only address space new
 devices have, where 17 leaves 53.
+
+### Bitmap sprites
+
+A glyph is one colour, and it shares its code with the text. A sprite can instead
+take its picture from **sprite pattern RAM**: 256 slots of 16x16 pixels at 4 bits
+a pixel, 32 KB of video RAM inside the chip. Like the font, it is not in the 64K
+map. It is reached through an index and data port:
+
+| Address | Contents |
+|---|---|
+| `$FECE` | Byte index low |
+| `$FECF` | Byte index high. The index runs 0 to 32767, and slot n starts at n × 128 |
+| `$FED0` | Data, read and write; the index advances after each and wraps at 32 KB |
+
+Each slot is 8 bytes a row, 16 rows, top to bottom. A byte holds two pixels, the
+left one in the high nibble. Pixel 0 is transparent, and 1 to 15 name palette
+slots, so a palette change reaches bitmap sprites as it reaches everything else.
+The cost is that palette slot 0 cannot be drawn; art that wants black maps it to
+another slot.
+
+Setting bit 6 of a sprite's Y high byte makes its glyph register name a pattern
+slot. Size then composes consecutive slots rather than glyph codes, row-major and
+wrapping at 255, so a sprite reaches 128x128 pixels. Magnify still doubles. A
+pattern pixel is one nominal pixel, so a slot covers two cells across and one down.
+
+To animate, upload every frame once and switch the glyph register between them.
+That is one write per step, where rewriting the picture would be 128. A clear
+turns bitmap mode off with the rest of the sprite state but keeps the pattern RAM,
+so a program's art survives a screen clear. The RAM is zero at power-on and, like
+the font, is kept across a warm reset.
+
+This is the TMS9918's arrangement: a video chip with its own RAM, reached through
+ports, holding the sprite patterns. The TMS9918 had 16 KB for everything; the
+V9938 and the C128's VDC had 64 KB. `DEMOS/SPRDEMO.PRG` shows the lot: two-frame
+and four-frame cycles, a figure walking in 16x32 frames of two slots each, and a
+2x2 composition.
 
 ## The frame counter
 
