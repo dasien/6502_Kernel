@@ -256,18 +256,25 @@ unsigned char m_live[MAX_MON], m_x[MAX_MON], m_y[MAX_MON];
 static unsigned char m_hx[MAX_MON], m_hy[MAX_MON];   /* the post each one guards */
 static unsigned char m_wp[MAX_MON];                  /* which leg of its beat it is on */
 static unsigned char m_ox[MAX_MON], m_oy[MAX_MON];   /* the cell each came from */
+/* A monster that stepped vertically sits out its next turn. The same rule as Winky's:
+ * a tile is 16 pixels wide and 32 tall, so a step a turn each way moved them twice as
+ * far on screen going up and down. The slide for that step lasts both turns, and a
+ * resting monster's slide is left alone rather than relaunched, so its motion stays
+ * continuous and its speed on screen is the same in every direction. */
+static unsigned char m_rest[MAX_MON], h_rest[MAX_HALL];
 unsigned char h_live[MAX_HALL], h_x[MAX_HALL], h_y[MAX_HALL];
 static unsigned char h_ox[MAX_HALL], h_oy[MAX_HALL];
 
 unsigned char a_live;                    /* one arrow in flight, as the original */
+static unsigned char a_spent;            /* reached a wall; goes when its slide ends */
 unsigned char a_x, a_y;
 
 /* Where every mover was at its last step, and when the slower classes took it.
  * Drawing slides between the previous cell and the current one, so a mover crosses
  * the cell over the whole span between its steps instead of appearing in the next
- * one. The simulation is untouched: it still steps whole cells, and every
- * collision, lethal() and tile test still asks the grid. Only the picture moves
- * continuously, which is the only place the jump was ever visible. */
+ * one. The simulation is untouched: it still steps whole cells, and every tile
+ * test still asks the grid. Catches are the exception, decided on the pictures
+ * themselves -- see touching(). */
 static unsigned char pw_x, pw_y, pf_x0, pf_y0, pa_x, pa_y;
 
 /* Each sprite's drawn position, in 12.4 fixed-point nominal pixels, plus the step it
@@ -293,7 +300,10 @@ static unsigned char lives = LIVES_START;
 static unsigned char level = 1;
 static unsigned char tickrate = TICK_RATE;   /* the whole difficulty ramp */
 static unsigned char have_treasure;          /* gates monster scoring */
-static unsigned char left_room, dead, level_done;
+static unsigned char left_room, level_done;
+/* Not static, like step and draw_movers: the harness watches it to check that a
+   catch is declared only when the sprites actually touch. */
+unsigned char dead;
 static unsigned char treas_got;              /* bit per theme, for the roster */
 static unsigned int  dawdle;                 /* ticks spent in the current room */
 
@@ -758,6 +768,10 @@ static void calc_rates(void)
 
     for (c = 0; c < CL_COUNT; c++) {
         j = (c == CL_FAST)    ? (unsigned int)tickrate / SLIDE_DEN
+          : (c == CL_FAST_V)  ? (unsigned int)tickrate * 2 / SLIDE_DEN
+          : (c == CL_MON_V)   ? (unsigned int)MON_EVERY * tickrate * 2
+          : (c == CL_HALL_V)  ? (unsigned int)HALL_EVERY * tickrate * 2
+          : (c == CL_INTRUDE_V) ? (unsigned int)HALL_IN_SKIP * tickrate * 2
           : (c == CL_TICK)    ? (unsigned int)tickrate
           : (c == CL_MON)     ? (unsigned int)MON_EVERY * tickrate
           : (c == CL_INTRUDE) ? (unsigned int)HALL_IN_SKIP * tickrate
@@ -949,6 +963,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
     for (rx = 0; rx < MAX_MON; rx++)  m_live[rx] = 0;
     for (rx = 0; rx < MAX_HALL; rx++) h_live[rx] = 0;
     a_live = 0;
+    a_spent = 0;
     f_live = 0;
 
     for (ry = 0; ry < h; ry++) {
@@ -964,7 +979,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
                         m_live[nm] = 1; m_x[nm] = rx; m_y[nm] = ry;
                         m_hx[nm] = rx;  m_hy[nm] = ry;   /* where the art put it */
                         m_wp[nm] = 0;
-                        m_ox[nm] = 0xFF; m_oy[nm] = 0xFF;
+                        m_ox[nm] = 0xFF; m_oy[nm] = 0xFF; m_rest[nm] = 0;
                         nm++;
                     }
                     break;
@@ -972,7 +987,7 @@ static void load_board(const char *const *art, unsigned char w, unsigned char h,
                     grid[ry][rx] = T_FLOOR;
                     if (nh < MAX_HALL) {
                         h_live[nh] = 1; h_x[nh] = rx; h_y[nh] = ry;
-                        h_ox[nh] = 0xFF; h_oy[nh] = 0xFF;
+                        h_ox[nh] = 0xFF; h_oy[nh] = 0xFF; h_rest[nh] = 0;
                         nh++;
                     }
                     break;
@@ -1155,6 +1170,24 @@ static void set_hall_count(void)
     for (i = want; i < MAX_HALL; i++) h_live[i] = 0;
 }
 
+/* Put every mover's sprite straight onto its cell, with no slide. A sprite's screen
+ * position is only worked out when its slide is launched, and a mover's slide is only
+ * launched when it steps -- so after a board is rebuilt, anything that has not moved
+ * yet would still be drawn where it stood on the LAST board, the hall's coordinates
+ * in a room or the room's in the hall, until its first step made it jump into place.
+ * Called once the new board's origin and every position on it are set. */
+static void settle_movers(void)
+{
+    unsigned char i;
+    spr_launch(SPR_WINKY, CL_FAST, wx, wy, wx, wy);
+    for (i = 0; i < MAX_MON; i++)
+        if (m_live[i])
+            spr_launch((unsigned char)(SPR_MON0 + i), CL_MON, m_x[i], m_y[i], m_x[i], m_y[i]);
+    for (i = 0; i < MAX_HALL; i++)
+        if (h_live[i])
+            spr_launch((unsigned char)(SPR_HALL0 + i), CL_HALL, h_x[i], h_y[i], h_x[i], h_y[i]);
+}
+
 static void enter_map(void)
 {
     mode = MODE_MAP;
@@ -1176,6 +1209,7 @@ static void enter_map(void)
     }
     face_dx = 0; face_dy = -1;
     dawdle = 0;
+    settle_movers();
 
     clear_screen();
     set_play_rows();
@@ -1198,6 +1232,7 @@ static void enter_room(unsigned char slot, unsigned char which)
     have_treasure = 0;
     left_room = 0;
     dawdle = 0;
+    settle_movers();
 
     clear_screen();
     set_play_rows();
@@ -1268,20 +1303,46 @@ static void fire(void)
     a_x = wx; a_y = wy;
     a_dx = face_dx; a_dy = face_dy;
     a_live = 1;
+    a_spent = 0;
 }
 
 /* The arrow and the monster it hit both come off the board, and the body goes in the
  * cell they shared. */
+/* The cell under the centre of a sprite, as drawn. A tile's top-left is
+ * ((gx0 + x) * 16, (PLAY_ROW0 + 2*(gy0 + y)) * 16), 16 wide and 32 tall, so the centre
+ * picks whichever cell a sliding mover is more than halfway into. */
+static unsigned char sprite_cell(unsigned char slot, unsigned char *rx, unsigned char *ry)
+{
+    const int x = (int)(((sp_x[slot] >> SUB) + 8) >> 4) - gx0;
+    const int y = ((int)(((sp_y[slot] >> SUB) + 16) >> 4) - PLAY_ROW0) / 2 - gy0;
+    if (x < 0 || x >= gw || y < 0 || y >= gh) return 0;
+    *rx = (unsigned char)x;
+    *ry = (unsigned char)y;
+    return 1;
+}
+
 static void kill_monster(unsigned char i)
 {
+    unsigned char bx, by;
+
+    /* The body goes where the monster was DRAWN when the arrow reached it. Hits are
+     * decided on screen now (see arrow_hits()), so the arrow and the monster no longer
+     * share a cell at the moment of contact, and a monster partway through a slide is
+     * logically already in the next one. A drawn cell that is not floor falls back to
+     * the logical cell. */
+    if (!sprite_cell((unsigned char)(SPR_MON0 + i), &bx, &by) || grid[by][bx] != T_FLOOR) {
+        bx = m_x[i];
+        by = m_y[i];
+    }
     m_live[i] = 0;
-    grid[a_y][a_x] = T_CORPSE;       /* the body stays, and stays lethal */
+    grid[by][bx] = T_CORPSE;         /* the body stays, and stays lethal */
     a_live = 0;
+    a_spent = 0;
     /* Draw it now. Nothing else will: the monster is off the live list and so is the
      * arrow, and step() only restores cells belonging to things still alive. Without
      * this the body sits in the grid -- lethal, and killing you -- while the screen
-     * still shows an arrow or a monster in that cell. */
-    restore(a_x, a_y);
+     * still shows a monster in that cell. */
+    restore(bx, by);
     /* The original's rule: monsters pay nothing until the treasure is yours. Clearing
      * the room first is the safe play and scores you nothing for it. */
     if (have_treasure) {
@@ -1293,7 +1354,7 @@ static void kill_monster(unsigned char i)
 
 static void arrow_advance(void)
 {
-    unsigned char step, i, nx, ny;
+    unsigned char step, nx, ny;
     const unsigned char steps = a_dy ? ARROW_STEP_V : ARROW_STEP;
 
     if (!a_live) return;
@@ -1302,25 +1363,21 @@ static void arrow_advance(void)
         nx = (unsigned char)(a_x + a_dx);
         ny = (unsigned char)(a_y + a_dy);
 
-        /* The arrow dies here, so nothing later repaints the cell it is currently
-         * drawn in -- step()'s restore pass is gated on a_live. Repaint it now or
-         * the glyph is left behind as litter. */
+        /* A wall. If the arrow got at least a cell this leg, let its sprite finish
+         * sliding there and go at the next tick (a_spent): hits are decided on the
+         * picture, and a monster standing against the wall is only reached at the end
+         * of the slide. Removing the arrow here, as the grid version did, made such a
+         * monster unhittable. If it did not move at all, there is nothing to finish.
+         * Either way the cell it is drawn in gets repainted, or the glyph is left
+         * behind as litter. */
         if (nx >= gw || ny >= gh || blocked(nx, ny)) {
-            a_live = 0; restore(a_x, a_y); return;
+            if (step) a_spent = 1;
+            else { a_live = 0; restore(a_x, a_y); }
+            return;
         }
 
         a_x = nx;
         a_y = ny;
-
-        for (i = 0; i < MAX_MON; i++)
-            if (m_live[i] && m_x[i] == a_x && m_y[i] == a_y) { kill_monster(i); return; }
-
-        /* Hallmonsters cannot be shot. The arrow just stops on one. */
-        for (i = 0; i < MAX_HALL; i++) {
-            if (h_live[i] && h_x[i] == a_x && h_y[i] == a_y) {
-                a_live = 0; restore(a_x, a_y); return;
-            }
-        }
     }
 }
 
@@ -1493,6 +1550,7 @@ static void monsters_advance(void)
     unsigned char i, ox, oy;
     for (i = 0; i < MAX_MON; i++) {
         if (!m_live[i]) continue;
+        if (m_rest[i]) { m_rest[i] = 0; continue; }   /* last step was vertical */
         chase_self = i;
         back_x = m_ox[i];
         back_y = m_oy[i];
@@ -1525,35 +1583,16 @@ static void monsters_advance(void)
             }
         }
         chase(&m_x[i], &m_y[i], 0, 1);      /* walls, bodies and each other stop them */
+        if (m_y[i] != oy) m_rest[i] = 1;
         m_ox[i] = back_x;
         m_oy[i] = back_y;
 
-        /* A monster that walks INTO the arrow dies on it. Without this the two swap
-         * cells and the shot goes straight through: the arrow advances past the
-         * monster's old cell earlier in this same tick, then the monster steps into
-         * the arrow's new one and nothing looks again. It only happens on the ticks
-         * monsters actually move, which is why it read as random. */
         /* Blocked where it was going: take the next leg rather than push at a wall
            until something moves, which is how it ends up standing still. */
         if (m_x[i] == ox && m_y[i] == oy) m_wp[i] = (unsigned char)((m_wp[i] + 1) & 3);
 
-        if (a_live && m_x[i] == a_x && m_y[i] == a_y) { kill_monster(i); continue; }
 
-        if (m_x[i] == wx && m_y[i] == wy) dead = 1;
     }
-}
-
-/* Same swap, and a Hallmonster still cannot be shot -- the arrow just stops on it. */
-static void hall_arrow_check(void)
-{
-    unsigned char i;
-    if (!a_live) return;
-    for (i = 0; i < MAX_HALL; i++)
-        if (h_live[i] && h_x[i] == a_x && h_y[i] == a_y) {
-            a_live = 0;
-            restore(a_x, a_y);
-            return;
-        }
 }
 
 /* In the hall they walk it like anyone else. Inside a room they walk THROUGH THE
@@ -1567,15 +1606,19 @@ static void hall_advance(void)
     chase_self = 0xFF;
     for (i = 0; i < MAX_HALL; i++) {
         if (!h_live[i]) continue;
+        if (h_rest[i]) { h_rest[i] = 0; continue; }   /* last step was vertical */
         back_x = h_ox[i];
         back_y = h_oy[i];
         hall_self = i;
         tgt_x = wx; tgt_y = wy;
-        chase(&h_x[i], &h_y[i], phases, 0);
+        {
+            const unsigned char oy = h_y[i];
+            chase(&h_x[i], &h_y[i], phases, 0);
+            if (h_y[i] != oy) h_rest[i] = 1;
+        }
         hall_self = 0xFF;
         h_ox[i] = back_x;
         h_oy[i] = back_y;
-        if (h_x[i] == wx && h_y[i] == wy) dead = 1;
     }
 }
 
@@ -1606,7 +1649,8 @@ static void hall_intrude(void)
     if (bx == 0xFF) return;
 
     h_live[0] = 1; h_x[0] = bx; h_y[0] = by;
-    h_ox[0] = 0xFF; h_oy[0] = 0xFF;
+    h_ox[0] = 0xFF; h_oy[0] = 0xFF; h_rest[0] = 0;
+    spr_launch(SPR_HALL0, CL_INTRUDE, bx, by, bx, by);   /* drawn at the door, not stale */
     cue(SND_HALL);
 }
 
@@ -1718,14 +1762,35 @@ void draw_movers(void)
  * jiffies whether or not a key is held, and while his move was part of that step a
  * press had to wait for the next one before anything happened -- up to a tenth of a
  * second, and measured at 45 ms on average. Now he moves on the first frame a
- * direction is held, provided a whole tick has gone by since his last move, and every
- * tick after that while it stays held. The rate cap is the same tickrate, so his top
- * speed is unchanged and tapping cannot outrun walking; only the phase is his own.
+ * direction is held, provided his last step's gap has gone by, and once a gap after
+ * that while it stays held: one tick across, two up or down (see winky_gap). The cap
+ * is the same as walking, so tapping cannot outrun it; only the phase is his own.
  * The monsters, the hall and the intruder's patience stay on the world's tick.
  *
  * Everything his move can land him in is settled here, where it happens: a door, the
  * treasure, an exit, something lethal. Returns nonzero if the move ended the frame --
  * he entered a room, left one, or died -- so the caller skips the world step. */
+/* Launch a monster's slide for the step it just took, with the vertical class if the
+ * step went up or down. A monster that did not move is left alone: one that is resting
+ * after a vertical step is still sliding through it, and relaunching it would snap its
+ * sprite to the end of that slide. One that was simply blocked has no slide left to
+ * lose. See m_rest. */
+static void mover_launch(unsigned char slot, unsigned char cls, unsigned char cls_v,
+                         unsigned char ax, unsigned char ay,
+                         unsigned char bx, unsigned char by)
+{
+    if (ax == bx && ay == by) return;
+    spr_launch(slot, (ay != by) ? cls_v : cls, ax, ay, bx, by);
+}
+
+/* Jiffies until Winky may step again: one tick, or two after a step with any
+ * vertical part. A playfield tile is 16 pixels wide and 32 tall, so one tile a tick
+ * each way made him cover twice the screen going up and down as going across. A
+ * vertical step now takes two ticks, and slides for two, so he moves at the same
+ * speed on screen either way. The slide and the gap are always the same length,
+ * which is what keeps a new step from cutting the last one's slide short. */
+static unsigned char winky_gap;
+
 static unsigned char winky_act(unsigned char ks)
 {
     unsigned char slot;
@@ -1733,7 +1798,15 @@ static unsigned char winky_act(unsigned char ks)
     restore(wx, wy);
     pw_x = wx; pw_y = wy;
     winky_move(ks);
-    spr_launch(SPR_WINKY, CL_FAST, pw_x, pw_y, wx, wy);
+    /* Judged by what he did, not what was asked: a diagonal into a wall that only
+       went across is a horizontal step. */
+    if (wy != pw_y) {
+        winky_gap = (unsigned char)(tickrate * 2);
+        spr_launch(SPR_WINKY, CL_FAST_V, pw_x, pw_y, wx, wy);
+    } else {
+        winky_gap = tickrate;
+        spr_launch(SPR_WINKY, CL_FAST, pw_x, pw_y, wx, wy);
+    }
 
     if (mode == MODE_MAP) {
         /* Walking onto an entrance is the commitment. enter_room() rebuilds the
@@ -1766,7 +1839,6 @@ static unsigned char winky_act(unsigned char ks)
             return 1;
         }
     }
-    if (lethal(wx, wy)) { dead = 1; return 1; }
     draw_facing();
     return 0;
 }
@@ -1785,41 +1857,123 @@ static unsigned char winky_act(unsigned char ks)
  * and a monster stepping into it is caught in monsters_advance(). */
 static void arrow_tick(void)
 {
+    if (a_spent) {                      /* it slid up to a wall last tick; now it goes */
+        a_spent = 0;
+        a_live = 0;
+        restore(a_x, a_y);
+        return;
+    }
     pa_x = a_x; pa_y = a_y;
     arrow_advance();
     spr_launch(SPR_ARROW, CL_TICK, pa_x, pa_y, a_x, a_y);
 }
 
-/* ---- a catch you can see ----------------------------------------------
- * The grid decides a catch the instant the catcher's cell becomes Winky's, but its
- * sprite has only just started sliding in from the next cell -- a room monster takes
- * three ticks to cross a tile, so at that instant the two are edge to edge at best
- * and often a whole tile apart. The player sees himself caught by something that
- * never reached him. So with the world stopped, keep drawing until the catcher's
- * sprite is within half a tile of Winky's, or MEET_FRAMES have gone by. The outcome
- * was settled on the grid; only the moment it is shown moves. A body needs none of
- * this: it was already lying in the cell. */
-#define MEET_FRAMES 12
-static void meet_catcher(void)
+/* ---- catches, decided on screen ---------------------------------------
+ * Winky is caught when his sprite overlaps a monster's, as drawn, checked every frame.
+ *
+ * It used to be the grid: caught the instant a monster's cell became his. But a cell
+ * changes the moment a step BEGINS and the sprite takes the whole slide to follow --
+ * up to 300 ms across for a room monster, 600 up or down -- so the hitbox ran a tile
+ * ahead of the picture, and he was caught by things that visibly never reached him.
+ * Testing the pictures puts the box where the eye is. It also closes the swap case
+ * with no special handling: two sprites that pass through each other overlap on the
+ * way.
+ *
+ * Each box is the sprite's rectangle shrunk to a bit over 60% each way, centred, so a
+ * graze does not count. In the hall Winky is drawn at half size, 8x16, and his box
+ * shrinks with him. Bodies are floor tiles that never move, so his box is tested
+ * against any body tile it overlaps. Chasing, blocking, doors and the treasure stay on
+ * the grid; only "who touched whom" moved. */
+#define HIT_W   10      /* a 16x32 sprite's hitbox, centred in it */
+#define HIT_H   20
+#define HIT_WS   6      /* Winky in the hall, drawn 8x16 */
+#define HIT_HS  12
+
+/* Does a box at ax,ay (aw x ah) overlap a full-size mover or tile box at bx,by? */
+static unsigned char boxes_meet(unsigned int ax, unsigned int ay,
+                                unsigned char aw, unsigned char ah,
+                                unsigned int bx, unsigned int by)
 {
-    unsigned char i, f, slot = 0xFF;
-    int dx, dy;
+    return ax < bx + HIT_W && bx < ax + aw && ay < by + HIT_H && by < ay + ah;
+}
 
-    for (i = 0; i < MAX_MON && slot == 0xFF; i++)
-        if (m_live[i] && m_x[i] == wx && m_y[i] == wy) slot = (unsigned char)(SPR_MON0 + i);
-    for (i = 0; i < MAX_HALL && slot == 0xFF; i++)
-        if (h_live[i] && h_x[i] == wx && h_y[i] == wy) slot = (unsigned char)(SPR_HALL0 + i);
-    if (slot == 0xFF) return;
+/* Not static, so the harness can find it by label like step and draw_movers. */
+unsigned char touching(void)
+{
+    unsigned char i, w, h;
+    int c, cx0, cx1, cy0, cy1, rx, ry;
+    unsigned int ax, ay, bx, by;
 
-    for (f = 0; f < MEET_FRAMES; f++) {
-        dx = (int)(sp_x[slot] >> SUB) - (int)(sp_x[SPR_WINKY] >> SUB);
-        dy = (int)(sp_y[slot] >> SUB) - (int)(sp_y[SPR_WINKY] >> SUB);
-        if (dx < 0) dx = -dx;
-        if (dy < 0) dy = -dy;
-        if (dx <= 8 && dy <= 16) break;      /* half a tile: 16 wide, 32 tall */
-        wait_frame();
-        draw_movers();
-        present();
+    if (mode == MODE_MAP) { w = HIT_WS; h = HIT_HS; }
+    else                  { w = HIT_W;  h = HIT_H;  }
+    ax = (sp_x[SPR_WINKY] >> SUB) + ((16 - w) >> 1);
+    ay = (sp_y[SPR_WINKY] >> SUB) + ((32 - h) >> 1);
+
+    for (i = 0; i < MAX_MON; i++) {
+        if (!m_live[i]) continue;
+        bx = (sp_x[SPR_MON0 + i] >> SUB) + ((16 - HIT_W) >> 1);
+        by = (sp_y[SPR_MON0 + i] >> SUB) + ((32 - HIT_H) >> 1);
+        if (boxes_meet(ax, ay, w, h, bx, by)) return 1;
+    }
+    for (i = 0; i < MAX_HALL; i++) {
+        if (!h_live[i]) continue;
+        bx = (sp_x[SPR_HALL0 + i] >> SUB) + ((16 - HIT_W) >> 1);
+        by = (sp_y[SPR_HALL0 + i] >> SUB) + ((32 - HIT_H) >> 1);
+        if (boxes_meet(ax, ay, w, h, bx, by)) return 1;
+    }
+
+    /* Bodies. A tile's top-left is ((gx0 + x) * 16, (PLAY_ROW0 + 2*(gy0 + y)) * 16);
+       his box can overlap at most two columns and two rows of them. */
+    if (mode == MODE_ROOM) {
+        cx0 = (int)(ax >> 4) - gx0;
+        cx1 = (int)((ax + w - 1) >> 4) - gx0;
+        cy0 = ((int)(ay >> 4) - PLAY_ROW0) / 2 - gy0;
+        cy1 = ((int)((ay + h - 1) >> 4) - PLAY_ROW0) / 2 - gy0;
+        for (ry = cy0; ry <= cy1; ry++) {
+            if (ry < 0 || ry >= gh) continue;
+            for (rx = cx0; rx <= cx1; rx++) {
+                if (rx < 0 || rx >= gw || grid[ry][rx] != T_CORPSE) continue;
+                c = (int)gx0 + rx;
+                bx = ((unsigned int)c << 4) + ((16 - HIT_W) >> 1);
+                c = PLAY_ROW0 + (((int)gy0 + ry) << 1);
+                by = ((unsigned int)c << 4) + ((32 - HIT_H) >> 1);
+                if (boxes_meet(ax, ay, w, h, bx, by)) return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* The arrow's hits, decided on screen the same way. On the grid an arrow killed a
+ * monster whose picture it had not reached, because both cells jump at the start of a
+ * step and the sprites take the whole slide to follow. Now the arrow's box has to
+ * overlap the monster's, as drawn. A room monster dies and leaves its body where it
+ * was drawn; a Hallmonster cannot be shot, and the arrow just stops on it. */
+static void arrow_hits(void)
+{
+    unsigned char i;
+    unsigned int ax, ay, bx, by;
+
+    if (!a_live) return;
+    ax = (sp_x[SPR_ARROW] >> SUB) + ((16 - HIT_W) >> 1);
+    ay = (sp_y[SPR_ARROW] >> SUB) + ((32 - HIT_H) >> 1);
+
+    for (i = 0; i < MAX_MON; i++) {
+        if (!m_live[i]) continue;
+        bx = (sp_x[SPR_MON0 + i] >> SUB) + ((16 - HIT_W) >> 1);
+        by = (sp_y[SPR_MON0 + i] >> SUB) + ((32 - HIT_H) >> 1);
+        if (boxes_meet(ax, ay, HIT_W, HIT_H, bx, by)) { kill_monster(i); return; }
+    }
+    for (i = 0; i < MAX_HALL; i++) {
+        if (!h_live[i]) continue;
+        bx = (sp_x[SPR_HALL0 + i] >> SUB) + ((16 - HIT_W) >> 1);
+        by = (sp_y[SPR_HALL0 + i] >> SUB) + ((32 - HIT_H) >> 1);
+        if (boxes_meet(ax, ay, HIT_W, HIT_H, bx, by)) {
+            a_live = 0;
+            a_spent = 0;
+            restore(a_x, a_y);
+            return;
+        }
     }
 }
 
@@ -1852,8 +2006,8 @@ void step(void)
             hall_at = tick_count;
             hall_advance();
             for (i = 0; i < MAX_HALL; i++)
-                spr_launch((unsigned char)(SPR_HALL0 + i), CL_HALL,
-                           ph_x[i], ph_y[i], h_x[i], h_y[i]);
+                mover_launch((unsigned char)(SPR_HALL0 + i), CL_HALL, CL_HALL_V,
+                             ph_x[i], ph_y[i], h_x[i], h_y[i]);
         }
     } else {
         if (!(tick_count % MON_EVERY)) {
@@ -1861,8 +2015,8 @@ void step(void)
             mon_at = tick_count;
             monsters_advance();
             for (i = 0; i < MAX_MON; i++)
-                spr_launch((unsigned char)(SPR_MON0 + i), CL_MON,
-                           pm_x[i], pm_y[i], m_x[i], m_y[i]);
+                mover_launch((unsigned char)(SPR_MON0 + i), CL_MON, CL_MON_V,
+                             pm_x[i], pm_y[i], m_x[i], m_y[i]);
         }
         if (++dawdle > HALL_ROOM_TICKS) hall_intrude();
         /* Note the sense: every tick EXCEPT every HALL_IN_SKIP'th, so the intruder
@@ -1870,7 +2024,7 @@ void step(void)
         if (tick_count % HALL_IN_SKIP) {
             for (i = 0; i < MAX_HALL; i++) { ph_x[i] = h_x[i]; ph_y[i] = h_y[i]; }
             hall_at = tick_count;
-            hall_advance(); hall_arrow_check();
+            hall_advance();
             /* CL_INTRUDE, not CL_TICK: it steps on all but every HALL_IN_SKIP'th
                tick, so the gap between its steps is HALL_IN_SKIP ticks, not one. Given
                a one-tick glide it crossed a cell in six frames and then held for six --
@@ -1879,13 +2033,10 @@ void step(void)
                the full HALL_EVERY ticks. The arrow keeps CL_TICK; it really does move
                every tick, which is why it measured smooth. */
             for (i = 0; i < MAX_HALL; i++)
-                spr_launch((unsigned char)(SPR_HALL0 + i), CL_INTRUDE,
-                           ph_x[i], ph_y[i], h_x[i], h_y[i]);
+                mover_launch((unsigned char)(SPR_HALL0 + i), CL_INTRUDE, CL_INTRUDE_V,
+                             ph_x[i], ph_y[i], h_x[i], h_y[i]);
         }
     }
-
-    if (lethal(wx, wy)) dead = 1;   /* something may have stepped onto Winky */
-    if (dead) return;
 
     draw_facing();
 }
@@ -2077,7 +2228,8 @@ int main(void)
         left_room = 0;
         last = jiffies();
         lastdraw = last - 1;          /* force a first draw */
-        winky_last = last - tickrate; /* so the first press moves him at once */
+        winky_gap = tickrate;
+        winky_last = last - winky_gap; /* so the first press moves him at once */
 
         for (;;) {
             /* Block until the frame begins, so everything below runs at the start
@@ -2096,7 +2248,7 @@ int main(void)
              * advanced, after a move: a stalled host must not bank moves for him. */
             ks = keystate();
             if ((ks & (KS_UP | KS_DOWN | KS_LEFT | KS_RIGHT)) &&
-                (unsigned int)(now - winky_last) >= tickrate) {
+                (unsigned int)(now - winky_last) >= winky_gap) {
                 winky_last = now;
                 if (winky_act(ks)) {
                     if (dead || left_room) break;
@@ -2144,6 +2296,13 @@ int main(void)
                 if ((unsigned int)(now - lastdraw) >= DRAW_EVERY) lastdraw = now;
             }
 
+            /* Hits, then catches, both decided on the pictures. The arrow goes first, so
+             * a monster shot on the frame it reaches Winky dies before it can catch him.
+             * Present before dying, so the frame showing the contact is the one on
+             * screen when the game ends. */
+            arrow_hits();
+            if (touching()) { present(); dead = 1; break; }
+
             /* The FIFO carries the commands that are not movement. Drained a few
              * per pass so a burst cannot back up and start dropping bytes. */
             for (catchup = 0; catchup < 4; catchup++) {
@@ -2166,8 +2325,6 @@ int main(void)
              * takes over for as long as it lasts. */
             present();
         }
-
-        if (dead) meet_catcher();
 
         sound_off();
         snd_left = 0;

@@ -332,7 +332,11 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define CL_MON  2            /* room monsters: MON_EVERY ticks */
 #define CL_HALL 3            /* Hallmonsters out in the hall: HALL_EVERY ticks */
 #define CL_INTRUDE 4         /* the one that follows you in: HALL_IN_SKIP ticks */
-#define CL_COUNT 5
+#define CL_FAST_V 5          /* Winky stepping vertically: two ticks, see winky_act() */
+#define CL_MON_V  6          /* ...and each monster class stepping vertically: twice */
+#define CL_HALL_V 7          /*    its own period, because a tile is twice as tall as */
+#define CL_INTRUDE_V 8       /*    it is wide -- see m_rest */
+#define CL_COUNT 9
 
 /* Sub-pixel resolution of a mover's position: nominal pixels in 12.4 fixed point.
  * A nominal x reaches 639, so twelve integer bits are enough and four fractional

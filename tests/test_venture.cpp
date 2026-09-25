@@ -516,7 +516,32 @@ protected:
         for (int i = 0; i < jiffy_count; i++) {
             const uint64_t until = cpu->getCycles() + kCyclesPerJiffy;
             while (cpu->getCycles() < until) c.runInstructions(1);
+            if (watch_kills) noteKills();
             tick();
+        }
+    }
+
+    /* Kill watching, for AnArrowKillsOnlyWhenItReachesTheMonster. Checked at the end of
+       each frame, where the game is parked in wait_frame() and the sprite registers still
+       show the frame a kill happened in: the monster and the arrow are both still drawn,
+       and switched off only by the next frame's draw. */
+    bool watch_kills = false;
+    int kills_seen = 0, kills_touching = 0;
+    uint8_t live_before[kMaxMon] = {};
+
+    void noteKills()
+    {
+        for (int i = 0; i < kMaxMon; i++) {
+            const uint8_t live = peek("_m_live", i);
+            if (live_before[i] && !live) {
+                kills_seen++;
+                // The game's hitbox: a 16x32 sprite shrunk to 10x20, centred.
+                const Computer::VIC::Sprite &a = c.getVideoChip()->sprite(1);
+                const Computer::VIC::Sprite &m = c.getVideoChip()->sprite(static_cast<uint8_t>(3 + i));
+                const int ax = a.x + 3, ay = a.y + 6, mx = m.x + 3, my = m.y + 6;
+                if (ax < mx + 10 && mx < ax + 10 && ay < my + 20 && my < ay + 20) kills_touching++;
+            }
+            live_before[i] = live;
         }
     }
 
@@ -605,17 +630,18 @@ protected:
     /* Hold a direction for exactly `ticks` moves, then let go.
      *
      * Winky moves on his own clock: on the first frame a direction is held, then once a
-     * tick while it stays held, never faster. So `ticks` moves take (ticks - 1) ticks
-     * plus a few frames of slack for the frame the key is first seen. ticks * kTickRate
-     * would be one move too many. The release is followed by a whole tick so his clock
-     * is due again, and the next hold starts with a move instead of waiting out the rate
-     * cap. */
+     * gap while it stays held. The gap is one tick across and two up or down, since a
+     * tile is twice as tall as it is wide. So `ticks` moves take (ticks - 1) gaps plus a
+     * few frames of slack for the frame the key is first seen; a full ticks * gap would
+     * be one move too many. The release is followed by a whole gap so his clock is due
+     * again, and the next hold starts with a move instead of waiting out the cap. */
     void hold(uint8_t mask, int ticks)
     {
+        const int gap = (mask & (kKsUp | kKsDown)) ? 2 * kTickRate : kTickRate;
         pia->setKeyState(mask);
-        run((ticks - 1) * kTickRate + 3);
+        run((ticks - 1) * gap + 3);
         pia->setKeyState(0);
-        run(kTickRate);
+        run(gap);
     }
 
     uint8_t glyphAt(int col, int row)
@@ -1964,3 +1990,66 @@ TEST(VentureColours, ItAssertsABlackBackgroundOverAnyTheme)
 }
 
 } // namespace
+
+/* A catch is declared only when the sprites actually touch.
+ *
+ * It used to be the grid: caught the instant a monster's cell became Winky's, while its
+ * sprite was still sliding in from a tile away, so he died to things that visibly never
+ * reached him. The intruder reliably catches a Winky who stands still, so wait for that
+ * and look at the frame the game declares it. Stepped in small chunks so the check lands
+ * before the death sequence starts changing the sprites. */
+TEST_F(VentureTest, ACatchMeansTheSpritesTouch)
+{
+    // In a room, where Winky and the intruder are both drawn full size. From the hall
+    // dawdleUntilIntruder() returns at once -- Hallmonsters are live there from the start
+    // -- and a Hallmonster makes the catch against Winky's half-size hall sprite.
+    ASSERT_TRUE(enterRoomZero());
+    ASSERT_TRUE(dawdleUntilIntruder()) << "no intruder ever arrived";
+
+    uint64_t nextj = cpu->getCycles() + kCyclesPerJiffy;
+    const uint64_t give_up = cpu->getCycles() + 60ull * 30 * kCyclesPerJiffy;
+    bool caught = false;
+    for (int n = 1; cpu->getCycles() < give_up; n++) {
+        if (!cpu->executeSingleInstruction()) break;
+        if (cpu->getCycles() >= nextj) { nextj += kCyclesPerJiffy; tick(); }
+        if ((n & 31) == 0 && peek("_dead")) { caught = true; break; }
+    }
+    ASSERT_TRUE(caught) << "the intruder never caught him";
+
+    // The game's hitbox: the sprite's 16x32 rectangle shrunk to 10x20, centred.
+    auto hit = [&](int slot, int &x0, int &y0, int &x1, int &y1) {
+        const Computer::VIC::Sprite &sp = c.getVideoChip()->sprite(static_cast<uint8_t>(slot));
+        x0 = sp.x + 3; y0 = sp.y + 6; x1 = x0 + 10; y1 = y0 + 20;
+        return sp.enabled;
+    };
+    int wx0, wy0, wx1, wy1;
+    ASSERT_TRUE(hit(0, wx0, wy0, wx1, wy1)) << "Winky's sprite is off at the catch";
+    bool touching = false;
+    std::string seen = "winky " + std::to_string(wx0) + "," + std::to_string(wy0);
+    for (int s = 3; s < 3 + kMaxMon + kMaxHallPosts && !touching; s++) {
+        int x0, y0, x1, y1;
+        if (!hit(s, x0, y0, x1, y1)) continue;
+        seen += "  sprite" + std::to_string(s) + " " + std::to_string(x0) + "," + std::to_string(y0);
+        touching = wx0 < x1 && x0 < wx1 && wy0 < y1 && y0 < wy1;
+    }
+    EXPECT_TRUE(touching) << "declared caught while no mover's sprite overlapped his: " << seen;
+}
+
+/* An arrow kills only when it visibly reaches the monster.
+ *
+ * It used to be the grid: a kill the instant the arrow's cell and the monster's
+ * coincided, while both sprites were still sliding -- up to a tile short of each other.
+ * Hunt a serpent the way a player would, and at every kill check that the arrow's
+ * sprite overlapped the monster's on that frame. */
+TEST_F(VentureTest, AnArrowKillsOnlyWhenItReachesTheMonster)
+{
+    ASSERT_TRUE(enterRoomZero());
+    for (int i = 0; i < kMaxMon; i++) live_before[i] = peek("_m_live", i);
+    watch_kills = true;
+    const bool killed = killOneSerpent(60);
+    watch_kills = false;
+    ASSERT_TRUE(killed) << "never managed to kill a serpent";
+    ASSERT_GE(kills_seen, 1);
+    EXPECT_EQ(kills_touching, kills_seen)
+        << "a monster died while the arrow's sprite was clear of it";
+}
