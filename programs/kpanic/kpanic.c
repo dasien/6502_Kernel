@@ -373,14 +373,19 @@ static void row_cell(unsigned char i, unsigned char x,
         *g = G_BEVEL; *a = A_BEVEL;
     } else if (x > lx && x < rx) {
         if (r_fw[i]) {                          /* barrier outranks island and node */
-            if (on_port(i, x)) { *g = G_PORT; *a = A_PORT; }
-            else              { *g = G_FIRE; *a = A_FIRE; }
+            if (on_port(i, x)) {                /* two cells: the orb's halves */
+                *g = (unsigned char)(x == r_fw[i] ? G_PORT : G_PORT + 1);
+                *a = A_PORT;
+            } else {
+                *g = G_FIRE; *a = A_FIRE;
+            }
         } else if (r_iw[i] && x >= r_ix[i] &&
                    x < (unsigned char)(r_ix[i] + r_iw[i])) {
             if (isl_shore(r_ix[i], r_iw[i], x)) { *g = G_WALL;  *a = A_WALL; }
             else                                { board_glyph(x, g); *a = r_ba[i]; }
-        } else if (on_node(i, x)) {
-            *g = G_NODE; *a = A_NODE;
+        } else if (on_node(i, x)) {                /* two cells: the brick's halves */
+            *g = (unsigned char)(x == r_nx[i] ? G_NODE : G_NODE + 1);
+            *a = A_NODE;
         } else {
             board_glyph(x, g); *a = A_RECESS;   /* recessed board in the channel */
         }
@@ -464,20 +469,33 @@ static unsigned char s_x[MAX_SHOTS], s_y[MAX_SHOTS], s_live[MAX_SHOTS];
 static unsigned char s_from[MAX_SHOTS];     /* row this shot started the tick on */
 static unsigned char s_pierce[MAX_SHOTS];   /* hits left before the shot dies */
 static unsigned char s_home[MAX_SHOTS];     /* 1 = drifts toward a target */
-/* Per-shot, because the beam bolt travels at its own speed and draws as a bar rather
- * than an arrow -- and because `weapon` can change while a shot is still in the air,
- * so neither can be re-derived at draw time. */
+/* Per-shot, because the beam bolt travels at its own speed -- and because `weapon` can
+ * change while a shot is still in the air, so it cannot be re-derived at draw time. */
 static unsigned char s_speed[MAX_SHOTS];
-static unsigned char s_glyph[MAX_SHOTS];
+/* Which group -- which sprite -- this shot draws in. See the sprite split in kpanic.h. */
+static unsigned char s_grp[MAX_SHOTS];
 /* The row this shot burns out at -- 0 for everything except spread. See SPREAD_FLOOR. */
 static unsigned char s_floor[MAX_SHOTS];
+
+/* Shot groups. A group is live while any of its shots is; draw_shots() recomputes that
+ * every frame, and fire() takes a group that is not. The kind decides the picture, and
+ * g_x0 is the spread volley's leftmost column -- a volley's shots never change column,
+ * so bit (s_x - g_x0) of its mask is each shot's place in the picture. */
+#define GK_SHOT     0
+#define GK_HOMING   1
+#define GK_SPREAD   2
+#define GK_BEAM     3
+static unsigned char g_live[MAX_GROUPS], g_kind[MAX_GROUPS], g_x0[MAX_GROUPS];
+#pragma warn(const-comparison, push, off)
+typedef char sprite_split_is_17[1 - 2 * (SPR_COUNT != 17)];
+typedef char spread_fits_pattern_ram[1 - 2 * (SL_SPREAD_SPENT + ((1 << SPREAD_COLS) - 1) * SPREAD_SLOTS > 256)];
+#pragma warn(const-comparison, pop)
 
 /* The gun: a kind and a level. Collecting the same fragment again deepens it;
  * a different one swaps you to that kind at level 1 -- so a pickup is a real
  * decision when you are already deep in something else. */
 unsigned char weapon = W_PLAIN;
 unsigned char wammo;             /* rounds left; meaningless while W_PLAIN */
-unsigned char wlevel = 1;
 
 /* Fragments drift down with the world like a node, but they are objects rather
  * than terrain because they are dropped mid-run, not generated with a row. */
@@ -531,6 +549,16 @@ static void frag_font_init(void) {
             vfwrite(hi);
         }
     }
+
+    /* The firewall's three glyphs and the data node's two are artwork rather than
+     * composed, so they are just copied in. */
+    vfseek((unsigned int)G_FIRE * FRAG_ROWS);
+    for (r = 0; r < FRAG_ROWS; r++) vfwrite(glyph_fire[r]);
+    for (r = 0; r < FRAG_ROWS; r++) vfwrite(glyph_port_l[r]);      /* G_PORT follows */
+    for (r = 0; r < FRAG_ROWS; r++) vfwrite(glyph_port_r[r]);
+    vfseek((unsigned int)G_NODE * FRAG_ROWS);                      /* and the data node */
+    for (r = 0; r < FRAG_ROWS; r++) vfwrite(glyph_node_l[r]);
+    for (r = 0; r < FRAG_ROWS; r++) vfwrite(glyph_node_r[r]);
 
     vfill(FONT_SET); vcmd(VCMD_FONTSET);
     vcmd(VCMD_FONTRAM);
@@ -598,18 +626,18 @@ static void craft_set_col(unsigned char col) {
     craft_x  = col;
 }
 
+/* The picture is 16 px wide and craft_px is the left edge of the 8 px column the craft
+ * occupies, so the sprite sits 4 px left of it to centre the ship on its column. The
+ * ship is drawn wider than it collides -- its column comes off its centre, as above --
+ * which is the forgiving way round for the object the player is steering. */
 static void draw_craft(void) {
-    spr_sel(0);
-    spr_x_px(craft_px);
+    spr_sel(SPR_CRAFT);
+    spr_x_px(craft_px >= 4 ? craft_px - 4 : 0);
     spr_y(CRAFT_ROW);
-    /* No reverse bit here, however much a crash wants to shout. A sprite has no
-     * cell behind it to swap with -- DisplayWidget draws sprite pixels in the
-     * FOREGROUND colour only -- so setting bit 7 just makes resolveCellColors hand
-     * back the background, and A_WARN's background is black. The impact flash was
-     * therefore drawing the ship in black pixels: hitting a wall read as the craft
-     * blinking out rather than being hit. */
-    if (flash) { spr_glyph(G_BLAST); spr_attr(A_WARN); }
-    else       { spr_glyph(G_CRAFT); spr_attr(A_CRAFT); }
+    /* The impact flash is a second picture, the ship in red. A bitmap sprite ignores
+     * the attribute byte, so there is no longer a colour to set -- and none of the
+     * reverse-bit trap that once drew the flash in black. */
+    spr_glyph(flash ? SL_CRAFT_HIT : SL_CRAFT);
 }
 
 /* Sample the held-key port and move the craft. Called once per FRAME from the main loop,
@@ -644,27 +672,28 @@ static void crash(void) {
     flash = 3;
     craft_set_col((unsigned char)((r_lx[i] + r_rx[i]) >> 1));
     energy_spend(ENERGY_CRASH);
-    /* The impact shakes the gun down a level. Energy is the obvious cost of a
-     * crash; losing hard-won firepower is the one that actually stings. */
-    if (wlevel > 1) wlevel--;
+    /* The impact costs the gun too: back to the plain shot. Energy is the obvious cost
+     * of a crash; losing hard-won firepower is the one that actually stings. */
+    weapon = W_PLAIN;
+    wammo = 0;
 }
 
 /* ---- weapon ---- */
 /* Put one shot in the air at column x, if a slot is free. */
 /* Takes the row explicitly: a beam bolt is a stack of these at one column. */
-static void shot_spawn(unsigned char x, unsigned char y) {
+static void shot_spawn(unsigned char x, unsigned char y, unsigned char g) {
     unsigned char i;
     for (i = 0; i < MAX_SHOTS; i++) {
         if (!s_live[i]) {
             s_live[i] = 1;
+            s_grp[i] = g;
             s_x[i] = x;
             s_y[i] = y;
-            /* Beam punches through one extra target per level; everything else
-             * is consumed by the first thing it hits. */
-            s_pierce[i] = (weapon == W_BEAM) ? (unsigned char)(wlevel + 1) : 1;
+            /* Beam punches through; everything else is consumed by the first thing
+             * it hits. */
+            s_pierce[i] = (weapon == W_BEAM) ? BEAM_PIERCE : 1;
             s_home[i]   = (weapon == W_HOMING) ? 1 : 0;
-            if (weapon == W_BEAM) { s_speed[i] = BEAM_SPEED; s_glyph[i] = G_BEAM; }
-            else                  { s_speed[i] = SHOT_SPEED; s_glyph[i] = G_SHOT; }
+            s_speed[i] = (weapon == W_BEAM) ? BEAM_SPEED : SHOT_SPEED;
             s_floor[i] = (weapon == W_SPREAD) ? SPREAD_FLOOR : 0;
             return;
         }
@@ -679,18 +708,27 @@ static unsigned char shots_free(void) {
 }
 
 static void fire(void) {
-    unsigned char want;
+    unsigned char want, g;
 
     if (cooldown) return;
 
     /* A volley is all or nothing: see MAX_SHOTS. Spawning a partial one would drop the
-     * outermost shots and narrow the gun rather than slow it. */
+     * outermost shots and narrow the gun rather than slow it. It needs a free group --
+     * its sprite -- on the same terms. */
     want = 1;
-    if (weapon == W_SPREAD) want = (wlevel >= 3) ? 5 : 3;
+    if (weapon == W_SPREAD) want = SPREAD_COLS;
     if (weapon == W_BEAM)   want = BEAM_CELLS;
     if (shots_free() < want) return;    /* no cooldown: retried next tick */
+    for (g = 0; g < MAX_GROUPS; g++) if (!g_live[g]) break;
+    if (g == MAX_GROUPS) return;        /* likewise */
 
     cooldown = FIRE_COOLDOWN;
+    g_live[g] = 1;
+    g_kind[g] = (weapon == W_SPREAD) ? GK_SPREAD : (weapon == W_BEAM) ? GK_BEAM
+              : (weapon == W_HOMING) ? GK_HOMING : GK_SHOT;
+    /* One left of the craft, so a volley spans bits 0-2. Clamped: a craft in column 0 is
+     * not spawning that shot anyway. */
+    g_x0[g] = (unsigned char)(craft_x >= 1 ? craft_x - 1 : 0);
 
     if (weapon == W_BEAM) {
         /* One bolt, BEAM_CELLS tall: the same column, stacked upward from the muzzle.
@@ -698,29 +736,19 @@ static void fire(void) {
          * cannot underflow. */
         unsigned char c;
         for (c = 0; c < BEAM_CELLS; c++)
-            shot_spawn(craft_x, (unsigned char)(CRAFT_ROW - 1 - c));
+            shot_spawn(craft_x, (unsigned char)(CRAFT_ROW - 1 - c), g);
     } else {
-        shot_spawn(craft_x, CRAFT_ROW - 1);
+        shot_spawn(craft_x, CRAFT_ROW - 1, g);
         if (weapon == W_SPREAD) {
-            /* Level 1-2 covers three columns, level 3 covers five. Width is the
-             * clearest way to show a level on a character grid -- you can see it. */
-            if (craft_x > 1)              shot_spawn(craft_x - 1, CRAFT_ROW - 1);
-            if (craft_x < PLAY_COLS - 2)  shot_spawn(craft_x + 1, CRAFT_ROW - 1);
-            if (wlevel >= 3) {
-                if (craft_x > 2)              shot_spawn(craft_x - 2, CRAFT_ROW - 1);
-                if (craft_x < PLAY_COLS - 3)  shot_spawn(craft_x + 2, CRAFT_ROW - 1);
-            }
+            /* Three columns: the craft's and one either side. */
+            if (craft_x > 1)              shot_spawn(craft_x - 1, CRAFT_ROW - 1, g);
+            if (craft_x < PLAY_COLS - 2)  shot_spawn(craft_x + 1, CRAFT_ROW - 1, g);
         }
     }
-    /* Deeper levels of the non-spread kinds fire faster instead of wider. */
-    if (weapon != W_SPREAD && wlevel > 1 && cooldown > 1) cooldown--;
 
     /* Spend one round. Single exit so this cannot be skipped by a branch above -- the
      * beam used to return early, which is exactly how an ammo leak gets written. */
-    if (weapon != W_PLAIN && --wammo == 0) {
-        weapon = W_PLAIN;
-        wlevel = 1;
-    }
+    if (weapon != W_PLAIN && --wammo == 0) weapon = W_PLAIN;
 }
 
 /* Resolve a shot arriving at one cell. Returns 1 if the shot is consumed.
@@ -897,6 +925,9 @@ static unsigned char shot_hits(unsigned char r, unsigned char x) {
         r_nx[i] = 0;                    /* clear first, so the restore paints lane */
         add_score(SCORE_NODE);
         for (k = 0; k < NODE_W; k++) restore_cell(r, nx + k);
+        /* It comes apart like a kill does. It used to just vanish, which reads as the
+         * shot passing through -- the same fault the debris was added to cure. */
+        pop_add(nx, r);
         return 1;
     }
     return blocked(r, x) ? 2 : 0;
@@ -932,6 +963,8 @@ static unsigned char e_flash[MAX_ENEMIES];
 static unsigned char e_t[MAX_ENEMIES];      /* fire timer / weave phase */
 
 static unsigned char p_live[MAX_PELLETS];
+static unsigned char p_own[MAX_PELLETS];    /* enemy slot that fired it; P_NONE if gone */
+#define P_NONE 0xFF
 static unsigned char p_x[MAX_PELLETS], p_y[MAX_PELLETS];
 
 static unsigned char spawn_timer = SPAWN_MIN;
@@ -1054,8 +1087,8 @@ static void fine_apply(void) {
     vcmd(VCMD_FINEY);
 }
 
-/* Shots are sprites 1..MAX_SHOTS, and because a sprite is pixel-positioned they can be
- * drawn BETWEEN rows. Their logical position only changes at a step boundary, but the
+/* Shot groups are sprites SPR_SHOT0.., and because a sprite is pixel-positioned they can
+ * be drawn BETWEEN rows. Their logical position only changes at a step boundary, but the
  * eye sees FINE_STEPS frames per step -- so without interpolation a shot hops its whole
  * per-step distance at once, which is what remained after the blink was fixed. That is
  * SHOT_SPEED rows for a plain shot and BEAM_SPEED for a beam bolt, so the interpolation
@@ -1066,47 +1099,106 @@ static void fine_apply(void) {
  * where collision has already been resolved, so a kill would register while the shot was
  * still visibly short of the target. Centred halves that error in both directions.
  *
+ * One pass over the shots gathers each group -- which of a volley's shots survive, and
+ * the rows a bolt still spans -- and a second draws each group as one sprite. It also
+ * decides g_live, so a group whose last shot died is free for fire() on the next step.
+ *
  * Called every frame, not just on step boundaries -- that is the whole point. A dead
- * slot must be switched OFF explicitly or its sprite lingers where the shot died. */
+ * group must be switched OFF explicitly or its sprite lingers where the shots died. */
+static unsigned char gm[MAX_GROUPS], gtop[MAX_GROUPS], gbot[MAX_GROUPS];
+static unsigned char gx[MAX_GROUPS], gsp[MAX_GROUPS], gspent[MAX_GROUPS];
+
 static void draw_shots(void) {
-    unsigned char i;
+    unsigned char i, g, h;
     /* Centred on the shot's logical row: at fine_off 0 it is drawn speed*CELL_H/2 below,
      * at CELL_H-1 the same above, so the visual error stays under a row either way
-     * instead of trailing the collision by a full `speed` rows. Scaled per shot, because
+     * instead of trailing the collision by a full `speed` rows. Scaled per group, because
      * a beam bolt covers BEAM_SPEED rows a step and a plain shot SHOT_SPEED -- one shared
      * bias would over-lead the slow shots or under-lead the fast ones. */
-    int half = (int)(CELL_H / 2) - (int)fine_off;
+    int half = (int)(CELL_H / 2) - (int)fine_off, py;
+    unsigned int px;
 
+    for (g = 0; g < MAX_GROUPS; g++) { gm[g] = 0; gtop[g] = 255; gbot[g] = 0; }
     for (i = 0; i < MAX_SHOTS; i++) {
-        spr_sel((unsigned char)(i + 1));
-        if (s_live[i]) {
-            int py = (int)s_y[i] * CELL_H + half * (int)s_speed[i];
-            if (py < 0) py = 0;         /* a shot near row 0 must not wrap negative */
-            spr_x(s_x[i]);
-            spr_y_px((unsigned int)py);
-            spr_glyph(s_glyph[i]);
-            /* Dim for the last two rows of a short-ranged shot, so burning out reads as
-             * running out of reach rather than as the shot blinking out of existence. */
-            spr_attr((s_floor[i] && s_y[i] <= (unsigned char)(s_floor[i] + 2))
-                     ? A_SPENT : A_SHOT);
-            spr_on(1);
+        if (!s_live[i]) continue;
+        g = s_grp[i];
+        gm[g] |= (unsigned char)(1 << ((s_x[i] - g_x0[g]) & 7));   /* spread only */
+        if (s_y[i] < gtop[g]) gtop[g] = s_y[i];
+        if (s_y[i] > gbot[g]) gbot[g] = s_y[i];
+        gx[g] = s_x[i];
+        gsp[g] = s_speed[i];
+        /* Dim for the last two rows of a short-ranged shot, so burning out reads as
+         * running out of reach rather than as the shot blinking out of existence. */
+        gspent[g] = (unsigned char)(s_floor[i] && s_y[i] <= (unsigned char)(s_floor[i] + 2));
+    }
+
+    for (g = 0; g < MAX_GROUPS; g++) {
+        spr_sel((unsigned char)(SPR_SHOT0 + g));
+        g_live[g] = (unsigned char)(gtop[g] != 255);
+        if (!g_live[g]) { spr_on(0); continue; }
+
+        py = (int)gtop[g] * CELL_H + half * (int)gsp[g];
+        if (py < 0) py = 0;             /* a shot near row 0 must not wrap negative */
+        spr_y_px((unsigned int)py);
+
+        if (g_kind[g] == GK_SPREAD) {
+            /* The picture of exactly these survivors, three columns wide from g_x0. */
+            spr_x_px((unsigned int)g_x0[g] << 3);
+            spr_glyph((unsigned char)((gspent[g] ? SL_SPREAD_SPENT : SL_SPREAD) +
+                                      (gm[g] - 1) * SPREAD_SLOTS));
+            spr_w(SPREAD_SLOTS);
+            spr_h(1);
         } else {
-            spr_on(0);
+            /* One column, centred: the pictures are 16 px wide and a cell is 8. */
+            px = (unsigned int)gx[g] << 3;
+            spr_x_px(px >= 4 ? px - 4 : 0);
+            spr_w(1);
+            if (g_kind[g] == GK_BEAM) {
+                /* A bolt loses cells from the front, into whatever stopped it, so what is
+                 * left is always one unbroken run -- as tall as the rows it still spans. */
+                h = (unsigned char)(gbot[g] - gtop[g] + 1);
+                if (h > BEAM_CELLS) h = BEAM_CELLS;
+                spr_glyph((unsigned char)(SL_BEAM + BEAM_CELLS - h));
+                spr_h(h);
+            } else {
+                spr_glyph(g_kind[g] == GK_HOMING ? SL_HOMING : SL_SHOT);
+                spr_h(1);
+            }
         }
+        spr_on(1);
     }
 }
 
+/* Enemies and pellets are sprites too, but they belong to the WORLD: they sit in its rows
+ * and scroll with it. The cell plane used to carry them for free, sliding the whole scroll
+ * region down by fine_off; a sprite does not ride the region, so each one is placed at
+ * its row plus that same offset, every frame, and moves with the terrain exactly.
+ *
+ * Anything on the bottom row is hidden. The region clips cells there as they slide out,
+ * and a sprite is not clipped, so it would slide down over the HUD instead. The craft
+ * sits above that row, so by then the object has already passed it. */
+static void draw_foes(void) {
+    unsigned char i, t;
+    unsigned int  x;
 
-
-static unsigned char enemy_glyph(unsigned char t) {
-    if (t == E_DAEMON)   return G_DAEMON;
-    if (t == E_WORM)     return G_WORM;
-    return G_SENTINEL;
-}
-static unsigned char enemy_attr(unsigned char t) {
-    if (t == E_WORM)     return A_FOE2;
-    if (t == E_SENTINEL) return A_FOE3;
-    return A_FOE;                       /* the daemon keeps plain bright red */
+    for (i = 0; i < MAX_ENEMIES; i++) {
+        spr_sel((unsigned char)(SPR_FOE0 + i));
+        t = e_type[i];
+        if (!t || e_y[i] >= PLAY_LAST) { spr_on(0); continue; }
+        spr_x_px((unsigned int)e_x[i] << 3);    /* two cells: exactly one slot */
+        spr_y_px((unsigned int)e_y[i] * CELL_H + fine_off);
+        spr_glyph((unsigned char)((e_flash[i] ? SL_FOE_HIT : SL_DAEMON) + t - 1));
+        spr_on(1);
+    }
+    for (i = 0; i < MAX_PELLETS; i++) {
+        spr_sel((unsigned char)(SPR_PELLET0 + i));
+        if (!p_live[i] || p_y[i] >= PLAY_LAST) { spr_on(0); continue; }
+        x = (unsigned int)p_x[i] << 3;          /* one cell, centred in a 16 px slot */
+        spr_x_px(x >= 4 ? x - 4 : 0);
+        spr_y_px((unsigned int)p_y[i] * CELL_H + fine_off);
+        spr_glyph(SL_PELLET);
+        spr_on(1);
+    }
 }
 
 /* Index+1 of a live enemy occupying (r,x), or 0. */
@@ -1137,9 +1229,7 @@ static void enemy_kill(unsigned char i) {
     else                              add_score(SCORE_SENTINEL);
     e_type[i] = E_NONE;
     if (rndn(FRAG_CHANCE) == 0) frag_drop(e_x[i], e_y[i]);
-    pop_add(e_x[i], e_y[i]);
-    restore_cell(e_y[i], e_x[i]);
-    restore_cell(e_y[i], (unsigned char)(e_x[i] + 1));
+    pop_add(e_x[i], e_y[i]);            /* the body is a sprite: nothing to erase */
 }
 
 /* Kept as decrement-and-check rather than collapsed to an unconditional kill: every
@@ -1187,19 +1277,48 @@ static void spawn_enemy(void) {
     e_y[i] = 0;
     e_hp[i] = (t == E_DAEMON) ? HP_DAEMON : (t == E_WORM ? HP_WORM : HP_SENTINEL);
     e_t[i] = (t == E_SENTINEL) ? fire_base : (rnd16() & 1);
+
+    /* A pellet outlives the sentinel that fired it. Disown any still falling from this
+     * slot's previous occupant, or the newcomer would hold its fire until it landed. */
+    for (k = 0; k < MAX_PELLETS; k++) if (p_own[k] == i) p_own[k] = P_NONE;
 }
 
-static void pellet_spawn(unsigned char x, unsigned char y) {
+/* Returns 1 if the pellet went up, 0 if the pool was full. */
+static unsigned char pellet_spawn(unsigned char x, unsigned char y, unsigned char own) {
     unsigned char i;
     for (i = 0; i < MAX_PELLETS; i++) {
         if (!p_live[i]) {
             p_live[i] = 1;
+            p_own[i] = own;
             p_x[i] = x;
             p_y[i] = y;
-            return;
+            return 1;
         }
     }
+    return 0;
 }
+
+/* A sentinel fires at the craft, not on a metronome. It used to drop a pellet every
+ * fire_base steps whatever was below it, straight down its left column -- so most of
+ * its shots fell where nobody was, and the right half of its body never fired at all.
+ *
+ * Now it shoots only when there is something to shoot at: the craft below it, in either
+ * of its two columns, and the pellet drops from the column the craft is in. Two limits
+ * keep a craft weaving through its line from drawing a stream:
+ *   - one pellet in the air per sentinel, and
+ *   - the reload, e_t, counted down from fire_base after every shot.
+ * The reload matters as well as the one-in-the-air rule because a pellet that HITS you
+ * dies at once, and without a reload the next would follow on the very next step. */
+static void sentinel_fire(unsigned char i) {
+    unsigned char k;
+    if (e_t[i]) { e_t[i]--; return; }
+    if (e_y[i] >= CRAFT_ROW) return;                        /* level with you or past */
+    if (craft_x < e_x[i] || craft_x > (unsigned char)(e_x[i] + ENEMY_W - 1)) return;
+    for (k = 0; k < MAX_PELLETS; k++) if (p_live[k] && p_own[k] == i) return;
+    if (pellet_spawn(craft_x, (unsigned char)(e_y[i] + 1), i)) e_t[i] = fire_base;
+}
+
+
 
 static void enemies_advance(void) {
     unsigned char i, ny, nx;
@@ -1249,8 +1368,7 @@ static void enemies_advance(void) {
                 blocked(e_y[i], (unsigned char)(nx + ENEMY_W - 1))) e_t[i] ^= 1;
             else                                                    e_x[i] = nx;
         } else if (e_type[i] == E_SENTINEL) {
-            if (e_t[i]) e_t[i]--;
-            else { pellet_spawn(e_x[i], e_y[i] + 1); e_t[i] = fire_base; }
+            sentinel_fire(i);
         }
 
         /* Crushed by a narrowing channel. Corruption is not privileged over the
@@ -1317,13 +1435,13 @@ static void frags_step(void) {
         ny = f_y[f] + WORLD_STEP;
 
         if (swept_craft(f_y[f], ny, f_x[f], FRAG_W)) {
-            if (f_kind[f] == weapon) {
-                if (wlevel < W_MAXLEVEL) wlevel++;   /* same kind: deepen... */
-            } else {
-                weapon = f_kind[f];                  /* ...different kind: swap, level 1 */
-                wlevel = 1;
+            if (f_kind[f] == weapon) {               /* same kind: another magazine */
+                wammo = (wammo > W_AMMO_MAX - W_AMMO) ? W_AMMO_MAX
+                                                      : (unsigned char)(wammo + W_AMMO);
+            } else {                                 /* different kind: swap to it */
+                weapon = f_kind[f];
+                wammo = W_AMMO;
             }
-            wammo = W_AMMO;                          /* either way, a full magazine */
             f_live[f] = 0;
             continue;
         }
@@ -1512,22 +1630,15 @@ static void step_world(void) {
 
     /* Erase every moving object BEFORE the scroll, or the hardware shift drags
      * their glyphs down the screen as a trail of ghosts. */
-    /* Neither the craft nor the shots are erased: both are sprites now and never
-     * touch the plane. That is what stops them blinking -- a cell-plane object is
-     * absent from the screen for the whole gap between its erase and its redraw, and
-     * the host repaints several times inside that gap. */
-    for (i = 0; i < MAX_ENEMIES; i++)
-        if (e_type[i]) {
-            restore_cell(e_y[i], e_x[i]);
-            restore_cell(e_y[i], (unsigned char)(e_x[i] + 1));
-        }
+    /* The craft, the shots, the enemies and the pellets are not erased: all of them are
+     * sprites now and never touch the plane. That is what stops them blinking -- a
+     * cell-plane object is absent from the screen for the whole gap between its erase
+     * and its redraw, and the host repaints several times inside that gap. */
     /* One cell each now: the scatter table's first two entries already cover the two
      * cells a target body occupied, so restoring x+1 as well would clean a column of
      * lane the debris never wrote to. */
     for (i = 0; i < MAX_DEBRIS; i++)
         if (pop_t[i]) restore_cell(pop_y[i], pop_x[i]);
-    for (i = 0; i < MAX_PELLETS; i++)
-        if (p_live[i]) restore_cell(p_y[i], p_x[i]);
     for (i = 0; i < MAX_FRAGS; i++)
         if (f_live[i]) {
             restore_cell(f_y[i], f_x[i]);
@@ -1593,33 +1704,15 @@ static void step_world(void) {
 
     energy_spend(ENERGY_DRAIN);
 
-    /* Redraw order is deliberate: corruption, then pellets, then your shots, then
-     * the craft. Later writes win, so the things you most need to see never end
-     * up hidden under something else sharing a cell. */
-    /* Debris first, so a live object drawn over a cell still wins it. Glyph and colour
-     * both come from the remaining-ticks tables, which is what makes the spray thin out
-     * rather than switch off. */
+    /* The cell plane now holds only debris and fragments; everything else is a sprite,
+     * and sprites always draw over the plane. Glyph and colour both come from the
+     * remaining-ticks tables, which is what makes the spray thin out rather than
+     * switch off. */
     for (i = 0; i < MAX_DEBRIS; i++)
         if (pop_t[i]) {
             vaddr(PROW(pop_y[i]) * SCR_W + pop_x[i]);
             last_attr = 0xFF;
             put_cell(pop_glyph[pop_t[i]], pop_attr[pop_t[i]]);
-        }
-    for (i = 0; i < MAX_ENEMIES; i++)
-        if (e_type[i]) {
-            vaddr(PROW(e_y[i]) * SCR_W + e_x[i]);
-            last_attr = 0xFF;
-            {
-                unsigned char ea = e_flash[i] ? A_SHOT : enemy_attr(e_type[i]);
-                put_cell(enemy_glyph(e_type[i]), ea);
-                put_cell(enemy_glyph(e_type[i]), ea);
-            }
-        }
-    for (i = 0; i < MAX_PELLETS; i++)
-        if (p_live[i]) {
-            vaddr(PROW(p_y[i]) * SCR_W + p_x[i]);
-            last_attr = 0xFF;
-            put_cell(G_PELLET, A_FOE);
         }
     for (i = 0; i < MAX_FRAGS; i++)
         if (f_live[i]) {
@@ -1632,6 +1725,7 @@ static void step_world(void) {
                 put_cell((unsigned char)(g + 1), A_FRAG);
             }
         }
+    draw_foes();
     draw_shots();
     draw_craft();                       /* a sprite: cheap, and never leaves a hole */
 }
@@ -1644,7 +1738,7 @@ static void step_world(void) {
  *
  * Layout, all of which must end by column 79:
  *   0 PWR   4..23 bar   25..28 energy   30 SCORE   36..40   42 ROWS   47..51
- *   53 WPN  57..62 name  63..66 Lv#   68..71 [OC]   73..77 PAUSE               */
+ *   53 WPN  57..62 name  64..66 xNN rounds   73..77 PAUSE                          */
 static void draw_hud_static(void) {
     put_str(0,  HUD_ROW, "PWR", A_HUD);
     put_str(30, HUD_ROW, "SCORE", A_HUD);
@@ -1658,7 +1752,7 @@ static void draw_hud_static(void) {
 static unsigned int  hud_score = 0xFFFF, hud_rows = 0xFFFF, hud_energy = 0xFFFF;
 static unsigned char hud_filled = 0xFF;
 static unsigned char hud_pause = 0xFF;
-static unsigned char hud_wpn = 0xFF, hud_wlev = 0xFF, hud_wammo = 0xFF;
+static unsigned char hud_wpn = 0xFF, hud_wammo = 0xFF;
 
 static unsigned char hud_sector = 0xFF;
 
@@ -1701,21 +1795,20 @@ static void draw_hud_live(void) {
         hud_pause = paused;
         put_str(73, HUD_ROW, paused ? "PAUSE" : "     ", A_WARN);
     }
-    if (weapon != hud_wpn || wlevel != hud_wlev) {
-        hud_wpn = weapon; hud_wlev = wlevel;
+    if (weapon != hud_wpn) {
+        hud_wpn = weapon;
         put_str(57, HUD_ROW, wname[weapon], A_CRAFT);
-        put_str(63, HUD_ROW, " Lv", A_HUD);
-        put_num(66, HUD_ROW, wlevel, 1, A_CRAFT);
+        hud_wammo = 0xFF;               /* plain shows no count, so repaint it too */
     }
-    /* Rounds left, in the two cells the overclock tag used to hold. Without this the
-     * gun reverting mid-fight would read as the weapon breaking. Red near empty. */
+    /* Rounds left, beside the name. Without this the gun reverting mid-fight would read
+     * as the weapon breaking. Red near empty. */
     if (wammo != hud_wammo) {
         hud_wammo = wammo;
         if (weapon == W_PLAIN) {
-            put_str(68, HUD_ROW, "   ", A_HUD);
+            put_str(64, HUD_ROW, "   ", A_HUD);
         } else {
-            put_str(68, HUD_ROW, "x", A_HUD);
-            put_num(69, HUD_ROW, wammo, 2,
+            put_str(64, HUD_ROW, "x", A_HUD);
+            put_num(65, HUD_ROW, wammo, 2,
                     (wammo <= W_AMMO_LOW) ? A_WARN : A_CRAFT);
         }
     }
@@ -1925,24 +2018,29 @@ static unsigned char play_run(void) {
     spawn_timer = SPAWN_MIN;
     fine_off = 0;
     fw_due = 0;                     /* fw_next is set with sector_next, further down */
-    weapon = W_PLAIN; wlevel = 1; wammo = 0;
+    weapon = W_PLAIN; wammo = 0;
     head = 0;
     gen_cx = 19; gen_hw = HW_MAX; gen_target = HW_MAX; gen_gaunt = 0;
     isl_left = 0; isl_x = 0; isl_w = 0;
     for (r = 0; r < MAX_SHOTS; r++)   s_live[r] = 0;
+    for (r = 0; r < MAX_GROUPS; r++)  g_live[r] = 0;
     for (r = 0; r < MAX_ENEMIES; r++) { e_type[r] = E_NONE; e_flash[r] = 0; }
-    for (r = 0; r < MAX_PELLETS; r++) p_live[r] = 0;
+    for (r = 0; r < MAX_PELLETS; r++) { p_live[r] = 0; p_own[r] = P_NONE; }
     for (r = 0; r < MAX_FRAGS; r++)   f_live[r] = 0;
     for (r = 0; r < MAX_DEBRIS; r++)  pop_t[r] = 0;
     /* Force every HUD field to repaint on the first frame of the run. */
     hud_score = 0xFFFF; hud_rows = 0xFFFF; hud_energy = 0xFFFF;
     hud_filled = 0xFF; hud_pause = 0xFF; hud_sector = 0xFF;
-    hud_wpn = 0xFF; hud_wlev = 0xFF; hud_wammo = 0xFF;
+    hud_wpn = 0xFF; hud_wammo = 0xFF;
 
     vhidecur();
     vattr(A_TEXT); vaddr(0); vfill(' '); vcmd(VCMD_CLEAR);
     vscrollbot(BAND_BOT);               /* AFTER the clear -- a clear resets this */
     frag_font_init();                   /* AFTER the clear -- a clear reverts to ROM */
+    for (r = 0; r < SPR_COUNT; r++) {   /* AFTER the clear too -- it drops bitmap mode */
+        spr_sel(r);
+        spr_bitmap(1);
+    }
     board_init();                       /* fixed trace routing for the whole run */
 
     /* BEFORE the pre-fill, not after. sector_apply() is what sets the generator's dials
@@ -1973,7 +2071,7 @@ static unsigned char play_run(void) {
 
     draw_hud_static();
     draw_craft();
-    spr_sel(0);
+    spr_sel(SPR_CRAFT);
     spr_on(1);                          /* AFTER a position is set, so it never
                                          * flashes on at a stale coordinate */
 
@@ -2009,8 +2107,10 @@ static unsigned char play_run(void) {
                     step_world();
                 } else {
                     fine_apply();
-                    /* Shots slide between rows, so their sprites are repositioned every
-                     * frame rather than once a step -- see draw_shots(). */
+                    /* Shots slide between rows and enemies ride the fine offset, so all
+                     * their sprites are repositioned every frame rather than once a
+                     * step -- see draw_shots() and draw_foes(). */
+                    draw_foes();
                     draw_shots();
                     /* The expensive terrain paint, on a frame that is otherwise idle.
                      * Newest row last, so the ring's slot order is respected. */
@@ -2056,6 +2156,80 @@ static unsigned char play_run(void) {
     return 0;                           /* quit out mid-run */
 }
 
+/* ---- pattern RAM ----
+ * Uploaded once, before the title screen: pattern RAM survives a clear, so every run
+ * after the first finds it already there.
+ *
+ * Most slots are copies of kpanic_art.c. The rest are derived here instead of stored,
+ * because they are recolourings or combinations of pictures already in memory, and
+ * 186 slots of spread volleys alone would be 24 KB of a 30 KB program. */
+
+/* One slot from src, every pixel's colour passed through map[] (map[0] must stay 0,
+ * transparent). A null map copies it as it is. */
+static void art_slot(unsigned char slot, const unsigned char *src, const unsigned char *map) {
+    unsigned char i, b;
+    spr_img_seek(slot);
+    if (!map) { spr_img_load(src); return; }
+    for (i = 0; i < 128; i++) {
+        b = src[i];
+        spr_img_write((unsigned char)((map[b >> 4] << 4) | map[b & 15]));
+    }
+}
+
+/* Every pixel to one colour: the flash pictures. */
+static const unsigned char map_red[16]   = { 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9 };
+static const unsigned char map_white[16] = { 0,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15 };
+/* The spent spread shot: green to grey, so the orb dims rather than changing shape. */
+static const unsigned char map_spent[16] = { 0, 1, 7, 3, 4, 5, 6, 7, 8, 9, 7,11,12,13,14,15 };
+
+/* The four pictures one slot of a spread volley can be, in each of the two sets
+ * (bright and spent). A slot is two columns, so all it can hold is: nothing, the left
+ * orb, the right orb, or both -- index bit 0 left, bit 1 right. */
+static unsigned char vquad[2][4][128];
+
+static void art_load(void) {
+    const unsigned char *src;
+    unsigned char set, mask, k, r, q, i, b, *dst;
+
+    art_slot(SL_CRAFT,      art_craft, 0);
+    art_slot(SL_CRAFT_HIT,  art_craft, map_red);
+    art_slot(SL_DAEMON,     art_daemon, 0);
+    art_slot(SL_WORM,       art_worm, 0);
+    art_slot(SL_SENTINEL,   art_sentinel, 0);
+    art_slot(SL_FOE_HIT,    art_daemon, map_white);
+    art_slot(SL_FOE_HIT + 1, art_worm, map_white);
+    art_slot(SL_FOE_HIT + 2, art_sentinel, map_white);
+    art_slot(SL_PELLET,     art_pellet, 0);
+    art_slot(SL_SHOT,       art_shot, 0);
+    art_slot(SL_HOMING,     art_homing, 0);
+    for (k = 0; k < BEAM_CELLS; k++) art_slot((unsigned char)(SL_BEAM + k), art_beam, 0);
+
+    /* Build the eight quarter pictures. A slot row is 8 bytes: the left column is bytes
+     * 0-3 and the right is 4-7, each a copy of that row of the orb or zero. */
+    for (set = 0; set < 2; set++)
+        for (q = 0; q < 4; q++) {
+            dst = vquad[set][q];
+            src = art_orb;
+            for (r = 0; r < 16; r++, src += 4)
+                for (i = 0; i < 8; i++) {
+                    b = ((q >> (i >> 2)) & 1) ? src[i & 3] : 0;
+                    if (set) b = (unsigned char)((map_spent[b >> 4] << 4) | map_spent[b & 15]);
+                    *dst++ = b;
+                }
+        }
+
+    /* Spread volleys: for each non-empty set of surviving shots, two slots, slot k
+     * holding columns 2k and 2k+1 -- so it is whichever quarter picture those two bits
+     * of the mask name. The fourth column does not exist, so the second slot only ever
+     * has a left orb. The volleys are contiguous, so one seek per set does. */
+    for (set = 0; set < 2; set++) {
+        spr_img_seek(set ? SL_SPREAD_SPENT : SL_SPREAD);
+        for (mask = 1; mask < (1 << SPREAD_COLS); mask++)
+            for (k = 0; k < SPREAD_SLOTS; k++)
+                spr_img_load(vquad[set][(mask >> (k << 1)) & 3]);
+    }
+}
+
 /* Assert our own background -- see the note in VAULT. The conduit is a hole in
  * a machine, and A_BOARD is the default pair, so a theme would otherwise decide
  * what the inside of a computer looks like. The shell restores the theme when
@@ -2069,6 +2243,7 @@ void main(void) {
     unsigned char i;
 
     own_colours();
+    art_load();
     rngv = rng_seed();
     if (rngv == 0) rngv = 0xACE1;       /* xorshift must never start at zero */
 
@@ -2080,7 +2255,7 @@ void main(void) {
 
     /* Hand the machine back the way we found it: no sprite, full-screen scroll
      * region. A clear would do it too, but being explicit costs nothing. */
-    for (i = 0; i <= MAX_SHOTS; i++) { spr_sel(i); spr_on(0); }
+    for (i = 0; i < SPR_COUNT; i++) { spr_sel(i); spr_on(0); }
     vcmd(VCMD_FONTROM);                 /* our six glyphs must not follow us into DOS */
     vcmd(VCMD_FONTRESET);
     vscrollbot(SCR_H - 1);

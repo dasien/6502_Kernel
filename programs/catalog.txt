@@ -94,7 +94,7 @@ desc    = micro-Max chess
 
 [kpanic]
 dir     = programs/kpanic
-sources = kpanic.c
+sources = kpanic.c kpanic_art.c
 config  = kpanic.cfg
 program = KPANIC.PRG -> GAMES/KPANIC.PRG
 doc     = KPANIC.TXT -> GAMES/KPANIC.TXT

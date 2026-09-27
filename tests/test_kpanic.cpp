@@ -329,17 +329,18 @@ TEST_F(KpanicTest, TheScoreSaturatesInsteadOfWrapping)
     EXPECT_EQ(peek16("_score"), 0xFFFFu);
 }
 
-/* The craft's impact flash must not set the reverse-video bit.
+/* The craft's impact flash must actually show, and no sprite may set the
+ * reverse-video bit.
  *
- * A sprite has no cell behind it to swap with -- DisplayWidget draws sprite
- * pixels in the FOREGROUND colour only -- so bit 7 makes resolveCellColors hand
- * back the background instead, and every attribute this game uses has a black
- * background. The flash was `A_WARN | 0x80`, which drew the ship in black pixels:
- * hitting a wall read as the craft blinking out rather than being hit.
+ * The flash was once `A_WARN | 0x80` on a glyph sprite. A sprite has no cell
+ * behind it to swap with -- DisplayWidget draws sprite pixels in the FOREGROUND
+ * colour only -- so bit 7 made resolveCellColors hand back the background, which
+ * is black: hitting a wall read as the craft blinking out rather than being hit.
  *
- * Reported from play, not found here; this exists so it cannot come back. The
- * assertion is deliberately about the whole sprite set, because the bit is wrong
- * on ANY sprite for the same reason. */
+ * Every sprite is a bitmap sprite now, which ignores the attribute, and the flash
+ * is its own picture (SL_CRAFT_HIT). The reverse-bit check stays, because a
+ * sprite switched back to a glyph would bring the trap straight back, and the
+ * flash check now asks for that picture. */
 TEST_F(KpanicTest, NoSpriteEverSetsTheReverseBit)
 {
     startRun();
@@ -356,10 +357,66 @@ TEST_F(KpanicTest, NoSpriteEverSetsTheReverseBit)
         EXPECT_EQ(s.attr & 0x80, 0)
             << "sprite " << static_cast<int>(i) << " has the reverse bit set, so it "
             << "draws in its background colour -- which is black";
-        if (s.glyph == 15) saw_flash = true;      // G_BLAST, the impact glyph
+        if (i == 0 && s.bitmap && s.glyph == 1) saw_flash = true;    // SL_CRAFT_HIT
     }
     EXPECT_TRUE(saw_flash) << "the craft was not showing its impact flash, so the "
                               "attribute under test was never exercised";
+}
+
+/* A spread volley draws as ONE sprite, not one per shot.
+ *
+ * One sprite per shot is what once let the spread gun consume 15 of the chip's 17
+ * sprites, leaving nothing for the enemies. A volley's shots share a row, a speed
+ * and a burn-out row, so each volley is now one picture of its surviving shots,
+ * three columns (two pattern slots) wide.
+ *
+ * Held fire is the heaviest the gun gets, so the shot sprites (1-4) are checked
+ * while it runs: every one that is on must be a bitmap sprite, two slots wide,
+ * showing a volley picture -- slots 15..42, the bright set and the spent one. */
+TEST_F(KpanicTest, ASpreadVolleyIsOneSprite)
+{
+    startRun();
+    poke("_weapon", 1);             // W_SPREAD
+    poke("_wammo", 99);
+    poke16("_energy", 1000);        // so the run outlives the test
+
+    pia->setKeyState(0x10);         // KS_FIRE, held
+    int volleys_seen = 0;
+    for (int f = 0; f < 90; f++) {
+        run(1);
+        for (uint8_t i = 1; i <= 4; i++) {
+            const auto &sp = c.getVideoChip()->sprite(i);
+            if (!sp.enabled) continue;
+            ASSERT_TRUE(sp.bitmap) << "shot sprite " << int(i) << " is a glyph";
+            EXPECT_EQ(sp.w, 2) << "a spread volley should be two slots wide";
+            EXPECT_GE(sp.glyph, 15); EXPECT_LE(sp.glyph, 42);
+            volleys_seen++;
+        }
+    }
+    pia->setKeyState(0);
+    EXPECT_GT(volleys_seen, 0) << "holding fire never put a volley on screen";
+}
+
+/* Enemies are bitmap sprites in their own range (5-12), showing one of the three
+ * enemy pictures or its hit flash. Flown hands-off until one appears; the first
+ * spawn comes within a few seconds. */
+TEST_F(KpanicTest, EnemiesAreBitmapSprites)
+{
+    startRun();
+    poke16("_energy", 1000);
+    bool seen = false;
+    for (int f = 0; f < 60 * 10 && !seen; f++) {
+        run(1);
+        for (uint8_t i = 5; i <= 12; i++) {
+            const auto &sp = c.getVideoChip()->sprite(i);
+            if (!sp.enabled) continue;
+            EXPECT_TRUE(sp.bitmap);
+            EXPECT_GE(sp.glyph, 2); EXPECT_LE(sp.glyph, 7);    // SL_DAEMON..SL_FOE_HIT+2
+            EXPECT_EQ(sp.w, 1); EXPECT_EQ(sp.h, 1);
+            seen = true;
+        }
+    }
+    EXPECT_TRUE(seen) << "no enemy appeared in ten seconds of flight";
 }
 
 /* KPANIC asserts its own background rather than wearing the machine's theme.

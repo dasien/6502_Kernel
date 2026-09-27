@@ -282,7 +282,7 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         mfc_add_test_blob(kpanic
             DIR      ${CMAKE_SOURCE_DIR}/programs/kpanic
             CONFIG   kpanic.cfg
-            SOURCES  kpanic.c
+            SOURCES  kpanic.c kpanic_art.c
             LABELS
             DEPENDS  ${CMAKE_SOURCE_DIR}/programs/kpanic/kpanic.h
             MESSAGE  "KERNEL PANIC blob built ($0800)"

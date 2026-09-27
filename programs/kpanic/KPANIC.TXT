@@ -65,8 +65,9 @@ with limited rounds, and each drops from wreckage:
   B   BEAM      a tall fast bolt that punches through what it hits
   H   HOMING    shots drift toward the nearest target
 
-Picking one up while you already hold it deepens it instead, up to level 3.
-When the rounds run out you fall back to the plain shot, which never runs dry.
+Picking one up while you already hold it adds ten more rounds, up to 99.
+When the rounds run out you fall back to the plain shot, which never runs dry,
+and so does a crash into the conduit wall.
 
 
 FIREWALLS

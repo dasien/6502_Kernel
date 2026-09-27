@@ -32,10 +32,10 @@ extern unsigned char keystate(void);                  /* live held-key bitmask (
  * Select a sprite, then set its fields. spr_x/spr_y take CELLS and the glue converts;
  * spr_x_px/spr_y_px take the chip's nominal pixels directly, for an object that sits
  * BETWEEN cells. The craft takes pixel X (it steers sub-column) and cell Y (its row never
- * moves); the shots are the mirror image -- cell X, pixel Y as they slide between rows.
+ * moves); shots, enemies and pellets take pixels on both axes.
  *
- * Sprite 0 is the craft; 1..MAX_SHOTS are the shots. Both were juddering in the cell
- * plane for the same reason, and both are cured the same way. */
+ * Every one is a BITMAP sprite, its picture a slot of the VIC's pattern RAM; the split
+ * of the 17 between craft, shot groups, enemies and pellets is under "sprites" below. */
 extern void          spr_sel(unsigned char index);
 extern void          spr_x(unsigned char cell_col);
 extern void          spr_y(unsigned char cell_row);
@@ -44,6 +44,12 @@ extern void          spr_y_px(unsigned int pixel_row);
 extern void          spr_glyph(unsigned char glyph);
 extern void          spr_attr(unsigned char attr);
 extern void          spr_on(unsigned char enable);
+extern void          spr_w(unsigned char cells);          /* width in slots, 1..8 */
+extern void          spr_h(unsigned char cells);          /* height in slots, 1..8 */
+extern void          spr_bitmap(unsigned char on);        /* picture from pattern RAM */
+extern void          spr_img_seek(unsigned char slot);    /* pattern port -> slot start */
+extern void          spr_img_write(unsigned char b);      /* one byte; port advances */
+extern void          spr_img_load(const unsigned char *src); /* one whole slot, 128 bytes */
 
 /* keystate() bits, active-high. Independent bits are the whole point: holding a
  * direction and firing are simultaneous by construction. */
@@ -67,7 +73,7 @@ extern void          spr_on(unsigned char enable);
 #define VCMD_FONTRESET  0x0A    /* reload CP437 into every font set */
 #define VCMD_FONTSET    0x0B    /* param = which set is live */
 
-/* ---- the soft font, used for exactly one thing ----
+/* ---- the soft font: fragments and the firewall ----
  * A fragment is drawn as a two-cell CHIP: a framed component with the weapon's letter
  * centred across the cell boundary. It was a bare letter, then a letter on a dim navy
  * tile, and neither read as an OBJECT -- they read as text that happened to be in the
@@ -79,10 +85,15 @@ extern void          spr_on(unsigned char enable);
  * frame around it. No hand-drawn letters to keep in sync with the font, and the letter
  * is exactly the one the rest of the game uses.
  *
- * Codes 16-21 are chosen because nothing else in this game draws them, and font RAM is
- * CP437-seeded so all 250 other glyphs are untouched. The font is put back to ROM on the
- * way out -- see main() -- so DOS never inherits them. */
-#define FONT_SET        0       /* set 0: CP437 everywhere except our six codes */
+ * The firewall's three glyphs (G_FIRE, G_PORT) are the other use; those ARE artwork,
+ * from kpanic_art.c.
+ *
+ * The data node's two (G_NODE) are the same kind of artwork.
+ *
+ * Codes 16-21 and 25-29 are chosen because nothing else in this game draws them, and
+ * font RAM is CP437-seeded so every other glyph is untouched. The font is put back to
+ * ROM on the way out -- see main() -- so DOS never inherits them. */
+#define FONT_SET        0       /* set 0: CP437 everywhere except our eleven codes */
 #define GL_FRAG_FIRST   16      /* 16/17 = S, 18/19 = B, 20/21 = H (left/right) */
 #define FRAG_ROWS       16      /* scanlines per glyph */
 
@@ -99,7 +110,8 @@ extern void          spr_on(unsigned char enable);
  * the enemies and the pellets all ride it correctly -- but anything screen-referenced
  * sawtooths by one cell per row. That is why the craft and the shots are sprites: a
  * sprite does not ride the region, and it is pixel-positioned so it can sit between
- * cells in both axes. */
+ * cells in both axes. Enemies and pellets are sprites too now, for their pictures, and
+ * so they add the offset back themselves to keep riding the world -- see draw_foes(). */
 #define CELL_H          16      /* pixel height of an ordinary row */
 
 /* World speed is PIXELS PER FRAME, accumulated: each frame adds it to a sub-cell
@@ -239,38 +251,96 @@ extern void          spr_on(unsigned char enable);
                                  * target to line up on while dodging */
 
 /* ---- weapon ----
- * Colour-coded pickups swap the gun's character; collecting the same kind again
- * deepens it. On a text display the pickup's LETTER carries the identity, not its
+ * Pickups swap the gun's character; collecting the same kind again adds rounds. There
+ * are no levels: each weapon has one form. On a text display the pickup's LETTER carries the identity, not its
  * colour -- red already means corruption and green already means a data node, so
  * a third colour-coded meaning would be one too many for the eye to hold. */
 #define W_PLAIN          0      /* one shot up the column */
 #define W_SPREAD         1      /* S: fires into adjacent columns too */
 #define W_BEAM           2      /* B: a tall fast bolt that punches through */
 #define W_HOMING         3      /* H: shots drift toward the nearest target */
-#define W_MAXLEVEL       3
 
 /* A special weapon is a MAGAZINE, not a permanent upgrade. Picking one up used to be
  * forever: collect homing once and you never fired anything else for the rest of the
  * run, which flattened the whole pickup chain into a single decision made in the first
  * thirty seconds. A magazine makes a fragment a resource to spend and re-earn.
  *
- * One trigger pull spends ONE round whatever the volley's shape -- a five-shot spread
+ * One trigger pull spends ONE round whatever the volley's shape -- a three-shot spread
  * and a four-cell beam bolt each cost the same as a single plain shot. Counting
  * projectiles instead would make spread burn five times faster than beam for the same
  * press, which is a tax on the weapon that is supposed to be wide.
  *
- * Collecting the same kind again refills AND deepens; a different kind swaps you to it
- * at level 1 with a full magazine. Empty reverts to W_PLAIN, which is unlimited. */
+ * Collecting the same kind again ADDS a magazine to what is left, up to W_AMMO_MAX; a
+ * different kind swaps you to it with one magazine. Empty reverts to W_PLAIN, which is
+ * unlimited, and so does a crash -- losing the gun is what makes a crash sting beyond
+ * the energy.
+ *
+ * There used to be levels: a matching pickup deepened the gun to 3 (a five-shot spread,
+ * more beam pierce, faster homing) and a crash knocked one off. Stacking rounds replaced
+ * them. It also freed two sprites: faster homing was the worst case for shot groups
+ * (6 in the air), and at the one fire rate it is 4 -- see the sprite split below. */
 #define W_AMMO          10      /* rounds a fragment grants */
+#define W_AMMO_MAX      99      /* the HUD shows two digits */
+#define BEAM_PIERCE      2      /* targets each cell of a bolt punches through */
 #define W_AMMO_LOW       3      /* at or below this the HUD count turns red */
 
-/* One sprite per shot plus one for the craft, and the chip has 17 -- so 16. In play
- * that is generous: the plain gun keeps about 3 in the air, spread level 2 about 9.
+/* ---- sprites ----
+ * Everything that moves is a bitmap sprite, and the chip has 17. They are split
+ * statically, because a thing that sometimes has no sprite is a thing that is sometimes
+ * invisible:
+ *
+ *   0        the craft
+ *   1..4     SHOT GROUPS -- one per volley, bolt or single shot, NOT one per shot
+ *   5..12    enemies
+ *   13..16   enemy pellets
+ *
+ * A spread volley is three shots and a beam bolt is four cells, but each moves as
+ * one: the shots of a volley share a row, a speed and a burn-out row, and a bolt's cells
+ * share a column. So each draws as ONE sprite. A volley is one picture per combination
+ * of surviving shots (they die separately), and a bolt is a column of beam slots whose
+ * height is how many cells are left. That is what freed the sprites the enemies now
+ * use: at one sprite per shot, the old five-shot spread alone needed 15.
+ *
+ * The LOGIC is still per shot -- s_x/s_y/s_live below, and every hit test -- so none of
+ * the collision work changed. Only drawing is grouped.
+ *
+ * Four groups is the worst case: a plain or homing shot lives about 11 ticks and the
+ * gun fires every FIRE_COOLDOWN (3). A volley that finds no free group is refused and
+ * retried next tick, exactly like a full shot pool. */
+#define SPR_CRAFT        0
+#define SPR_SHOT0        1
+#define MAX_GROUPS       4
+#define SPR_FOE0         (SPR_SHOT0 + MAX_GROUPS)
+#define SPR_PELLET0      (SPR_FOE0 + MAX_ENEMIES)
+#define SPR_COUNT        (SPR_PELLET0 + MAX_PELLETS)    /* must be 17 */
+
+/* Pattern RAM slots. The ones marked "derived" are built at start-up from another
+ * picture rather than stored -- see art_load(). A spread volley draws three columns,
+ * so its picture is two slots wide (32 px); slot SL_SPREAD + (mask-1)*2 is the
+ * volley whose surviving shots are the set bits of `mask`, bit 0 the leftmost. */
+#define SL_CRAFT         0
+#define SL_CRAFT_HIT     1      /* derived: the craft in the impact colour */
+#define SL_DAEMON        2      /* E_DAEMON..E_SENTINEL are 1..3, so SL_DAEMON-1+type */
+#define SL_WORM          3
+#define SL_SENTINEL      4
+#define SL_FOE_HIT       5      /* derived: 5..7, each enemy flashed white */
+#define SL_PELLET        8
+#define SL_SHOT          9
+#define SL_HOMING        10
+#define SL_BEAM          11     /* 11..14: one beam cell repeated, so a bolt of n cells
+                                 * is a sprite n slots tall at SL_BEAM + 4 - n */
+#define SL_SPREAD        15     /* derived: 7 volleys x 2 slots, 15..28 */
+#define SL_SPREAD_SPENT  29     /* derived: the same, dimmed, 29..42 */
+#define SPREAD_COLS      3
+#define SPREAD_SLOTS     2      /* slots across one volley picture */
+
+/* One shot per logical projectile, and 16 of them. In play that is generous: the plain
+ * gun keeps about 3 in the air, spread about 9.
  *
  * A full pool must never change the weapon's SHAPE, though, and this is the trap: fire()
  * spawns the centre shot first and works outwards, so dropping individual shots eats the
- * WINGS and level 3 spread quietly renders as level 1 at exactly the moment you earned
- * it. So a volley is ALL OR NOTHING -- if the whole thing does not fit, nothing fires
+ * WINGS and a spread quietly renders as a single shot, which reads as the weapon
+ * breaking. So a volley is ALL OR NOTHING -- if the whole thing does not fit, nothing fires
  * and the shot is retried next tick. Saturation costs you rate, which is legible,
  * instead of silently narrowing the gun. */
 #define MAX_SHOTS        16
@@ -300,7 +370,8 @@ extern void          spr_on(unsigned char enable);
  * Spread shots burn out at SPREAD_FLOOR instead of running to the top of the band. This
  * started as a pool problem and turned into the weapon's identity.
  *
- * The problem: one sprite per shot, 16 for shots after the craft takes one, and Lv3 puts
+ * The problem (from when spread had a five-shot level 3 and every shot was its own
+ * sprite -- the pool of 16 still applies to the shots themselves): 16 shots, and Lv3 puts
  * five shots up every FIRE_COOLDOWN steps with an 11-step flight. That is 5 * 11/3 = 18
  * in flight against a pool of 16, so the volley check refused about one press in five.
  * Not lost shots -- a refused volley retries next tick -- so the gun already self-paced
@@ -322,11 +393,16 @@ extern void          spr_on(unsigned char enable);
 /* ---- corruption (enemies) ----
  * Unlike nodes, these do not ride the terrain ring: they move independently of
  * the world, so they need their own pools and explicit erase/redraw. */
+/* Eight enemies -- the number SPAWN_FLOOR was chosen against, so the pool does not
+ * saturate as the spawn interval closes past the sector table. Four pellets: a sentinel
+ * fires only at the craft and only one pellet at a time (sentinel_fire), so two or
+ * three in the air is the usual most. A full pellet pool means a sentinel holds its
+ * fire; a full enemy pool skips a spawn. */
 #define MAX_ENEMIES     8
-#define MAX_PELLETS     6
+#define MAX_PELLETS     4
 
-/* Corruption is TWO cells wide. On a double-size row that is a 32x32 px body --
- * an arcade-sized target instead of a 16x32 sliver. It is the single biggest thing
+/* Corruption is TWO cells wide: a 16x16 px body, exactly one bitmap-sprite slot,
+ * and square rather than an 8x16 sliver. It is the single biggest thing
  * that makes the game hittable: a one-cell enemy needs the craft on exactly the
  * right column, and at that precision a miss is indistinguishable from a bug.
  * Every test against an enemy has to cover e_x AND e_x+1. */
@@ -360,7 +436,10 @@ extern void          spr_on(unsigned char enable);
                                  * MAX_ENEMIES saturates and spawn_enemy() starts
                                  * returning early -- difficulty would stop rising while
                                  * appearing to, which is the worst kind of dial. */
-#define SENTINEL_FIRE   14      /* ticks between a sentinel's shots */
+#define SENTINEL_FIRE   14      /* ticks a sentinel reloads between shots. It only fires
+                                 * at the craft, and one pellet at a time -- see
+                                 * sentinel_fire() -- so this is a minimum gap, no
+                                 * longer a metronome. */
 
 /* Everything dies to one shot, as in the original. Tiered health was the single
  * biggest thing making the game feel unresponsive: a 3-shot sentinel closing on you
@@ -475,17 +554,13 @@ extern void          spr_on(unsigned char enable);
 #define A_BOARD4    0x07        /* grey   -- I/O */
 #define A_RECESS    0x40        /* dark gray -- the board seen in shadow, inside the
                                  * channel: same routing as outside, just recessed */
-#define A_CRAFT     0x43        /* bright yellow -- your trace process */
-#define A_FOE       0x41        /* bright red -- the diving daemon */
-#define A_FOE2      0x45        /* bright magenta -- the weaving worm */
-#define A_FOE3      0xC1        /* REVERSED bright red -- the emplaced sentinel: a solid
-                                 * red block with the diamond knocked out of it. All six
-                                 * bright hues were already spoken for, so the sentinel
-                                 * is distinguished by inverting rather than by another
-                                 * colour -- and inverted reads as "emplaced", which
-                                 * suits the one enemy that holds station and shoots. */
-#define A_NODE      0x42        /* bright green -- data node (matches the energy bar,
-                                 * and stays clear of craft yellow / wall cyan) */
+#define A_CRAFT     0x43        /* bright yellow -- your trace process, in the HUD. The
+                                 * craft itself and the enemies are pictures now (see
+                                 * kpanic_art.c), and carry their own colours. */
+#define A_NODE      0x53        /* bright yellow on green -- the data node, drawn from
+                                 * two glyphs of the brick art: a green panel with a lit
+                                 * core. Green because it is what refills the
+                                 * energy bar, which is green while it is healthy. */
 #define A_FRAG      0x67        /* bright white on BLUE -- a weapon fragment. Was
                                  * reversed bright blue, which is near-black on this
                                  * palette and effectively invisible: blue was "the one
@@ -496,14 +571,13 @@ extern void          spr_on(unsigned char enable);
 #define A_FIRE      0x01        /* DIM red -- the firewall barrier. Deliberately not
                                  * bright: it does not move and it is not the thing you
                                  * aim at, so it must not compete with the port. */
-#define A_PORT      0xC7        /* REVERSED bright white -- the port. Inverted so it
-                                 * reads as a target rather than more barrier. */
-#define A_SPENT     0x07        /* dim white -- a spread shot in its last rows before it
-                                 * burns out. Without this the shots simply vanish in mid
-                                 * air, which reads as a rendering fault rather than as
-                                 * the weapon running out of reach. */
-#define A_SHOT      0x47        /* bright white -- reserved for the fastest thing on
-                                 * screen, so the eye tracks projectiles first */
+#define A_PORT      0x4E        /* bright cyan on dim red -- the port's orb set into the
+                                 * barrier. Red ground so it reads as PART of the barrier,
+                                 * cyan ink so it reads as the one thing in it to shoot. */
+/* A spread shot in its last rows before it burns out is drawn from SL_SPREAD_SPENT, a
+ * dimmed copy: without it the shots simply vanish in mid air, which reads as a
+ * rendering fault rather than as the weapon running out of reach. */
+#define A_SHOT      0x47        /* bright white -- the debris's hottest stage */
 #define A_OK        0x42        /* energy bar: healthy */
 #define A_MID       0x43        /* energy bar: getting thin */
 #define A_HUD       0x46        /* bright cyan -- HUD frame/labels */
@@ -519,27 +593,31 @@ extern void          spr_on(unsigned char enable);
 #define G_TRACE_V   179         /* board: vertical trace */
 #define G_VIA       197         /* board: trace crossing */
 #define G_PAD       9           /* board: solder pad */
-#define G_NODE      8           /* data node -- fly over to refill, or shoot for score */
-#define G_SHOT      24          /* your projectile (up arrow: unambiguous direction) */
-#define G_BEAM      186         /* double vertical -- one cell of a beam bolt. A bar,
-                                 * not an arrow: stacked bars join into a continuous
-                                 * column, where stacked arrows would read as four
-                                 * separate shots flying in formation. */
-#define G_DAEMON    31          /* solid down triangle -- coming at you */
-#define G_WORM      215         /* weaving corruption */
-#define G_SENTINEL  4           /* diamond -- emplaced, shoots */
-#define G_PELLET    7           /* enemy shot */
+#define G_NODE      28          /* data node's left cell (29 its right) -- fly over to
+                                 * refill, or shoot for score. Soft-font glyphs from
+                                 * kpanic_art.c, like the firewall's; CP437 28-29 are
+                                 * nothing this game draws. */
 #define G_BAR_FULL  219         /* energy bar: filled cell */
 #define G_BAR_EMPTY 176         /* energy bar: empty cell */
-#define G_CRAFT     30          /* solid up triangle */
 /* Debris fades BLAST -> EMBER -> DUST as a cell ages. Three glyphs of decreasing
  * density, so the spray visibly thins rather than switching colour in place. */
 #define G_BLAST     15          /* sun -- the dense heart of the burst */
 #define G_EMBER     249         /* small bullet -- a cooling fragment */
 #define G_DUST      250         /* middle dot -- the last of it */
-#define G_FIRE      177         /* dark shade -- the barrier itself */
-#define G_PORT      254         /* small solid square -- the port to shoot */
+/* The firewall is terrain, so it stays in the cell plane, drawn from three soft-font
+ * glyphs built from kpanic_art.c (see art_load). CP437's 25-27 are arrows nothing in
+ * this game draws. */
+#define G_FIRE      25          /* the laser band */
+#define G_PORT      26          /* the port's left cell; 27 is its right */
 #define G_HBAR      196         /* single horizontal -- HUD rule */
+
+/* ---- kpanic_art.c ---- */
+extern const unsigned char art_craft[128], art_daemon[128], art_worm[128];
+extern const unsigned char art_sentinel[128], art_pellet[128];
+extern const unsigned char art_shot[128], art_homing[128], art_beam[128];
+extern const unsigned char art_orb[64];          /* one 8-pixel spread column */
+extern const unsigned char glyph_fire[16], glyph_port_l[16], glyph_port_r[16];
+extern const unsigned char glyph_node_l[16], glyph_node_r[16];
 
 /* ---- kpanic.c ---- */
 unsigned int  rnd16(void);
