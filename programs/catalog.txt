@@ -135,6 +135,13 @@ config  = raster.cfg
 program = RASTER.PRG -> DEMOS/RASTER.PRG
 desc    = raster splits: colour bars and a fine-scroll wobble
 
+[sound]
+dir     = programs/sound
+sources = sound.c
+config  = sound.cfg
+program = SOUND.PRG -> DEMOS/SOUND.PRG
+desc    = the SID: a three-voice tune, waveforms, envelopes and the filter
+
 # ---- Scott Adams adventures ------------------------------------------------
 # Twelve games, one engine. Each entry builds programs/scottfree/scott.c against a
 # different database: `generate` runs the dat2c host tool over the .dat to produce
