@@ -91,7 +91,7 @@ one.
 
 | Range | Chip | Class | Registers |
 |---|---|---|---|
-| `$FE00-$FE22` | PIA | `PIA` | Keyboard data and status at `$FE00-$FE02`, interval-timer IRQ acknowledge at `$FE0E`, live held-key state at `$FE0F`, and host file I/O command, status, address and 12-byte name at `$FE10-$FE21` |
+| `$FE00-$FE22` | PIA | `PIA` | Keyboard data and status at `$FE00-$FE02`, interval-timer IRQ acknowledge at `$FE0E`, live held-key state at `$FE0F`, and host file I/O command, status, 12-byte name and stream data at `$FE10-$FE22` (`$FE12-$FE13` and `$FE20-$FE21` unused) |
 | `$FE23` | decoder | `Memory` | `MODULE_BANK`, which selects the `$B000` window. This is not a chip. `Memory` answers it directly, before any peripheral is consulted |
 | `$FE24-$FE28` | BLK | `BlockDevice` | LBA, command, status, and a 512-byte sector port |
 | `$FE29-$FE2C` | ACIA | `ACIA` | Serial data, status, command, control |

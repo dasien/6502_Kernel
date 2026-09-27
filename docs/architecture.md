@@ -491,15 +491,17 @@ The I/O page sits at `$FE00-$FEFF`, inside the kernel ROM region, which the kern
 simply avoids placing code in. Putting it here keeps `$B000-$EFFF` a clean,
 I/O-free, bank-switched module slot.
 
-A single PIA-style device provides keyboard input and host file I/O. It offers two file
-models. The block model, which the kernel's `L:` and `S:` commands use, moves a whole
-memory range in or out at once. The byte-stream model, which BASIC's `LOAD` and `SAVE`
-use, moves one byte at a time through the data register.
+A single PIA-style device provides keyboard input and host file I/O. Host files move one
+byte at a time through the data register: a program opens a file for reading or writing,
+streams it, and closes it. BASIC's `LOAD` and `SAVE`, the DOS's `IMPORT` and `EXPORT`,
+and the monitor's `L:` all work this way. (There was also a block model that copied a
+whole file into a memory range and back in one command, for the monitor's old `L:` and
+`S:`. Nothing used it once those went, and it was removed.)
 
 A block device at `$FE24-$FE28` is a separate thing again. It presents a host
 `disk.img` as 512-byte sectors and is the storage layer beneath the MFC-DOS FAT16
-filesystem, which `dos_internals.md` describes. It is independent of both PIA file
-models.
+filesystem, which `dos_internals.md` describes. It is independent of the PIA's
+host file I/O.
 
 | Address | Register | Purpose |
 |---------|----------|---------|
@@ -507,11 +509,11 @@ models.
 | `$FE02` | `PIA_CONTROL` | Status flags (bit 0 = data available) |
 | `$FE0E` | `TIMER_IRQ_ACK` | Write to acknowledge the ~60 Hz periodic timer IRQ |
 | `$FE0F` | `KEY_STATE` | A read-only bitmask of the keys held right now. Described below |
-| `$FE10` | `FIO_COMMAND` | The file operation. Load and save are block operations, and open-read, open-write and close are stream operations |
+| `$FE10` | `FIO_COMMAND` | The file operation: 3 opens for reading, 4 opens for writing, 5 closes |
 | `$FE11` | `FIO_STATUS` | Idle / in-progress / success / stream-open / EOF / error |
-| `$FE12-$FE13` | `FIO_ADDR_LO/HI` | Block load/save target/start address |
+| `$FE12-$FE13` | | Unused (the removed block mode's address) |
 | `$FE14-$FE1F` | `FIO_NAME` | Filename buffer (12 bytes) |
-| `$FE20-$FE21` | `FIO_END_ADDR_LO/HI` | Block save end address |
+| `$FE20-$FE21` | | Unused (the removed block mode's end address) |
 | `$FE22` | `FILE_DATA` | Byte-stream data register (read next / write byte) |
 | `$FE23` | `MODULE_BANK` | Selects the module bank. Bank 0 is RAM, and banks 1 to 255 are ROM modules mapped at `$B000-$EFFF` |
 | `$FE24-$FE25` | `BLK_LBA` | The block device's 16-bit sector number, little-endian |

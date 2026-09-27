@@ -5,7 +5,6 @@
 
 #include "PIA.h"
 #include "host/LatencyProbe.h"
-#include "Memory.h"
 #include "CPU6502.h"
 #include <cstdio>
 #include <string>
@@ -39,9 +38,6 @@ PIA::PIA()
     , port_b_control_(0x00)
     , file_command_(kFileIdle)
     , file_status_(kFileIdle)
-    , file_address_(0x0000)
-    , file_end_address_(0x0000)
-    , memory_(nullptr)
 {
     clearKeyboardBuffer();
     filename_.fill(0);
@@ -90,10 +86,9 @@ void PIA::writePia(const uint16_t address, const uint8_t value)
         case kFileCommand:
             PIA_LOG("PIA: Received file command: 0x%02X\n", value);
             file_command_ = value;
-            // Block transfers and stream OPENs need a host action (and a file
-            // dialog); mark IN_PROGRESS so processFileOperations() picks them up.
-            if (value == kFileLoadCommand || value == kFileSaveCommand ||
-                value == kFileOpenReadCommand || value == kFileOpenWriteCommand) {
+            // Stream OPENs need a host action (and maybe a file dialog); mark
+            // IN_PROGRESS so processFileOperations() picks them up.
+            if (value == kFileOpenReadCommand || value == kFileOpenWriteCommand) {
                 PIA_LOG("PIA: Setting file status to IN_PROGRESS\n");
                 file_status_ = kFileInProgress;
             } else if (value == kFileCloseCommand) {
@@ -105,18 +100,6 @@ void PIA::writePia(const uint16_t address, const uint8_t value)
             if (stream_mode_ == kStreamWrite) {
                 stream_buffer_.push_back(value);
             }
-            break;
-        case kFileAddrLo:
-            file_address_ = (file_address_ & 0xFF00) | value;
-            break;
-        case kFileAddrHi:
-            file_address_ = (file_address_ & 0x00FF) | (value << 8);
-            break;
-        case kFileEndAddrLo:
-            file_end_address_ = (file_end_address_ & 0xFF00) | value;
-            break;
-        case kFileEndAddrHi:
-            file_end_address_ = (file_end_address_ & 0x00FF) | (value << 8);
             break;
         default:
             // Handle filename buffer writes ($DC14-$DC1F)
@@ -348,11 +331,6 @@ void PIA::incrementBufferTail()
 }
 
 // File I/O implementation
-void PIA::setMemoryInterface(Memory* memory)
-{
-    memory_ = memory;
-}
-
 void PIA::setCpu(CPU6502* cpu)
 {
     cpu_ = cpu;
@@ -371,8 +349,7 @@ void PIA::pulseTimerIrq()
 
 bool PIA::hasFileOperation() const
 {
-    return (file_command_ == kFileLoadCommand || file_command_ == kFileSaveCommand ||
-            file_command_ == kFileOpenReadCommand || file_command_ == kFileOpenWriteCommand) &&
+    return (file_command_ == kFileOpenReadCommand || file_command_ == kFileOpenWriteCommand) &&
            file_status_ == kFileInProgress;
 }
 
@@ -409,7 +386,7 @@ void PIA::closeStream()
 
 void PIA::processFileOperations()
 {
-    if (!hasFileOperation() || !memory_) {
+    if (!hasFileOperation()) {
         return;
     }
 
@@ -428,155 +405,7 @@ void PIA::processFileOperations()
         ~DialogGuard() { flag = false; }
     } dialog_guard{in_host_dialog_};
 
-    if (file_command_ == kFileLoadCommand) {
-        PIA_LOG("PIA: File load request - Address: $%04X\n", file_address_);
-
-        std::string filename = guestFilename();
-        if (filename.empty())   // no guest name: fall back to asking
-        {
-#ifdef QT_GUI
-            // Open file dialog to let user select file
-            QString qfilename = QFileDialog::getOpenFileName(
-                nullptr,
-                "Load Binary File",
-                QString(),
-                "Binary Files (*.bin *.rom *.prg);;All Files (*.*)"
-            );
-
-            if (qfilename.isEmpty()) {
-                PIA_LOG("PIA: File load cancelled by user\n");
-                file_status_ = kFileError;
-                return;
-            }
-
-            filename = qfilename.toStdString();
-#else
-            // Console-only mode - use a default filename or disable file operations
-            PIA_LOG("PIA: File operations not supported in console mode\n");
-            file_status_ = kFileError;
-            return;
-#endif
-        }
-
-        PIA_LOG("PIA: User selected file: '%s'\n", filename.c_str());
-
-        // Load file using C++ streams for better error handling
-        std::ifstream file(filename, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            PIA_LOG("PIA: File load error - Could not open file: %s\n", filename.c_str());
-            file_status_ = kFileError;
-            return;
-        }
-        
-        // Get file size
-        std::streamsize file_size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        
-        if (file_size <= 0 || file_size > 65536) {
-            PIA_LOG("PIA: File load error - Invalid file size: %ld bytes\n", static_cast<long>(file_size));
-            file_status_ = kFileError;
-            return;
-        }
-        
-        // Read file into buffer
-        std::vector<uint8_t> buffer(static_cast<size_t>(file_size));
-        if (!file.read(reinterpret_cast<char*>(buffer.data()), file_size)) {
-            PIA_LOG("PIA: File load error - Failed to read file data\n");
-            file_status_ = kFileError;
-            return;
-        }
-        
-        // Load file data into emulated memory
-        uint16_t current_address = file_address_;
-
-        for (uint8_t byte : buffer) {
-            if (current_address > 0xFFFF) break;
-            memory_->write(current_address++, byte);
-        }
-
-        PIA_LOG("PIA: File loaded successfully at $%04X\n", file_address_);
-        
-        // Clear the file operation
-        file_command_ = kFileIdle;
-        file_status_ = kFileSuccess;
-    }
-    else if (file_command_ == kFileSaveCommand) {
-        PIA_LOG("PIA: File save request - Range: $%04X-$%04X\n", file_address_, file_end_address_);
-        
-        // Validate address range
-        if (file_end_address_ < file_address_) {
-            PIA_LOG("PIA: File save error - Invalid address range (end < start)\n");
-            file_status_ = kFileError;
-            return;
-        }
-        
-        // Calculate number of bytes to save
-        size_t bytes_to_save = file_end_address_ - file_address_ + 1;
-        if (bytes_to_save > 65536) {
-            PIA_LOG("PIA: File save error - Range too large: %zu bytes\n", bytes_to_save);
-            file_status_ = kFileError;
-            return;
-        }
-        
-        std::string filename = guestFilename();
-        if (filename.empty())   // no guest name: fall back to asking
-        {
-#ifdef QT_GUI
-            // Open file dialog to let user select save location
-            QString qfilename = QFileDialog::getSaveFileName(
-                nullptr,
-                "Save Binary File",
-                QString(),
-                "Binary Files (*.bin);;All Files (*.*)"
-            );
-
-            if (qfilename.isEmpty()) {
-                PIA_LOG("PIA: File save cancelled by user\n");
-                file_status_ = kFileError;
-                return;
-            }
-
-            filename = qfilename.toStdString();
-#else
-            // Console-only mode - disable file operations
-            PIA_LOG("PIA: File operations not supported in console mode\n");
-            file_status_ = kFileError;
-            return;
-#endif
-        }
-
-        PIA_LOG("PIA: User selected save file: '%s'\n", filename.c_str());
-
-        // Read memory range and save to file
-        std::ofstream file(filename, std::ios::binary);
-        if (!file.is_open()) {
-            PIA_LOG("PIA: File save error - Could not create file: %s\n", filename.c_str());
-            file_status_ = kFileError;
-            return;
-        }
-        
-        // Read memory and write to file
-        std::vector<uint8_t> buffer;
-        buffer.reserve(bytes_to_save);
-        
-        for (uint16_t addr = file_address_; addr <= file_end_address_; ++addr) {
-            buffer.push_back(memory_->read(addr));
-        }
-        
-        if (!file.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()))) {
-            PIA_LOG("PIA: File save error - Failed to write file data\n");
-            file_status_ = kFileError;
-            return;
-        }
-        
-        PIA_LOG("PIA: File saved successfully - %zu bytes saved from $%04X-$%04X\n",
-               buffer.size(), file_address_, file_end_address_);
-
-        // Clear the file operation
-        file_command_ = kFileIdle;
-        file_status_ = kFileSuccess;
-    }
-    else if (file_command_ == kFileOpenReadCommand) {
+    if (file_command_ == kFileOpenReadCommand) {
         // Open a file for streaming read. The stream is generic text, used by
         // BASIC LOAD (.bas) and the assembler's source load (.s), so default to
         // an inclusive source/text filter rather than BASIC-only.

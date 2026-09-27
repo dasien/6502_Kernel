@@ -87,16 +87,15 @@ namespace Computer
         // File I/O interface (extended PIA)
         static constexpr uint8_t kFileCommand = 0x10; // $DC10 - File operation command
         static constexpr uint8_t kFileStatus = 0x11; // $DC11 - File operation status
-        static constexpr uint8_t kFileAddrLo = 0x12; // $DC12 - Target address low byte
-        static constexpr uint8_t kFileAddrHi = 0x13; // $DC13 - Target address high byte
+        // $DC12-$DC13 and $DC20-$DC21 are unused. They held a block mode's start and end
+        // addresses -- commands $01/$02 copied a whole host file into a memory range and
+        // back -- whose last users were the monitor's L: and S:. It was removed; the
+        // addresses stay inside the PIA's decode as holes, and $01/$02 do nothing.
         static constexpr uint8_t kFilenameStart = 0x14; // $DC14-$DC1F - Filename buffer (12 bytes)
-        static constexpr uint8_t kFileEndAddrLo = 0x20; // $DC20 - End address low byte (for save range)
-        static constexpr uint8_t kFileEndAddrHi = 0x21; // $DC21 - End address high byte (for save range)
         static constexpr uint8_t kFileData = 0x22;      // $DC22 - Byte-stream data register
 
-        // File command codes
-        static constexpr uint8_t kFileLoadCommand = 0x01;  // block: file -> memory range
-        static constexpr uint8_t kFileSaveCommand = 0x02;  // block: memory range -> file
+        // File command codes. Streams only: a file is moved a byte at a time through
+        // kFileData.
         static constexpr uint8_t kFileOpenReadCommand = 0x03;   // stream: open file for reading
         static constexpr uint8_t kFileOpenWriteCommand = 0x04;  // stream: open file for writing
         static constexpr uint8_t kFileCloseCommand = 0x05;      // stream: close current stream
@@ -221,12 +220,6 @@ namespace Computer
          */
         void clearKeyState();
 
-        /**
-         * @brief Set the memory interface for file operations
-         * @param memory Pointer to system memory interface
-         * @note Required for L: (load) and S: (save) monitor commands
-         */
-        void setMemoryInterface(class Memory *memory);
 
         /**
          * @brief Set the CPU interface so the PIA can assert/deassert the IRQ
@@ -277,13 +270,10 @@ namespace Computer
         // File I/O state
         uint8_t file_command_;
         uint8_t file_status_;
-        uint16_t file_address_;
-        uint16_t file_end_address_;
         std::array<char, 12> filename_{};
 
         /// The guest-supplied host filename, or "" when the buffer is blank.
         [[nodiscard]] std::string guestFilename() const;
-        class Memory *memory_;
         class CPU6502 *cpu_ = nullptr;
 
         // Byte-stream file state (BASIC LOAD/SAVE)

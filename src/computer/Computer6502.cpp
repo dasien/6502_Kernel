@@ -29,9 +29,6 @@ namespace Computer
 {
     Computer6502::Computer6502() : memory(&video_chip, &pia), cpu(memory), reset_circuit(cpu)
     {
-        // Connect PIA to memory for file operations
-        pia.setMemoryInterface(&memory);
-
         // Let the PIA acknowledge (deassert) the CPU IRQ line when the timer
         // interrupt is serviced.
         pia.setCpu(&cpu);

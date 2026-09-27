@@ -45,7 +45,9 @@
   somewhere outside the test. Not reproduced run alone. Suite totals of 504,
   923 and 1,705 s earlier were put down to host load before per-test times
   showed they concentrate here.
-- [ ] **The PIA's block load/save mode is dead code.** Commands `$01`/`$02` load or
+- [x] **The PIA's block load/save mode is dead code.** Removed 2026-09-27, with the
+  kernel's `FIO_ADDR_*`, `FIO_END_ADDR_*`, `FILE_LOAD_CMD` and `FILE_SAVE_CMD`; the four
+  addresses stay in the PIA's decode as holes. The original note: Commands `$01`/`$02` load or
   save a whole memory range in one operation, using the address registers at
   `$FE12`-`$FE13` and `$FE20`-`$FE21`. Nothing on the 6502 side has issued them since
   the monitor's `L:`/`S:` were removed, and no test exercises them -- about 150 lines

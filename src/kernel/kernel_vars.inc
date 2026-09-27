@@ -147,13 +147,9 @@ PIA_DATA_AVAIL     = $01           ; Bit mask for data available flag
 ; File I/O interface addresses
 FIO_COMMAND        = $FE10         ; File operation command
 FIO_STATUS         = $FE11         ; File operation status
-FIO_ADDR_LO        = $FE12         ; Target address low byte
-FIO_ADDR_HI        = $FE13         ; Target address high byte
+; $FE12-$FE13 and $FE20-$FE21 are unused: a block load/save mode's addresses, removed.
 FIO_NAME           = $FE14         ; Filename buffer start ($FE14-$FE1F)
 
-; Additional file I/O registers for save operations
-FIO_END_ADDR_LO    = $FE20         ; End address low byte for save range
-FIO_END_ADDR_HI    = $FE21         ; End address high byte for save range
 
 ; Module-slot bank select. Writing n maps bank n into the $B000-$EFFF module
 ; window: 0 = RAM (boot/default), 1..255 = read-only ROM modules. Reading returns
@@ -235,10 +231,6 @@ VCMD_CLEAR         = $01           ; fill whole screen (char=param, color=latch)
 VCMD_SCROLL_UP     = $02           ; scroll up one row, blank bottom
 VCMD_SCROLL_DOWN   = $03           ; scroll down one row, blank top
 VCMD_FILL_ROW      = $04           ; fill the row of the current cell
-
-; File command codes
-FILE_LOAD_CMD      = $01           ; Load file command
-FILE_SAVE_CMD      = $02           ; Save file command
 
 ; File status codes
 FILE_IN_PROGRESS   = $01           ; Operation in progress
