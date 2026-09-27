@@ -750,6 +750,28 @@ static void load_font(void)
     vcmd(VCMD_FONTRAM);
 }
 
+/* Winky's pictures into pattern RAM. Once is enough: pattern RAM survives a clear,
+ * unlike the font mode. A room picture is two slots, so it is two loads -- the port
+ * carries on into the next slot after each. */
+static void load_winky(void)
+{
+    spr_img_seek(SL_WINKY_DOWN);
+    spr_img_load(winky_down);  spr_img_load(winky_down + 128);
+    spr_img_load(winky_up);    spr_img_load(winky_up + 128);
+    spr_img_load(winky_left);  spr_img_load(winky_left + 128);
+    spr_img_load(winky_right); spr_img_load(winky_right + 128);
+    spr_img_load(winky_hall);
+}
+
+/* Which way the picture looks: the way the next arrow will fly. */
+static unsigned char winky_slot(void)
+{
+    if (face_dy < 0) return SL_WINKY_UP;
+    if (face_dx < 0) return SL_WINKY_LEFT;
+    if (face_dx > 0) return SL_WINKY_RIGHT;
+    return SL_WINKY_DOWN;
+}
+
 /* Hand the chip's font back before leaving.
  *
  * Measured, not assumed: DOS's warm start clears the screen, and a clear already
@@ -1737,14 +1759,15 @@ void draw_movers(void)
         sp_n[s]--;
     }
 
-    /* Winky first: the pip hangs off where he is DRAWN, so it can never detach. Half
-       size out in the hall, as the arcade draws him, and centred in the cell since he
-       is smaller than it -- the picture only, he still occupies the whole cell for
-       anything he can walk into. */
+    /* Winky first: the pip hangs off where he is DRAWN, so it can never detach. He is
+       a bitmap sprite, looking the way he faces. Half size out in the hall, as the
+       arcade draws him, in one slot centred in the cell since he is smaller than it --
+       the picture only, he still occupies the whole cell for anything he can walk
+       into. In a room he is two slots, 16x32, a whole cell. */
     nx = sp_x[SPR_WINKY] >> SUB;
     ny = sp_y[SPR_WINKY] >> SUB;
-    if (mode == MODE_MAP) SPR_WRITE(SPR_OFF[SPR_WINKY], nx + 4, ny + 8, G_WINKY, A_WINKY, 0);
-    else                  SPR_WRITE(SPR_OFF[SPR_WINKY], nx, ny, G_WINKY, A_WINKY, SPR_MAG);
+    if (mode == MODE_MAP) SPR_WRITE_BM(SPR_OFF[SPR_WINKY], nx, ny + 8, SL_WINKY_HALL, 0);
+    else                  SPR_WRITE_BM(SPR_OFF[SPR_WINKY], nx, ny, winky_slot(), SPR_TALL2);
     sp_on[SPR_WINKY] = 1;
 
     /* The pip is half size and sits hard against whichever edge of Winky he faces. A
@@ -2248,6 +2271,7 @@ int main(void)
     own_colours();              /* our background, before a theme decides it for us */
     vhidecur();
     load_font();                /* our glyphs, before anything is drawn with them */
+    load_winky();
     banner("V E N T U R E");
 
     new_game();

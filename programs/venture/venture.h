@@ -23,6 +23,8 @@ extern void          vhidecur(void);           /* hide the kernel's cursor */
 extern void          vpseek(unsigned char index);  /* palette byte index */
 extern void          vpwrite(unsigned char b);     /* palette byte; port advances */
 extern unsigned char vpread(void);                 /* palette byte; port advances */
+extern void          spr_img_seek(unsigned char slot);     /* pattern port -> slot */
+extern void          spr_img_load(const unsigned char *src); /* one slot, 128 bytes */
 extern unsigned int  rng_seed(void);           /* RTC-derived entropy */
 extern unsigned char rtc_sec(void);            /* BCD seconds */
 extern unsigned int  jiffies(void);            /* 60 Hz monotonic counter */
@@ -252,7 +254,37 @@ extern void          sound_off(void);                /* SID voice 1 off */
  * venture.c; these are the fixed ones. */
 #define A_TEXT    0x02   /* green on black, the machine's default */
 #define A_HUD     0x47   /* bright white */
-#define A_WINKY   0x43   /* bright yellow, as the arcade smiley was */
+#define A_WINKY   0x43   /* bright yellow, as the arcade smiley was -- now the colour
+                          * of his PICTURE (venture_art.c); a bitmap sprite ignores
+                          * the attribute byte */
+
+/* Winky's pictures in the VIC's pattern RAM. A room Winky is two slots stacked, so
+ * each facing takes two; the hall Winky is one. Nothing else in the game uses
+ * pattern RAM, so they start at slot 0. */
+#define SL_WINKY_DOWN   0
+#define SL_WINKY_UP     2
+#define SL_WINKY_LEFT   4
+#define SL_WINKY_RIGHT  6
+#define SL_WINKY_HALL   8
+#define SPR_BITMAP      0x40     /* Y high byte: the glyph register names a slot */
+#define SPR_TALL2       0x04     /* Y high byte, bits 4-2 = height-1: two slots */
+extern const unsigned char winky_down[256], winky_up[256];
+extern const unsigned char winky_left[256], winky_right[256];
+extern const unsigned char winky_hall[128];
+
+/* Write a BITMAP sprite's registers: position, slot and height, one slot wide. The
+ * attribute byte is left alone -- a bitmap sprite does not use it. */
+#define SPR_WRITE_BM(off, nx, ny, slot, tall)                                  \
+    do {                                                                       \
+        volatile unsigned char *r_ = SPRITES + (off);                          \
+        const unsigned int nx_ = (nx), ny_ = (ny);                             \
+        r_[0] = (unsigned char)nx_;                                            \
+        r_[1] = (unsigned char)((nx_ >> 8) & 0x03);                            \
+        r_[2] = (unsigned char)ny_;                                            \
+        r_[3] = (unsigned char)(((ny_ >> 8) & 0x03) | (tall) | SPR_BITMAP |   \
+                                SPR_ENABLE);                                   \
+        r_[4] = (slot);                                                        \
+    } while (0)
 #define A_MON     0x41   /* bright red */
 /* Once the treasure is yours the monsters are worth points, and the arcade tells you
  * so by recolouring them. Before that a kill scores nothing, which is invisible

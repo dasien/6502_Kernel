@@ -249,7 +249,7 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         mfc_add_test_blob(venture
             DIR      ${CMAKE_SOURCE_DIR}/programs/venture
             CONFIG   venture.cfg
-            SOURCES  venture.c
+            SOURCES  venture.c venture_art.c
             LABELS
             DEPENDS  ${CMAKE_SOURCE_DIR}/programs/venture/venture.h
             MESSAGE  "VENTURE blob built ($0800)"

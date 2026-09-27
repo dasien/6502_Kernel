@@ -1627,6 +1627,27 @@ TEST_F(VentureTest, TheFacingPipShowsWhereTheArrowWillGo)
     EXPECT_EQ(py, wy);
 }
 
+/* Winky is a bitmap sprite, and in a room his picture looks the way he faces.
+ *
+ * He was the smiley glyph, magnified. As a bitmap he is a 16x32 picture -- two
+ * pattern slots, one above the other, the size of a cell -- in four facings, so
+ * which way the next arrow will fly shows on Winky himself as well as in the pip.
+ * Slots: down 0, up 2, left 4, right 6. */
+TEST_F(VentureTest, WinkyIsABitmapThatLooksTheWayHeFaces)
+{
+    ASSERT_TRUE(enterRoomZero());
+    run(2);
+    const Computer::VIC::Sprite &w = c.getVideoChip()->sprite(0);
+    ASSERT_TRUE(w.enabled);
+    EXPECT_TRUE(w.bitmap) << "Winky is still a glyph sprite";
+    EXPECT_EQ(w.h, 2) << "a room Winky is two slots tall";
+    EXPECT_EQ(w.glyph, 0) << "he came in through the top doorway, so he faces down";
+
+    hold(kKsLeft, 2);
+    run(2);
+    EXPECT_EQ(c.getVideoChip()->sprite(0).glyph, 4) << "his picture did not turn left";
+}
+
 TEST_F(VentureTest, RoomsHaveTwoDoorwaysAndBothAreDrawn)
 {
     ASSERT_TRUE(enterRoomZero());
