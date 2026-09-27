@@ -96,6 +96,13 @@ target_compile_features(mkprg PRIVATE cxx_std_20)
 add_executable(dat2c tools/dat2c/dat2c.c)
 target_include_directories(dat2c PRIVATE ${CMAKE_SOURCE_DIR}/programs/scottfree)
 
+# ----------------------------------------------------------------
+# spr2c - turn sprite and glyph art, drawn as text in an .art file, into packed C
+# arrays, so a program's pictures are edited as pictures.
+#   ./bin/spr2c kpanic.art kpanic_art.c
+# ----------------------------------------------------------------
+add_executable(spr2c tools/spr2c/spr2c.c)
+
 # Assemble the default disk.img the GUI loads (${CMAKE_BINARY_DIR}/disk.img).
 # Explicit target -- NOT part of `ninja`/ALL -- so routine builds never rewrite the
 # disk. The programs are ordinary targets, so `ninja disk` rebuilds whichever of

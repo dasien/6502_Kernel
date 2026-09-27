@@ -151,6 +151,29 @@ consecutive slots load with one seek. `spr_img_read()` and `spr_img_write()` mov
 a single byte. `docs/video_design.md` has the pattern format; SPRDEMO is a worked
 example.
 
+Draw the pictures in an `.art` file rather than typing bytes. One character is one
+pixel: `.` is transparent and a hex digit is a palette slot.
+
+```
+# the hero, facing right
+@sprite hero_art 16x16
+......BBBB......
+.....BBBBBB.....
+...
+
+@glyph wall 8x16
+########
+#......#
+...
+```
+
+`generate = hero.art -> hero_art.c` in the catalog entry runs `spr2c` over it at
+build time and compiles the result, so `hero_art` is an ordinary array to declare
+`extern`. `@glyph` is a 1-bit soft-font character, `#` for ink, for
+`vfseek`/`vfwrite`. The full format, the byte layout and the errors are in
+`docs/video_design.md`, under "Drawing pictures". KPANIC, VENTURE and SPRDEMO all
+draw this way.
+
 ### Memory map (`.cfg`)
 
 User RAM is `$0800–$87FF` (32 KB). The standard layout:
@@ -176,7 +199,7 @@ is configured.
 ### Self-contained (chess)
 Everything is in the C/asm. The build just compiles, links and prepends the header.
 
-### Host-pre-parsed data (Scott Adams)
+### Host-pre-parsed data (Scott Adams, and sprite art)
 The game database is parsed on the host at build time, not on the 6502.
 `dat2c` reads a Scott Adams `.dat` and emits a C file of initialized tables
 (`Items[]`, `Rooms[]`, `Actions[]`, strings, …). That C is compiled together
@@ -193,6 +216,10 @@ A catalog entry asks for this with a `generate` line, and the twelve adventures 
 twelve entries over one engine and one `ld65` config, differing only in which `.dat`
 they name. Because one source directory then backs twelve builds, each entry compiles
 into its own directory under the build tree.
+
+The same `generate` line runs `spr2c` when its input is an `.art` file, which is
+how the games' pictures are built -- see Sprites, above. The tool is chosen by the
+input's extension.
 
 This pattern is the right call whenever a program would otherwise parse a large text
 database at run time. It trades a little disk space, since the engine is duplicated

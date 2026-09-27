@@ -414,6 +414,46 @@ checklist — rebuilding the EhBASIC ROM at a new base, memory.cfg / basic_memor
 the emulator's ROM load addresses — went away with it; BASIC keeps its $B000 base and
 only `Ram_top` ever moves.
 
+### Sprite art from images: `png2art` (2026-09-27)
+
+- [ ] A developer tool that turns an image into an `.art` block, so a sprite can start
+  from a picture instead of being typed pixel by pixel. Today the only ways into an
+  `.art` file are drawing it by hand, or the one-off converter written while
+  converting the GameSupply space pack. That converter (`sprconv.py`) lives outside
+  the repo, in `~/Downloads/Space Game Assets/_MFC_sprites/`, and its output had to
+  be adapted by hand every time.
+
+  What it should do, all learned converting that pack:
+  - read a PNG or GIF, trim to the visible pixels, and scale to fit a chosen size,
+    area-averaged with premultiplied alpha so transparent pixels do not bleed into
+    the edges;
+  - decide transparency with an alpha threshold (about 110 of 255 worked);
+  - snap each colour to the nearest palette slot, excluding slot 0, which a bitmap
+    sprite cannot draw -- the default palette, or one given on the command line;
+  - fit inside a smaller box centred in the slot, for shots and anything that should
+    stay small in its 16x16;
+  - rotate the full-size source before shrinking, which gives far cleaner frames
+    than rotating pixel art (how rotation frames would be made);
+  - recolour a finished picture slot-for-slot (turning blue turrets red);
+  - a brightness-band mode for single-tone art like rocks: blur away texture, then
+    bin brightness into a hand-picked ramp of slots, or it comes out one flat grey;
+  - a `@glyph` mode that thresholds to 1 bit;
+  - write `@sprite`/`@glyph` blocks to paste into an `.art` file.
+
+  It is run by hand while drawing, not by the build; the `.art` file is what gets
+  committed, and `spr2c` stays the only thing the build runs.
+
+  **Language: C or Python -- either is acceptable, decided when it is written.**
+  - *Python* follows the existing split: build tools are C/C++ (`mkdisk`, `dat2c`,
+    `spr2c`), while tests, one-off conversions and by-hand developer tools are Python.
+    `tools/make_icon.py` already needs Pillow, which does the image decoding and
+    resampling, and the working converter is already Python.
+  - *C* matches the other tools and puts nothing on a developer's machine beyond the
+    compiler. `stb_image.h` (single public-domain header, into `vendor/` with a
+    credit) decodes PNG/GIF/JPEG/BMP; the rest is a few hundred lines. Qt's
+    `QImage` could do both, but Qt is optional in this build, so a tool needing it
+    would be missing from a GUI-less build.
+
 ### Assembler and monitor extras
 
 - [ ] Remaining from post-Phase-4: assembler macros + more directives; single-step/breakpoints in the monitor.

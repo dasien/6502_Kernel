@@ -183,6 +183,68 @@ V9938 and the C128's VDC had 64 KB. `DEMOS/SPRDEMO.PRG` shows the lot: two-frame
 and four-frame cycles, a figure walking in 16x32 frames of two slots each, and a
 2x2 composition.
 
+### Drawing pictures: the `.art` format
+
+Nobody types pattern bytes. A program's pictures are drawn in an `.art` file, one
+character a pixel, and `spr2c` turns them into packed C arrays at build time. The
+drawing is the source and the bytes are generated, so the two cannot drift apart.
+A catalog entry asks for it with `generate = NAME.art -> NAME_art.c`, and the result
+compiles as one more source; `docs/cc65_to_prg.md` covers the build side.
+
+```
+# KERNEL PANIC's craft
+@sprite art_craft 16x16
+................
+........4.......
+.......CC.......
+...
+
+# the firewall barrier
+@glyph glyph_fire 8x16
+........
+...
+########
+```
+
+**Lines.** A file is a sequence of pictures. Each starts with a directive line and
+is followed by exactly as many rows as its height. Between pictures, a line starting
+`#` is a comment. Inside a picture every line is a row, because a glyph row can
+start with `#`. Blank lines are ignored everywhere, and trailing spaces are trimmed.
+
+**`@sprite NAME WxH`** is a bitmap-sprite picture, 4 bits a pixel. Each row is `W`
+characters: `.` is transparent (pixel 0) and a hex digit `1`-`F` is that palette
+slot, in either case. `W` is even and 2 to 128; `H` is 1 to 128.
+
+**`@glyph NAME 8xH`** is a soft-font character, 1 bit a pixel, for the font port.
+Each row is 8 characters: `#` is ink, drawn in the cell's foreground colour, and `.`
+is ground, drawn in its background colour. `H` is 1 to 32; a font glyph is 16.
+
+**`NAME`** becomes `const unsigned char NAME[n]`, so it has to be a C identifier and
+unique in the file. The program declares the names it uses as `extern`, as it would
+for a hand-written array.
+
+**Byte layout.**
+
+- A sprite whose width and height are both multiples of 16 is written slot by slot:
+  128 bytes per 16x16 slot, in the row-major order the chip composes them in (left to
+  right, then down). A whole picture therefore loads with consecutive
+  `spr_img_load()` calls, and a 16x32 frame is two.
+- Within a slot, and for a sprite of any other size, each row is `W/2` bytes, with
+  the left pixel of each pair in the high nibble, rows top to bottom. KPANIC's
+  8-pixel spread column is one of these: 4 bytes a row, which the game composes into
+  volley pictures itself.
+- A glyph is one byte a row, the leftmost pixel in bit 7.
+
+**Errors.** A row of the wrong width, a character that is not allowed, a picture
+with too few or too many rows, an unknown directive or a name used twice each stop
+the build with the file and line. A row one character short would otherwise draw a
+picture that is subtly wrong. A failed run leaves no output file behind, so the build
+cannot mistake a half-written one for current.
+
+The generated C repeats each picture in a comment above its bytes, but it lives in
+the build tree and is never edited. `kpanic.art`, `venture.art` and `sprdemo.art`
+are the working examples.
+
 ## The frame counter
 
 `$FECD` counts frames, wrapping, and `K_WAIT_FRAME` ($FF42) blocks until it

@@ -64,8 +64,9 @@ macro(mfc_read_catalog _catalog)
             elseif(_mfc_key STREQUAL "include")
                 set(MFC_CAT_${_mfc_cur}_INCLUDE "${_mfc_val}")
             elseif(_mfc_key STREQUAL "generate")
-                # "INPUT -> OUTPUT.c": dat2c reads INPUT and writes OUTPUT.c into
-                # the build tree, where it compiles as one more source.
+                # "INPUT -> OUTPUT.c": a host tool reads INPUT and writes OUTPUT.c
+                # into the build tree, where it compiles as one more source. The
+                # tool is chosen by INPUT's extension -- see mfc_generator_for().
                 string(REPLACE "->" ";" _mfc_gen "${_mfc_val}")
                 list(LENGTH _mfc_gen _mfc_n)
                 if(NOT _mfc_n EQUAL 2)

@@ -17,8 +17,10 @@
 #   config   =   the ld65 config, relative to dir
 #   include  =   optional -I directory, relative to dir
 #   generate =   "DATA -> OUT.c", optional: run a host tool over DATA to produce
-#                OUT.c in the build tree and compile it with the sources. This is
-#                what lets one engine build several programs from several databases.
+#                OUT.c in the build tree and compile it with the sources. The tool
+#                goes by DATA's extension: a .dat is a Scott Adams database (dat2c),
+#                which is what lets one engine build several programs from several
+#                databases; an .art is sprite and glyph art drawn as text (spr2c).
 #
 # The .PRG comes out of that recipe -- its name is the `program` source below, and
 # it lands in the build tree, never here. There is no build script: CMake compiles
@@ -94,16 +96,18 @@ desc    = micro-Max chess
 
 [kpanic]
 dir     = programs/kpanic
-sources = kpanic.c kpanic_art.c
+sources = kpanic.c
 config  = kpanic.cfg
+generate = kpanic.art -> kpanic_art.c
 program = KPANIC.PRG -> GAMES/KPANIC.PRG
 doc     = KPANIC.TXT -> GAMES/KPANIC.TXT
 desc    = KERNEL PANIC, a vertical scroller
 
 [venture]
 dir     = programs/venture
-sources = venture.c venture_art.c
+sources = venture.c
 config  = venture.cfg
+generate = venture.art -> venture_art.c
 program = VENTURE.PRG -> GAMES/VENTURE.PRG
 doc     = VENTURE.TXT -> GAMES/VENTURE.TXT
 desc    = Venture (Exidy 1981) port
@@ -119,6 +123,7 @@ desc    = Frontier Fortune, a Wild-West trading game
 [sprdemo]
 dir     = programs/sprdemo
 sources = sprdemo.c
+generate = sprdemo.art -> sprdemo_art.c
 config  = sprdemo.cfg
 program = SPRDEMO.PRG -> DEMOS/SPRDEMO.PRG
 desc    = bitmap sprites from the VIC's pattern RAM

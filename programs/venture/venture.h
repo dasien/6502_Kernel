@@ -255,7 +255,7 @@ extern void          sound_off(void);                /* SID voice 1 off */
 #define A_TEXT    0x02   /* green on black, the machine's default */
 #define A_HUD     0x47   /* bright white */
 #define A_WINKY   0x43   /* bright yellow, as the arcade smiley was -- now the colour
-                          * of his PICTURE (venture_art.c); a bitmap sprite ignores
+                          * of his PICTURE (venture.art); a bitmap sprite ignores
                           * the attribute byte */
 
 /* Winky's pictures in the VIC's pattern RAM. A room Winky is two slots stacked, so

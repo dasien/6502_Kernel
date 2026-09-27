@@ -13,9 +13,9 @@
  *   - a still block in the corner, four slots composed 2x2, to show sizes
  *     counting slots.
  *
- * The art is written as text below, one character a pixel: '.' for transparent
- * and a hex digit for a palette slot. It is packed into the chip's 4-bit format
- * at start-up. Any key returns to the DOS.
+ * The art is drawn as text in sprdemo.art, one character a pixel, and spr2c packs
+ * it into the chip's 4-bit format at build time; this file only loads the bytes.
+ * Any key returns to the DOS.
  * ==========================================================================*/
 
 /* ---- runtime glue (libmfcglue) ---- */
@@ -62,280 +62,24 @@ extern void          spr_bitmap(unsigned char on);
 #define MAX_X        (640 - SIZE_PX)
 #define MAX_Y        (400 - SIZE_PX)
 
-/* The default palette is ANSI order: 1 red, 3 brown, 4 blue, 9 bright red,
- * B bright yellow, F white. */
-static const char *const smile_art[16] = {
-    ".....333333.....",
-    "...33BBBBBB33...",
-    "..3BBBBBBBBBB3..",
-    ".3BBBBBBBBBBBB3.",
-    ".3BBB44BB44BBB3.",
-    "3BBBB44BB44BBBB3",
-    "3BBBB44BB44BBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BB1BBBBBBBB1BB3",
-    "3BBB1BBBBBB1BBB3",
-    ".3BBB111111BBB3.",
-    ".3BBBBBBBBBBBB3.",
-    "..3BBBBBBBBBB3..",
-    "...33BBBBBB33...",
-    ".....333333.....",
-};
-
-static const char *const blink_art[16] = {
-    ".....333333.....",
-    "...33BBBBBB33...",
-    "..3BBBBBBBBBB3..",
-    ".3BBBBBBBBBBBB3.",
-    ".3BBBBBBBBBBBB3.",
-    "3BBB444BB444BBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BB1BBBBBBBB1BB3",
-    "3BBB1BBBBBB1BBB3",
-    ".3BBB111111BBB3.",
-    ".3BBBBBBBBBBBB3.",
-    "..3BBBBBBBBBB3..",
-    "...33BBBBBB33...",
-    ".....333333.....",
-};
-
-static const char *const heart_art[16] = {
-    "................",
-    "..999......999..",
-    ".99999....99999.",
-    "99FF999..9999999",
-    "99F9999999999999",
-    "9999999999999999",
-    "9999999999999999",
-    ".99999999999999.",
-    ".99999999999999.",
-    "..999999999999..",
-    "...9999999999...",
-    "....99999999....",
-    ".....999999.....",
-    "......9999......",
-    ".......99.......",
-    "................",
-};
-
-static const char *const beat_art[16] = {
-    "................",
-    "................",
-    "...111....111...",
-    "..11991..119111.",
-    "..19111111111111",
-    "..11111111111111",
-    "...111111111111.",
-    "...111111111111.",
-    "....1111111111..",
-    ".....11111111...",
-    "......111111....",
-    ".......1111.....",
-    "........11......",
-    "................",
-    "................",
-    "................",
-};
-
-
-/* The walker, facing right. The near leg is blue (4) and the far one grey (8), so
- * the two strides are visibly different frames rather than one frame twice. Arms
- * swing out on a stride and hang at the sides on a pass. */
-static const char *const walk_swing[16] = {
-    "......3333......",
-    ".....333333.....",
-    ".....3FFFF3.....",
-    ".....FFF4FF.....",
-    ".....FFFFFF.....",
-    "......FFFF......",
-    ".......FF.......",
-    ".....CCCCCC.....",
-    "....CCCCCCCC....",
-    "...CC.CCCC.CC...",
-    "..CC..CCCC..CC..",
-    ".FF...CCCC...FF.",
-    "......CCCC......",
-    "......CCCC......",
-    "......CCCC......",
-    "......4444......",
-};
-
-static const char *const walk_sides[16] = {
-    "......3333......",
-    ".....333333.....",
-    ".....3FFFF3.....",
-    ".....FFF4FF.....",
-    ".....FFFFFF.....",
-    "......FFFF......",
-    ".......FF.......",
-    ".....CCCCCC.....",
-    "....CCCCCCCC....",
-    "....C.CCCC.C....",
-    "....C.CCCC.C....",
-    "....C.CCCC.C....",
-    "....F.CCCC.F....",
-    "......CCCC......",
-    "......CCCC......",
-    "......4444......",
-};
-
-static const char *const legs_stride_near[16] = {
-    "......4444......",
-    "......8844......",
-    ".....88..44.....",
-    ".....88..44.....",
-    "....88....44....",
-    "....88....44....",
-    "...88......44...",
-    "...88......44...",
-    "..88........44..",
-    "..88........44..",
-    ".888........444.",
-    ".888........4444",
-    "................",
-    "................",
-    "................",
-    "................",
-};
-
-static const char *const legs_pass_near[16] = {
-    "......4444......",
-    "......8844......",
-    "......8844......",
-    "......88.44.....",
-    "......88..44....",
-    "......88..44....",
-    "......88.44.....",
-    "......88.44.....",
-    "......88.44.....",
-    "......88.444....",
-    "......888.......",
-    "......8888......",
-    "................",
-    "................",
-    "................",
-    "................",
-};
-
-static const char *const legs_stride_far[16] = {
-    "......4444......",
-    "......4488......",
-    ".....44..88.....",
-    ".....44..88.....",
-    "....44....88....",
-    "....44....88....",
-    "...44......88...",
-    "...44......88...",
-    "..44........88..",
-    "..44........88..",
-    ".444........888.",
-    ".444........8888",
-    "................",
-    "................",
-    "................",
-    "................",
-};
-
-static const char *const legs_pass_far[16] = {
-    "......4444......",
-    "......4488......",
-    "......4488......",
-    "......44.88.....",
-    "......44..88....",
-    "......44..88....",
-    "......44.88.....",
-    "......44.88.....",
-    "......44.88.....",
-    "......44.888....",
-    "......444.......",
-    "......4444......",
-    "................",
-    "................",
-    "................",
-    "................",
-};
-
-static const char *const coin_full[16] = {
-    ".....333333.....",
-    "...33BBBBBB33...",
-    "..3BBFFBBBBBB3..",
-    ".3BBFBBBBBBBBB3.",
-    ".3BFBBBBBBBBBB3.",
-    "3BBFBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    "3BBBBBBBBBBBBBB3",
-    ".3BBBBBBBBBBBB3.",
-    ".3BBBBBBBBBBBB3.",
-    "..3BBBBBBBBBB3..",
-    "...33BBBBBB33...",
-    ".....333333.....",
-};
-
-static const char *const coin_oval[16] = {
-    "......3333......",
-    ".....3BBBB3.....",
-    "....3BFBBBB3....",
-    "....3FBBBBB3....",
-    "....3FBBBBB3....",
-    "....3FBBBBB3....",
-    "....3BBBBBB3....",
-    "....3BBBBBB3....",
-    "....3BBBBBB3....",
-    "....3BBBBBB3....",
-    "....3BBBBBB3....",
-    "....3BBBBBB3....",
-    "....3BBBBBB3....",
-    "....3BBBBBB3....",
-    ".....3BBBB3.....",
-    "......3333......",
-};
-
-static const char *const coin_edge[16] = {
-    ".......33.......",
-    "......3BB3......",
-    "......3FB3......",
-    "......3FB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    "......3BB3......",
-    ".......33.......",
-};
+/* The pictures, from sprdemo.art by way of spr2c. A 16x32 walker frame is two
+ * slots, top then bottom, so it is 256 bytes and two loads. */
+extern const unsigned char art_smile[128], art_blink[128], art_heart[128], art_beat[128];
+extern const unsigned char art_coin_full[128], art_coin_oval[128], art_coin_edge[128];
+extern const unsigned char art_walk0[256], art_walk1[256], art_walk2[256], art_walk3[256];
 
 /* Spin order, as slot offsets from SLOT_COIN: the oval is both quarter turns. */
 static const unsigned char coin_turn[4] = { 0, 1, 2, 1 };
 
 static unsigned char packed[128];
 
-static unsigned char nibble(char c)
-{
-    if (c >= '0' && c <= '9') return (unsigned char)(c - '0');
-    if (c >= 'A' && c <= 'F') return (unsigned char)(c - 'A' + 10);
-    return 0;                   /* '.' and anything else: transparent */
-}
+static unsigned char packed[128];       /* the corner block, computed */
 
-/* Text art -> one slot: two pixels a byte, the left one in the high nibble. */
-static void load_art(unsigned char slot, const char *const *art)
+/* One slot straight from the art. */
+static void load_slot(unsigned char slot, const unsigned char *art)
 {
-    unsigned char y, x, n = 0;
-    for (y = 0; y < 16; ++y)
-        for (x = 0; x < 16; x += 2)
-            packed[n++] = (unsigned char)((nibble(art[y][x]) << 4) | nibble(art[y][x + 1]));
     spr_img_seek(slot);
-    spr_img_load(packed);
+    spr_img_load(art);
 }
 
 /* The corner block: 32x32 pixels across four slots, a diagonal band through all
@@ -365,17 +109,15 @@ static int           mx[MOVERS], my[MOVERS];
 static signed char   mdx[MOVERS], mdy[MOVERS];
 static unsigned int  wx[WALKERS];
 
-/* Four walk frames of two slots each: stride, pass, the other stride, the other pass. */
+/* Four walk frames of two slots each: stride, pass, the other stride, the other
+ * pass. Consecutive, so one seek and eight loads; the port carries on. */
 static void load_walker(void)
 {
-    load_art(SLOT_WALK + 0, walk_swing);
-    load_art(SLOT_WALK + 1, legs_stride_near);
-    load_art(SLOT_WALK + 2, walk_sides);
-    load_art(SLOT_WALK + 3, legs_pass_near);
-    load_art(SLOT_WALK + 4, walk_swing);
-    load_art(SLOT_WALK + 5, legs_stride_far);
-    load_art(SLOT_WALK + 6, walk_sides);
-    load_art(SLOT_WALK + 7, legs_pass_far);
+    spr_img_seek(SLOT_WALK);
+    spr_img_load(art_walk0); spr_img_load(art_walk0 + 128);
+    spr_img_load(art_walk1); spr_img_load(art_walk1 + 128);
+    spr_img_load(art_walk2); spr_img_load(art_walk2 + 128);
+    spr_img_load(art_walk3); spr_img_load(art_walk3 + 128);
 }
 
 static void backdrop(void)
@@ -405,15 +147,15 @@ void main(void)
     unsigned char i, frame = 0, beat;
 
     backdrop();
-    load_art(SLOT_SMILE, smile_art);
-    load_art(SLOT_BLINK, blink_art);
-    load_art(SLOT_HEART, heart_art);
-    load_art(SLOT_BEAT, beat_art);
+    load_slot(SLOT_SMILE, art_smile);
+    load_slot(SLOT_BLINK, art_blink);
+    load_slot(SLOT_HEART, art_heart);
+    load_slot(SLOT_BEAT, art_beat);
     load_block();
     load_walker();
-    load_art(SLOT_COIN + 0, coin_full);
-    load_art(SLOT_COIN + 1, coin_oval);
-    load_art(SLOT_COIN + 2, coin_edge);
+    load_slot(SLOT_COIN + 0, art_coin_full);
+    load_slot(SLOT_COIN + 1, art_coin_oval);
+    load_slot(SLOT_COIN + 2, art_coin_edge);
 
     for (i = 0; i < MOVERS; ++i)
     {

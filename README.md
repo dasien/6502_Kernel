@@ -158,7 +158,7 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 │                         #   (catalog.txt lists every one and where it lands on disk)
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)
 ├── vendor/                # Pristine upstream sources we port/derive from
-├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, mkprg, dat2c
+├── tools/                 # Host tools: cmake modules, mkdisk, mkfat16, mkprg, dat2c, spr2c
 ├── docs/                  # Documentation
 └── tests/                 # Unit and integration tests (GoogleTest)
 ```

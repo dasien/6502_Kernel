@@ -2160,7 +2160,7 @@ static unsigned char play_run(void) {
  * Uploaded once, before the title screen: pattern RAM survives a clear, so every run
  * after the first finds it already there.
  *
- * Most slots are copies of kpanic_art.c. The rest are derived here instead of stored,
+ * Most slots are copies of kpanic.art. The rest are derived here instead of stored,
  * because they are recolourings or combinations of pictures already in memory, and
  * 186 slots of spread volleys alone would be 24 KB of a 30 KB program. */
 

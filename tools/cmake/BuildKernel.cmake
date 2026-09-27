@@ -168,13 +168,30 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         #     [DEPENDS <extra file...>]     (headers the depfile cannot cover)
         #     [MESSAGE <text>])
         function(mfc_add_test_blob name)
-            cmake_parse_arguments(B "LABELS" "DIR;CONFIG;INCLUDE;MESSAGE" "SOURCES;DEPENDS" ${ARGN})
+            cmake_parse_arguments(B "LABELS" "DIR;CONFIG;INCLUDE;MESSAGE;ART" "SOURCES;DEPENDS" ${ARGN})
             set(_out ${CMAKE_BINARY_DIR}/kernel/${name}.bin)
             set(_objdir ${CMAKE_BINARY_DIR}/kernel/blobs/${name})
 
+            # ART names the program's .art file; spr2c turns it into one more source,
+            # exactly as the catalog's `generate` does for the disk build.
+            set(_srcs ${B_SOURCES})
+            if(B_ART)
+                get_filename_component(_artbase ${B_ART} NAME_WE)
+                set(_artc ${_objdir}/${_artbase}_art.c)
+                file(MAKE_DIRECTORY ${_objdir})
+                add_custom_command(
+                    OUTPUT ${_artc}
+                    COMMAND spr2c ${B_DIR}/${B_ART} ${_artc}
+                    DEPENDS spr2c ${B_DIR}/${B_ART}
+                    COMMENT "spr2c ${B_ART}"
+                    VERBATIM
+                )
+                list(APPEND _srcs ${_artc})
+            endif()
+
             set(_objs "")
             set(_seen "")
-            foreach(_src IN LISTS B_SOURCES)
+            foreach(_src IN LISTS _srcs)
                 # A source may be named relative to DIR, or absolutely, as the
                 # shared programs/common sources are.
                 if(IS_ABSOLUTE ${_src})
@@ -249,7 +266,8 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         mfc_add_test_blob(venture
             DIR      ${CMAKE_SOURCE_DIR}/programs/venture
             CONFIG   venture.cfg
-            SOURCES  venture.c venture_art.c
+            SOURCES  venture.c
+            ART      venture.art
             LABELS
             DEPENDS  ${CMAKE_SOURCE_DIR}/programs/venture/venture.h
             MESSAGE  "VENTURE blob built ($0800)"
@@ -282,7 +300,8 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         mfc_add_test_blob(kpanic
             DIR      ${CMAKE_SOURCE_DIR}/programs/kpanic
             CONFIG   kpanic.cfg
-            SOURCES  kpanic.c kpanic_art.c
+            SOURCES  kpanic.c
+            ART      kpanic.art
             LABELS
             DEPENDS  ${CMAKE_SOURCE_DIR}/programs/kpanic/kpanic.h
             MESSAGE  "KERNEL PANIC blob built ($0800)"

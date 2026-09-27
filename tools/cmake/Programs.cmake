@@ -43,6 +43,21 @@ function(_mfc_program_filename entry out_var)
     message(FATAL_ERROR "catalog [${entry}]: has a build recipe but no 'program' line")
 endfunction()
 
+# Which host tool turns a `generate` input into C, by its extension: a Scott Adams
+# database (.dat) goes through dat2c, sprite and glyph art (.art) through spr2c.
+# The test blobs in BuildKernel.cmake take an .art directly (their ART argument).
+function(mfc_generator_for input out_var)
+    get_filename_component(_ext "${input}" LAST_EXT)
+    if(_ext STREQUAL ".dat")
+        set(${out_var} dat2c PARENT_SCOPE)
+    elseif(_ext STREQUAL ".art")
+        set(${out_var} spr2c PARENT_SCOPE)
+    else()
+        message(FATAL_ERROR
+            "no generator for '${input}': 'generate' takes a .dat (dat2c) or .art (spr2c)")
+    endif()
+endfunction()
+
 function(mfc_add_catalog_program entry out_target)
     set(_dir    "${MFC_CAT_${entry}_DIR}")
     set(_srcdir "${CMAKE_SOURCE_DIR}/${_dir}")
@@ -72,11 +87,12 @@ function(mfc_add_catalog_program entry out_target)
     set(_gen_srcs "")
     if(MFC_CAT_${entry}_GEN_IN)
         set(_gen_out "${_outdir}/${MFC_CAT_${entry}_GEN_OUT}")
+        mfc_generator_for("${MFC_CAT_${entry}_GEN_IN}" _gen_tool)
         add_custom_command(
             OUTPUT ${_gen_out}
-            COMMAND dat2c ${_srcdir}/${MFC_CAT_${entry}_GEN_IN} ${_gen_out}
-            DEPENDS dat2c ${_srcdir}/${MFC_CAT_${entry}_GEN_IN}
-            COMMENT "dat2c ${_dir}/${MFC_CAT_${entry}_GEN_IN}"
+            COMMAND ${_gen_tool} ${_srcdir}/${MFC_CAT_${entry}_GEN_IN} ${_gen_out}
+            DEPENDS ${_gen_tool} ${_srcdir}/${MFC_CAT_${entry}_GEN_IN}
+            COMMENT "${_gen_tool} ${_dir}/${MFC_CAT_${entry}_GEN_IN}"
             VERBATIM
         )
         list(APPEND _gen_srcs ${_gen_out})

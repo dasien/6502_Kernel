@@ -949,6 +949,14 @@ add_test(NAME io_equates_agree
 # how the frame counter and the palette both took $FECB on different branches.
 file(GLOB _io_headers ${CMAKE_SOURCE_DIR}/include/computer/*.h)
 string(REPLACE ";" "|" _io_headers "${_io_headers}")
+# spr2c packs the art three programs are drawn from. Pins its byte layout and that
+# malformed art fails the build instead of drawing wrong.
+add_test(NAME spr2c_art
+    COMMAND ${CMAKE_COMMAND}
+    -DSPR2C=$<TARGET_FILE:spr2c>
+    -DWORK=${CMAKE_BINARY_DIR}/spr2c_test
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_spr2c.cmake)
+
 add_test(NAME io_addresses_unique
     COMMAND ${CMAKE_COMMAND}
     "-DASM_FILES=${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc|${CMAKE_SOURCE_DIR}/programs/common/mfc.inc|${CMAKE_SOURCE_DIR}/src/kernel/dos/dos.asm"

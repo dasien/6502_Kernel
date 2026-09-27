@@ -86,7 +86,7 @@ extern void          spr_img_load(const unsigned char *src); /* one whole slot, 
  * is exactly the one the rest of the game uses.
  *
  * The firewall's three glyphs (G_FIRE, G_PORT) are the other use; those ARE artwork,
- * from kpanic_art.c.
+ * from kpanic.art.
  *
  * The data node's two (G_NODE) are the same kind of artwork.
  *
@@ -556,7 +556,7 @@ extern void          spr_img_load(const unsigned char *src); /* one whole slot, 
                                  * channel: same routing as outside, just recessed */
 #define A_CRAFT     0x43        /* bright yellow -- your trace process, in the HUD. The
                                  * craft itself and the enemies are pictures now (see
-                                 * kpanic_art.c), and carry their own colours. */
+                                 * kpanic.art), and carry their own colours. */
 #define A_NODE      0x53        /* bright yellow on green -- the data node, drawn from
                                  * two glyphs of the brick art: a green panel with a lit
                                  * core. Green because it is what refills the
@@ -595,7 +595,7 @@ extern void          spr_img_load(const unsigned char *src); /* one whole slot, 
 #define G_PAD       9           /* board: solder pad */
 #define G_NODE      28          /* data node's left cell (29 its right) -- fly over to
                                  * refill, or shoot for score. Soft-font glyphs from
-                                 * kpanic_art.c, like the firewall's; CP437 28-29 are
+                                 * kpanic.art, like the firewall's; CP437 28-29 are
                                  * nothing this game draws. */
 #define G_BAR_FULL  219         /* energy bar: filled cell */
 #define G_BAR_EMPTY 176         /* energy bar: empty cell */
@@ -605,13 +605,13 @@ extern void          spr_img_load(const unsigned char *src); /* one whole slot, 
 #define G_EMBER     249         /* small bullet -- a cooling fragment */
 #define G_DUST      250         /* middle dot -- the last of it */
 /* The firewall is terrain, so it stays in the cell plane, drawn from three soft-font
- * glyphs built from kpanic_art.c (see art_load). CP437's 25-27 are arrows nothing in
+ * glyphs built from kpanic.art (see art_load). CP437's 25-27 are arrows nothing in
  * this game draws. */
 #define G_FIRE      25          /* the laser band */
 #define G_PORT      26          /* the port's left cell; 27 is its right */
 #define G_HBAR      196         /* single horizontal -- HUD rule */
 
-/* ---- kpanic_art.c ---- */
+/* ---- kpanic.art, built into kpanic_art.c by spr2c ---- */
 extern const unsigned char art_craft[128], art_daemon[128], art_worm[128];
 extern const unsigned char art_sentinel[128], art_pellet[128];
 extern const unsigned char art_shot[128], art_homing[128], art_beam[128];
