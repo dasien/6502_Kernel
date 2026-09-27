@@ -368,6 +368,25 @@ target_compile_features(vic_palette_tests PRIVATE cxx_std_20)
 
 add_test(NAME vic_palette COMMAND vic_palette_tests)
 
+# VIC raster: the line the beam is on, the latch, and which mid-frame changes make a
+# band the renderer draws separately. Device-only, no Qt.
+add_executable(vic_raster_tests
+    test_vic_raster.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+)
+
+target_link_libraries(vic_raster_tests gtest_main gtest)
+
+target_include_directories(vic_raster_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+
+target_compile_features(vic_raster_tests PRIVATE cxx_std_20)
+
+add_test(NAME vic_raster COMMAND vic_raster_tests)
+
 # VIC fine-scroll unit test: the chip-side contract the renderer reads, and that
 # fine scrolling is off unless a program asks for it. Device-only, no Qt.
 add_executable(vic_finescroll_tests

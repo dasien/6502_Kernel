@@ -93,9 +93,10 @@ void CPU6502::requestNmi()
     nmi_pending_ = true;
 }
 
-void CPU6502::setIrqLine(const bool asserted)
+void CPU6502::setIrqSource(const uint8_t source, const bool asserted)
 {
-    irq_line_ = asserted;
+    if (asserted) irq_sources_ |= source;
+    else          irq_sources_ &= static_cast<uint8_t>(~source);
 }
 
 void CPU6502::serviceInterrupt(const uint16_t vector)
@@ -126,7 +127,7 @@ bool CPU6502::executeSingleInstruction()
     // below decide that), which is exactly WAI's documented behaviour.
     if (waiting_)
     {
-        if (!nmi_pending_ && !irq_line_)
+        if (!nmi_pending_ && irq_sources_ == 0)
         {
             cycles_++;
             return true;
@@ -142,7 +143,7 @@ bool CPU6502::executeSingleInstruction()
         serviceInterrupt(0xFFFA);
         return true;
     }
-    if (irq_line_ && !getFlag(kInterrupt))
+    if ((irq_sources_ != 0) && !getFlag(kInterrupt))
     {
         serviceInterrupt(0xFFFE);
         return true;

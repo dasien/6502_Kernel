@@ -85,7 +85,11 @@ namespace Computer
         /// internally consistent whether or not the host can keep up.
         static constexpr uint32_t kJiffyHz = 60;
 
-        void setClockHz(uint32_t hz) { clock_hz_ = hz ? hz : kDefaultClockHz; }
+        void setClockHz(uint32_t hz)
+        {
+            clock_hz_ = hz ? hz : kDefaultClockHz;
+            video_chip.setCyclesPerFrame(clock_hz_ / kJiffyHz);   // the raster's frame
+        }
         [[nodiscard]] uint32_t clockHz() const { return clock_hz_; }
 
         /**
@@ -112,6 +116,11 @@ namespace Computer
          * @note Stops early on an unknown instruction
          */
         void runCycles(uint64_t cycles);
+
+    private:
+        void raster();   ///< after each instruction: the VIC's share of IRQ
+
+    public:
 
         /**
          * @brief Reset the computer system

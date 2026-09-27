@@ -160,6 +160,6 @@ TEST(VicPalette, TheChipClaimsItsPaletteRegisters)
     // The byte after the palette is the frame counter and after that the sprite
     // pattern port, which the VIC answers too; past those the claim has to stop.
     EXPECT_EQ(VIC::kRegPaletteData + 1, VIC::kRegFrame);
-    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegSprPatLast + 1))
-        << "the claim is wider than the palette, the frame counter and the pattern port";
+    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegRasterLast + 1))
+        << "the claim is wider than the palette, frame counter, pattern port and raster";
 }

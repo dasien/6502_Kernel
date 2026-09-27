@@ -75,6 +75,7 @@ so the program side and the ROM side cannot drift.
 | `K_CLEAR_SCREEN`  | `$FF0C` | clear + home                          |
 | `K_GET_JIFFIES`   | `$FF39` | 60 Hz tick counter, A=lo X=hi         |
 | `K_WAIT_FRAME`    | `$FF42` | block until the next frame begins     |
+| `K_RASTER_IRQ`    | `$FF45` | install (A/X) or remove (0) a raster-interrupt handler |
 | `FS_OPEN`         | `$AF03` | open file by name (ptr in `DOS_PTR` `$3C`) |
 | `FS_GETB`         | `$AF06` | read next byte of open file           |
 | `FS_PUTB`         | `$AF09` | write byte (create/append)            |
@@ -121,6 +122,21 @@ for (;;) {
 
 A delay that is only a duration, a splash screen held for three seconds, needs
 neither discipline. Compare `jiffies()` against a mark and leave it at that.
+
+### Raster splits
+
+`raster_line()` returns the line the beam is on, 0-399 drawn and 400-499 blanking,
+and `wait_line(n)` busy-waits until it reaches `n`. A palette, fine-scroll or font
+change made after `wait_line(n)` shows from line `n` down; `docs/video_design.md`
+has the rules. A split program should not call `present()`: its frame is only whole
+at the boundary.
+
+To make the splits without waiting, describe them as a copper list -- four bytes an
+entry: line low, line high, the register's `$FExx` low byte, the value -- and
+`copper_start(list)`. The raster interrupt then makes each write on its line, frame
+after frame. `copper_stop()` before leaving: the handler is in your program's memory.
+`raster_compare(line)` sets the compare line directly, for a program with its own
+assembly handler installed through `K_RASTER_IRQ`.
 
 ### Sprites
 

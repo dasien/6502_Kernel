@@ -69,7 +69,7 @@ TEST(VicSoftFont, NeighboursAreNotClaimed)
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegSpriteLast + 1)) << "the palette port";
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegPaletteLast + 1)) << "the frame counter";
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegFrame + 1)) << "the sprite pattern port";
-    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegSprPatLast + 1))
+    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegRasterLast + 1))
         << "first free byte in the I/O page";
     // The original block is still intact and the SID after it is still not ours.
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegAddrLo));

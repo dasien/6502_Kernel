@@ -67,7 +67,7 @@ $B000 ├═══════════════════════�
 $F000 ├════════════════════════════════════════════════┤
       │  KERNEL BIOS ROM (4 KB)                        │
       │    $FE00-$FEFF  I/O page  ── decoded below     │
-      │    $FF00        ABI jump table (23 entries)    │
+      │    $FF00        ABI jump table (24 entries)    │
       │    $FFFA        NMI / RESET / IRQ vectors      │
 $FFFF └────────────────────────────────────────────────┘
 ```
@@ -81,7 +81,7 @@ One 256-byte page holds every chip's registers. It is carved out of the kernel R
 window and reserved by the `IORESV` linker segment, so kernel code can never grow
 into it by accident.
 
-The decode runs from `$FE00` to `$FED0`, and each chip claims one span. The ranges in
+The decode runs from `$FE00` to `$FED3`, and each chip claims one span. The ranges in
 the table below are taken from the `is*Address()` predicate in each class rather than
 paraphrased from it. The decode is contiguous and gapless with a single exception.
 The VIC answers two separate ranges, because the soft-font port, the sprite block
@@ -104,12 +104,13 @@ one.
 | `$FECB-$FECC` | VIC | `VIC` | Soft palette: byte index, then an auto-incrementing data port |
 | `$FECD` | VIC | `VIC` | Frame counter on read; a write presents the finished frame |
 | `$FECE-$FED0` | VIC | `VIC` | Sprite pattern RAM: byte index low and high, then an auto-incrementing data port |
+| `$FED1-$FED3` | VIC | `VIC` | Raster: the line the beam is on (read) or the compare line (write), and the raster interrupt's control |
 
 The RTC reaches `$FE60` because the FAT date registers sit above the clock
 registers proper. The authority for every range here is the chip's own
 `is*Address()` predicate.
 
-`$FED1-$FEFF` is unclaimed. That leaves 47 bytes, and it is where the next chip goes.
+`$FED4-$FEFF` is unclaimed. That leaves 44 bytes, and it is where the next chip goes.
 The size of the sprite block was chosen against that figure rather than against a
 theoretical peak. Twenty-five sprites would have fitted but would have left only five
 free bytes, so seventeen were taken instead.
@@ -129,9 +130,13 @@ action game cannot use the keystroke buffer for movement.
 
 Two interrupt lines run into the CPU, and both of them are real.
 
-IRQ is level-sensitive and is asserted by the PIA's interval timer at roughly 60 Hz.
-The handler must acknowledge it at `$FE0E` or it will re-fire immediately. It drives
-BASIC's `ON IRQ` and the jiffy counter behind `K_GET_JIFFIES` at `$FF39`.
+IRQ is level-sensitive and wired-OR: two chips can pull it, and it stays asserted
+until the last of them lets go. The PIA's interval timer pulls it at roughly 60 Hz;
+the handler must acknowledge it at `$FE0E` or it will re-fire immediately, and it
+drives BASIC's `ON IRQ` and the jiffy counter behind `K_GET_JIFFIES` at `$FF39`. The
+VIC pulls it when the beam reaches the raster compare line, if a program enabled
+that at `$FED3`. The kernel's handler reads each chip's pending bit -- `$FED3` bit 7,
+`$FE0E` bit 7 -- to tell which, and serves the raster first.
 
 NMI is edge-triggered and is raised by the host STOP key, which breaks into the
 monitor from anywhere. Because the handler lives in always-mapped kernel ROM, it

@@ -49,6 +49,10 @@ namespace Computer
         // Route the RTC registers ($FE55-$FE60) through memory.
         memory.setRtc(&rtc);
         memory.setPowerSwitch(&power);
+
+        // The VIC's raster runs on machine time: the CPU's cycle count, and a frame's
+        // worth of it -- the jiffy interval, since the frame boundary IS the jiffy.
+        video_chip.setClock([this] { return cpu.getCycles(); }, clock_hz_ / kJiffyHz);
     }
 
     void Computer6502::showFatalError(const std::string& message)
@@ -282,7 +286,17 @@ namespace Computer
 
             // Process any pending file operations
             pia.processFileOperations();
+            raster();
         }
+    }
+
+    /* The VIC's raster interrupt, checked after every instruction: the chip pulls its
+     * share of the wired-OR IRQ line while its interrupt is pending and enabled, and
+     * lets go once the handler acknowledges it. */
+    void Computer6502::raster()
+    {
+        video_chip.pollRaster();
+        cpu.setIrqSource(CPU6502::kIrqRaster, video_chip.irqAsserted());
     }
 
     /* How many frame boundaries runCycles() crossed, for the host's repaint. Reading
@@ -315,7 +329,11 @@ namespace Computer
         const uint64_t cycles_per_jiffy = clock_hz_ / kJiffyHz;
         const uint64_t until = cpu.getCycles() + cycles;
 
-        if (next_jiffy_ == 0) next_jiffy_ = cpu.getCycles() + cycles_per_jiffy;
+        if (next_jiffy_ == 0)
+        {
+            next_jiffy_ = cpu.getCycles() + cycles_per_jiffy;
+            video_chip.endFrame(cpu.getCycles());   // line 0 of the first frame is now
+        }
 
         while (cpu.getCycles() < until)
         {
@@ -324,9 +342,11 @@ namespace Computer
                 break;
             }
             pia.processFileOperations();
+            raster();
 
             if (cpu.getCycles() >= next_jiffy_)
             {
+                const uint64_t boundary = next_jiffy_;
                 next_jiffy_ += cycles_per_jiffy;
                 pia.pulseTimerIrq();
                 /* The frame boundary IS the jiffy boundary, ticked here so the two
@@ -335,7 +355,7 @@ namespace Computer
                  * because a PIA interval timer and a video signal are different
                  * things, and a raster split would want to move one without the
                  * other. */
-                video_chip.endFrame();
+                video_chip.endFrame(boundary);  // the raster restarts ON the boundary
                 frames_elapsed_++;
             }
         }

@@ -124,6 +124,82 @@ void DisplayWidget::stopRefresh() const
     refresh_timer_->stop();
 }
 
+/* One band of the frame: widget rows top..bot, already clipped by the caller when the
+ * frame is split. Everything that reads a split-capable setting -- colours, glyph
+ * shapes, the fine offset -- is drawn here, so a band is complete on its own. Rows that
+ * fall wholly outside the band are skipped; the clip would discard them anyway, but a
+ * split screen draws the plane once per band and this keeps that near one frame's work.
+ */
+void DisplayWidget::paintBand(QPainter& painter, const int top, const int bot)
+{
+    // The letterbox around the grid follows slot 0, so it matches whatever
+    // the machine currently calls background.
+    painter.fillRect(0, top, width(), bot - top, paletteSlot(0));
+
+    /* Glyphs are blitted from the CP437 character ROM (see drawCharacterAt); no QFont
+     * is involved.
+     *
+     * A row flagged double renders at 16x32: forty cells, each covering two columns
+     * and two rows of the screen. The row beneath it is what it grows into, so that
+     * row is skipped rather than drawn -- whatever is in its buffer is hidden, exactly
+     * as on a VT100 double-height line. */
+    /* Fine scroll slides the scroll region down by a pixel count. Its TOP row is a
+     * hidden staging row: the clip starts one row in, so at offset 0 that row is
+     * entirely above the visible area and slides into view as the offset grows. The
+     * bottom row's overhang is clipped off at the far edge, which is what a row
+     * leaving the playfield should look like.
+     *
+     * The offset goes into each cell's destination rect and the clip is scoped to
+     * this loop -- deliberately NOT a painter.translate() or a frame-wide clip, both
+     * of which a later sprite pass would inherit, and sprites are precisely the
+     * things that must NOT move with the region. The region clip is INTERSECTED with
+     * the band's, so neither widens the other. */
+    const bool fine = video_chip_->fineActive();
+    const int fine_y = fine ? video_chip_->fineY() : 0;
+    const int fine_px = fine_y * char_height_ / 16;
+    uint8_t region_top = 0, region_bot = 0;
+    video_chip_->getScrollRegion(region_top, region_bot);
+    const int clip_top = (region_top + 1) * char_height_;
+    const int clip_bot = (region_bot + 1) * char_height_;
+
+    for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
+    {
+        const bool dbl = video_chip_->isRowDouble(y);
+        const int cols = dbl ? Computer::VIC::kScreenWidth / 2
+                             : Computer::VIC::kScreenWidth;
+        const bool shifted = fine && y >= region_top && y <= region_bot;
+        const int row_top = y * char_height_ + (shifted ? fine_px : 0);
+        const int row_bot = row_top + (dbl ? 2 : 1) * char_height_;
+        if (row_bot <= top || row_top >= bot)
+        {
+            if (dbl) ++y;
+            continue;
+        }
+        if (shifted)
+        {
+            painter.save();
+            painter.setClipRect(0, clip_top, width(), clip_bot - clip_top, Qt::IntersectClip);
+        }
+        for (int x = 0; x < cols; ++x)
+        {
+            const uint8_t character = video_chip_->getCharacterAt(x, y);
+            const uint8_t attr = video_chip_->getColorAt(x, y);
+            drawCharacterAt(painter, x, y, character, attr, dbl ? 2 : 1,
+                            shifted ? fine_y : 0);
+        }
+        if (shifted) painter.restore();
+        if (dbl) ++y;                       // the covered row draws nothing of its own
+    }
+
+    drawSprites(painter);
+
+    // Draw cursor if widget has focus
+    if (has_focus_ && show_cursor_)
+    {
+        drawCursor(painter);
+    }
+}
+
 void DisplayWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
@@ -142,57 +218,37 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
     }
     
     QPainter painter(this);
-    // The letterbox around the grid follows slot 0, so it matches whatever
-    // the machine currently calls background.
-    painter.fillRect(rect(), paletteSlot(0));
 
-    /* Glyphs are blitted from the CP437 character ROM (see drawCharacterAt); no QFont
-     * is involved.
-     *
-     * A row flagged double renders at 16x32: forty cells, each covering two columns
-     * and two rows of the screen. The row beneath it is what it grows into, so that
-     * row is skipped rather than drawn -- whatever is in its buffer is hidden, exactly
-     * as on a VT100 double-height line. */
-    /* Fine scroll slides the scroll region down by a pixel count. Its TOP row is a
-     * hidden staging row: the clip starts one row in, so at offset 0 that row is
-     * entirely above the visible area and slides into view as the offset grows. The
-     * bottom row's overhang is clipped off at the far edge, which is what a row
-     * leaving the playfield should look like.
-     *
-     * The offset goes into each cell's destination rect and the clip is scoped to
-     * this loop -- deliberately NOT a painter.translate() or a frame-wide clip, both
-     * of which a later sprite pass would inherit, and sprites are precisely the
-     * things that must NOT move with the region. */
-    const bool fine = video_chip_->fineActive();
-    const int fine_y = fine ? video_chip_->fineY() : 0;
-    uint8_t region_top = 0, region_bot = 0;
-    video_chip_->getScrollRegion(region_top, region_bot);
-    const int clip_top = (region_top + 1) * char_height_;
-    const int clip_bot = (region_bot + 1) * char_height_;
-
-    for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
+    /* The frame is drawn in BANDS when the program split it: a palette, fine-scroll or
+     * font change made partway down the last frame applies from its line on, so each
+     * band is drawn clipped to its own lines with the chip answering for that band's
+     * settings (VIC::selectBand). One band -- no split -- is drawn from the live state
+     * exactly as before, which is what every program that never touches the raster
+     * gets. Lines are nominal pixel rows, 400 of them, scaled by the zoom. */
+    const auto &bands = video_chip_->frameBands();
+    if (bands.size() <= 1)
     {
-        const bool dbl = video_chip_->isRowDouble(y);
-        const int cols = dbl ? Computer::VIC::kScreenWidth / 2
-                             : Computer::VIC::kScreenWidth;
-        const bool shifted = fine && y >= region_top && y <= region_bot;
-        if (shifted)
-        {
-            painter.save();
-            painter.setClipRect(0, clip_top, width(), clip_bot - clip_top);
-        }
-        for (int x = 0; x < cols; ++x)
-        {
-            const uint8_t character = video_chip_->getCharacterAt(x, y);
-            const uint8_t attr = video_chip_->getColorAt(x, y);
-            drawCharacterAt(painter, x, y, character, attr, dbl ? 2 : 1,
-                            shifted ? fine_y : 0);
-        }
-        if (shifted) painter.restore();
-        if (dbl) ++y;                       // the covered row draws nothing of its own
+        paintBand(painter, 0, height());
     }
-    
-    // Overlay the text selection (translucent, so the glyphs show through).
+    else
+    {
+        for (size_t i = 0; i < bands.size(); ++i)
+        {
+            const int top = bands[i].line * char_height_ / 16;
+            const int bot = (i + 1 < bands.size())
+                          ? bands[i + 1].line * char_height_ / 16 : height();
+            if (bot <= top) continue;
+            video_chip_->selectBand(static_cast<int>(i));
+            painter.save();
+            painter.setClipRect(0, top, width(), bot - top);
+            paintBand(painter, top, bot);
+            painter.restore();
+        }
+        video_chip_->selectBand(-1);
+    }
+
+    // Overlay the text selection (translucent, so the glyphs show through). Once, over
+    // every band: it is the host's, not the chip's.
     if (has_selection_)
     {
         for (int y = 0; y < Computer::VIC::kScreenHeight; ++y)
@@ -202,14 +258,6 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
                                      char_width_, char_height_, QColor(120, 160, 255, 96));
     }
 
-    drawSprites(painter);
-
-    // Draw cursor if widget has focus
-    if (has_focus_ && show_cursor_)
-    {
-        drawCursor(painter);
-    }
-    
     needs_full_redraw_ = false;
 }
 

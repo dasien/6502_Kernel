@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <array>
+#include <functional>
 #include <vector>
 
 namespace Computer
@@ -112,6 +113,20 @@ namespace Computer
      * off with the rest of the sprite state but leaves the images alone -- a program
      * uploads its art once and a screen clear should not cost it the upload.
      *
+     * THE RASTER. A frame is kLinesPerFrame lines of machine time: kVisibleLines drawn,
+     * the rest blanking, all derived from the CPU's cycle count since the frame began
+     * (the chip is handed a clock -- setClock -- rather than keeping one). $FED1-$FED2
+     * report the current line, so a program knows where the beam is inside a frame and
+     * not only when a frame begins.
+     *
+     * What makes that worth having is the SPLIT: a palette, fine-scroll or font change
+     * made on a visible line takes effect from that line down, as it would on a chip
+     * drawing the picture a line at a time. The chip records each such change against
+     * its line; at the frame boundary the finished frame's bands are handed to the
+     * renderer, which draws each band with the settings that were live for it. A frame
+     * with no mid-frame change has one band, and the renderer then draws from the live
+     * state as it always did -- a program that never splits sees no difference.
+     *
      * @see Memory, BlockDevice, Computer6502
      */
     class VIC
@@ -174,7 +189,8 @@ namespace Computer
         /// Positions are in NOMINAL pixels on an 8x16 cell grid (so 0..639 x 0..399);
         /// the renderer scales them by the window zoom.
         /// 17 x 6 bytes ends at $FECA. The palette takes $FECB-$FECC, the frame
-        /// counter $FECD and the sprite pattern port $FECE-$FED0, leaving 47 free.
+        /// counter $FECD, the sprite pattern port $FECE-$FED0 and the raster
+        /// $FED1-$FED3, leaving 44 free.
         /// 25 sprites fitted
         /// too, but left only 5 -- a poor price for a shot count that only occurs at one
         /// weapon's peak, and this page is the only address space new devices have.
@@ -218,6 +234,37 @@ namespace Computer
         static constexpr uint16_t kRegSprPatData = 0xFED0; ///< pattern data, auto-inc (R/W)
         static constexpr uint16_t kRegSprPatFirst = kRegSprPatLo;
         static constexpr uint16_t kRegSprPatLast = kRegSprPatData;
+
+        /// RASTER ($FED1-$FED3). READ $FED1/$FED2: the line the beam is on --
+        /// 0..kVisibleLines-1 are drawn, the rest of kLinesPerFrame is blanking. Reading
+        /// the LOW byte latches the high one, so a low-then-high read is one coherent
+        /// line even when the beam crosses 255/256 between the two reads -- the RTC's
+        /// latch, for the same reason.
+        ///
+        /// WRITE $FED1/$FED2: the COMPARE line, as the C64's $D012 is both. When the
+        /// beam reaches it the raster interrupt goes pending, and while it is pending
+        /// AND enabled the chip pulls the CPU's IRQ line, alongside the PIA's timer.
+        /// $FED3 is its control and status: read bit 7 = pending, bit 0 = enabled;
+        /// write bit 0 = enable, and bit 7 set acknowledges (clears pending).
+        static constexpr uint16_t kRegRasterLo = 0xFED1;   ///< R: line 7-0, latches Hi. W: compare 7-0
+        static constexpr uint16_t kRegRasterHi = 0xFED2;   ///< R: bit 0 line bit 8, bit 7 blanking. W: compare bit 8
+        static constexpr uint16_t kRegRasterCtl = 0xFED3;  ///< R: bit 7 pending, bit 0 enabled. W: bit 0 enable, bit 7 ack
+        static constexpr uint16_t kRegRasterFirst = kRegRasterLo;
+        static constexpr uint16_t kRegRasterLast = kRegRasterCtl;
+        static constexpr uint8_t  kRasterBlanking = 0x80;
+        static constexpr uint8_t  kRasterPending = 0x80;
+        static constexpr uint8_t  kRasterEnable = 0x01;
+        static constexpr uint8_t  kRasterAck = 0x80;
+        /// 500 lines of 60 Hz at 4 MHz is about 133 cycles a line -- some thirty
+        /// instructions, room to set a split up between one line and the next. 400 are
+        /// drawn, one per nominal pixel row of the 640x400 picture.
+        static constexpr uint16_t kLinesPerFrame = 500;
+        static constexpr uint16_t kVisibleLines = 400;
+        /// Bands a frame may have: one per visible line, so it cannot actually be met --
+        /// changes on one line already share a band. The renderer skips the rows outside
+        /// each band, so a frame split on every line costs little more than one that is
+        /// not. (It was 64, and colour bars plus a wobble overflowed it.)
+        static constexpr uint16_t kMaxBands = kVisibleLines;
 
         /// Pattern RAM geometry. Two pixels a byte, the LEFT pixel in the high nibble,
         /// 8 bytes a row, rows top to bottom.
@@ -322,7 +369,52 @@ namespace Computer
         /// makes "wait for the counter to change, then paint" actually tear-free --
         /// a program that starts painting at a boundary has the whole frame interval
         /// to finish before anything reads the plane again.
+        ///
+        /// `at` is the cycle the new frame begins on, line 0 of the raster. Without
+        /// it the clock's current reading is used, which is what a harness faking the
+        /// boundary wants.
         void endFrame();
+        void endFrame(uint64_t at);
+
+        /// Where the raster's time comes from: a reading of the CPU's cycle count, and
+        /// how many cycles a frame lasts. Without a clock the raster reads line 0 and
+        /// no split is ever recorded.
+        void setClock(std::function<uint64_t()> clock, uint64_t cycles_per_frame);
+        void setCyclesPerFrame(uint64_t cycles_per_frame) { cycles_per_frame_ = cycles_per_frame; }
+
+        /// The line the beam is on now, 0..kLinesPerFrame-1.
+        [[nodiscard]] uint16_t rasterLine() const;
+
+        /// Advance the raster interrupt: if the beam has reached the compare line
+        /// since the last call, the interrupt goes pending. The machine calls this
+        /// after every instruction, and then asks irqAsserted() for the IRQ line.
+        void pollRaster();
+        /// Is the chip pulling the CPU's IRQ line? Pending and enabled.
+        [[nodiscard]] bool irqAsserted() const { return raster_pending_ && raster_enabled_; }
+
+        /// The settings a split can change, as they stood for one band of a frame.
+        struct SplitState
+        {
+            std::array<uint8_t, kPaletteBytes> palette{};
+            uint8_t fine_y = 0;
+            bool fine_active = false;
+            uint8_t font_set = 0;
+            bool font_ram_active = false;
+        };
+        struct Band
+        {
+            uint16_t line = 0;   ///< first line this band covers; it runs to the next's
+            SplitState state;
+        };
+
+        /// The last completed frame's bands, in line order, the first at line 0. One
+        /// band means that frame had no split.
+        [[nodiscard]] const std::vector<Band> &frameBands() const { return completed_; }
+
+        /// Make the renderer's accessors -- paletteColor, fineY, fineActive, glyphRows --
+        /// answer for one band of the last frame, or for the live state with -1. The
+        /// renderer selects each band in turn while it draws that band's lines.
+        void selectBand(int index) const;
 
         /// The frame counter's current value, as the guest sees it at $FECD.
         [[nodiscard]] uint8_t frame() const { return frame_; }
@@ -390,8 +482,8 @@ namespace Computer
         /// Pixel offset the scroll region is currently slid down by, and whether fine
         /// scrolling is on at all. Off means the renderer draws exactly as before --
         /// a program that never issues kCmdFineY is completely unaffected.
-        [[nodiscard]] uint8_t fineY() const { return fine_y_; }
-        [[nodiscard]] bool fineActive() const { return fine_active_; }
+        [[nodiscard]] uint8_t fineY() const { return view_ ? view_->fine_y : fine_y_; }
+        [[nodiscard]] bool fineActive() const { return view_ ? view_->fine_active : fine_active_; }
         void getScrollRegion(uint8_t &top, uint8_t &bot) const { top = scroll_top_; bot = scroll_bot_; }
 
         /// The 16 scanline bytes for a glyph, from the ROM or the live font set.
@@ -450,6 +542,22 @@ namespace Computer
 
         std::vector<uint8_t> sprpat_ram_;        ///< kSprPatSlots x kSprPatBytes
         mutable uint16_t sprpat_index_ = 0;      ///< byte index for the data port
+
+        // The raster. See the class comment.
+        std::function<uint64_t()> clock_;
+        uint64_t cycles_per_frame_ = 0;
+        uint64_t frame_start_ = 0;               ///< cycle line 0 began on
+        mutable uint8_t raster_hi_latch_ = 0;    ///< set by reading kRegRasterLo
+        uint16_t raster_compare_ = 0;            ///< the line the interrupt waits for
+        bool raster_enabled_ = false;
+        bool raster_pending_ = false;
+        uint16_t raster_polled_ = 0;             ///< the line pollRaster() last saw
+        std::vector<Band> bands_;                ///< the frame in progress
+        std::vector<Band> completed_;            ///< the frame the renderer draws
+        mutable const SplitState *view_ = nullptr;   ///< selectBand(); null = live
+
+        [[nodiscard]] SplitState splitState() const;  ///< the live settings
+        void recordSplit();                      ///< after a split-capable change
         uint16_t cursor_index_ = 0;
         bool cursor_hidden_ = false;
 

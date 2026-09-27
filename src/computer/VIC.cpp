@@ -18,6 +18,72 @@ namespace Computer
         seedPalette();
         seedFontRam();
         clearScreen();
+        bands_.assign(1, Band{0, splitState()});
+        completed_ = bands_;
+    }
+
+    VIC::SplitState VIC::splitState() const
+    {
+        SplitState s;
+        s.palette = palette_;
+        s.fine_y = fine_y_;
+        s.fine_active = fine_active_;
+        s.font_set = font_set_;
+        s.font_ram_active = font_ram_active_;
+        return s;
+    }
+
+    void VIC::setClock(std::function<uint64_t()> clock, const uint64_t cycles_per_frame)
+    {
+        clock_ = std::move(clock);
+        cycles_per_frame_ = cycles_per_frame;
+        frame_start_ = clock_ ? clock_() : 0;
+    }
+
+    uint16_t VIC::rasterLine() const
+    {
+        if (!clock_ || !cycles_per_frame_) return 0;
+        const uint64_t elapsed = clock_() - frame_start_;
+        const uint64_t line = elapsed * kLinesPerFrame / cycles_per_frame_;
+        // A frame the machine has not yet ended sits on its last line rather than
+        // wrapping into a line 0 that has not begun.
+        return static_cast<uint16_t>(line < kLinesPerFrame ? line : kLinesPerFrame - 1);
+    }
+
+    /* A split-capable setting just changed. On a visible line it starts a band there,
+     * holding the settings from now on; a second change on the same line just updates
+     * that band. In the blanking lines there is nothing left of this frame to split,
+     * so the change simply becomes the next frame's starting state. */
+    void VIC::recordSplit()
+    {
+        if (!clock_ || !cycles_per_frame_ || bands_.empty()) return;
+        const uint16_t line = rasterLine();
+        if (line >= kVisibleLines) return;
+        if (bands_.back().line == line || bands_.size() >= kMaxBands)
+            bands_.back().state = splitState();
+        else
+            bands_.push_back(Band{line, splitState()});
+    }
+
+    /* The beam has moved on since the last poll. If it crossed the compare line --
+     * was below it and is now on it or past -- the interrupt goes pending. Crossing,
+     * not equality: the machine polls between instructions, and an instruction can
+     * span a line boundary, so the exact line may never be seen. A compare the beam
+     * has already passed waits for the next frame, which is what a program setting
+     * up the next split wants. Line 0 is taken at the frame boundary, in endFrame(). */
+    void VIC::pollRaster()
+    {
+        if (!raster_enabled_) return;
+        const uint16_t line = rasterLine();
+        if (raster_polled_ < raster_compare_ && line >= raster_compare_)
+            raster_pending_ = true;
+        raster_polled_ = line;
+    }
+
+    void VIC::selectBand(const int index) const
+    {
+        view_ = (index >= 0 && static_cast<size_t>(index) < completed_.size())
+              ? &completed_[static_cast<size_t>(index)].state : nullptr;
     }
 
     // Every set starts as a copy of the CP437 ROM, so a program that redefines a
@@ -59,6 +125,14 @@ namespace Computer
 
     void VIC::paletteColor(const uint8_t slot, uint8_t &r, uint8_t &g, uint8_t &b) const
     {
+        if (view_)
+        {
+            const size_t base = static_cast<size_t>(slot % kPaletteSlots) * 3;
+            r = view_->palette[base];
+            g = view_->palette[base + 1];
+            b = view_->palette[base + 2];
+            return;
+        }
         const size_t base = static_cast<size_t>(slot % kPaletteSlots) * 3;
         r = palette_[base];
         g = palette_[base + 1];
@@ -76,11 +150,13 @@ namespace Computer
 
     const uint8_t *VIC::glyphRows(const uint8_t glyph) const
     {
-        if (!font_ram_active_)
+        const bool ram = view_ ? view_->font_ram_active : font_ram_active_;
+        const uint8_t set = view_ ? view_->font_set : font_set_;
+        if (!ram)
         {
             return &kCp437Font[static_cast<size_t>(glyph) * kGlyphBytes];
         }
-        return &font_ram_[static_cast<size_t>(font_set_) * kFontSize +
+        return &font_ram_[static_cast<size_t>(set) * kFontSize +
                           static_cast<size_t>(glyph) * kGlyphBytes];
     }
 
@@ -98,11 +174,27 @@ namespace Computer
                (address >= kRegSpriteFirst && address <= kRegSpriteLast) ||
                (address >= kRegPaletteFirst && address <= kRegPaletteLast) ||
                address == kRegFrame ||
-               (address >= kRegSprPatFirst && address <= kRegSprPatLast);
+               (address >= kRegSprPatFirst && address <= kRegSprPatLast) ||
+               (address >= kRegRasterFirst && address <= kRegRasterLast);
     }
 
     void VIC::endFrame()
     {
+        endFrame(clock_ ? clock_() : 0);
+    }
+
+    void VIC::endFrame(const uint64_t at)
+    {
+        // Hand the finished frame's bands to the renderer and start the next frame
+        // from the settings as they stand -- which is what line 0 will show.
+        completed_.swap(bands_);
+        bands_.assign(1, Band{0, splitState()});
+        frame_start_ = at;
+
+        // The raster starts again at 0. A compare of 0 is reached right here.
+        raster_polled_ = 0;
+        if (raster_enabled_ && raster_compare_ == 0) raster_pending_ = true;
+
         frame_++;   // wrapping is the contract; callers compare for change
         presented_last_frame_ = presented_this_frame_;
         presented_this_frame_ = false;
@@ -174,6 +266,18 @@ namespace Computer
             palette_index_ = static_cast<uint8_t>((palette_index_ + 1) % kPaletteBytes);
             return value;
         }
+        case kRegRasterLo:
+        {
+            const uint16_t line = rasterLine();
+            raster_hi_latch_ = static_cast<uint8_t>(((line >> 8) & 0x01) |
+                                                    (line >= kVisibleLines ? kRasterBlanking : 0));
+            return static_cast<uint8_t>(line & 0xFF);
+        }
+        case kRegRasterHi:
+            return raster_hi_latch_;
+        case kRegRasterCtl:
+            return static_cast<uint8_t>((raster_pending_ ? kRasterPending : 0) |
+                                        (raster_enabled_ ? kRasterEnable : 0));
         case kRegSprPatLo:
             return static_cast<uint8_t>(sprpat_index_ & 0xFF);
         case kRegSprPatHi:
@@ -267,6 +371,25 @@ namespace Computer
             palette_[palette_index_ % kPaletteBytes] = value;
             palette_index_ = static_cast<uint8_t>((palette_index_ + 1) % kPaletteBytes);
             dirty_flag_ = true;
+            // A split takes the colour when its slot is COMPLETE -- on the blue byte,
+            // as a VGA DAC commits a colour. Its three writes routinely straddle a line,
+            // and splitting on each would draw a stripe of half-changed colour: new red
+            // over old green and blue, for no reason a program could want.
+            if (palette_index_ % 3 == 0) recordSplit();
+            break;
+        case kRegRasterLo:
+            raster_compare_ = static_cast<uint16_t>((raster_compare_ & 0x100) | value);
+            break;
+        case kRegRasterHi:
+            raster_compare_ = static_cast<uint16_t>((raster_compare_ & 0x0FF) |
+                                                    ((value & 0x01) << 8));
+            break;
+        case kRegRasterCtl:
+            if (value & kRasterAck) raster_pending_ = false;
+            raster_enabled_ = (value & kRasterEnable) != 0;
+            // Enabling does not look back: the next line crossed is the first that
+            // counts, so a compare already behind the beam waits for the next frame.
+            raster_polled_ = rasterLine();
             break;
         // The pattern index wraps as the font index does, and for the same reason.
         case kRegSprPatLo:
@@ -314,11 +437,12 @@ namespace Computer
                 fine_y_ = (cmd_param_ < 32) ? cmd_param_ : 31;
                 fine_active_ = true;
                 dirty_flag_ = true;
+                recordSplit();
                 break;
-            case kCmdFontRom: font_ram_active_ = false; dirty_flag_ = true; break;
-            case kCmdFontRam: font_ram_active_ = true;  dirty_flag_ = true; break;
+            case kCmdFontRom: font_ram_active_ = false; dirty_flag_ = true; recordSplit(); break;
+            case kCmdFontRam: font_ram_active_ = true;  dirty_flag_ = true; recordSplit(); break;
             case kCmdFontReset: seedFontRam(); dirty_flag_ = true; break;
-            case kCmdPaletteReset: seedPalette(); dirty_flag_ = true; break;
+            case kCmdPaletteReset: seedPalette(); dirty_flag_ = true; recordSplit(); break;
             case kCmdFontSet:
                 // Out-of-range is ignored rather than clamped: a wild value is a bug,
                 // and silently rendering someone else's set hides it worse than
@@ -327,6 +451,7 @@ namespace Computer
                 {
                     font_set_ = cmd_param_;
                     dirty_flag_ = true;
+                    recordSplit();
                 }
                 break;
             default: break;
@@ -402,7 +527,11 @@ namespace Computer
             sp.magy = false;
             sp.bitmap = false;             // back to glyphs; pattern RAM is kept
         }
+        raster_enabled_ = false;           // ...and the raster interrupt off, so a
+        raster_pending_ = false;           // program that quits cannot leave it
+                                           // calling into memory it no longer owns
         dirty_flag_ = true;
+        recordSplit();                     // it resets the font and fine scroll
     }
 
     // Flag one row double or normal. The row comes in the low bits of the command

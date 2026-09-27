@@ -58,7 +58,7 @@ The rest of this part describes those components and how they connect.
         ┌─────────────────────────────────────────────────┴────────────────┐
         │                          Memory (64K)                            │
         │  RAM  •  ROM overlay ($F000-$FFFF)  •  bank window ($B000-$EFFF) │
-        │  •  I/O page routed to peripherals ($FE00-$FED0)                 │
+        │  •  I/O page routed to peripherals ($FE00-$FED3)                 │
         └───┬──────┬───────┬───────┬───────┬───────┬───────────────────────┘
             ▼      ▼       ▼       ▼       ▼       ▼
         ┌──────┐┌─────┐┌──────┐┌─────┐┌─────┐┌───────────┐
@@ -125,8 +125,8 @@ $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
 $B000-$EFFF  Bank-switched module window (BASIC 1, FORTH 3, MONITOR 4; 2 free)
 $F000-$FFFF  Kernel BIOS; jump table at $FF00, vectors at $FFFA
-$FE00-$FED0  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font, sprites, palette,
-             frame, sprite patterns (carved out of the ROM window; $FED1-$FEFF free)
+$FE00-$FED3  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font, sprites, palette,
+             frame, sprite patterns, raster (carved out of the ROM window; $FED4-$FEFF free)
 ```
 
 See `Part 2 (Memory and zero-page map)` for the full zero-page allocation, the I/O
@@ -220,7 +220,7 @@ ASCII rather than PETSCII, a 64K address space whose only banked region is the
 | `$8800-$AFFF` | 10 KB | The DOS ROM, which is always mapped and holds the FAT16 filesystem and the DOS shell |
 | `$B000-$EFFF` | 16 KB | The module window. Bank 0 is RAM and banks 1 to 255 are ROM modules, of which BASIC is bank 1 |
 | `$F000-$FFFF` | 4 KB | The kernel BIOS. The monitor is module bank 4 and is not here |
-| `$FE00-$FED0` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
+| `$FE00-$FED3` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
 
 There is no CIA, and the SID is not a Commodore part. The VIC is an 80 by 25 colour
 text chip whose character and colour planes live inside the chip rather than in the
@@ -269,6 +269,7 @@ EhBASIC interpreter, which uses page zero heavily. The split:
 | `$2B` | `RNG_STATE_HI` | RNG 16-bit LFSR state, high byte |
 | `$2F-$30` | `RNG_TMP/RNG_TMP2` | RNG range-reduction scratch (multiplier / product) |
 | `$31-$32` | `JIFFY_LO/JIFFY_HI` | 60 Hz monotonic tick counter, advanced by the timer IRQ (`K_GET_JIFFIES`) |
+| `$33-$34` | `RASTER_VEC` | Raster-interrupt handler address, called by the IRQ handler; set through `K_RASTER_IRQ` |
 | `$35-$36` | `DEC_TEMP_LO/HI` | Decimal-conversion temp |
 | `$37` | `DEC_DIGIT_IDX` | Decimal digit index |
 | `$38-$39` | `DEC_RESULT_LO/HI` | Decimal-conversion result |
@@ -352,11 +353,14 @@ itself.
 | `$FECE` | `VREG_SPRPAT_LO` | Sprite pattern byte index low |
 | `$FECF` | `VREG_SPRPAT_HI` | Sprite pattern byte index high (0..32767; slot n starts at n*128) |
 | `$FED0` | `VREG_SPRPAT_DATA` | Sprite pattern data port; auto-increments |
+| `$FED1` | `VREG_RASTER_LO` | Read: raster line, bits 7-0 (0-399 drawn, 400-499 blanking), latching `$FED2`. Write: compare line, bits 7-0 |
+| `$FED2` | `VREG_RASTER_HI` | Read: bit 0 = line bit 8, bit 7 = in blanking. Write: compare line bit 8 |
+| `$FED3` | `VREG_RASTER_CTL` | Raster interrupt. Read: bit 7 pending, bit 0 enabled. Write: bit 0 enable, bit 7 acknowledge |
 
 The soft-font port, the sprite block, the palette, the frame counter and the pattern
 port sit above the RTC rather than beside the rest because the port block ends at
 `$FE37` with the SID immediately after.
-`$FED1-$FEFF` is the remaining free space in the I/O page.
+`$FED4-$FEFF` is the remaining free space in the I/O page.
 
 A sprite occupies one cell of 8 by 16 nominal pixels unless its size bits say
 otherwise, and it may reach 8 by 8 cells. A multi-cell sprite draws consecutive glyph
@@ -549,7 +553,7 @@ input rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 |---------|-------|---------|
 | `CODE` | `$F000-$F61C` (1565 B) | BIOS code and data |
 | `IORESV` | `$FE00-$FEFF` (256 B) | Reserved I/O page (PIA + `MODULE_BANK` + VIC + SID) |
-| `JUMPS` | `$FF00-$FF44` (69 B) | Kernel API jump table (23 entries) |
+| `JUMPS` | `$FF00-$FF47` (72 B) | Kernel API jump table (24 entries) |
 | `VECS` | `$FFFA-$FFFF` (6 B) | Interrupt/reset vectors |
 | (free) | `$F61D-$FDFF` | ~2.0 KB unused |
 
@@ -580,6 +584,7 @@ input rather than misbehaving. `programs/kpanic/glue.s` shows the accessor.
 | `$FF3C` | `K_HEX_PAIR` | `HEX_PAIR_TO_BYTE` — parse two hex digits into a byte |
 | `$FF3F` | `K_PARSE_DEC_VAL` | `PARSE_DECIMAL_VALUE` — parse a decimal value |
 | `$FF42` | `K_WAIT_FRAME` | `WAIT_FRAME` — block until the VIC frame counter at `$FECD` changes; returns the new frame in A, preserves X and Y |
+| `$FF45` | `K_RASTER_IRQ` | `RASTER_IRQ` — A/X = a raster-interrupt handler (ends in RTS): install it and enable the interrupt; 0 disables it. Set the compare line first. Preserves Y |
 
 The jump table is also the module ABI. A ROM module reaches kernel services only
 through these entries, so it is independent of where the kernel's internal
@@ -728,6 +733,7 @@ Two consequences are worth knowing when adding to the kernel.
 | `$FF3C` | `K_HEX_PAIR` | Parse two hex digits into a byte |
 | `$FF3F` | `K_PARSE_DEC_VAL` | Parse a decimal value |
 | `$FF42` | `K_WAIT_FRAME` | Block until the next frame begins |
+| `$FF45` | `K_RASTER_IRQ` | Install (A/X) or remove (0) a raster-interrupt handler |
 
 ### Details
 

@@ -60,8 +60,11 @@ namespace Computer
         static constexpr uint8_t kPortBControl = 0x05; // $DC05 - Port B control
 
         // Timer IRQ acknowledge: writing this register deasserts the periodic
-        // timer's IRQ line (the ISR writes it to clear the interrupt).
+        // timer's IRQ line (the ISR writes it to clear the interrupt). READING it
+        // says whether the timer is the one pulling the line -- bit 7 -- which the
+        // kernel needs now that the VIC's raster can raise IRQ too.
         static constexpr uint8_t kTimerIrqAck = 0x0E; // $DC0E
+        static constexpr uint8_t kTimerPending = 0x80;
 
         // Live key state ($FE0F), read-only: which control keys are held RIGHT NOW,
         // as opposed to the keystroke FIFO's record of what was typed. An action
@@ -261,6 +264,7 @@ namespace Computer
         // synchronisation here: the CPU is stepped from a QTimer on the Qt GUI
         // thread, so key events and guest reads are already serialised.
         uint8_t key_state_{};
+        bool timer_pending_ = false;   ///< the timer is pulling IRQ until acked
 
         // PIA registers
         uint8_t port_a_data_;

@@ -43,7 +43,7 @@ RNG_STATE_LO       = $23           ; RNG 16-bit LFSR state, low byte (was RNG_SE
 RNG_MAX            = $24           ; Maximum value for random number
 ; $25-$34 was the runtime hex lookup table; now reclaimed (NIBBLE_TO_ASCII
 ; computes hex digits). $25-$28 reused as M: move scratch; $29-$32 since taken by
-; sound/RNG/jiffy state; $33-$34 still free.
+; sound/RNG/jiffy state; $33-$34 since taken by RASTER_VEC.
 MOVE_DEST_LO       = $25           ; M: captured original destination low (copy mutates MON_DEST_ADDR)
 MOVE_DEST_HI       = $26           ; M: captured original destination high
 MOVE_DEND_LO       = $27           ; M: destination end = dest + (end - start), low
@@ -55,6 +55,7 @@ RNG_TMP            = $2F           ; RNG scratch: multiplier during range reduct
 RNG_TMP2           = $30           ; RNG scratch: product low during range reduction
 JIFFY_LO           = $31           ; 60 Hz monotonic tick counter, low byte (K_GET_JIFFIES)
 JIFFY_HI           = $32           ; 60 Hz monotonic tick counter, high byte
+RASTER_VEC         = $33           ; raster IRQ handler (2 bytes, $33-$34); see K_RASTER_IRQ
 DEC_TEMP_LO        = $35           ; Decimal conversion temporary low byte
 DEC_TEMP_HI        = $36           ; Decimal conversion temporary high byte
 DEC_DIGIT_IDX      = $37           ; Decimal digit index/counter
@@ -203,6 +204,9 @@ VREG_PAL_DATA      = $FECC         ; palette data port (auto-increments)
 ; boundary. The kernel itself never presents, so everything it draws is shown at
 ; each boundary as before.
 VREG_FRAME         = $FECD
+VREG_RASTER_CTL    = $FED3         ; raster IRQ: R bit7 pending/bit0 enabled; W bit0 enable, bit7 ack
+RASTER_IRQ_ACK     = $81           ; acknowledge and stay enabled
+TIMER_PENDING      = $80           ; reading TIMER_IRQ_ACK: bit 7 = the timer is pulling IRQ
 
 ; RTC (real-time clock) registers in the I/O page. Writing RTC_LATCH snapshots the
 ; live clock into the read registers. Used here only to seed the RNG at boot so

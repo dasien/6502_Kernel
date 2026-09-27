@@ -20,7 +20,7 @@
 MFC_INC = 1
 
 ; ---- kernel ABI, $FF00-$FF41 ----------------------------------------------
-; 23 entries, three bytes each. Call these rather than reaching into the ROM:
+; 24 entries, three bytes each. Call these rather than reaching into the ROM:
 ; the addresses are the contract, the routines behind them are not.
 K_PRINT_CHAR       = $FF00      ; A = char -> screen
 K_PRINT_MESSAGE    = $FF03      ; A/Y = null-terminated string
@@ -45,6 +45,7 @@ K_GET_JIFFIES      = $FF39      ; 60 Hz monotonic counter -> A = lo, X = hi
 K_HEX_PAIR         = $FF3C      ; 2 hex digits -> byte
 K_PARSE_DEC_VAL    = $FF3F      ; decimal digits -> DEC_RESULT, no side effects
 K_WAIT_FRAME       = $FF42      ; block until the VIC starts a new frame
+K_RASTER_IRQ       = $FF45      ; A/X = raster-interrupt handler (RTS-ending), 0 = off
 
 ; ---- DOS ABI, $AF00-$AF23 --------------------------------------------------
 ; The FS_ entries report failure in carry and leave X undefined.
@@ -154,5 +155,17 @@ VREG_SPRPAT_LO     = $FECE      ; pattern byte index low
 VREG_SPRPAT_HI     = $FECF      ; pattern byte index high
 VREG_SPRPAT_DATA   = $FED0      ; pattern data port; auto-increments
 SPR_BITMAP         = $40        ; Y high byte: glyph register names a pattern slot
+
+; ---- VIC raster --------------------------------------------------------------
+; The line the beam is on: 0-399 are drawn, 400-499 are blanking (500 lines a
+; frame, about 133 cycles a line at 4 MHz). Read LO first: it latches HI, so the
+; pair is one coherent line even when the beam crosses 255/256 between the reads.
+; A palette, fine-scroll or font change made on a visible line takes effect from
+; that line down -- that is what a split is.
+VREG_RASTER_LO     = $FED1      ; line bits 7-0; reading latches HI
+VREG_RASTER_HI     = $FED2      ; bit 0 = line bit 8, bit 7 = in blanking
+; Written, the same two registers set the COMPARE line: when the beam reaches it
+; the raster interrupt goes pending, and with it enabled the VIC pulls IRQ.
+VREG_RASTER_CTL    = $FED3      ; R: bit 7 pending, bit 0 enabled; W: bit 0 enable, bit 7 ack
 
 .endif

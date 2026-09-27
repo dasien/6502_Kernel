@@ -277,12 +277,124 @@ VIC between the present and the next `wait_frame()`. The host reads the plane
 shortly after the present rather than at the instant of it, and anything written
 in that gap can land in the picture.
 
+## The raster
+
+The frame counter says when a frame begins. The raster says where the beam is
+inside one, which is what a mid-screen split needs: colour bars, a playfield that
+fine-scrolls under a status bar that does not, a different font set for the lower
+half of the screen.
+
+A frame is 500 lines of machine time. Lines 0 to 399 are drawn, one for each
+nominal pixel row, and 400 to 499 are blanking. The line comes from the CPU's cycle
+count since the frame boundary, so at 4 MHz a line lasts about 133 cycles, some
+thirty instructions -- room to set a change up between one line and the next.
+
+| Address | Contents |
+|---|---|
+| `$FED1` | Read: line, bits 7-0, latching `$FED2`. Write: compare line, bits 7-0 |
+| `$FED2` | Read: bit 0 line bit 8, bit 7 set during blanking. Write: compare line bit 8 |
+| `$FED3` | Raster interrupt. Read: bit 7 pending, bit 0 enabled. Write: bit 0 enable, bit 7 acknowledge |
+
+Read the low byte first. It latches the high one, so the pair is one coherent line
+even if the beam crosses from 255 to 256 between the reads -- the RTC's latch, for
+the same reason.
+
+**A split** is a palette, fine-scroll or font change made on a visible line: it
+shows from that line down. The chip records each such change against its line, and
+at the frame boundary hands the finished frame's bands to the renderer, which draws
+each band with the settings that were live for it. So a program splits the screen
+by waiting for a line and changing something:
+
+```c
+for (;;) {
+    wait_frame();                /* line 0: set the top band      */
+    ...
+    wait_line(200);              /* the beam reaches line 200     */
+    ...                          /* set the bottom band           */
+}
+```
+
+The details:
+
+- **What can split:** the palette, the fine-scroll offset (`kCmdFineY`), and the
+  font (`kCmdFontSet`, `kCmdFontRom`/`kCmdFontRam`). A clear or a palette reset made
+  mid-frame splits too. The cell plane, the scroll region and the sprites do not.
+- **Several changes on one line** make one band, holding the last of them.
+- **A colour splits whole, on its blue byte.** Setting a colour is three writes, and
+  they routinely straddle a line; splitting on each would draw a stripe of new red
+  over old green and blue. So the split is taken when the slot's third byte arrives,
+  the way a VGA DAC commits a colour. The palette itself still changes byte by byte.
+- **A change in the blanking lines** has no frame left to split. It becomes the
+  settings the next frame starts with.
+- **A change on line 0** is the whole frame.
+- **Every visible line can be a band.** The renderer skips the rows outside each
+  band, so even a frame split on every line costs little more than one that is not.
+  (An early cap of 64 was overflowed by colour bars plus a wobble.)
+- **A frame with no mid-frame change** is drawn from the live settings, exactly as
+  before the raster existed, so a program that never splits sees no difference.
+- **The frame shown is the last completed one.** A split program should not present:
+  its bands are only whole at the boundary, and the boundary repaint is what shows
+  them.
+
+`wait_line(n)` busy-waits until the beam is on line `n` or past it, and returns at
+once if it already is, so call it in rising order within a frame. `raster_line()`
+returns the line. `DEMOS/RASTER.PRG` draws both classic effects: colour bars and a
+fine-scroll wobble.
+
+### The raster interrupt
+
+Polling spends the frame waiting. The raster interrupt lets the CPU do other work:
+the VIC raises IRQ when the beam reaches a chosen line, as the C64's VIC-II did.
+
+**The chip.** Writing `$FED1`/`$FED2` sets the compare line, the same two registers
+that read the beam -- again the C64's arrangement, where `$D012` is both. When the
+beam reaches the compare line the interrupt goes pending, and while it is pending and
+enabled the VIC pulls the CPU's IRQ line. The machine checks after every instruction,
+so the test is *crossing* the line, not landing on it; an instruction can span a line
+boundary. A compare the beam has already passed waits for the next frame, which is
+what a handler re-arming for its next split wants. A compare of 0 fires at the frame
+boundary. `$FED3` enables it and acknowledges it, and a clear command turns it off, so
+a program that quits cannot leave it calling a handler in memory it no longer owns.
+
+**The line is shared.** IRQ is wired-OR, as on a real board: the PIA's interval
+timer and the VIC's raster both pull it, and it stays asserted until the last lets go.
+Reading `$FE0E` says whether the timer is one of them (bit 7), so the kernel can tell
+the two apart.
+
+**The kernel.** Its IRQ handler checks the raster first, because a split has a
+deadline. A pending raster interrupt is acknowledged, then A, X and Y are saved and
+the program's handler is called through `RASTER_VEC` (`$33`-`$34`). Only a pending
+timer advances the jiffy. `K_RASTER_IRQ` (`$FF45`) installs a handler (address in A/X)
+and enables the interrupt, or with 0 disables it and puts back a do-nothing default.
+Set the compare line first. The handler is an ordinary subroutine ending in `RTS`; the
+interrupt is already acknowledged, so it may set the next compare line before it
+returns.
+
+**From C: a copper list.** A raster interrupt's handler cannot be C, because cc65's
+runtime keeps state in zero page that an interrupt would trample. So the glue offers
+a copper list instead -- the name is the Amiga's, whose copper coprocessor ran exactly
+this -- a table of (line, register, value) writes that an assembly handler makes on
+their lines, frame after frame:
+
+```c
+static unsigned char list[] = {
+    0, 0,   0xCB, 0,      /* line 0: palette index = slot 0 ...     */
+    0, 0,   0xCC, 0,      /* ...red, green, blue = black            */
+    ...
+    0, 0xFF               /* the end: a line whose high byte is $FF */
+};
+copper_start(list);       /* and copper_stop() before leaving      */
+```
+
+Each entry is four bytes: line low, line high, then the register as the low byte of
+its `$FExx` address, and the value. Entries go in rising line order; several on one
+line are made together. After the last, it starts again from the top next frame. A
+program animates it by rewriting values in place during the blanking lines.
+`DEMOS/RASTER.PRG` draws its effects both ways, and Space switches between polling
+and the copper list -- the picture is the same.
+
 ## What is still missing
 
-- There is no raster register. A program can tell when a frame begins but not
-  where the beam is within one, so a mid-screen split -- two scroll regions, a
-  status bar that does not move with the playfield -- has nothing to hang off.
-  This is now the most obvious gap.
 - There is no bitmap mode. The display is text only, though giving a small
   region unique glyph codes per cell yields a pixel framebuffer of 128x256,
   which is the classic MSX and Amstrad trick.

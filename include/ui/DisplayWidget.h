@@ -129,6 +129,9 @@ private:
     // and deliberately outside the scroll region's offset and clip -- not moving with
     // the region is the entire reason they exist.
     void drawSprites(QPainter& painter);
+    // One band of a frame, widget rows top..bot: background, cells, sprites and cursor,
+    // drawn with whatever settings the VIC is currently answering for (selectBand).
+    void paintBand(QPainter& painter, int top, int bot);
     // A bitmap sprite's picture comes from the VIC's pattern RAM, not the font:
     // 4 bits a pixel through the palette, index 0 transparent.
     void drawBitmapSprite(QPainter& painter, const Computer::VIC::Sprite& sp);

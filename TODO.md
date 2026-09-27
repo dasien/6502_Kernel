@@ -52,7 +52,7 @@
   of `PIA.cpp` (424-571) plus the register handling and two constants in `PIA.h`.
   The live file-I/O registers (command, status, name, data) are unaffected; the DOS,
   BASIC and the assembler use them. Freeing the four registers is worth little: they
-  are two holes inside the PIA's span, and `$FED1`-`$FEFF` is already free. Either
+  are two holes inside the PIA's span, and `$FED4`-`$FEFF` is already free. Either
   remove block mode along with the kernel's `FIO_ADDR_*`, `FIO_END_ADDR_*`,
   `FILE_LOAD_CMD` and `FILE_SAVE_CMD`, or keep it and give it a test -- the case for
   keeping it is a kernel service that runs a freshly built `.PRG` straight from the
@@ -61,11 +61,18 @@
   2026-09-24. `caught_flash()` turns the background palette slot red and back three
   times, a tenth of a second each way, between the contact frame and CAUGHT, and puts
   back whatever colour the slot held rather than assuming black.
-- [ ] **Raster register.** A program can tell when a frame begins but not where
-  the beam is inside one, so there is nothing to hang a mid-screen split on, such
-  as a status bar that does not scroll with the playfield, two scroll regions or
-  a colour change partway down. This is now the most obvious gap in the VIC, and
-  collision hardware, if it is ever wanted, would latch on the same boundary.
+- [x] **Raster register.** Done 2026-09-27: `$FED1-$FED2` report the line (500 a
+  frame, 400 drawn), and palette, fine-scroll and font changes made on a visible line
+  split the frame there -- the renderer draws each band with its own settings.
+  `wait_line()` polls; `DEMOS/RASTER.PRG` shows colour bars and a wobble. See the
+  raster section of `docs/video_design.md`.
+- [x] **Raster interrupt.** Done 2026-09-27, kernel 4.2. Writing `$FED1-$FED2` sets a
+  compare line; `$FED3` enables and acknowledges; the VIC pulls the now wired-OR IRQ
+  line alongside the PIA timer, whose pending bit reads at `$FE0E`. The kernel serves
+  the raster first, through `RASTER_VEC` (`$33-$34`), set by `K_RASTER_IRQ` (`$FF45`),
+  and only a timer interrupt advances the jiffy. C programs use a copper list
+  (`copper_start`), since a C handler would trample cc65's zero page. Collision
+  hardware, if it is ever wanted, would latch on the same machinery.
 
 ### Modem and ACIA: carrier detect, raw and quiet modes (DONE 2026-09-20)
 
@@ -224,9 +231,10 @@
 
 ### KERNEL PANIC — steps 7 and 8
 
-- [ ] **KERNEL PANIC** (`programs/kpanic/`, `KPANIC.PRG` 14,125 bytes) — original
+- [ ] **KERNEL PANIC** (`programs/kpanic/`, `KPANIC.PRG` 16,736 bytes) — original
   real-time vertical scroller; manual on the disk as `GAMES/KPANIC.TXT`. Build steps 1-6
-  done and play-tested good, plus a full weapon/feel rework. Steps 7-8 open (below).
+  done and play-tested good, plus a full weapon/feel rework and, 2026-09-25..27, a
+  bitmap-sprite rework (below). Steps 7-8 open (below).
   It is the program the VIC's **soft font, fine vertical scroll and sprites** were added
   for — see `docs/video_design.md`; every one of those exists because a character-cell
   chip scrolling in whole 16 px quanta reads as a strobe rather than motion.
@@ -285,25 +293,24 @@
     a 2-wide lane where it promised 3 (608 rows per million), an economy where a
     competent player bled to death by arithmetic, and a composed soft-font glyph
     sitting hard against its frame because CP437 capitals occupy scanlines 2..11 of 16.
-    - That constraint is gone. `tests/test_venture.cpp` runs 37 tests against the real
-      game: a `venture_bin` target links a flat $0800 blob, the harness writes it into
-      memory and sets `PC` there, and it reads live state by name through the `-Ln`
-      label file cl65 emits (non-`static` variables only, which is the one thing to
-      design for). Steps 7-8 should get a `kpanic_bin` target and the same treatment
-      rather than another round of throwaway C — the span-collision and stale-static
-      bug families above are exactly what a harness pins, and the budget tests VENTURE
-      grew (a frame under 9,000 cycles, a tick under 30,000) apply here too.
+    - That constraint is gone: `kpanic_bin` links the game as a flat $0800 blob and
+      `tests/test_kpanic.cpp` (11 tests) drives it and reads live state by name through
+      the label file -- non-`static` variables only, which is the one thing to design
+      for. What it does not have yet is VENTURE's cost budgets (a frame and a tick
+      measured in cycles), which would be worth adding before the balance pass.
   - **Rejected alternatives, with the numbers, so they are not re-proposed:**
     - *Node minimum spacing* — kills the luck-death tail, but even a floor as loose as
       4N doubled a good player's distance and pushed perfect play toward never dying,
       which breaks "how far can you go" as a score. The scarcity cut subsumed it.
     - *A fixed cooldown for spread Lv3* — 150 volleys against the broken version's 164.
       It fires *less* while looking like a fix, because refuse-and-retry is already a
-      more generous self-pacing limiter than any constant.
+      more generous self-pacing limiter than any constant. (Moot since weapon levels
+      were removed; the refuse-and-retry lesson stands.)
     - *Enlarging the chip's sprite block* — works, but pool 20 is the threshold (19
       refuses exactly as much as 16) and it spends 24 of the 53 remaining I/O-page
       bytes on one weapon's peak. Spread became short-ranged instead, which fits by
-      construction and buys a weapon role rather than a compromise.
+      construction and buys a weapon role rather than a compromise. (The sprite
+      rework later solved the pressure properly: one sprite per volley.)
     - *Per-sector palette re-skin* — proposed from a screenshot that turned out to be
       the one frame of a bridge explosion. The original runs one palette throughout.
       What shipped is a per-sector *board* colour, which is our own idea, not theirs.
@@ -312,6 +319,31 @@
     which at 12 was ~29 s against runs of 60-90 s, so power-ups stopped appearing at
     all. Reason about the cadence the player experiences, not the rate the mechanic
     fires at.
+  - **Bitmap-sprite rework, 2026-09-25..27** (`51e5f60`; art moved to `kpanic.art`
+    and `spr2c` in `ac3c598`). Play-approved. What changed, so the older notes above
+    are read in its light:
+    - **Everything that moves is a bitmap sprite** with art converted from GameSupply's
+      space packs: the craft, daemon, worm and sentinel, the shots, and the pellets.
+      Enemies and pellets used to be cell-plane objects erased and redrawn each step;
+      as sprites they cannot blink, and they ride the fine scroll by adding `fine_off`
+      to their own y every frame. They are hidden on the bottom row, which a cell would
+      slide out under the clip but a sprite would draw over the HUD.
+    - **One sprite per volley or bolt, not per shot.** A spread volley is one picture of
+      whichever of its shots survive (7 combinations, built at start-up), a beam bolt
+      one sprite whose height is the cells it has left. Hit-testing is still per shot.
+      Split of the 17: craft 0, shot groups 1-4, enemies 5-12, pellets 13-16.
+      `MAX_ENEMIES` stays 8 -- the number `SPAWN_FLOOR` was chosen against -- and
+      `MAX_PELLETS` is 4.
+    - **Weapon levels removed.** A matching pickup adds 10 rounds (cap 99); a different
+      one switches weapon. Spread is always 3 shots, beam always pierces 2, homing fires
+      at the standard rate. A wall crash drops you to the plain shot with no rounds
+      (enemy, pellet and firewall hits still cost energy only). The HUD's `Lv` is gone.
+    - **Sentinels aim.** They fire only when the craft is below and in one of their two
+      columns, from that column, one pellet in the air per sentinel, with `fire_base`
+      as a reload. They used to drop a pellet from their left column on a timer.
+    - **Terrain art as soft-font glyphs:** the firewall is a laser band with the port
+      as a cyan orb on dim red, and the data node is the brick art in green with a
+      yellow core. Shooting a node now throws debris like a kill.
   - **Steps 7-8, part done and MERGED to `main`** (`9e83229`, `9af5cac`). Parked
     2026-09-05 at Brian's call, mid-way through the juice. The note here previously said
     this sat unmerged on a `feat/kpanic-steps-7-8` branch; that branch was merged and
@@ -323,17 +355,27 @@
       swap with, so bit 7 could only ever darken it; and an end screen whose headline
       states the cause rather than repeating the game's name.
     - **Done, not needing eyes:** `KPANIC.TXT` on the disk beside the game; a saturating
-      `add_score()`; and a real test harness — `kpanic_bin` plus eight tests in
+      `add_score()`; and a real test harness — `kpanic_bin` plus eight tests (eleven now) in
       `tests/test_kpanic.cpp`, which is what the "no `.PRG` can be tested" note above
       was waiting for.
     - **Dropped on measurement:** the 2-word/BCD score. `unsigned long` cost 650 bytes
       and a myriad-pair 1,054 (cc65 emits a division helper per constant divide), and
       the harness put a generous score ceiling in the low thousands — five to ten times
       short of 65,535. See the score note in `kpanic.c`.
-    - **Still open:** cell-offset screen shake; SID cues; the final balance pass, which
-      wants doing last because juice changes how harsh the game feels without changing
-      a number. A persistent score *table* is also still absent and would need the game
-      to open a disk file, which it never does today.
+    - **Still open:**
+      - *Screen shake.* Planned as a cell offset, but the enemies, pellets and shots
+        are sprites now and would not move with the plane -- a shake has to nudge the
+        sprite positions by the same amount, or the world shakes and its contents hold
+        still.
+      - *SID cues.*
+      - *The final balance pass*, last, because juice changes how harsh the game feels
+        without changing a number. It matters more after the rework: the gun lost its
+        levels (and crashes now cost the whole gun), sentinels only fire when lined up,
+        and the pellet pool shrank, all of which move difficulty in ways nobody has
+        measured. The node rates, spawn table and `FRAG_CHANCE` were tuned before all
+        of it.
+      - A persistent score *table* is also still absent and would need the game to open
+        a disk file, which it never does today.
 
 ### Display themes
 - [x] **Colour themes.** **Built 2026-09-22.** Landed as a *soft palette* rather than

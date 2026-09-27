@@ -172,8 +172,15 @@ public:
      * @brief Set/clear the IRQ line. While asserted and the I flag is clear,
      *        an IRQ is serviced before each instruction; the handler must clear
      *        the source (ack) to deassert the line.
+     *
+     * The line is WIRED-OR, as on a real board: several chips can pull it, and it
+     * stays asserted while any of them does. setIrqLine() is the PIA timer's pull,
+     * kept under its old name; setIrqSource() is the general form.
      */
-    void setIrqLine(bool asserted);
+    void setIrqLine(bool asserted) { setIrqSource(kIrqTimer, asserted); }
+    static constexpr uint8_t kIrqTimer = 0x01;   ///< the PIA interval timer
+    static constexpr uint8_t kIrqRaster = 0x02;  ///< the VIC raster compare
+    void setIrqSource(uint8_t source, bool asserted);
 
     /**
      * @brief True while STP ($DB) has halted the processor. Only reset() revives it.
@@ -193,7 +200,7 @@ private:
 
     // Hardware interrupt lines
     bool nmi_pending_ = false;  ///< edge-triggered NMI latch
-    bool irq_line_ = false;     ///< level-sensitive IRQ line
+    uint8_t irq_sources_ = 0;   ///< level-sensitive IRQ line: one bit per chip pulling it
 
     // 65C02 processor-control states
     bool waiting_ = false;      ///< WAI: halted until an interrupt is signalled

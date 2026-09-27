@@ -56,6 +56,58 @@ TEST(Clock, ASecondOfMachineTimeIsSixtyJiffies)
  * display showed a single frame -- so no instant existed that a program could know
  * was safe to paint in. Ticking the frame with the jiffy is what makes VREG_FRAME
  * mean something. */
+/* The raster interrupt, end to end through the real kernel.
+ *
+ * A program asks for line 100 and installs a handler through K_RASTER_IRQ ($FF45).
+ * The handler counts its calls and notes the line it ran on. A second of machine
+ * time must call it sixty times, on line 100 or just after -- AND still advance the
+ * jiffy exactly sixty times. The kernel's handler used to treat every interrupt as a
+ * timer tick; with the raster sharing the line, that would have run the clock at
+ * double speed. */
+TEST(Clock, TheRasterInterruptCallsAProgramsHandlerOnceAFrame)
+{
+    Computer::Computer6502 box; box.power_on();
+    box.runCycles(box.clockHz() / 4);             // into the DOS, servicing IRQs
+
+    Computer::Memory *mem = box.getMemory();
+    const uint8_t prog[] = {
+        0xA9, 100,              // LDA #100
+        0x8D, 0xD1, 0xFE,       // STA $FED1        compare line, low
+        0xA9, 0x00,             // LDA #0
+        0x8D, 0xD2, 0xFE,       // STA $FED2        compare line, high
+        0xA9, 0x80,             // LDA #<$0880
+        0xA2, 0x08,             // LDX #>$0880
+        0x20, 0x45, 0xFF,       // JSR K_RASTER_IRQ
+        0x58,                   // CLI
+        0x4C, 0x12, 0x08,       // JMP *            (the CLI's address + 1)
+    };
+    const uint8_t handler[] = {
+        0xEE, 0x00, 0x07,       // INC $0700        count the calls
+        0xAD, 0xD1, 0xFE,       // LDA $FED1        the line it ran on
+        0x8D, 0x01, 0x07,       // STA $0701
+        0x60,                   // RTS
+    };
+    for (size_t i = 0; i < sizeof prog; ++i)    mem->write(uint16_t(0x0800 + i), prog[i]);
+    for (size_t i = 0; i < sizeof handler; ++i) mem->write(uint16_t(0x0880 + i), handler[i]);
+    mem->write(0x0700, 0);
+    box.getCpu()->reg.PC = 0x0800;
+
+    box.runCycles(box.clockHz() / 60 * 2);       // settle: installed, first frame by
+    const int calls0 = mem->read(0x0700);
+    const int jiffy0 = mem->read(0x31) | (mem->read(0x32) << 8);
+    box.runCycles(box.clockHz());                 // one second
+    const int calls = (mem->read(0x0700) - calls0) & 0xFF;
+    const int jiffies = ((mem->read(0x31) | (mem->read(0x32) << 8)) - jiffy0) & 0xFFFF;
+
+    EXPECT_GE(calls, 59);
+    EXPECT_LE(calls, 61) << "the handler did not run once a frame";
+    EXPECT_GE(jiffies, 59);
+    EXPECT_LE(jiffies, 61) << "raster interrupts were counted as jiffies";
+    const int line = mem->read(0x0701);
+    EXPECT_GE(line, 100);
+    EXPECT_LE(line, 104) << "the handler ran far from its line";
+}
+
 TEST(Clock, ASecondOfMachineTimeIsSixtyFrames)
 {
     Computer::Computer6502 box; box.power_on();

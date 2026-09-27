@@ -105,7 +105,7 @@ TEST(VicSprites, BlockIsRoutedToTheVicAndDoesNotOverrunThePage)
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegFontData));
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegSpriteLast + 1));
     EXPECT_TRUE(VIC::isVideoRegAddress(VIC::kRegPaletteLast + 1));
-    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegSprPatLast + 1));
+    EXPECT_FALSE(VIC::isVideoRegAddress(VIC::kRegRasterLast + 1));
 }
 
 // --- defaults -------------------------------------------------------------

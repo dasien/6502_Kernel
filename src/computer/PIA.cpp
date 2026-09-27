@@ -82,6 +82,7 @@ void PIA::writePia(const uint16_t address, const uint8_t value)
             break;
         case kTimerIrqAck:
             // Acknowledge the periodic timer IRQ: deassert the CPU IRQ line.
+            timer_pending_ = false;
             if (cpu_) {
                 cpu_->setIrqLine(false);
             }
@@ -178,6 +179,11 @@ uint8_t PIA::readPia(const uint16_t address)
             PIA_LOG("PIA: 6502 reading data register: no data available\n");
             return 0x00;
             
+        case kTimerIrqAck:
+            // Is the timer pulling IRQ? The raster can too, so the handler asks
+            // rather than assuming every interrupt is a jiffy.
+            return timer_pending_ ? kTimerPending : 0x00;
+
         case kKeyState:
             // Live "which control keys are held" bitmask. Unlike kPortAData this is
             // non-destructive: a game polls it every frame and must keep seeing the
@@ -356,6 +362,7 @@ void PIA::pulseTimerIrq()
 {
     // Interval-timer tick: assert the IRQ line. The handler clears it by
     // writing the timer ack register ($DC0E).
+    timer_pending_ = true;
     if (cpu_)
     {
         cpu_->setIrqLine(true);

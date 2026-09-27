@@ -136,6 +136,29 @@ TEST_F(CpuInterruptTest, IrqReentersWhileTheLineStaysAsserted) {
         << "IRQ is level-sensitive, not a one-shot latch";
 }
 
+/* The IRQ line is wired-OR: the PIA's timer and the VIC's raster both pull it, and
+ * it stays asserted until the LAST of them lets go. A handler that acknowledges one
+ * source while the other still pulls must be interrupted again, or the second
+ * interrupt is lost. */
+TEST_F(CpuInterruptTest, TheLineStaysUpWhileAnySourcePullsIt) {
+    fillNops();
+    cpu.setFlag(CPU6502::kInterrupt, false);
+    cpu.setIrqSource(CPU6502::kIrqTimer, true);
+    cpu.setIrqSource(CPU6502::kIrqRaster, true);
+
+    step();                                   // enter
+    ASSERT_EQ(cpu.reg.PC, kIrqHandler);
+    cpu.setIrqSource(CPU6502::kIrqTimer, false);   // the timer is acknowledged
+    step();                                   // RTI
+    step();                                   // the raster still pulls: enter again
+    EXPECT_EQ(cpu.reg.PC, kIrqHandler) << "releasing one source dropped the other";
+
+    cpu.setIrqSource(CPU6502::kIrqRaster, false);
+    step();                                   // RTI
+    step();
+    EXPECT_NE(cpu.reg.PC, kIrqHandler) << "the line stayed up with no source pulling";
+}
+
 TEST_F(CpuInterruptTest, IrqStopsOnceTheLineIsDeasserted) {
     fillNops();
     cpu.setFlag(CPU6502::kInterrupt, false);

@@ -3,8 +3,8 @@
 ; ================================================================
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
-; Date:         2026-09-23
-; Version:      4.1
+; Date:         2026-09-27
+; Version:      4.2
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -273,6 +273,13 @@
 ;                   reusing the jiffy count because a PIA interval timer and a video
 ;                   signal are different things, and a raster split would want to
 ;                   move one without the other.
+; 2026-09-27  v4.2  The raster interrupt. The VIC can now pull IRQ at a chosen line,
+;                   alongside the PIA timer on the same wired-OR line, so the IRQ
+;                   handler asks which: a pending raster interrupt is acknowledged
+;                   and handed to a program's handler through RASTER_VEC ($33-$34),
+;                   and only a pending TIMER advances the jiffy -- it used to assume
+;                   every interrupt was one. K_RASTER_IRQ ($FF45) installs a handler
+;                   (A/X) and enables the interrupt, or with 0 disables it.
 ; 2026-07-31  v4.0  The monitor left the kernel. kernel.asm is now the BIOS and
 ;                   nothing else -- screen, keyboard, hex/decimal conversion, the
 ;                   pager, IRQ/NMI, sound, bank launching, the $FF00 ABI and the
@@ -437,6 +444,15 @@ RNG_SEED_OK:
     STZ PAGE_IN_BREAK
     STA SOUND_ENABLE            ; A still $01: system sound on by default
     STZ BEEP_TIMER              ; no beep pending
+
+    ; No raster interrupt until a program asks for one, and a harmless handler if
+    ; one ever fires anyway. The VIC is not reset by a warm reset, so say it here.
+    LDA #RASTER_IRQ_ACK & $80   ; acknowledge, and enable bit clear
+    STA VREG_RASTER_CTL
+    LDA #<RASTER_NOP
+    STA RASTER_VEC
+    LDA #>RASTER_NOP
+    STA RASTER_VEC+1
 
     ; Initialize monitor variables and state
     LDX #$E9                    ; Clear monitor area $0200-$02E9 (234 bytes)
@@ -1544,7 +1560,23 @@ PRINT_HELP_LINE:
 ; would re-fire immediately and storm); if BASIC has ON IRQ enabled, set the
 ; "happened" bit so BASIC's interpreter loop dispatches the handler.
 IRQ_HANDLER:
-    PHA                         ; preserve A (X/Y untouched)
+    PHA                         ; preserve A (X/Y untouched here)
+
+    ; Two chips share the IRQ line, so ask rather than assume. The raster first:
+    ; it is the one with a deadline -- a split has to land on its line.
+    LDA VREG_RASTER_CTL
+    BPL IRQ_TIMER               ; bit 7 clear: the raster is not pulling
+    LDA #RASTER_IRQ_ACK         ; acknowledge, stay enabled
+    STA VREG_RASTER_CTL
+    PHX                         ; the program's handler may use every register
+    PHY
+    JSR RASTER_DISPATCH
+    PLY
+    PLX
+
+IRQ_TIMER:
+    LDA TIMER_IRQ_ACK           ; reading it: bit 7 = the timer is pulling
+    BPL IRQ_HANDLER_DONE        ; a raster-only interrupt is not a jiffy
     STA TIMER_IRQ_ACK           ; acknowledge the timer (value ignored)
 
     ; Advance the monotonic jiffy counter (K_GET_JIFFIES). INC touches no
@@ -1571,6 +1603,39 @@ IRQ_CHECK_BASIC:
 IRQ_HANDLER_DONE:
     PLA
     RTI
+
+;; A raster interrupt's handler, reached by JSR from IRQ_HANDLER: A, X and Y are
+;; saved around it and the interrupt is already acknowledged, so it may re-arm the
+;; compare line for the next split and must end with RTS. RASTER_NOP is the default.
+RASTER_DISPATCH:
+    JMP (RASTER_VEC)
+RASTER_NOP:
+    RTS
+
+;; K_RASTER_IRQ ($FF45) -- install a raster-interrupt handler and enable the
+;; interrupt, or with A/X = 0 disable it and restore the default. Set the compare
+;; line (VREG_RASTER_LO/HI) first. The vector is written with interrupts held off,
+;; so an interrupt can never find it half-changed. Preserves Y.
+RASTER_IRQ:
+    PHP
+    SEI
+    STA RASTER_VEC
+    STX RASTER_VEC+1
+    ORA RASTER_VEC+1
+    BEQ @off
+    LDA #RASTER_IRQ_ACK         ; clear anything stale, and enable
+    STA VREG_RASTER_CTL
+    PLP
+    RTS
+@off:
+    LDA #RASTER_IRQ_ACK & $80   ; acknowledge, and disable
+    STA VREG_RASTER_CTL
+    LDA #<RASTER_NOP
+    STA RASTER_VEC
+    LDA #>RASTER_NOP
+    STA RASTER_VEC+1
+    PLP
+    RTS
 
 ; NMI: the "stop" key. If BASIC has ON NMI enabled, flag it for BASIC; otherwise
 ; abandon whatever is running and return to the monitor command loop.
@@ -1821,6 +1886,7 @@ K_GET_JIFFIES:   JMP GET_JIFFIES        ; $FF39 - read the 60 Hz tick counter (A
 K_HEX_PAIR:      JMP HEX_PAIR_TO_BYTE   ; $FF3C - 2 hex digits -> byte (K_PARSE_HEX does 4)
 K_PARSE_DEC_VAL: JMP PARSE_DECIMAL_VALUE; $FF3F - decimal digits -> DEC_RESULT, no side effects
 K_WAIT_FRAME:    JMP WAIT_FRAME         ; $FF42 - block until the next frame boundary
+K_RASTER_IRQ:    JMP RASTER_IRQ         ; $FF45 - install (A/X) or remove (0) a raster handler
 ; ================================================================
 ; RESET VECTORS
 ; ================================================================

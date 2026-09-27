@@ -128,6 +128,13 @@ config  = sprdemo.cfg
 program = SPRDEMO.PRG -> DEMOS/SPRDEMO.PRG
 desc    = bitmap sprites from the VIC's pattern RAM
 
+[raster]
+dir     = programs/raster
+sources = raster.c
+config  = raster.cfg
+program = RASTER.PRG -> DEMOS/RASTER.PRG
+desc    = raster splits: colour bars and a fine-scroll wobble
+
 # ---- Scott Adams adventures ------------------------------------------------
 # Twelve games, one engine. Each entry builds programs/scottfree/scott.c against a
 # different database: `generate` runs the dat2c host tool over the .dat to produce
