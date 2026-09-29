@@ -89,6 +89,7 @@ namespace Computer
         {
             clock_hz_ = hz ? hz : kDefaultClockHz;
             video_chip.setCyclesPerFrame(clock_hz_ / kJiffyHz);   // the raster's frame
+            sid.setClockHz(clock_hz_);                            // and the SID's samples
         }
         [[nodiscard]] uint32_t clockHz() const { return clock_hz_; }
 
@@ -118,7 +119,7 @@ namespace Computer
         void runCycles(uint64_t cycles);
 
     private:
-        void raster();   ///< after each instruction: the VIC's share of IRQ
+        void raster();   ///< after each instruction: is the raster interrupt's cycle here?
 
     public:
 

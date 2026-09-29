@@ -50,6 +50,14 @@ namespace Computer
         // The VIC's raster runs on machine time: the CPU's cycle count, and a frame's
         // worth of it -- the jiffy interval, since the frame boundary IS the jiffy.
         video_chip.setClock([this] { return cpu.getCycles(); }, clock_hz_ / kJiffyHz);
+        // The VIC raises and drops its share of the IRQ line itself, when it changes.
+        video_chip.setIrqLine([this](bool asserted) {
+            cpu.setIrqSource(CPU6502::kIrqRaster, asserted);
+        });
+        // The SID runs on machine time too, caught up on each register write and at
+        // the end of each run of instructions -- see SID::clock.
+        sid.setClockHz(clock_hz_);
+        sid.setClock([this] { return cpu.getCycles(); });
     }
 
     void Computer6502::showFatalError(const std::string& message)
@@ -285,15 +293,17 @@ namespace Computer
             pia.processFileOperations();
             raster();
         }
+        sid.clock(cpu.getCycles());             // the rest of this run's sound
     }
 
-    /* The VIC's raster interrupt, checked after every instruction: the chip pulls its
-     * share of the wired-OR IRQ line while its interrupt is pending and enabled, and
-     * lets go once the handler acknowledges it. */
+    /* After every instruction: one comparison. The raster interrupt is an event at a
+     * cycle the VIC worked out in advance (VIC::nextRasterEvent), so the machine only
+     * checks whether that cycle has come -- as VICE's alarms do -- and the VIC drives
+     * its share of the IRQ line itself. The SID is not here at all: it catches up on
+     * its own register writes and at the end of each run (see SID::clock). */
     void Computer6502::raster()
     {
-        video_chip.pollRaster();
-        cpu.setIrqSource(CPU6502::kIrqRaster, video_chip.irqAsserted());
+        if (cpu.getCycles() >= video_chip.nextRasterEvent()) video_chip.pollRaster();
     }
 
     /* How many frame boundaries runCycles() crossed, for the host's repaint. Reading
@@ -356,6 +366,7 @@ namespace Computer
                 frames_elapsed_++;
             }
         }
+        sid.clock(cpu.getCycles());             // the rest of this slice's sound
     }
 
     void Computer6502::reset()

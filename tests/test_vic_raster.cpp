@@ -241,6 +241,39 @@ TEST(VicRaster, AColourSplitsWholeOnItsBlueByte)
     EXPECT_EQ(bands[1].state.palette[2], 0x30);
 }
 
+// A presented frame is drawn from the live settings however split it was: it is shown
+// at the present, with the cells as they are then, and the recorded bands belong to
+// that moment's past. KPANIC shook because of this -- it moves its fine offset partway
+// into every frame and presents.
+TEST(VicRaster, APresentedFrameIsNotDrawnInBands)
+{
+    Clocked c;
+    c.at(120);
+    c.command(VIC::kCmdFineY, 6);
+    c.v.endFrame(kCyclesPerFrame);
+    ASSERT_EQ(c.v.frameBands().size(), 2u);
+    EXPECT_TRUE(c.v.drawInBands()) << "an unpresented split frame should draw in bands";
+
+    c.now = kCyclesPerFrame + 120 * kCyclesPerLine;
+    c.command(VIC::kCmdFineY, 8);
+    c.v.write(VIC::kRegFrame, 0);                   // present
+    c.v.endFrame(2 * kCyclesPerFrame);
+    ASSERT_EQ(c.v.frameBands().size(), 2u);
+    EXPECT_FALSE(c.v.drawInBands()) << "a presented frame was drawn from stale bands";
+
+    // A presenting program that misses ONE present -- a frame whose work ran long --
+    // is still a presenting program. Drawing that frame in bands gave KPANIC a judder.
+    c.now = 2 * kCyclesPerFrame + 120 * kCyclesPerLine;
+    c.command(VIC::kCmdFineY, 10);                  // no present this time
+    c.v.endFrame(3 * kCyclesPerFrame);
+    EXPECT_FALSE(c.v.drawInBands()) << "one missed present made it a split program";
+
+    c.now = 3 * kCyclesPerFrame + 120 * kCyclesPerLine;
+    c.command(VIC::kCmdFineY, 12);                  // and none again: a split program
+    c.v.endFrame(4 * kCyclesPerFrame);
+    EXPECT_TRUE(c.v.drawInBands()) << "two frames without a present should draw bands";
+}
+
 // The renderer draws each band by asking the chip for that band's settings.
 TEST(VicRaster, SelectingABandRedirectsTheRenderersAccessors)
 {

@@ -38,12 +38,15 @@ namespace Computer
         clock_ = std::move(clock);
         cycles_per_frame_ = cycles_per_frame;
         frame_start_ = clock_ ? clock_() : 0;
+        rasterArm();
     }
 
     uint16_t VIC::rasterLine() const
     {
         if (!clock_ || !cycles_per_frame_) return 0;
-        const uint64_t elapsed = clock_() - frame_start_;
+        const uint64_t now = clock_();
+        if (now < frame_start_) return 0;       // a frame not begun yet is at its top
+        const uint64_t elapsed = now - frame_start_;
         const uint64_t line = elapsed * kLinesPerFrame / cycles_per_frame_;
         // A frame the machine has not yet ended sits on its last line rather than
         // wrapping into a line 0 that has not begun.
@@ -65,19 +68,29 @@ namespace Computer
             bands_.push_back(Band{line, splitState()});
     }
 
-    /* The beam has moved on since the last poll. If it crossed the compare line --
-     * was below it and is now on it or past -- the interrupt goes pending. Crossing,
-     * not equality: the machine polls between instructions, and an instruction can
-     * span a line boundary, so the exact line may never be seen. A compare the beam
-     * has already passed waits for the next frame, which is what a program setting
-     * up the next split wants. Line 0 is taken at the frame boundary, in endFrame(). */
+    /* When will the beam reach the compare line? Line n begins on the first cycle whose
+     * elapsed time maps to n, which is ceil(n * cycles_per_frame / lines). A compare
+     * already behind the beam -- or on its current line -- waits for the next frame,
+     * which is what a program setting up its next split wants; endFrame() arms it
+     * again then. Line 0 is taken at the frame boundary itself, in endFrame(). */
+    void VIC::rasterArm()
+    {
+        raster_due_ = kNoRasterEvent;
+        if (!raster_enabled_ || !clock_ || !cycles_per_frame_ || raster_compare_ == 0) return;
+        if (raster_compare_ <= rasterLine()) return;
+        raster_due_ = frame_start_ +
+            (static_cast<uint64_t>(raster_compare_) * cycles_per_frame_ + kLinesPerFrame - 1) /
+            kLinesPerFrame;
+    }
+
+    /* The machine has reached the cycle rasterArm() worked out -- or passed it, since it
+     * looks between instructions and an instruction can span a line boundary. */
     void VIC::pollRaster()
     {
-        if (!raster_enabled_) return;
-        const uint16_t line = rasterLine();
-        if (raster_polled_ < raster_compare_ && line >= raster_compare_)
-            raster_pending_ = true;
-        raster_polled_ = line;
+        if (!clock_ || clock_() < raster_due_) return;
+        raster_due_ = kNoRasterEvent;               // once a frame
+        raster_pending_ = true;
+        rasterNotify();
     }
 
     void VIC::selectBand(const int index) const
@@ -191,12 +204,19 @@ namespace Computer
         bands_.assign(1, Band{0, splitState()});
         frame_start_ = at;
 
-        // The raster starts again at 0. A compare of 0 is reached right here.
-        raster_polled_ = 0;
-        if (raster_enabled_ && raster_compare_ == 0) raster_pending_ = true;
+        // The raster starts again at 0. A compare of 0 is reached right here; any other
+        // is an event later in this frame.
+        if (raster_enabled_ && raster_compare_ == 0)
+        {
+            raster_pending_ = true;
+            rasterNotify();
+        }
+        rasterArm();
 
         frame_++;   // wrapping is the contract; callers compare for change
         presented_last_frame_ = presented_this_frame_;
+        if (presented_this_frame_) frames_unpresented_ = 0;
+        else if (frames_unpresented_ < 255) frames_unpresented_++;
         presented_this_frame_ = false;
         Host::LatencyProbe::get().frame();
     }
@@ -379,17 +399,20 @@ namespace Computer
             break;
         case kRegRasterLo:
             raster_compare_ = static_cast<uint16_t>((raster_compare_ & 0x100) | value);
+            rasterArm();
             break;
         case kRegRasterHi:
             raster_compare_ = static_cast<uint16_t>((raster_compare_ & 0x0FF) |
                                                     ((value & 0x01) << 8));
+            rasterArm();
             break;
         case kRegRasterCtl:
             if (value & kRasterAck) raster_pending_ = false;
             raster_enabled_ = (value & kRasterEnable) != 0;
-            // Enabling does not look back: the next line crossed is the first that
-            // counts, so a compare already behind the beam waits for the next frame.
-            raster_polled_ = rasterLine();
+            // Enabling does not look back: a compare already behind the beam waits
+            // for the next frame.
+            rasterArm();
+            rasterNotify();
             break;
         // The pattern index wraps as the font index does, and for the same reason.
         case kRegSprPatLo:
@@ -529,7 +552,8 @@ namespace Computer
         }
         raster_enabled_ = false;           // ...and the raster interrupt off, so a
         raster_pending_ = false;           // program that quits cannot leave it
-                                           // calling into memory it no longer owns
+        raster_due_ = kNoRasterEvent;      // calling into memory it no longer owns
+        rasterNotify();
         dirty_flag_ = true;
         recordSplit();                     // it resets the font and fine scroll
     }

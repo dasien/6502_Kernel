@@ -334,7 +334,13 @@ The details:
   before the raster existed, so a program that never splits sees no difference.
 - **The frame shown is the last completed one.** A split program should not present:
   its bands are only whole at the boundary, and the boundary repaint is what shows
-  them.
+  them. A program that presents is drawn from the live settings, bands or not --
+  its frames are shown at the present, and pairing their cells with the frame
+  before's settings would be wrong. That is what lets a presenting program change its
+  fine offset mid-frame, as KPANIC does every frame, without its frames reading as
+  splits. Bands apply once two frames running have gone by with no present, so a
+  presenting program that misses the odd present, when a frame runs long, is still
+  drawn live.
 
 `wait_line(n)` busy-waits until the beam is on line `n` or past it, and returns at
 once if it already is, so call it in rising order within a frame. `raster_line()`
@@ -349,9 +355,11 @@ the VIC raises IRQ when the beam reaches a chosen line, as the C64's VIC-II did.
 **The chip.** Writing `$FED1`/`$FED2` sets the compare line, the same two registers
 that read the beam -- again the C64's arrangement, where `$D012` is both. When the
 beam reaches the compare line the interrupt goes pending, and while it is pending and
-enabled the VIC pulls the CPU's IRQ line. The machine checks after every instruction,
-so the test is *crossing* the line, not landing on it; an instruction can span a line
-boundary. A compare the beam has already passed waits for the next frame, which is
+enabled the VIC pulls the CPU's IRQ line. It is scheduled, not polled, as VICE's alarms
+are: whenever the compare line, the enable bit or the frame changes, the VIC works out
+the cycle the beam will reach the line, and the machine compares its cycle count with
+that one number after each instruction. It fires on the first instruction boundary at
+or past that cycle, since an instruction can span a line boundary. A compare the beam has already passed waits for the next frame, which is
 what a handler re-arming for its next split wants. A compare of 0 fires at the frame
 boundary. `$FED3` enables it and acknowledges it, and a clear command turns it off, so
 a program that quits cannot leave it calling a handler in memory it no longer owns.

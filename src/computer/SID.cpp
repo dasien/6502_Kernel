@@ -60,7 +60,6 @@ namespace Computer
             return env3_val_.load(std::memory_order_relaxed);
         if (idx == kRegPotX || idx == kRegPotY)
             return 0;
-        std::lock_guard<std::mutex> lock(mtx_);
         return regs_[idx];
     }
 
@@ -68,13 +67,30 @@ namespace Computer
     {
         if (!isSidAddress(address))
             return;
-        std::lock_guard<std::mutex> lock(mtx_);
-        regs_[address - kRegBase] = value;
+        // The sound up to this cycle was made with the old value; render it before the
+        // new one takes effect. This is what puts the write at its exact sample.
+        if (now_) clock(now_());
+        const uint16_t reg = static_cast<uint16_t>(address - kRegBase);
+        // A gate written clear is remembered until the envelope sees it. The real chip
+        // is clocked with the CPU and catches a gate held low for a few microseconds;
+        // this one runs its envelope once a sample and would miss it. See
+        // Voice::gate_dropped.
+        if (reg < kNumVoices * kVoiceRegs && reg % kVoiceRegs == kOffControl &&
+            !(value & kCtrlGate))
+            voices_[reg / kVoiceRegs].gate_dropped = true;
+        regs_[reg] = value;
     }
 
     void SID::reset()
     {
-        std::lock_guard<std::mutex> lock(mtx_);
+        {
+            std::lock_guard<std::mutex> lock(ring_mtx_);
+            ring_head_ = 0;
+            ring_count_ = 0;
+        }
+        pending_count_ = 0;
+        sample_acc_ = 0;
+        clocked_ = false;
         regs_.fill(0);
         voices_ = {};
         filt_ic1_ = 0.0;
@@ -84,9 +100,10 @@ namespace Computer
     }
 
     // Advance the ADSR envelope one sample. Gate transitions are detected from the
-    // control register's gate bit each sample, so no edge tracking is needed on the
-    // register-write side. Decay and release approximate the SID's exponential
-    // curve with a geometric decay toward the target level.
+    // control register's gate bit each sample -- plus a gate-off written since the last
+    // sample (gate_dropped), which a clear-and-set between samples would otherwise
+    // hide. Decay and release approximate the SID's exponential curve with a geometric
+    // decay toward the target level.
     void SID::advanceEnvelope(Voice &v, const uint8_t *vr)
     {
         const bool gate = (vr[kOffControl] & kCtrlGate) != 0;
@@ -96,6 +113,15 @@ namespace Computer
         const double decay_ms = kAttackMs[ad & 0x0F] * 3.0;
         const double release_ms = kAttackMs[sr & 0x0F] * 3.0;
         const double sustain = (sr >> 4) / 15.0; // sustain level 0..1
+
+        // A gate that went low between samples: release now, so that if it is high
+        // again the edge below restarts the attack, as the real chip would.
+        if (v.gate_dropped)
+        {
+            if (v.last_gate) v.env_phase = EnvPhase::Release;
+            v.last_gate = false;
+            v.gate_dropped = false;
+        }
 
         // Gate edges drive the state machine.
         if (gate && !v.last_gate)
@@ -207,14 +233,87 @@ namespace Computer
         return (acc / 2047.5) - 1.0;
     }
 
+    /* Machine time: the samples since the last call -- on a register write, or at the
+     * end of a run of instructions. At 4 MHz and 44.1 kHz a sample is about 91 cycles.
+     * The remainder carries in sample_acc_, so no fraction of a sample is ever lost and
+     * a second of cycles is exactly a second of audio. */
+    void SID::clock(const uint64_t now)
+    {
+        if (!clock_hz_) return;
+        if (!clocked_) { last_cycle_ = now; clocked_ = true; return; }
+        sample_acc_ += (now - last_cycle_) * kSampleRate;
+        last_cycle_ = now;
+        while (sample_acc_ >= clock_hz_)
+        {
+            sample_acc_ -= clock_hz_;
+            generateSamples(&pending_[pending_count_], 1);
+            if (++pending_count_ == static_cast<int>(pending_.size())) flushPending();
+        }
+        if (pending_count_) flushPending();     // nothing waits for the next catch-up
+    }
+
+    // Hand the rendered samples to the audio thread. Past kRingMax the oldest go, back
+    // to kRingKeep: nothing is draining (no audio device), or the host fell behind,
+    // and a buffer that grows is a delay that grows.
+    void SID::flushPending()
+    {
+        std::lock_guard<std::mutex> lock(ring_mtx_);
+        for (int i = 0; i < pending_count_; ++i)
+        {
+            ring_[(ring_head_ + ring_count_) % kRingMax] = pending_[i];
+            if (ring_count_ < kRingMax) ring_count_++;
+            else ring_head_ = (ring_head_ + 1) % kRingMax;
+        }
+        pending_count_ = 0;
+        if (ring_count_ >= kRingMax)
+        {
+            const int drop = ring_count_ - kRingKeep;
+            ring_head_ = (ring_head_ + drop) % kRingMax;
+            ring_count_ = kRingKeep;
+            dropped_ += static_cast<uint64_t>(drop);
+        }
+    }
+
+    /* The sound system's request, always filled: what the buffer holds, then -- if it
+     * is short, the machine paused or behind -- the last sample held for the rest,
+     * which is silent to the ear where dropping to zero would click. */
+    void SID::playback(int16_t *out, const int frames)
+    {
+        if (frames <= 0) return;
+        if (frames > largest_request_.load()) largest_request_.store(frames);
+        std::lock_guard<std::mutex> lock(ring_mtx_);
+        const int have = frames < ring_count_ ? frames : ring_count_;
+        for (int i = 0; i < have; ++i) out[i] = ring_[(ring_head_ + i) % kRingMax];
+        if (have > 0) last_out_ = out[have - 1];
+        for (int i = have; i < frames; ++i) out[i] = last_out_;
+        ring_head_ = (ring_head_ + have) % kRingMax;
+        ring_count_ -= have;
+        underruns_ += static_cast<uint64_t>(frames - have);
+        drained_ += static_cast<uint64_t>(have);
+    }
+
+    int SID::drainSamples(int16_t *out, const int frames)
+    {
+        std::lock_guard<std::mutex> lock(ring_mtx_);
+        const int n = frames < ring_count_ ? frames : ring_count_;
+        for (int i = 0; i < n; ++i)
+            out[i] = ring_[(ring_head_ + i) % kRingMax];
+        ring_head_ = (ring_head_ + n) % kRingMax;
+        ring_count_ -= n;
+        return n;
+    }
+
+    int SID::buffered() const
+    {
+        std::lock_guard<std::mutex> lock(ring_mtx_);
+        return ring_count_ + pending_count_;
+    }
+
     void SID::generateSamples(int16_t *out, int frames)
     {
-        // Snapshot the registers so we don't hold the lock while synthesizing.
-        std::array<uint8_t, kNumRegs> regs;
-        {
-            std::lock_guard<std::mutex> lock(mtx_);
-            regs = regs_;
-        }
+        // The registers as they stand now. Everything is on the emulation thread, so
+        // nothing can change them while this runs.
+        const std::array<uint8_t, kNumRegs> &regs = regs_;
 
         const uint8_t mode_vol = regs[kRegModeVol];
         const uint8_t res_filt = regs[kRegResFilt];

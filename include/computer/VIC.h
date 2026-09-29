@@ -380,17 +380,31 @@ namespace Computer
         /// how many cycles a frame lasts. Without a clock the raster reads line 0 and
         /// no split is ever recorded.
         void setClock(std::function<uint64_t()> clock, uint64_t cycles_per_frame);
-        void setCyclesPerFrame(uint64_t cycles_per_frame) { cycles_per_frame_ = cycles_per_frame; }
+        void setCyclesPerFrame(uint64_t cycles_per_frame)
+        {
+            cycles_per_frame_ = cycles_per_frame;
+            rasterArm();
+        }
 
         /// The line the beam is on now, 0..kLinesPerFrame-1.
         [[nodiscard]] uint16_t rasterLine() const;
 
-        /// Advance the raster interrupt: if the beam has reached the compare line
-        /// since the last call, the interrupt goes pending. The machine calls this
-        /// after every instruction, and then asks irqAsserted() for the IRQ line.
+        /// The raster interrupt is an EVENT at a known cycle, not something polled.
+        /// Whenever the compare line, the enable bit or the frame changes, the chip
+        /// works out the cycle the beam will reach that line -- or "not this frame",
+        /// if it is behind the beam or has already fired -- and the machine compares
+        /// its cycle count against that one number after each instruction. VICE's
+        /// alarms work the same way. When the cycle arrives the machine calls
+        /// pollRaster(), and the interrupt goes pending.
+        [[nodiscard]] uint64_t nextRasterEvent() const { return raster_due_; }
         void pollRaster();
         /// Is the chip pulling the CPU's IRQ line? Pending and enabled.
         [[nodiscard]] bool irqAsserted() const { return raster_pending_ && raster_enabled_; }
+        /// How the chip pulls its share of the wired-OR IRQ line: called with the new
+        /// state whenever it changes -- the interrupt fires, is acknowledged, disabled
+        /// or cleared -- so the line is right without anyone polling it.
+        void setIrqLine(std::function<void(bool)> line) { irq_line_ = std::move(line); }
+        static constexpr uint64_t kNoRasterEvent = ~0ull;
 
         /// The settings a split can change, as they stood for one band of a frame.
         struct SplitState
@@ -410,6 +424,25 @@ namespace Computer
         /// The last completed frame's bands, in line order, the first at line 0. One
         /// band means that frame had no split.
         [[nodiscard]] const std::vector<Band> &frameBands() const { return completed_; }
+
+        /// Should the renderer draw the last frame in bands? Only if it was split AND
+        /// the program is not one that presents. A presented frame is shown at the
+        /// moment of the present, with the cells as they are then, and the bands
+        /// recorded for the frame before would pair those cells with stale settings.
+        /// KPANIC changes its fine offset partway into every frame and presents, so
+        /// its frames all looked split: drawn with the previous frame's offset, the
+        /// freshly scrolled cells sat a whole row off on every row step and the
+        /// playfield shook.
+        ///
+        /// It is the program's HABIT that counts, not the one frame: KPANIC misses the
+        /// odd present when a frame's work runs long, and a rule keyed on the single
+        /// frame drew exactly those in stale bands -- a quarter of them, as a judder.
+        /// So bands wait for two frames running with no present. A split program never
+        /// presents; see docs/video_design.md.
+        [[nodiscard]] bool drawInBands() const
+        {
+            return completed_.size() > 1 && frames_unpresented_ >= 2;
+        }
 
         /// Make the renderer's accessors -- paletteColor, fineY, fineActive, glyphRows --
         /// answer for one band of the last frame, or for the live state with -1. The
@@ -529,6 +562,7 @@ namespace Computer
         bool present_pending_ = false;             ///< a present the host has not seen
         bool presented_this_frame_ = false;        ///< a present since the last boundary
         bool presented_last_frame_ = false;        ///< the frame just ended had one
+        uint8_t frames_unpresented_ = 0;           ///< frames running with no present
 
         // Palette and soft font. Not in the 6502's address space -- see the class
         // comment.
@@ -551,7 +585,10 @@ namespace Computer
         uint16_t raster_compare_ = 0;            ///< the line the interrupt waits for
         bool raster_enabled_ = false;
         bool raster_pending_ = false;
-        uint16_t raster_polled_ = 0;             ///< the line pollRaster() last saw
+        uint64_t raster_due_ = kNoRasterEvent;   ///< cycle the compare line is reached
+        std::function<void(bool)> irq_line_;
+        void rasterArm();                        ///< recompute raster_due_
+        void rasterNotify() { if (irq_line_) irq_line_(irqAsserted()); }
         std::vector<Band> bands_;                ///< the frame in progress
         std::vector<Band> completed_;            ///< the frame the renderer draws
         mutable const SplitState *view_ = nullptr;   ///< selectBand(); null = live

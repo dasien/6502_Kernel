@@ -458,6 +458,25 @@ checklist — rebuilding the EhBASIC ROM at a new base, memory.cfg / basic_memor
 the emulator's ROM load addresses — went away with it; BASIC keeps its $B000 base and
 only `Ram_top` ever moves.
 
+### Audio: one clock, not two (2026-09-29)
+
+- [x] **The 186 ms requests.** Qt's sink was asking for 8,192 samples at a time whatever
+  `setBufferSize()` said. Not Qt: `SidAudio`'s pull device was a buffered `QIODevice`,
+  which tops every small read up to its own 16 KB chunk. Opened `Unbuffered`, requests
+  are 2,048 (measured with `MFC_AUDIO_LOG=1`), sound follows the machine by tens of ms,
+  and the clipped notes went. Found by reading Qt 6.10.1's source
+  (`qaudio_qiodevice_support_p.h`, `qaudiosystem_platform_stream_support.cpp`) rather
+  than assuming the setting was ignored.
+- [ ] **The remaining drift.** The emulation runs on the wall clock and the audio device
+  on its own, about 0.03 % apart (buffer +11 samples/s), so every nine minutes or so the
+  buffer hits its ceiling and drops back once. VICE's fix is to make the audio device the
+  timing source ("push against the audio device": `sound_flush` in its `sound.c`; its
+  CoreAudio driver sets `is_timing_source`) -- run just enough cycles each tick to keep
+  the SID's buffer at a target. Built once and reverted: it ran the machine at exactly
+  half speed, because every request was then 186 ms and the target could only cover
+  half of one. With 2,048-sample requests it should work; set the target above the
+  largest request, and fall back to the wall clock if the device stops taking samples.
+
 ### Sprite art from images: `png2art` (2026-09-27)
 
 - [ ] A developer tool that turns an image into an `.art` block, so a sprite can start

@@ -226,7 +226,7 @@ void DisplayWidget::paintEvent(QPaintEvent* event)
      * exactly as before, which is what every program that never touches the raster
      * gets. Lines are nominal pixel rows, 400 of them, scaled by the zoom. */
     const auto &bands = video_chip_->frameBands();
-    if (bands.size() <= 1)
+    if (!video_chip_->drawInBands())
     {
         paintBand(painter, 0, height());
     }

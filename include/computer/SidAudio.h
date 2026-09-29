@@ -20,12 +20,12 @@ class QIODevice;
 
 /**
  * @class SidAudio
- * @brief Pulls PCM from a Computer::SID and plays it through a QAudioSink.
+ * @brief Plays a Computer::SID's samples through a QAudioSink.
  *
  * Runs the sink in pull mode: an internal QIODevice's readData() calls
- * SID::generateSamples() whenever the audio backend needs more samples (on Qt's
- * audio thread). The SID guards its registers with a mutex, so the CPU can poke
- * sound registers on the emulation thread while audio plays. 44100 Hz, mono, s16.
+ * SID::playback() whenever the audio backend needs more samples (on Qt's audio
+ * thread), which copies them out of the buffer the SID fills on machine time.
+ * Nothing is synthesized here. 44100 Hz, mono, s16.
  */
 class SidAudio : public QObject
 {
@@ -33,6 +33,9 @@ class SidAudio : public QObject
 public:
     explicit SidAudio(Computer::SID *sid, QObject *parent = nullptr);
     ~SidAudio() override;
+
+    /// Is there an audio device playing? If not, the machine keeps its own time.
+    [[nodiscard]] bool playing() const { return sink_ != nullptr; }
 
 private:
     Computer::SID *sid_;

@@ -285,3 +285,185 @@ TEST(SidTest, ResetSilencesAndClears)
     for (int16_t s : buf)
         EXPECT_EQ(s, 0);
 }
+
+// A note is restarted by clearing the gate and setting it again, a few instructions
+// apart -- far closer together than one audio sample. The chip must still see the gate
+// close, or the note does not restart: KPANIC's shots fired while the last one's
+// envelope had died played nothing at all.
+TEST(SidTest, AGateClearedAndSetBetweenSamplesRestartsTheNote)
+{
+    SID sid;
+    sid.write(kModeVol, 0x0F);
+    sid.write(kFreqLo, 0xD6);
+    sid.write(kFreqHi, 0x1C);
+    sid.write(kAtkDec, 0x03);           // instant attack, short decay...
+    sid.write(kSusRel, 0x00);           // ...to silence: a pluck
+    sid.write(kControl, SID::kCtrlSawtooth | SID::kCtrlGate);
+
+    std::vector<int16_t> first(SID::kSampleRate / 2);   // the pluck, and long after
+    sid.generateSamples(first.data(), static_cast<int>(first.size()));
+    std::vector<int16_t> quiet(first.end() - 200, first.end());
+    ASSERT_LT(rms(quiet), 0.01) << "the pluck should have died away";
+
+    sid.write(kControl, SID::kCtrlSawtooth);                  // gate off...
+    sid.write(kControl, SID::kCtrlSawtooth | SID::kCtrlGate); // ...and on, no sample between
+
+    std::vector<int16_t> again(2205);
+    sid.generateSamples(again.data(), static_cast<int>(again.size()));
+    EXPECT_GT(rms(again), 0.05) << "the note did not restart";
+}
+
+// --- machine time -------------------------------------------------------------
+//
+// The chip renders its samples as the machine's cycles pass (clock), and the audio
+// thread only drains them. These pin what that is for: a register write lands at the
+// sample it happened on. The chip used to render each audio block from one snapshot
+// of its registers, so changes were heard only as often as the sound system asked --
+// tens of milliseconds -- which turned sweeps into steps and lost short sounds.
+
+namespace
+{
+    constexpr uint64_t kHz = 1'000'000;             // a 1 MHz CPU: 1 cycle = 1 us
+
+    // Run the chip for `ms` of machine time from cycle `t`, draining as the audio
+    // thread would, and return what came out.
+    std::vector<int16_t> runFor(SID &sid, uint64_t &t, int ms)
+    {
+        std::vector<int16_t> out, chunk(512);
+        for (int i = 0; i < ms; ++i) {
+            t += kHz / 1000;
+            sid.clock(t);
+            int n;
+            while ((n = sid.drainSamples(chunk.data(), static_cast<int>(chunk.size()))) > 0)
+                out.insert(out.end(), chunk.begin(), chunk.begin() + n);
+        }
+        return out;
+    }
+
+    void tone(SID &sid, uint8_t freq_hi)
+    {
+        sid.write(kModeVol, 0x0F);
+        sid.write(kFreqLo, 0x00);
+        sid.write(kFreqHi, freq_hi);
+        sid.write(kAtkDec, 0x00);
+        sid.write(kSusRel, 0xF0);
+        sid.write(kControl, SID::kCtrlSawtooth | SID::kCtrlGate);
+    }
+}
+
+TEST(SidMachineTime, ASecondOfCyclesIsASecondOfAudio)
+{
+    SID sid;
+    sid.setClockHz(kHz);
+    uint64_t t = 0;
+    sid.clock(t);
+    tone(sid, 0x1C);
+    const auto out = runFor(sid, t, 1000);
+    // pending_ holds up to 63 not yet handed over; nothing is lost.
+    EXPECT_NEAR(static_cast<double>(out.size() + sid.buffered()), SID::kSampleRate, 1.0);
+}
+
+// A pitch change is heard from the moment it was written, not from the next time the
+// sound system happened to ask.
+TEST(SidMachineTime, APitchChangeIsHeardWhereItWasWritten)
+{
+    SID sid;
+    sid.setClockHz(kHz);
+    uint64_t t = 0;
+    sid.clock(t);
+    tone(sid, 0x10);                                // about 244 Hz
+    const auto low = runFor(sid, t, 500);
+    sid.write(kFreqHi, 0x20);                       // about 489 Hz
+    const auto high = runFor(sid, t, 500);
+
+    const int a = risingCrossings(low), b = risingCrossings(high);
+    EXPECT_NEAR(a, 122, 6) << "the first half is not the first pitch";
+    EXPECT_NEAR(b, 244, 8) << "the second half is not the second pitch";
+}
+
+// A shot: gate on, 30 ms, gate off. Rendered in blocks from snapshots, a sound this
+// short could start and end between two of them and never be heard.
+TEST(SidMachineTime, AShortSoundIsNotLost)
+{
+    SID sid;
+    sid.setClockHz(kHz);
+    uint64_t t = 0;
+    sid.clock(t);
+    runFor(sid, t, 10);
+    tone(sid, 0x1C);
+    auto burst = runFor(sid, t, 30);
+    sid.write(kControl, SID::kCtrlSawtooth);        // release
+    runFor(sid, t, 50);
+    EXPECT_GT(rms(burst), 0.1) << "a 30 ms sound was not heard";
+}
+
+// With nothing draining it -- no audio device, as here -- the buffer stays bounded.
+TEST(SidMachineTime, TheBufferCannotGrowWithoutLimit)
+{
+    SID sid;
+    sid.setClockHz(kHz);
+    sid.clock(0);
+    tone(sid, 0x1C);
+    sid.clock(10 * kHz);                            // ten seconds, never drained
+    EXPECT_LE(sid.buffered(), SID::kRingMax + 64);
+}
+
+// --- playback -------------------------------------------------------------------
+//
+// playback() always fills the sound system's request and is a plain copy. An earlier
+// version stretched and squeezed the audio to steer the buffer's level, and clipped
+// notes. These pin that it copies one-for-one and pads only when it must.
+
+namespace
+{
+    void fill(SID &sid, uint64_t &t, int n)
+    {
+        t += static_cast<uint64_t>(n) * kHz / SID::kSampleRate;
+        sid.clock(t);
+    }
+}
+
+TEST(SidPlayback, ARequestIsServedOneForOne)
+{
+    SID sid; sid.setClockHz(kHz);
+    uint64_t t = 0; sid.clock(t); tone(sid, 0x1C);
+    fill(sid, t, 3000);
+    const int before = sid.buffered();
+    std::vector<int16_t> out(1024);
+    sid.playback(out.data(), 1024);
+    EXPECT_EQ(before - sid.buffered(), 1024) << "playback resampled instead of copying";
+    EXPECT_EQ(sid.underrunSamples(), 0u);
+}
+
+// Short: what the buffer holds, then the last of it held for the rest.
+TEST(SidPlayback, AShortBufferIsPaddedWithItsLastSample)
+{
+    SID sid; sid.setClockHz(kHz);
+    uint64_t t = 0; sid.clock(t); tone(sid, 0x1C);
+    fill(sid, t, 1200);
+    std::vector<int16_t> first(1024);
+    sid.playback(first.data(), 1024);               // leaves ~176 buffered
+    const int left = sid.buffered();
+    ASSERT_GT(left, 0);
+    ASSERT_LT(left, 1024);
+
+    std::vector<int16_t> out(1024);
+    sid.playback(out.data(), 1024);
+    for (int i = left; i < 1024; ++i)
+        ASSERT_EQ(out[i], out[left - 1]) << "padding at " << i << " is not the held sample";
+    EXPECT_EQ(sid.underrunSamples(), static_cast<uint64_t>(1024 - left));
+    EXPECT_EQ(sid.buffered(), 0);
+}
+
+TEST(SidPlayback, AnEmptyBufferHoldsTheLastSample)
+{
+    SID sid; sid.setClockHz(kHz);
+    uint64_t t = 0; sid.clock(t); tone(sid, 0x1C);
+    fill(sid, t, 1024);
+    std::vector<int16_t> out(1024);
+    sid.playback(out.data(), 1024);
+    const int16_t last = out.back();
+    sid.playback(out.data(), 1024);                 // nothing left
+    EXPECT_EQ(out[0], last);
+    EXPECT_EQ(out[1023], last);
+}

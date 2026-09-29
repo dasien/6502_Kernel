@@ -17,15 +17,49 @@ Ring/sync modulation are not modeled. No reSID (or other GPL) code is used.
 Mirrors the ACIA/Modem split:
 
 - `SID` is the headless core, in `include/computer/SID.h` and
-  `src/computer/SID.cpp`. It holds the mutex-guarded register array and synthesises
-  44.1 kHz mono PCM on demand through `generateSamples()`. It uses no Qt and is fully
-  unit-tested by `tests/test_sid.cpp`. Its oscillators use a phase accumulator at a
-  nominal 1 MHz SID clock, so standard SID frequency values give familiar pitches.
+  `src/computer/SID.cpp`. It uses no Qt and is fully unit-tested by
+  `tests/test_sid.cpp`. Its oscillators use a phase accumulator at a nominal 1 MHz SID
+  clock, so standard SID frequency values give familiar pitches.
+- **It runs on machine time, caught up lazily** -- the way VICE runs reSID. It is not
+  stepped per instruction. A register write first renders every sample up to the
+  current cycle and only then takes the new value, and the machine catches the chip up
+  at the end of each run of instructions. Either way the chip synthesises exactly the
+  44.1 kHz samples the elapsed emulated time is worth, from the registers as they
+  stood during it, so a write is heard from the sample it happened on, as with a real
+  SID. The samples go
+  into a buffer of up to about 140 ms; with nothing draining it, the oldest are dropped
+  back to about 46 ms, so neither memory nor delay can grow.
+- It used to be the other way round: the audio thread asked for a block whenever the
+  sound system wanted one, and the chip rendered it from one snapshot of the
+  registers. The sound system's blocks are tens of milliseconds, so changes were only
+  noticed that often -- a pitch sweep came out as a run of short notes, and a sound
+  that started and stopped between two snapshots was never heard.
+- A gate cleared and set again a few instructions apart, how every player restarts a
+  note, falls between two samples. The chip remembers the gate-off until its envelope
+  has seen it, as the real chip, clocked with the CPU, would.
+- Playback (`SID::playback`) is a plain copy from the buffer; if it is short -- the
+  machine paused or behind -- the rest holds the last sample, which is silent where
+  zero would click. `MFC_AUDIO_LOG=1` prints the buffer level, the largest request the
+  sound system has made, and the padded and dropped counts every five seconds.
+- **`SidAudio`'s device must be UNBUFFERED.** A plain `QIODevice` keeps a read buffer
+  of its own in front of `readData()` and tops every small read up to its 16 KB chunk.
+  That made every request 8,192 samples -- 186 ms -- whatever `setBufferSize()` said,
+  and the sound lagged the machine by at least that much. Opened with
+  `QIODevice::Unbuffered`, requests are bounded by Qt's own ring buffer, which
+  `setBufferSize()` does size (Qt 6.10's `inferRingbufferBytes`: the size given, but at
+  least twice the device's buffer). Measured after: largest request 2,048, no underruns.
+- **Two clocks remain.** The emulation is paced by the wall clock and the audio device
+  plays on its own, so the buffer drifts -- measured at about 11 samples a second, the
+  emulation 0.03 % fast -- and when it reaches its ceiling, every nine minutes or so,
+  it drops back once. VICE removes this by making the audio device the machine's timing
+  source. That was tried while requests were 186 ms and ran the machine at half speed;
+  with small requests it should work. See TODO.md.
 - `SidAudio` is the Qt bridge and exists only in the GUI build, in
   `include/computer/SidAudio.h` and `src/computer/SidAudio.cpp`. It is a pull-mode
-  `QAudioSink` whose `QIODevice` calls `generateSamples()` on the audio thread. It is
-  built only when Qt Multimedia is present, which `HAVE_SID_AUDIO` records. A Qt build
-  without it still compiles and simply runs silent.
+  `QAudioSink` whose `QIODevice` calls `SID::playback()` on the audio thread and
+  synthesises nothing. It asks the sink for a small buffer, which on macOS is ignored. It is built only when Qt
+  Multimedia is present, which `HAVE_SID_AUDIO` records. A Qt build without it still
+  compiles and simply runs silent.
 - `Memory` handles dispatch, routing `$FE38-$FE54` to the `SID` through
   `isSidAddress`, exactly as it does for the VIC and ACIA register ports.
 

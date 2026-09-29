@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <array>
 #include <atomic>
+#include <functional>
 #include <mutex>
+#include <vector>
 
 namespace Computer
 {
@@ -25,11 +27,30 @@ namespace Computer
      * waveforms), and an ADSR envelope; plus a master volume (the multimode filter
      * and OSC3/ENV3 read-back arrive in phase 2).
      *
-     * The chip is headless (no Qt): it holds register state written by the CPU and
-     * synthesizes PCM on demand via generateSamples(), which the GUI's QAudioSink
-     * bridge pulls on the audio thread. Register writes and sample generation may
-     * run on different threads, so a mutex guards the register array; the per-voice
-     * oscillator/envelope state is owned solely by the audio thread.
+     * The chip is headless (no Qt) and runs on MACHINE TIME, caught up LAZILY, as VICE
+     * runs reSID. It is never stepped per instruction. Instead, a register write
+     * first renders every sample up to the current cycle and only then takes the new
+     * value, so the write lands at the sample it happened on; and the machine calls
+     * clock() at the end of each run of instructions to render the rest. Either way
+     * the chip synthesizes exactly the samples the elapsed time is worth -- 44,100 a
+     * second -- from the registers as they stood during it.
+     * The samples go into a buffer; the GUI's QAudioSink bridge drains it on the audio
+     * thread (drainSamples) and never synthesizes anything itself.
+     *
+     * It used to be the other way round: the audio thread asked for a block whenever
+     * the sound system wanted one, and the chip rendered the whole block from ONE
+     * snapshot of its registers. The block size is the operating system's, tens of
+     * milliseconds, so register changes were only noticed that often -- a smooth
+     * pitch sweep came out as a run of short notes, and a sound that started and
+     * stopped between two snapshots was never heard at all. On machine time the chip
+     * reacts to a write when it happens, as a real SID does.
+     *
+     * Everything here runs on the emulation thread except drainSamples(), and the
+     * sample buffer is the only thing the two threads share (ring_mtx_). If the buffer
+     * runs dry -- the machine paused, or the emulation behind -- the audio thread holds
+     * the last sample rather than clicking; if it overfills -- no audio device at all,
+     * as in the tests -- the oldest samples are dropped, so neither memory nor latency
+     * can grow.
      *
      * This synthesizer is written from scratch from public SID documentation. It is
      * musically faithful (register-compatible, familiar pitches) but not cycle-exact
@@ -104,14 +125,54 @@ namespace Computer
         [[nodiscard]] uint8_t read(uint16_t address) const;
         void write(uint16_t address, uint8_t value);
 
-        // --- Audio backend interface (called on the audio thread) ---
+        // --- Machine time (emulation thread) ---
+        /// The CPU clock, so a cycle count converts to samples. Without it clock()
+        /// does nothing.
+        void setClockHz(uint64_t hz) { clock_hz_ = hz; }
+        /// Where "now" comes from: the CPU's cycle count. A register write catches the
+        /// chip up to it first. Without a source, writes simply apply (the tests that
+        /// render directly with generateSamples work that way).
+        void setClock(std::function<uint64_t()> now) { now_ = std::move(now); }
+        /// Catch up to the CPU's cycle count @p now: synthesize the samples the time
+        /// since the last call is worth, into the buffer.
+        void clock(uint64_t now);
+
         /**
-         * @brief Synthesize @p frames mono 16-bit samples into @p out.
+         * @brief Synthesize @p frames mono 16-bit samples into @p out, now, from the
+         *        current registers.
          *
-         * Takes a snapshot of the registers under the lock, then synthesizes without
-         * holding it (oscillator/envelope state is audio-thread-private).
+         * The core that clock() runs; tests also call it directly, to render a known
+         * stretch of sound without a machine around the chip.
          */
         void generateSamples(int16_t *out, int frames);
+
+        // --- Audio backend interface (the audio thread) ---
+        /// Take up to @p frames buffered samples, exactly as rendered; returns how many
+        /// there were. The tests read the buffer through this.
+        int drainSamples(int16_t *out, int frames);
+
+        /// Fill @p frames samples for the sound system -- always all of them: what the
+        /// buffer holds, then the last sample held if it is short.
+        void playback(int16_t *out, int frames);
+
+        /// Samples waiting in the buffer.
+        [[nodiscard]] int buffered() const;
+        /// What playback() has had to do: samples padded because the buffer was empty,
+        /// and samples thrown away because it overflowed. For MFC_AUDIO_LOG.
+        [[nodiscard]] uint64_t underrunSamples() const { return underruns_.load(); }
+        [[nodiscard]] uint64_t droppedSamples() const { return dropped_.load(); }
+        /// Samples the sound system has taken, in all. The machine watches it to tell a
+        /// live audio device from a stuck one.
+        [[nodiscard]] uint64_t drainedSamples() const { return drained_.load(); }
+        /// The largest request the sound system has made, in samples. For MFC_AUDIO_LOG:
+        /// it was 8192 (186 ms) while SidAudio's device was a buffered QIODevice, which
+        /// topped every small read up to its own 16 KB chunk.
+        [[nodiscard]] int largestRequest() const { return largest_request_.load(); }
+
+        /// The buffer's bounds, in samples. Past kRingMax the oldest are dropped, back
+        /// to kRingKeep, which bounds the delay between a write and hearing it.
+        static constexpr int kRingMax = 6144;    ///< ~140 ms
+        static constexpr int kRingKeep = 2048;   ///< ~46 ms
 
         /// @brief Reset all registers and synthesis state (silence).
         void reset();
@@ -129,19 +190,43 @@ namespace Computer
             EnvPhase env_phase = EnvPhase::Idle;
             double env = 0.0;     ///< envelope level [0,1]
             bool last_gate = false;
+            /// The gate was written clear since the envelope last looked. The envelope
+            /// runs once a sample, about every 90 cycles, so a gate cleared and set
+            /// again a few instructions later -- how every player restarts a note --
+            /// would otherwise never be seen closed, and the note would not restart.
+            /// A real SID is clocked with the CPU and does see it.
+            bool gate_dropped = false;
         };
 
-        // Register array (guarded by mtx_). Indexed 0..kNumRegs-1.
+        // Register array. Indexed 0..kNumRegs-1. Emulation thread only.
         std::array<uint8_t, kNumRegs> regs_{};
-        mutable std::mutex mtx_;
 
-        // Audio-thread-private synthesis state.
+        // Machine time.
+        std::function<uint64_t()> now_;
+        uint64_t clock_hz_ = 0;
+        uint64_t last_cycle_ = 0;
+        bool clocked_ = false;                 ///< last_cycle_ has been set
+        uint64_t sample_acc_ = 0;              ///< cycles*kSampleRate not yet a sample
+
+        // Samples rendered, waiting for the audio thread: a ring, guarded by ring_mtx_.
+        // pending_ collects a few on the emulation thread first, so the lock is taken
+        // every 64 samples rather than every one.
+        std::vector<int16_t> ring_ = std::vector<int16_t>(kRingMax);
+        int ring_head_ = 0, ring_count_ = 0;
+        mutable std::mutex ring_mtx_;
+        std::array<int16_t, 64> pending_{};
+        int pending_count_ = 0;
+        void flushPending();
+        int16_t last_out_ = 0;                 ///< playback()'s last sample, for padding
+        std::atomic<uint64_t> underruns_{0}, dropped_{0}, drained_{0};
+        std::atomic<int> largest_request_{0};
+
+        // Synthesis state.
         std::array<Voice, kNumVoices> voices_{};
         double filt_ic1_ = 0.0;   ///< TPT state-variable filter integrator 1 state
         double filt_ic2_ = 0.0;   ///< TPT state-variable filter integrator 2 state
 
-        // Voice-3 read-back, published from the audio thread for the OSC3/ENV3
-        // read-only registers (read on the CPU thread; slight staleness is fine).
+        // Voice-3 read-back for the OSC3/ENV3 read-only registers.
         std::atomic<uint8_t> osc3_val_{0};
         std::atomic<uint8_t> env3_val_{0};
 
