@@ -419,6 +419,75 @@ TEST_F(KpanicTest, EnemiesAreBitmapSprites)
     EXPECT_TRUE(seen) << "no enemy appeared in ten seconds of flight";
 }
 
+/* Q quits even straight after a broken arrow sequence.
+ *
+ * Held arrows fill the keystroke buffer with ESC [ x, and a full buffer drops the tail
+ * of one, leaving a lone ESC. The decoder used to swallow whatever byte came next as
+ * the rest of that sequence -- so the Q after it vanished, and quitting took two
+ * presses. A lone ESC, then Q, must quit. */
+TEST_F(KpanicTest, QQuitsAfterABrokenArrowSequence)
+{
+    startRun();
+    ASSERT_EQ(peek("_dead"), 0u);
+    ASSERT_NE(screenRow(24).find("PWR"), std::string::npos) << "not in a run";
+    pressKey(0x1B);                 // what is left of an arrow whose tail was dropped
+    pressKey('q');
+    run(30);
+    // A quit mid-run leaves the game: the HUD goes and every sprite is switched off.
+    EXPECT_EQ(screenRow(24).find("PWR"), std::string::npos)
+        << "the Q after a lone ESC was swallowed: still in the run";
+    EXPECT_FALSE(c.getVideoChip()->sprite(0).enabled) << "the craft is still up";
+}
+
+/* Shots climb at the same rate whatever the throttle.
+ *
+ * Everything used to move on world steps, and the throttle sets how often a step comes,
+ * so at speed the player's own shots flew faster up the screen and throttling back
+ * slowed them. The throttle moves the WORLD; the gun is the player's. Shots now move on
+ * their own clock, every frame. Measured as the shot sprite's climb in pixels over a
+ * fixed number of frames, at the starting speed and then with the throttle opened up. */
+TEST_F(KpanicTest, ShotsClimbAtTheSameRateAtAnyThrottle)
+{
+    auto climb = [&]() {
+        run(20);                                    // the previous shot is long gone
+        pia->setKeyState(0x10);                     // fire...
+        run(1);
+        pia->setKeyState(0);                        // ...one shot
+        int y0 = -1, y1 = -1;
+        for (int f = 0; f < 12; f++) {
+            run(1);
+            const auto &sp = c.getVideoChip()->sprite(1);
+            if (!sp.enabled) continue;
+            if (y0 < 0) y0 = sp.y;
+            y1 = sp.y;
+        }
+        return y0 - y1;                             // pixels climbed
+    };
+
+    // Rows of world covered in a second: proof the throttle really moved.
+    auto world = [&]() {
+        const unsigned r0 = peek16("_rows");
+        run(60);
+        return peek16("_rows") - r0;
+    };
+
+    startRun();
+    poke16("_energy", 1000);
+    const unsigned world_slow = world();
+    const int slow = climb();
+    for (int i = 0; i < 4; i++) {                   // throttle up: ESC [ A, four times
+        pressKey(0x1B); pressKey('['); pressKey('A');
+        run(2);
+    }
+    poke16("_energy", 1000);
+    const unsigned world_fast = world();
+    const int fast = climb();
+
+    ASSERT_GT(world_fast, world_slow * 2) << "the throttle did not open up -- test is void";
+    ASSERT_GT(slow, 0) << "no shot was seen climbing";
+    EXPECT_NEAR(fast, slow, 4) << "the throttle changed how fast the shots fly";
+}
+
 /* KPANIC asserts its own background rather than wearing the machine's theme.
  *
  * Attributes name palette slots, so a theme loaded by the DOS reaches into any

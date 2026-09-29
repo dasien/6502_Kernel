@@ -129,6 +129,11 @@ extern void          spr_img_load(const unsigned char *src); /* one whole slot, 
 #define SPEED_MIN       1       /* 3.75 rows/sec */
 #define SPEED_MAX       8       /* 30 rows/sec */
 #define SPEED_DEFAULT   2       /* 7.5 rows/sec -- where a run starts */
+/* Frames in one world step at the starting speed. Everything that should move on TIME
+ * rather than with the throttle -- the enemies' own motion, the shots, the rate of fire
+ * -- counts in these, so at the starting speed they are one step each, exactly as when
+ * they were counted in steps, and nothing had to be retuned. */
+#define OWN_FRAMES      (CELL_H / SPEED_DEFAULT)
 
 /* ---- screen geometry ----
  * Ordinary single-size rows: 80 columns, playfield rows 0..PLAY_LAST, HUD pinned on
