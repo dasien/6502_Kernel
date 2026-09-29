@@ -27,6 +27,11 @@ extern unsigned int  jiffies(void);                   /* 60 Hz monotonic tick co
 extern void          wait_frame(void);           /* block until the next frame begins */
 extern void          present(void);              /* this frame is finished: show it now */
 extern unsigned char keystate(void);                  /* live held-key bitmask ($FE0F) */
+extern unsigned char dopen_read(const char *name);    /* 0 = ok */
+extern unsigned char dopen_write(const char *name);   /* 0 = ok */
+extern int           dgetb(void);                     /* byte, or -1 at EOF */
+extern unsigned char dputb(unsigned char c);          /* 0 = ok */
+extern char          dclose(void);         /* 0 = ok, 1 = the file on disk is wrong */
 /* Sprites. Pixel-positioned and, crucially, NOT riding the scroll region -- the only
  * place a screen-fixed object can live once the world scrolls in sub-cell steps.
  * Select a sprite, then set its fields. spr_x/spr_y take CELLS and the glue converts;
@@ -61,6 +66,18 @@ extern void          spr_img_load(const unsigned char *src); /* one whole slot, 
 #define KS_BOOST    0x20        /* Left Shift. Unused by this game -- kept because it
                                  * documents the control port's bit 5, which exists
                                  * whether or not a program reads it. */
+
+/* ---- the score table ----
+ * KPANIC.SCO, beside the game in whatever drawer it was launched from, the way
+ * FRONTIER keeps FRONTIER.SCO. The magic and version bytes mean a file from
+ * another format is ignored rather than misread: a bad file costs the table,
+ * never the run. Per entry: the name padded with spaces, the score and the
+ * distance little-endian, the sector reached. */
+#define SCORE_FILE   "KPANIC.SCO"
+#define SCORE_MAGIC  'K'
+#define SCORE_VER    1
+#define NSCORES      8
+#define NAMELEN      10
 
 /* ---- VIC command codes ---- */
 #define VCMD_CLEAR      0x01

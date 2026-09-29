@@ -2084,6 +2084,173 @@ static unsigned char wait_fresh_key(void) {
     }
 }
 
+/* ============================================================================
+ * The score table
+ *
+ * Kept as KPANIC.SCO beside the game, FRONTIER's pattern. Every read is
+ * untrusted: a short, truncated or foreign file gives an empty table (or the
+ * whole entries before the damage), never garbage. Loaded once at start-up and
+ * held in RAM; written only when a run makes it. Ranked by score, distance
+ * breaking a tie -- the score is what the HUD has been counting all run.
+ * ==========================================================================*/
+static char          hs_name[NSCORES][NAMELEN + 1];
+static unsigned int  hs_score[NSCORES], hs_dist[NSCORES];
+static unsigned char hs_sector[NSCORES];
+unsigned char        hs_n;                  /* non-static: the tests read it */
+
+static void put16(unsigned int v) { dputb((unsigned char)v); dputb((unsigned char)(v >> 8)); }
+
+/* Two bytes little-endian, or -1 once the file has run out. Returned in a long
+   would pull in cc65's long helpers; an int with a flag is all this needs. */
+static unsigned char hs_eof;
+static unsigned int get16(void) {
+    int lo = dgetb(), hi = dgetb();
+    if (lo < 0 || hi < 0) { hs_eof = 1; return 0; }
+    return (unsigned int)lo | ((unsigned int)hi << 8);
+}
+
+static void hs_load(void) {
+    unsigned char i, j, count;
+    int b;
+
+    hs_n = 0;
+    if (dopen_read(SCORE_FILE) != 0) return;    /* no table yet is normal */
+    if (dgetb() != SCORE_MAGIC || dgetb() != SCORE_VER) { dclose(); return; }
+    b = dgetb();
+    if (b < 0 || b > NSCORES) { dclose(); return; }
+    count = (unsigned char)b;
+
+    hs_eof = 0;
+    for (i = 0; i < count; i++) {
+        for (j = 0; j < NAMELEN; j++) {
+            b = dgetb();
+            if (b < ' ' || b > '~') b = ' ';    /* EOF or a control byte: a blank */
+            hs_name[i][j] = (char)b;
+        }
+        hs_name[i][NAMELEN] = 0;
+        hs_score[i] = get16();
+        hs_dist[i]  = get16();
+        b = dgetb();
+        if (b < 0) hs_eof = 1;
+        if (hs_eof) break;
+        hs_sector[i] = (b < NSECTORS) ? (unsigned char)b : NSECTORS - 1;
+    }
+    dclose();
+    hs_n = i;                                   /* whole entries only */
+}
+
+/* 0 = written, 1 = the table on disk is now wrong (no disk, or a full one). */
+static char hs_save(void) {
+    unsigned char i, j;
+
+    if (dopen_write(SCORE_FILE) != 0) return 1;
+    dputb(SCORE_MAGIC);
+    dputb(SCORE_VER);
+    dputb(hs_n);
+    for (i = 0; i < hs_n; i++) {
+        /* Spaces from the terminator on: what follows it in the buffer is
+           whatever longer name used to sit in this row. */
+        for (j = 0; j < NAMELEN && hs_name[i][j]; j++) dputb((unsigned char)hs_name[i][j]);
+        for (; j < NAMELEN; j++) dputb(' ');
+        put16(hs_score[i]);
+        put16(hs_dist[i]);
+        dputb(hs_sector[i]);
+    }
+    /* Only the close is checked: the DOS keeps a failed write sticky. */
+    return dclose();
+}
+
+/* Where this run lands, or NSCORES if it does not. A run that scored nothing
+   does not place: an empty table should fill with runs, not with idling. */
+static unsigned char hs_rank(void) {
+    unsigned char i;
+    if (score == 0) return NSCORES;
+    for (i = 0; i < hs_n; i++)
+        if (score > hs_score[i] || (score == hs_score[i] && rows > hs_dist[i])) return i;
+    return (hs_n < NSCORES) ? hs_n : NSCORES;
+}
+
+/* Open a row for this run at `at`, name blank, pushing the rest down. */
+static void hs_insert(unsigned char at) {
+    unsigned char i, j;
+
+    if (hs_n < NSCORES) hs_n++;
+    for (i = hs_n - 1; i > at; i--) {
+        for (j = 0; j <= NAMELEN; j++) hs_name[i][j] = hs_name[i - 1][j];
+        hs_score[i]  = hs_score[i - 1];
+        hs_dist[i]   = hs_dist[i - 1];
+        hs_sector[i] = hs_sector[i - 1];
+    }
+    hs_name[at][0] = 0;
+    hs_score[at]  = score;
+    hs_dist[at]   = rows;
+    hs_sector[at] = (sector < NSECTORS) ? sector : NSECTORS - 1;
+}
+
+#define HS_X    20                      /* the table's left edge */
+#define HS_ROW  11                      /* its first entry */
+
+static void hs_draw(unsigned char highlight) {
+    unsigned char i, y, a;
+
+    put_str(HS_X + 13, HS_ROW - 3, "CORE DUMPS", A_CRAFT);
+    put_str(HS_X,      HS_ROW - 1, "#  TRACER       SCORE   DIST  SECTOR", A_HUD);
+    if (hs_n == 0)
+        put_str(HS_X + 3, HS_ROW, "none yet -- score to be the first", A_BEVEL);
+    for (i = 0; i < hs_n; i++) {
+        y = HS_ROW + i;
+        a = (i == highlight) ? A_CRAFT : A_TEXT;
+        put_num(HS_X, y, i + 1, 3, A_HUD);
+        put_str(HS_X + 3, y, "          ", a);
+        put_str(HS_X + 3, y, hs_name[i], a);
+        put_num(HS_X + 16, y, hs_score[i], 8, a);
+        put_num(HS_X + 24, y, hs_dist[i], 6, a);
+        put_str(HS_X + 30, y, sector_name[hs_sector[i]], a);
+    }
+}
+
+/* Type a name into the table's own row. Printables only, so a control byte can
+ * never reach the file. Reads raw bytes rather than through getkey(), which
+ * would turn an arrow into h/j/k/l letters: an escape sequence is skipped whole.
+ *
+ * It first waits for every key to come up. The run ends while Space is held
+ * more often than not, and the key repeat would otherwise type the name. */
+static void hs_read_name(unsigned char y, char *out) {
+    unsigned char len = 0, esc = 0, x = HS_X + 3;
+    int c;
+
+    while (keystate()) wait_frame();
+    while (INCH_NB() >= 0) ;
+    for (;;) {
+        put_str(x + len, y, len < NAMELEN ? "_" : " ", A_WARN);
+        do { wait_frame(); c = INCH_NB(); } while (c < 0);
+        if (esc) {                              /* ESC [ params final */
+            if (esc == 1 && c != '[') esc = 0;
+            else if (esc == 1) { esc = 2; continue; }
+            else { if (!((c >= '0' && c <= '9') || c == ';')) esc = 0; continue; }
+        }
+        if (c == 0x1B) { esc = 1; continue; }
+        if (c == 13 || c == 10) break;
+        if ((c == 8 || c == 127) && len) {
+            put_str(x + len, y, " ", A_CRAFT);
+            len--;
+            continue;
+        }
+        if (c >= ' ' && c <= '~' && len < NAMELEN) {
+            out[len] = (char)c;
+            out[len + 1] = 0;
+            put_str(x + len, y, out + len, A_CRAFT);
+            len++;
+        }
+    }
+    put_str(x + len, y, " ", A_CRAFT);
+    out[len] = 0;
+    if (len == 0) {                             /* ENTER alone: the game names you */
+        const char *d = "TRACER";
+        while ((*out++ = *d++) != 0) ;
+    }
+}
+
 /* Title screen. Waits for a deliberate key, and Q here quits without a run --
  * returns 0 to mean "quit". */
 static unsigned char title_screen(void) {
@@ -2102,6 +2269,12 @@ static unsigned char title_screen(void) {
     put_str(26, 12, "up/down",    A_HUD);   put_str(38, 12, "speed", A_TEXT);
     put_str(26, 13, "P",          A_HUD);   put_str(38, 13, "pause", A_TEXT);
     put_str(26, 14, "Q",          A_HUD);   put_str(38, 14, "quit", A_TEXT);
+
+    if (hs_n) {                         /* the run to beat */
+        put_str(26, 17, "BEST", A_HUD);
+        put_str(32, 17, hs_name[0], A_CRAFT);
+        put_num(44, 17, hs_score[0], 5, A_TEXT);
+    }
 
     put_str(24, 20, "S to start        Q to quit", A_BEVEL);
 
@@ -2146,12 +2319,13 @@ static void death_throes(void) {
 
 /* End screen. Returns 1 to play again, 0 to quit.
  *
- * States the cause, the sector reached, the score and the distance, and stays up
- * until dismissed. A score TABLE -- a persistent list of past runs -- is still not
- * here, and needs somewhere to keep it: the disk, which means the game would have
- * to open a file, which it currently never does. */
+ * States the cause, the sector reached, the score and the distance, then the
+ * score table. A run that places opens a row for itself and takes a name typed
+ * straight into it; the table is written before the keys to go on are offered,
+ * so quitting from here can never lose the entry. */
 static unsigned char game_over(void) {
-    unsigned char k;
+    unsigned char k, rank;
+    char save_failed = 0;
 
     /* Wipe to a plain screen -- which suits a panic, and means the panel is never
      * competing with terrain behind it. */
@@ -2162,17 +2336,32 @@ static unsigned char game_over(void) {
      * title screen's job done twice -- and it pushed the one line that actually
      * explained the run down among the tally, where it read as another statistic.
      * 23 characters centred on column 40. */
-    put_str(29, 9,  "*** ENERGY DEPLETED ***", A_WARN);
+    put_str(29, 2,  "*** ENERGY DEPLETED ***", A_WARN);
 
-    /* Row 10 left blank: the tally is a different kind of statement from the
+    /* Row 3 left blank: the tally is a different kind of statement from the
      * headline and should not start against it. */
-    put_str(28, 11, "SECTOR", A_HUD);
-    put_str(38, 11, sector_name[(sector < NSECTORS) ? sector : (NSECTORS - 1)], A_CRAFT);
-    put_str(28, 12, "SCORE", A_HUD);
-    put_num(38, 12, score, 5, A_TEXT);
-    put_str(28, 13, "DIST", A_HUD);
-    put_num(38, 13, rows, 5, A_TEXT);
-    put_str(27, 15, "R retry   Q quit", A_BEVEL);
+    put_str(28, 4, "SECTOR", A_HUD);
+    put_str(38, 4, sector_name[(sector < NSECTORS) ? sector : (NSECTORS - 1)], A_CRAFT);
+    put_str(28, 5, "SCORE", A_HUD);
+    put_num(38, 5, score, 5, A_TEXT);
+    put_str(28, 6, "DIST", A_HUD);
+    put_num(38, 6, rows, 5, A_TEXT);
+
+    rank = hs_rank();
+    if (rank < NSCORES) {
+        hs_insert(rank);
+        hs_draw(rank);
+        put_str(22, 21, "NEW CORE DUMP -- type your name, ENTER", A_WARN);
+        hs_read_name(HS_ROW + rank, hs_name[rank]);
+        save_failed = hs_save();
+        put_str(22, 21, "                                      ", A_TEXT);
+        hs_draw(rank);
+    } else {
+        hs_draw(NSCORES);
+    }
+    if (save_failed)
+        put_str(25, 21, "No disk room -- table not saved", A_WARN);
+    put_str(32, 23, "R retry   Q quit", A_BEVEL);
 
     for (;;) {
         k = wait_fresh_key();
@@ -2441,6 +2630,7 @@ void main(void) {
     if (rngv == 0) rngv = 0xACE1;       /* xorshift must never start at zero */
 
     vhidecur();
+    hs_load();
     while (title_screen()) {             /* Q on the title screen leaves */
         if (!play_run()) break;          /* quit out mid-run */
         if (!game_over()) break;         /* Q on the end screen leaves */

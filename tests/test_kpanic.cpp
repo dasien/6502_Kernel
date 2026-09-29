@@ -22,6 +22,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
+#include <unistd.h>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -34,6 +37,7 @@
 #include "computer/PIA.h"
 #include "computer/RTC.h"
 #include "computer/VIC.h"
+#include "support/fat16_image.h"
 
 namespace {
 
@@ -46,10 +50,46 @@ constexpr uint16_t kSoundEnable = 0x0029;
 // simulation at whatever speed the instruction mix happened to give.
 constexpr uint64_t kCyclesPerJiffy = 4'000'000ull / 60ull;
 
+using mfcdos_test::Fat16File;
+using mfcdos_test::Fat16ImageBuilder;
+using mfcdos_test::Fat16ImageReader;
+
 class KpanicTest : public ::testing::Test {
 protected:
+    /* What is on the disk when the game starts. The game keeps its score table
+       there, so every test gets a disk of its own: the drive's default is the
+       real ../disk.img, and a test that died with a score would have written
+       its table onto the disk the machine boots from. */
+    virtual std::vector<Fat16File> diskFiles() { return {}; }
+
+    void TearDown() override
+    {
+        if (!image_path_.empty()) std::remove(image_path_.c_str());
+    }
+
+    /* The disk as it is now, for reading back what the game wrote. */
+    std::vector<uint8_t> diskFile(const std::string &name)
+    {
+        std::ifstream f(image_path_, std::ios::binary);
+        std::vector<uint8_t> img((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+        std::vector<uint8_t> out;
+        if (!Fat16ImageReader(img).read(name, out)) out.clear();
+        return out;
+    }
+
     void SetUp() override
     {
+        image_path_ = (std::filesystem::temp_directory_path() /
+                       ("mfc_kpanic_" + std::to_string(::getpid()) + "_" +
+                        std::to_string(++counter_) + ".img")).string();
+        const std::vector<uint8_t> img = Fat16ImageBuilder::build(diskFiles());
+        std::ofstream out(image_path_, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char *>(img.data()),
+                  static_cast<std::streamsize>(img.size()));
+        out.close();
+        c.getBlockDevice()->setImagePath(image_path_);
+
         c.power_on();
         cpu = c.getCpu();
         mem = c.getMemory();
@@ -211,7 +251,11 @@ protected:
 
     Computer::PIA *pia = nullptr;
     Computer::VIC *vic = nullptr;
+    std::string image_path_;
+    static int counter_;
 };
+
+int KpanicTest::counter_ = 0;
 
 /* The blob boots to its own title screen rather than the DOS. This is the
    harness proving itself: if this fails, nothing below means anything. */
@@ -515,6 +559,124 @@ TEST_F(KpanicTest, ItAssertsABlackBackgroundOverAnyTheme)
     c.getVideoChip()->paletteColor(0, r, g, b);
     EXPECT_EQ(r, 0x00); EXPECT_EQ(g, 0x00); EXPECT_EQ(b, 0x00)
         << "KPANIC inherited the theme's background instead of stating its own";
+}
+
+
+/* ---- the score table ---------------------------------------------------- */
+
+/* A run that scores takes a name on the end screen and is written to
+   KPANIC.SCO, in the format the header documents. */
+TEST_F(KpanicTest, AScoringRunIsNamedAndWrittenToTheDisk)
+{
+    startRun();
+    poke16("_score", 500);
+    poke16("_energy", 1);
+    run(180);                       // dead, the blast, the end screen
+    ASSERT_EQ(peek("_dead"), 1u);
+    std::string s = screenText();
+    ASSERT_NE(s.find("type your name"), std::string::npos) << s;
+
+    for (const char *p = "ADA"; *p; p++) { pressKey(*p); run(2); }
+    pressKey(0x1B); pressKey('['); pressKey('D');   // an arrow types nothing
+    run(4);
+    pressKey('\r');
+    run(30);
+
+    s = screenText();
+    EXPECT_NE(s.find("ADA "), std::string::npos) << s;
+    EXPECT_EQ(s.find("ADAk"), std::string::npos) << "an arrow was typed as a letter";
+    EXPECT_EQ(s.find("not saved"), std::string::npos) << s;
+    EXPECT_EQ(peek("_hs_n"), 1u);
+
+    const std::vector<uint8_t> f = diskFile("KPANIC.SCO");
+    ASSERT_EQ(f.size(), 3u + 10u + 2u + 2u + 1u) << "no table, or the wrong size";
+    EXPECT_EQ(f[0], 'K');
+    EXPECT_EQ(f[1], 1u);
+    EXPECT_EQ(f[2], 1u);
+    EXPECT_EQ(std::string(f.begin() + 3, f.begin() + 13), "ADA       ");
+    EXPECT_EQ(f[13] | (f[14] << 8), 500);
+    EXPECT_EQ(unsigned(f[15] | (f[16] << 8)), peek16("_rows"));
+}
+
+/* A run that scored nothing does not place, and the disk is left alone. */
+TEST_F(KpanicTest, AScorelessRunLeavesTheDiskAlone)
+{
+    startRun();
+    poke16("_energy", 1);
+    run(180);
+    ASSERT_EQ(peek("_dead"), 1u);
+    const std::string s = screenText();
+    EXPECT_EQ(s.find("type your name"), std::string::npos) << s;
+    EXPECT_NE(s.find("none yet"), std::string::npos) << s;
+    EXPECT_TRUE(diskFile("KPANIC.SCO").empty()) << "a scoreless run wrote the table";
+}
+
+/* A table on the disk is read at start-up, shown on the title screen, and a new
+   run is ranked into it rather than appended. */
+class KpanicTableTest : public KpanicTest {
+protected:
+    static void entry(std::vector<uint8_t> &f, const char *name, unsigned score,
+                      unsigned dist, uint8_t sector)
+    {
+        std::string n(name);
+        n.resize(10, ' ');
+        f.insert(f.end(), n.begin(), n.end());
+        f.push_back(score & 0xFF); f.push_back(score >> 8);
+        f.push_back(dist & 0xFF);  f.push_back(dist >> 8);
+        f.push_back(sector);
+    }
+    std::vector<Fat16File> diskFiles() override
+    {
+        std::vector<uint8_t> f = {'K', 1, 2};
+        entry(f, "GRACE", 900, 400, 2);
+        entry(f, "LINUS", 300, 200, 1);
+        return {{"KPANIC.SCO", f, ""}};
+    }
+};
+
+TEST_F(KpanicTableTest, TheTableIsLoadedShownAndRankedInto)
+{
+    run(20);
+    EXPECT_EQ(peek("_hs_n"), 2u);
+    std::string s = screenText();
+    EXPECT_NE(s.find("BEST  GRACE"), std::string::npos) << s;
+
+    pressKey('S');
+    run(120);
+    poke16("_score", 500);          // between the two
+    poke16("_energy", 1);
+    run(180);
+    ASSERT_EQ(peek("_dead"), 1u);
+    pressKey('B'); run(2);
+    pressKey('\r'); run(30);
+
+    s = screenText();
+    const size_t g = s.find("GRACE"), b = s.find("B "), l = s.find("LINUS");
+    ASSERT_NE(g, std::string::npos); ASSERT_NE(b, std::string::npos); ASSERT_NE(l, std::string::npos);
+    EXPECT_LT(g, b); EXPECT_LT(b, l) << s;
+    EXPECT_NE(s.find("STACK"), std::string::npos) << "GRACE's sector was not read";
+
+    const std::vector<uint8_t> f = diskFile("KPANIC.SCO");
+    ASSERT_EQ(f.size(), 3u + 3u * 15u);
+    EXPECT_EQ(f[2], 3u);
+    EXPECT_EQ(std::string(f.begin() + 18, f.begin() + 28), "B         ");
+}
+
+/* Someone else's file under the name -- or a future format -- is not misread:
+   the game starts with an empty table. */
+class KpanicForeignTableTest : public KpanicTest {
+protected:
+    std::vector<Fat16File> diskFiles() override
+    {
+        return {{"KPANIC.SCO", {'F', 1, 8, 'x', 'y'}, ""}};
+    }
+};
+
+TEST_F(KpanicForeignTableTest, AFileOfAnotherFormatGivesAnEmptyTable)
+{
+    run(20);
+    EXPECT_EQ(peek("_hs_n"), 0u);
+    EXPECT_EQ(screenText().find("BEST"), std::string::npos);
 }
 
 } // namespace

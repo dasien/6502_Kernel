@@ -737,6 +737,7 @@ target_include_directories(kpanic_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/computer
+    ${CMAKE_SOURCE_DIR}/tests
 )
 
 target_compile_features(kpanic_tests PRIVATE cxx_std_20)

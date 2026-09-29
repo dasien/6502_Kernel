@@ -365,19 +365,24 @@
       the harness put a generous score ceiling in the low thousands — five to ten times
       short of 65,535. See the score note in `kpanic.c`.
     - **Still open:**
-      - *Screen shake.* Planned as a cell offset, but the enemies, pellets and shots
-        are sprites now and would not move with the plane -- a shake has to nudge the
-        sprite positions by the same amount, or the world shakes and its contents hold
-        still.
-      - *SID cues.*
+      - ~~*Screen shake* and *SID cues*~~ **done** (`c53ed63`): the shake nudges the
+        fine scroll and every sprite's y by the same amount, and the effects come from a
+        SID table with exponential slides for the guns. Enemies' own motion and the
+        shots run on frames since, not on world steps, so the throttle changes only how
+        fast you travel.
       - *The final balance pass*, last, because juice changes how harsh the game feels
         without changing a number. It matters more after the rework: the gun lost its
         levels (and crashes now cost the whole gun), sentinels only fire when lined up,
         and the pellet pool shrank, all of which move difficulty in ways nobody has
         measured. The node rates, spawn table and `FRAG_CHANCE` were tuned before all
         of it.
-      - A persistent score *table* is also still absent and would need the game to open
-        a disk file, which it never does today.
+      - ~~A persistent score table~~ **done 2026-09-29:** `KPANIC.SCO` beside the
+        game, FRONTIER's pattern (magic, version, count; per entry a 10-byte name, score,
+        distance, sector). Eight entries ranked by score, distance breaking a tie; a
+        scoreless run does not place; the name is typed into the table's own row; the
+        title shows the best. The test fixture now gives every test its own disk image
+        -- the drive's default is the real `../disk.img`, which a scoring test would
+        otherwise have written its table onto.
 
 ### Display themes
 - [x] **Colour themes.** **Built 2026-09-22.** Landed as a *soft palette* rather than
