@@ -136,6 +136,10 @@ namespace Computer
         /// Catch up to the CPU's cycle count @p now: synthesize the samples the time
         /// since the last call is worth, into the buffer.
         void clock(uint64_t now);
+        /// The CPU's cycle count has started again from 0 (a reset). The next clock()
+        /// takes its time as the new origin instead of subtracting the old one from
+        /// it, which wraps and asks for ~2^64 cycles' worth of samples.
+        void restartClock() { clocked_ = false; sample_acc_ = 0; }
 
         /**
          * @brief Synthesize @p frames mono 16-bit samples into @p out, now, from the

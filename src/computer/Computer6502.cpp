@@ -277,6 +277,7 @@ namespace Computer
 
         // Power-on reset
         reset_circuit.powerOnReset();
+        afterReset();
     }
 
     void Computer6502::runInstructions(const int count)
@@ -369,8 +370,21 @@ namespace Computer
         sid.clock(cpu.getCycles());             // the rest of this slice's sound
     }
 
+    /* A reset loads the CPU's cycle count with 0, and two things are scheduled against
+     * that count: the next jiffy, and the SID's catch-up point. Left alone, the jiffy
+     * would not come round again until the new count reached the old one -- the timer
+     * silent for as long as the machine had been running -- and the SID would compute
+     * now - last as an unsigned wrap and try to render billions of samples, which
+     * froze the machine on its first catch-up after any reset. */
+    void Computer6502::afterReset()
+    {
+        next_jiffy_ = 0;            // runCycles re-arms it, and restarts the frame, from now
+        sid.restartClock();
+    }
+
     void Computer6502::reset()
     {
         reset_circuit.triggerReset();
+        afterReset();
     }
 }

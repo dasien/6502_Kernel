@@ -363,6 +363,25 @@ TEST(SidMachineTime, ASecondOfCyclesIsASecondOfAudio)
     EXPECT_NEAR(static_cast<double>(out.size() + sid.buffered()), SID::kSampleRate, 1.0);
 }
 
+// A reset starts the CPU's cycle count again from 0. The SID must take that as a new
+// origin: subtracting its old catch-up point from the new, smaller count wrapped, and
+// the first catch-up after any reset tried to render billions of samples -- the
+// machine froze. A millisecond after the reset is a millisecond of sound.
+TEST(SidMachineTime, AResetStartsTheClockAgainRatherThanWrapping)
+{
+    SID sid;
+    sid.setClockHz(kHz);
+    uint64_t t = 0;
+    sid.clock(t);
+    runFor(sid, t, 100);                            // the machine has been running
+    const int before = sid.buffered();
+
+    sid.restartClock();                             // reset: the count is 0 again
+    sid.clock(0);
+    sid.clock(kHz / 1000);                          // one millisecond
+    EXPECT_NEAR(sid.buffered() - before, SID::kSampleRate / 1000, 2);
+}
+
 // A pitch change is heard from the moment it was written, not from the next time the
 // sound system happened to ask.
 TEST(SidMachineTime, APitchChangeIsHeardWhereItWasWritten)

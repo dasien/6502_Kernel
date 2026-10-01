@@ -253,6 +253,8 @@ namespace Computer
          * @note This function does not return - it terminates the program
          */
         void showFatalError(const std::string &message);
+        /// A reset zeroes the CPU's cycle count; re-anchor what is scheduled against it.
+        void afterReset();
 
         VIC video_chip; ///< VIC-II video chip for screen output
         PIA pia; ///< Peripheral Interface Adapter for I/O
