@@ -32,6 +32,7 @@ all things you type at this prompt.
 | `MEMMAP` | memory map |
 | `VERSION` | OS version |
 | `DATE` | date and time |
+| `RESTART` | start the machine again, as from reset |
 | `SHUTDOWN` | switch the machine off |
 | `CLS` / `CLEAR` | clear the screen |
 | `HELP` | list built-in commands |
@@ -235,10 +236,18 @@ DISKFREE          free space in bytes and KB
 MEMMAP            the full memory map with region sizes
 VERSION           the MFC/OS version
 DATE              current weekday, date, and time (from the RTC)
+RESTART           start the machine again, as from reset
 SHUTDOWN          switch the machine off
 CLS / CLEAR       clear the screen
 HELP              list the built-in commands
 ```
+
+`RESTART` starts the machine again: the chime, the boot report, a clear screen and
+the sign-on, with `SYSTEM/STARTUP.CFG` run again on the way. It goes through the
+reset vector at `$FFFC` -- the software restart 8-bit machines always used --
+rather than pulling the CPU's reset line as the emulator's Control > Reset does,
+and the kernel's `RESET` sets up everything the boot depends on itself, so the two
+end in the same place.
 
 `SHUTDOWN` switches the machine off and the window closes. There is nothing to
 park first. Sector writes go straight through to the disk image, so the image is

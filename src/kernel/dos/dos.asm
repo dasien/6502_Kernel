@@ -58,6 +58,9 @@ CURSOR_X         = $0276                ; current cursor column (for box padding
 ; machine down. Mirrors kernel_vars.inc, as the RTC equates below do: the DOS ROM
 ; assembles on its own and carries its own copy of the I/O map.
 POWER_REG        = $FE61
+
+; The kernel's boot-chime switch (kernel_vars.inc). Cleared before a program runs.
+CHIME_ON         = $02E0
 POWER_ARM        = $5A
 POWER_FIRE       = $A5
 
@@ -320,8 +323,14 @@ DOS_SIGNATURE:
 ;        wrote a corrupt score table while ScottFree told the player the game was
 ;        saved. DOS_W_ERR follows the ferror() rule -- once a write on the open
 ;        file fails the stream stays failed until the next FS_OPEN
+;   1.23 an identity block at $AFF0 (src/kernel/romid.inc), which the kernel's
+;        boot report reads to say the DOS is installed; running a program stops
+;        the boot chime first, so the kernel's IRQ never writes the SID under a
+;        program launched while the chime still played; RESTART starts the
+;        machine again through the reset vector; and HELP lists SHUTDOWN, whose
+;        help line had been written but never put in the table
 DOS_VERSION:
-    .BYTE $01, $16                      ; version 1.22 (major, minor)
+    .BYTE $01, $17                      ; version 1.23 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -1789,6 +1798,20 @@ _DOS_DO_SHUTDOWN:
     STA POWER_REG
     STP                                 ; belt and braces; see above
 
+; ----------------------------------------------------------------
+; _DOS_DO_RESTART - start the machine again
+; ----------------------------------------------------------------
+; Through the reset vector, the way 8-bit machines always did it in software (the
+; C64's SYS 64738, the Apple II's jump to its reset routine). The kernel's RESET
+; sets up everything it depends on itself -- stack, bank, zero page, screen, the
+; chime and the boot report -- so this is the whole boot sequence again. What it
+; does not do is pull the CPU's reset line, as the host's Reset does; nothing the
+; boot does depends on the difference. The disk needs nothing first, for the
+; reason SHUTDOWN gives: there is no cache to lose.
+_DOS_DO_RESTART:
+    SEI                                 ; RESET runs with interrupts off, as on a reset
+    JMP ($FFFC)
+
 ; _DOS_PRINT_BYTE_DEC - print the byte in A as decimal (via K_PRINT_DEC).
 _DOS_PRINT_BYTE_DEC:
     STA DOS_W_SIZE                      ; zero-extend the byte to 32 bits
@@ -2510,6 +2533,7 @@ _DOS_RUN_FILE:
     PHA                                 ;   on DOS_WARM (RTS adds 1)
     LDA #<(DOS_WARM-1)
     PHA
+    STZ CHIME_ON                        ; the program owns the SID from here
     JMP (DOS_PTR2)                      ; run it at the header's load address
 @badclose:
     JSR _FS_CLOSE
@@ -2530,11 +2554,12 @@ MSG_DOS_HELP_HDR: .BYTE "MFC/OS COMMANDS", $0D, $0A, 0
 DOS_HELP_TABLE:
     .WORD DH_CAT, DH_TYPE, DH_MORE, DH_LOAD, DH_SAVE, DH_COPY, DH_MOVE
     .WORD DH_REN, DH_ERASE, DH_IMPORT, DH_EXPORT, DH_NEWD, DH_OPEN, DH_CLOSE
-    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_THEME, DH_VER, DH_DATE, DH_CLS
-    .WORD DH_MON, DH_HELP
+    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_THEME, DH_VER, DH_DATE, DH_RESTART
+    .WORD DH_SHUTDOWN, DH_CLS, DH_MON, DH_HELP
 DOS_HELP_COUNT = (* - DOS_HELP_TABLE) / 2
 
 DH_SHUTDOWN: .BYTE "SHUTDOWN", $09, "switch the machine off", 0
+DH_RESTART:  .BYTE "RESTART", $09, "start the machine again, as from reset", 0
 DH_CAT:    .BYTE "CATALOG [pat]", $09, "list files (CAT)", 0
 DH_TYPE:   .BYTE "TYPE name", $09, "show a text file", 0
 DH_MORE:   .BYTE "MORE name", $09, "show a file (= TYPE)", 0
@@ -2634,9 +2659,11 @@ DOS_VERB_TAB:
     .word KW_MOVE,        _DOS_DO_MOVE
     .word KW_DATE,        _DOS_DO_DATE
     .word KW_SHUTDOWN,    _DOS_DO_SHUTDOWN
+    .word KW_RESTART,     _DOS_DO_RESTART
     .word $0000                         ; end of table
 
 KW_SHUTDOWN:     .BYTE "SHUTDOWN", 0
+KW_RESTART:      .BYTE "RESTART", 0
 KW_CLS:          .BYTE "CLS", 0
 KW_CLEAR:        .BYTE "CLEAR", 0
 KW_BANKS:        .BYTE "BANKS", 0

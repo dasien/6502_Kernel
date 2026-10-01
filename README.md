@@ -154,7 +154,7 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 ├── include/               # C++ headers
 ├── programs/              # cc65/asm disk programs: edit, term, irc, gopher, venture,
 │                         #   kpanic, frontier, micromax, scottfree, vault, sprdemo,
-│                         #   raster, sound
+│                         #   raster, sound, chimes
 │                         #   common/ holds mfc.inc and the shared glue library
 │                         #   (catalog.txt lists every one and where it lands on disk)
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)

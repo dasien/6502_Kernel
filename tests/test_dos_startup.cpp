@@ -51,9 +51,10 @@ protected:
     /* Put a disk in the drive with the given SYSTEM/STARTUP.CFG, then power on.
        Pass an empty string for "no config file at all", which must be the silent
        case -- most disks will not have one. */
-    void bootWith(const std::string &cfg, bool press_escape = false)
+    void bootWith(const std::string &cfg, bool press_escape = false,
+                  std::vector<Fat16File> files = {})
     {
-        std::vector<Fat16File> files;
+        if (!image_path_.empty()) std::remove(image_path_.c_str());   // a second boot
         files.push_back({"README.TXT", {'h', 'i', '\r', '\n'}, ""});
         if (!cfg.empty())
             files.push_back({"STARTUP.CFG",
@@ -104,6 +105,104 @@ TEST_F(DosStartupTest, ADiskWithNoConfigBootsExactlyAsBefore)
     bootWith("");
     const std::string s = screen();
     EXPECT_NE(s.find("OPERATIONAL"), std::string::npos) << s;
+}
+
+/* The kernel reports what is installed before the DOS signs on: its own segments
+   from the linker, and every ROM that carries an identity block (romid.inc). The
+   ROM lines are read off the ROMs, so this also proves each block is in place.
+
+   Paced, on emulated time (runCycles ticks the timer): the chime plays out first,
+   ~1.5 s, then a line a second, then a second's hold and a clear -- so the header
+   is up at ~1.5 s, the DOS line at ~8.5 s, and the screen is clear at ~9.5 s.
+   Sampled every quarter second, and judged at instants clear of those edges. */
+TEST_F(DosStartupTest, TheBootReportIsPacedAndNamesTheSegmentsAndTheRoms)
+{
+    bootWith("");                       // the disk; the boot itself is re-run below
+    box_.power_on();
+    constexpr uint64_t kQuarter = 1'000'000;            // 4 MHz
+    std::string seen, at1, at2_75, at9, at11;
+    for (int q = 1; q <= 44; q++) {                     // 11 s
+        box_.runCycles(kQuarter);
+        const std::string s = screen();
+        seen += s;
+        if (q == 4)  at1 = s;
+        if (q == 11) at2_75 = s;
+        if (q == 36) at9 = s;
+        if (q == 44) at11 = s;
+    }
+
+    EXPECT_EQ(at1.find("MFC 6502 KERNEL"), std::string::npos)
+        << "the report did not wait for the chime\n" << at1;
+    EXPECT_NE(at2_75.find("MFC 6502 KERNEL"), std::string::npos) << at2_75;
+    EXPECT_EQ(at2_75.find("DOS ROM installed"), std::string::npos)
+        << "the lines were not paced\n" << at2_75;
+    EXPECT_NE(at9.find("DOS ROM installed"), std::string::npos) << at9;
+
+    EXPECT_NE(seen.find("CODE segment loaded at  $F000-$F"), std::string::npos);
+    EXPECT_NE(seen.find("JUMPS segment loaded at $FF00-$FF47 (72 bytes)"), std::string::npos);
+    EXPECT_NE(seen.find("VECS segment loaded at  $FFFA-$FFFF (6 bytes)"), std::string::npos);
+    EXPECT_NE(seen.find("BASIC ROM installed as module bank 1 (16384 bytes)"), std::string::npos);
+    EXPECT_NE(seen.find("FORTH ROM installed as module bank 3 (16384 bytes)"), std::string::npos);
+    EXPECT_NE(seen.find("MONITOR ROM installed as module bank 4 (16384 bytes)"), std::string::npos);
+    EXPECT_NE(seen.find("DOS ROM installed at $8800-$AFFF (10240 bytes)"), std::string::npos);
+    EXPECT_EQ(seen.find("bank 2"), std::string::npos) << "an empty bank was reported";
+
+    // Then a clear screen, and the sign-on as it always was.
+    EXPECT_EQ(at11.find("ROM installed"), std::string::npos) << "the report was not cleared\n" << at11;
+    EXPECT_NE(at11.find("OPERATIONAL"), std::string::npos) << at11;
+}
+
+/* Without a timer -- the CPU run on its own, as most harnesses here do -- the
+   pauses are skipped rather than waited on forever: the same boot reaches the same
+   cleared screen and sign-on. */
+TEST_F(DosStartupTest, WithoutATimerTheReportIsNotPacedAndStillCleared)
+{
+    bootWith("");
+    const std::string s = screen();
+    EXPECT_EQ(s.find("ROM installed"), std::string::npos) << s;
+    EXPECT_NE(s.find("OPERATIONAL"), std::string::npos) << s;
+}
+
+/* The chime is started at reset and the DOS stops it before running a program:
+   the kernel's IRQ must never write the SID under one. Without a timer the boot
+   leaves it armed, which is exactly the state a program launch would find. */
+TEST_F(DosStartupTest, TheBootChimeIsArmedAndALaunchStopsIt)
+{
+    bootWith("");
+    EXPECT_NE(box_.getMemory()->read(0x02E0), 0) << "reset did not start the chime";
+
+    // A program that returns at once ($0800: RTS), run from the config.
+    bootWith("NOP\r\n", false, {{"NOP.PRG", {0x00, 0x08, 0x60}, ""}});
+    EXPECT_EQ(box_.getMemory()->read(0x02E0), 0)
+        << "a program was run with the chime still playing";
+}
+
+/* RESTART starts the machine again from the reset vector: the kernel's RESET runs,
+   so the chime is started afresh and the DOS signs on again. The chime is stopped
+   by hand first, so a re-armed chime can only have come from the restart. */
+TEST_F(DosStartupTest, RestartRunsTheBootAgain)
+{
+    bootWith("");
+    box_.getMemory()->write(0x02E0, 0);             // CHIME_ON: as if it had played out
+    for (char c : std::string("RESTART\r")) box_.getPia()->addKeypress(c);
+    box_.runInstructions(kBootInstructions);
+    EXPECT_NE(box_.getMemory()->read(0x02E0), 0) << "the restart did not run RESET";
+    EXPECT_NE(screen().find("OPERATIONAL"), std::string::npos) << screen();
+}
+
+/* HELP lists RESTART and SHUTDOWN. SHUTDOWN's help line was written when the verb
+   was, and never put in the table, so HELP did not mention it. HELP pages, so the
+   screens are collected across the --MORE-- break. */
+TEST_F(DosStartupTest, HelpListsRestartAndShutdown)
+{
+    bootWith("");
+    std::string seen;
+    for (char c : std::string("HELP\r")) box_.getPia()->addKeypress(c);
+    for (int i = 0; i < 300; i++) { box_.runInstructions(1000); seen += screen(); }
+    box_.getPia()->addKeypress(' ');                // past the page break
+    for (int i = 0; i < 300; i++) { box_.runInstructions(1000); seen += screen(); }
+    EXPECT_NE(seen.find("RESTART"), std::string::npos);
+    EXPECT_NE(seen.find("SHUTDOWN"), std::string::npos);
 }
 
 /* The point of the whole feature: a command in the file takes effect. OPEN is
@@ -180,7 +279,9 @@ TEST_F(DosStartupTest, EscapeAtBootSkipsTheConfigEntirely)
  * cursor (the FS holds one open file). Filtering in the caller instead made the
  * cost grow with the number of lines rather than commands -- fifteen comment
  * lines cost 122,000 extra instructions to boot, and 11,000 after the fix.
- * Asserted as a ceiling rather than a figure: it is a shape, not a benchmark. */
+ * Asserted as a ceiling rather than a figure: it is a shape, not a benchmark --
+ * and measured against the same boot with no config, so what the rest of the
+ * boot costs (the kernel's boot report, say) does not move the line. */
 TEST_F(DosStartupTest, ACommentOnlyConfigBarelyCostsAnything)
 {
     const std::string cfg = [] {
@@ -189,24 +290,33 @@ TEST_F(DosStartupTest, ACommentOnlyConfigBarelyCostsAnything)
         return s;
     }();
 
+    // Instructions from power-on to the ']' prompt, on the disk bootWith made.
+    auto bootCost = [this] {
+        long n = 0;
+        Computer::Computer6502 b;
+        b.getBlockDevice()->setImagePath(image_path_);
+        b.power_on();
+        for (; n < 2000000; n += 1000) {
+            b.runInstructions(1000);
+            bool at_prompt = false;
+            for (int y = 0; y < 25 && !at_prompt; y++)
+                if (b.getVideoChip()->getCharacterAt(0, y) == ']') at_prompt = true;
+            if (at_prompt) break;
+        }
+        return n;
+    };
+
+    bootWith("");
+    const long bare = bootCost();
+
     bootWith(cfg);
     EXPECT_NE(screen().find("OPERATIONAL"), std::string::npos)
         << "a comment-only config did not reach the sign-on";
 
     // The shipped default is comments only, so this is the cost every disk pays.
-    long n = 0;
-    Computer::Computer6502 b;
-    b.getBlockDevice()->setImagePath(image_path_);
-    b.power_on();
-    for (; n < 2000000; n += 1000) {
-        b.runInstructions(1000);
-        bool at_prompt = false;
-        for (int y = 0; y < 25 && !at_prompt; y++)
-            if (b.getVideoChip()->getCharacterAt(0, y) == ']') at_prompt = true;
-        if (at_prompt) break;
-    }
-    EXPECT_LT(n, 180000L)
-        << "fifteen comment lines cost " << n << " instructions to boot; the "
+    const long extra = bootCost() - bare;
+    EXPECT_LT(extra, 40000L)
+        << "fifteen comment lines cost " << extra << " instructions to boot; the "
         << "reader is re-opening the file per line again";
 }
 

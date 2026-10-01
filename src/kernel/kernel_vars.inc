@@ -93,6 +93,18 @@ MON_DEST_ADDR_LO   = $027A         ; Move/Copy destination address low byte
 MON_DEST_ADDR_HI   = $027B         ; Move/Copy destination address high byte
 MON_COPY_MODE      = $027C         ; Move/Copy mode (0=copy, 1=move)
 MON_DUMP_SNAP      = $02DF         ; non-zero: DUMP_MEMORY_RANGE reads MON_SNAP_BUF
+; The boot chime's player state ($02E0-$02E2), stepped by the jiffy IRQ. Page 2,
+; not zero page, because a program launched while it plays would own zero page
+; and a stale pointer there would send the IRQ's writes anywhere. An index into
+; CHIME_TABLE needs no pointer at all. The DOS clears CHIME_ON before it runs a
+; program, so the chime never writes the SID under one.
+CHIME_ON           = $02E0         ; non-zero: the chime is playing
+CHIME_IDX          = $02E1         ; offset of the next (wait, register, value) triple
+CHIME_WAIT         = $02E2         ; jiffies until it is due
+BOOT_NUM           = $02E3         ; 4 bytes ($02E3-$02E6): the boot report's counter,
+                                   ; kept 32-bit so PRINT_DEC can print it in place
+BOOT_TIMED         = $02E7         ; non-zero: the timer runs, so the report is paced
+BOOT_UNTIL         = $02E8         ; the jiffy a boot pause ends on
 MON_SNAP_BUF       = $0400         ; 256-byte page snapshot for T:/Z: (free RAM)
 ; $0500-$07FF is the assembler's workspace (identifier buffers + symbol table; see
 ; assembler.inc). It lives here rather than in user RAM because this page sits
@@ -156,6 +168,10 @@ FIO_NAME           = $FE14         ; Filename buffer start ($FE14-$FE1F)
 ; the current bank. Lives in the always-mapped I/O page (see docs/architecture.md, Part 2).
 MODULE_BANK        = $FE23         ; bank-select register for the $B000-$EFFF window
 MODULE_BANK_RAM    = $00           ; bank value that maps the window to RAM
+ROMID_BANK         = $EFF0         ; a module's identity block: its last 16 bytes
+ROMID_DOS          = $AFF0         ; the DOS ROM's (layout in romid.inc)
+ROMID_NAME         = 4             ; offset of the 8-character name
+ROMID_SIZE         = 12            ; offset of the 32-bit size
 MODULE_WINDOW_START = $B000        ; base of the bankable module window
 MODULE_WINDOW_END  = $EFFF         ; last byte of the bankable module window (16 KB)
 

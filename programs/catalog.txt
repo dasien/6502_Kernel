@@ -142,6 +142,13 @@ config  = sound.cfg
 program = SOUND.PRG -> DEMOS/SOUND.PRG
 desc    = the SID: a three-voice tune, waveforms, envelopes and the filter
 
+[chimes]
+dir     = programs/chimes
+sources = chimes.c
+config  = chimes.cfg
+program = CHIMES.PRG -> DEMOS/CHIMES.PRG
+desc    = candidates for the boot chime, as lists of timed SID writes
+
 # ---- Scott Adams adventures ------------------------------------------------
 # Twelve games, one engine. Each entry builds programs/scottfree/scott.c against a
 # different database: `generate` runs the dat2c host tool over the .dat to produce

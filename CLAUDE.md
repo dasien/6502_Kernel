@@ -150,7 +150,7 @@ Defined once in `src/kernel/kernel_vars.inc`, not in `monitor.asm`:
 - **$028E-$02DE**: Last-command buffer and length, for the `.` recall
 - **$02DF**: `MON_DUMP_SNAP`, the flag that makes a dump read the snapshot
 - **$0400**: `MON_SNAP_BUF`, the 256-byte page snapshot used by `T:` and `Z:`
-- **$02E0-$02FF** is free. The gap below $026A is BASIC's ($0200-$0268); the
+- **$02E0-$02E8** is the kernel's boot chime and boot report; **$02E9-$02FF** is free. The gap below $026A is BASIC's ($0200-$0268); the
   command buffer overlaps it only because the two are never active at once.
 - The message pointer is zero page, `MON_MSG_PTR` at **$16/$17**.
 
@@ -337,8 +337,10 @@ The kernel code follows these patterns:
 4. Clear zero page
 5. Clear the screen (a VIC command, not a memory fill) and the module window RAM
 6. Initialize the devices and install the interrupt vectors
-7. Enable the jiffy IRQ and `CLI`
-8. Enter **DOS**, which runs `SYSTEM/STARTUP.CFG` and then signs on
+7. Start the boot chime, enable the jiffy IRQ (which plays it) and `CLI`
+8. Print the boot report, paced when the timer runs: the chime plays out, then the
+   kernel's segments and every ROM's identity block a line a second, then a clear
+9. Enter **DOS**, which runs `SYSTEM/STARTUP.CFG` and then signs on
 
 There is no VIC-II, SID-CIA or keyboard-CIA init step: the PIA supplies the keyboard,
 the ACIA the serial port, and the SID needs no reset sequence.

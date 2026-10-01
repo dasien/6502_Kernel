@@ -216,6 +216,7 @@ $026A-$027C: Core monitor state (length, mode, addresses, cursor, fill, move)
 $027D-$028D: Search pattern buffer and length
 $028E-$02DE: Last-command buffer and length, for the '.' recall
 $02DF:       MON_DUMP_SNAP flag
+$02E0-$02E8: the kernel's boot chime and boot report (not the monitor's)
 $0400:       MON_SNAP_BUF, the 256-byte page snapshot used by T: and Z:
 ```
 
@@ -225,13 +226,13 @@ time. Monitor variables that must survive a trip through BASIC start above it.
 
 #### Available Memory Ranges
 
-`$02E0-$02FF` is free, 32 bytes. Beyond that, `$0500-$07FF` is already taken by
+`$02E9-$02FF` is free, 23 bytes. Beyond that, `$0500-$07FF` is already taken by
 the assembler's identifier buffers and symbol table.
 
 #### Variable Allocation Guidelines
 
 1. Add the definition to `kernel_vars.inc`, not to `monitor.asm`.
-2. Place it after the existing allocations, starting at `$02E0`.
+2. Place it after the existing allocations, starting at `$02E9`.
 3. Use the naming convention `MON_[COMMAND]_[PURPOSE]`.
 4. Give it a comment saying what it holds and how wide it is.
 5. Keep a command's variables together.
@@ -557,7 +558,7 @@ recognise than a dozen bespoke ones.
 
 1. Choose a command letter from the free ones listed in section 1.
 2. Design the command syntax, including its parameter format and validation.
-3. Allocate any variables in `kernel_vars.inc`, starting at `$02E0`.
+3. Allocate any variables in `kernel_vars.inc`, starting at `$02E9`.
 4. Add entries to all three jump and mapping tables.
 5. Implement the parser as `PARSE_CMD_[NAME]`.
 6. Implement the command as `CMD_[NAME]`.

@@ -61,7 +61,8 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
     # Create BASIC ROM build target
     add_custom_target(basic_rom ALL
         COMMAND ca65 ${BASIC_ASM_SOURCE} -o ${BASIC_OBJECT} --listing ${BASIC_LST}
-        COMMAND ld65 -C ${BASIC_CONFIG} ${BASIC_OBJECT} -o ${BASIC_ROM} -m ${BASIC_MAP}
+        COMMAND ca65 ${CMAKE_SOURCE_DIR}/src/kernel/romid/basic.s -I ${CMAKE_SOURCE_DIR}/src/kernel -o ${CMAKE_BINARY_DIR}/kernel/romid_basic.o
+        COMMAND ld65 -C ${BASIC_CONFIG} ${BASIC_OBJECT} ${CMAKE_BINARY_DIR}/kernel/romid_basic.o -o ${BASIC_ROM} -m ${BASIC_MAP}
         COMMAND ${CMAKE_COMMAND} -E echo "================================================================"
         COMMAND ${CMAKE_COMMAND} -E echo "BASIC ROM BUILD COMPLETE"
         COMMAND ${CMAKE_COMMAND} -E echo "================================================================"
@@ -69,6 +70,7 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
         COMMENT "Building BASIC ROM"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${BASIC_ASM_SOURCE} ${BASIC_CONFIG}
+                ${CMAKE_SOURCE_DIR}/src/kernel/romid/basic.s ${CMAKE_SOURCE_DIR}/src/kernel/romid.inc
         VERBATIM
     )
 
@@ -86,10 +88,12 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
 
     add_custom_target(monitor_rom ALL
         COMMAND ca65 ${MONITOR_ASM_SOURCE} -I ${CMAKE_SOURCE_DIR}/src/kernel -I ${CMAKE_SOURCE_DIR}/src/kernel/assembler -o ${MONITOR_OBJECT}
-        COMMAND ld65 -C ${MONITOR_CONFIG} ${MONITOR_OBJECT} -o ${MONITOR_ROM} -m ${MONITOR_MAP}
+        COMMAND ca65 ${CMAKE_SOURCE_DIR}/src/kernel/romid/monitor.s -I ${CMAKE_SOURCE_DIR}/src/kernel -o ${CMAKE_BINARY_DIR}/kernel/romid_monitor.o
+        COMMAND ld65 -C ${MONITOR_CONFIG} ${MONITOR_OBJECT} ${CMAKE_BINARY_DIR}/kernel/romid_monitor.o -o ${MONITOR_ROM} -m ${MONITOR_MAP}
         COMMENT "Building monitor module ROM (bank 4)"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${MONITOR_ASM_SOURCE} ${MONITOR_CONFIG}
+                ${CMAKE_SOURCE_DIR}/src/kernel/romid/monitor.s ${CMAKE_SOURCE_DIR}/src/kernel/romid.inc
                 ${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc
                 ${CMAKE_SOURCE_DIR}/src/kernel/assembler/assembler.inc
                 ${CMAKE_SOURCE_DIR}/src/kernel/assembler/opcodes_65c02.inc
@@ -106,11 +110,13 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
 
     add_custom_target(forth_rom ALL
         COMMAND ca65 ${FORTH_ASM_SOURCE} -o ${FORTH_OBJECT}
-        COMMAND ld65 -C ${FORTH_CONFIG} ${FORTH_OBJECT} -o ${FORTH_ROM} -m ${FORTH_MAP}
+        COMMAND ca65 ${CMAKE_SOURCE_DIR}/src/kernel/romid/forth.s -I ${CMAKE_SOURCE_DIR}/src/kernel -o ${CMAKE_BINARY_DIR}/kernel/romid_forth.o
+        COMMAND ld65 -C ${FORTH_CONFIG} ${FORTH_OBJECT} ${CMAKE_BINARY_DIR}/kernel/romid_forth.o -o ${FORTH_ROM} -m ${FORTH_MAP}
         COMMAND ${CMAKE_COMMAND} -E echo "FORTH module ROM built (bank 3)"
         COMMENT "Building FORTH module ROM"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${FORTH_ASM_SOURCE} ${FORTH_CONFIG}
+                ${CMAKE_SOURCE_DIR}/src/kernel/romid/forth.s ${CMAKE_SOURCE_DIR}/src/kernel/romid.inc
         VERBATIM
     )
 
@@ -340,11 +346,13 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
 
     add_custom_target(dos_rom ALL
         COMMAND ca65 ${DOS_ASM_SOURCE} -I ${DOS_DIR} -o ${DOS_OBJECT}
-        COMMAND ld65 -C ${DOS_CONFIG} ${DOS_OBJECT} -o ${DOS_ROM} -m ${DOS_MAP}
+        COMMAND ca65 ${CMAKE_SOURCE_DIR}/src/kernel/romid/dos.s -I ${CMAKE_SOURCE_DIR}/src/kernel -o ${CMAKE_BINARY_DIR}/kernel/romid_dos.o
+        COMMAND ld65 -C ${DOS_CONFIG} ${DOS_OBJECT} ${CMAKE_BINARY_DIR}/kernel/romid_dos.o -o ${DOS_ROM} -m ${DOS_MAP}
         COMMAND ${CMAKE_COMMAND} -E echo "MFC-DOS resident ROM built ($8800-$AFFF)"
         COMMENT "Building MFC-DOS resident ROM"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/kernel
         DEPENDS ${DOS_ASM_SOURCE} ${DOS_CONFIG}
+                ${CMAKE_SOURCE_DIR}/src/kernel/romid/dos.s ${CMAKE_SOURCE_DIR}/src/kernel/romid.inc
         VERBATIM
     )
 

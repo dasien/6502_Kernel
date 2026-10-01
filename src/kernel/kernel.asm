@@ -3,8 +3,8 @@
 ; ================================================================
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
-; Date:         2026-09-27
-; Version:      4.2
+; Date:         2026-10-01
+; Version:      4.3
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -280,6 +280,18 @@
 ;                   and only a pending TIMER advances the jiffy -- it used to assume
 ;                   every interrupt was one. K_RASTER_IRQ ($FF45) installs a handler
 ;                   (A/X) and enables the interrupt, or with 0 disables it.
+; 2026-10-01  v4.3  A boot report and a boot chime. RESET prints what is installed
+;                   before the DOS takes over: the kernel's own CODE, JUMPS and VECS
+;                   segments, from the linker's __<SEG>_RUN__/__SIZE__ symbols, then
+;                   every module bank and the DOS ROM that carries an identity block
+;                   in its last 16 bytes (romid.inc) -- name and size read off the ROM,
+;                   so no table here can go stale. And it starts the chime, a list of
+;                   timed SID writes (CHIME_TABLE) the jiffy IRQ steps through while the
+;                   boot carries on; the DOS stops it before running a program. The
+;                   report is paced -- the chime, then a line a second, then a clear
+;                   screen and the DOS's sign-on as before -- when the timer runs. Also
+;                   fixes the page-2 clear: LDX #$E9 / BPL exits at once (bit 7 is
+;                   already set), so it had only ever cleared $02E9.
 ; 2026-07-31  v4.0  The monitor left the kernel. kernel.asm is now the BIOS and
 ;                   nothing else -- screen, keyboard, hex/decimal conversion, the
 ;                   pager, IRQ/NMI, sound, bank launching, the $FF00 ABI and the
@@ -352,6 +364,11 @@
 
 ; Shared addresses (zero page, page 2, I/O registers, hardware constants).
 .include "kernel_vars.inc"
+
+; The linker's own record of where each kernel segment landed (memory.cfg defines
+; them with define = yes), for the boot report.
+.import __CODE_RUN__, __CODE_SIZE__, __JUMPS_RUN__, __JUMPS_SIZE__
+.import __VECS_RUN__, __VECS_SIZE__
 
 ; ================================================================
 ; KERNEL PROGRAM START
@@ -454,13 +471,22 @@ RNG_SEED_OK:
     LDA #>RASTER_NOP
     STA RASTER_VEC+1
 
-    ; Initialize monitor variables and state
-    LDX #$E9                    ; Clear monitor area $0200-$02E9 (234 bytes)
+    ; Initialize monitor variables and state: clear $0200-$02E9 (234 bytes). Counts
+    ; down to 1 against a base one lower, because X starts above $7F -- the loop
+    ; this replaced tested BPL and so ran once, clearing only $02E9.
+    LDX #$EA
 
 CLEAR_MON_VAR_LOOP:
-    STZ $0200,X                 ; Store zero to monitor variable area
-    DEX                         ; Decrement counter
-    BPL CLEAR_MON_VAR_LOOP      ; Continue while X >= 0 (branch on plus)
+    STZ $01FF,X                 ; $0200 + X - 1
+    DEX
+    BNE CLEAR_MON_VAR_LOOP
+
+    ; Start the boot chime. The jiffy IRQ steps it once CLI below lets it run, so it
+    ; plays while the boot carries on. Muted is muted, even at power-on.
+    LDA SOUND_ENABLE
+    STA CHIME_ON
+    LDA CHIME_TABLE             ; the first write's wait; CHIME_IDX is 0 from the clear
+    STA CHIME_WAIT
 
     ; Initialize cursor position to top-left of screen
     STZ CURSOR_X                ; Set cursor X to 0
@@ -468,6 +494,8 @@ CLEAR_MON_VAR_LOOP:
     JSR UPDATE_CURSOR           ; position the displayed hardware cursor
 
     CLI                         ; Enable interrupts
+
+    JSR BOOT_REPORT             ; what is installed, before the DOS's own output
 
 ; ================================================================
 ; HAND OFF TO THE DOS SHELL
@@ -1588,10 +1616,45 @@ IRQ_JIFFY_DONE:
 
     ; Count down an in-progress BEL beep and gate it off when it expires.
     LDA BEEP_TIMER
-    BEQ IRQ_CHECK_BASIC         ; 0 = no beep running
+    BEQ IRQ_CHIME               ; 0 = no beep running
     DEC BEEP_TIMER
-    BNE IRQ_CHECK_BASIC         ; still sounding
+    BNE IRQ_CHIME               ; still sounding
     STZ SID_V1_CTRL             ; duration elapsed: gate off voice 1 (silence)
+
+    ; Step the boot chime: make every write in CHIME_TABLE that is due, then count
+    ; down to the next. Writes with a wait of 0 land in the same jiffy.
+IRQ_CHIME:
+    LDA CHIME_ON
+    BEQ IRQ_CHECK_BASIC         ; not playing
+    LDA CHIME_WAIT
+    BEQ @due
+    DEC CHIME_WAIT
+    BRA IRQ_CHECK_BASIC
+@due:
+    PHX
+    PHY
+    LDX CHIME_IDX
+@write:
+    LDY CHIME_TABLE+1,X         ; register
+    LDA CHIME_TABLE+2,X         ; value
+    STA SID_V1_FREQLO,Y         ; register 0 of the SID: +Y is register Y
+    INX
+    INX
+    INX
+    LDA CHIME_TABLE,X           ; the next triple's wait, or the end
+    CMP #CHIME_END
+    BEQ @over
+    STA CHIME_WAIT
+    TAY
+    BEQ @write                  ; due now as well
+    DEC CHIME_WAIT              ; this jiffy counts as one of them
+    STX CHIME_IDX
+    BRA @out
+@over:
+    STZ CHIME_ON
+@out:
+    PLY
+    PLX
 
 IRQ_CHECK_BASIC:
     LDA BASIC_IRQ_FLAGS         ; is BASIC's ON IRQ enabled?
@@ -1726,6 +1789,262 @@ SOUND_OFF:
     STZ BEEP_TIMER
     STZ SID_V1_CTRL
     RTS
+
+; ================================================================
+; THE BOOT CHIME
+; ================================================================
+; A list of (wait, register, value) triples: `wait` jiffies after the previous
+; write, store `value` in SID register `register` ($FE38 + n). CHIME_END ends it.
+; DEMOS/CHIMES.PRG plays candidates in this exact format with the same player, so
+; what is heard there is what ships here -- this is its fifth, "the bell reversed":
+; C5 over C4, then E5 over E4 a fifth of a second later, on pulse waves (decay
+; 1.5 s, release 750 ms), about a second and a half in all. It opens by quieting
+; the chip and closes by putting it back as the kernel expects (no filter, volume
+; 15), because a reset does not reset the SID.
+CHIME_END = $FF
+
+CHIME_TABLE:
+    .BYTE   0, $04, $00         ; quiet: voices 1-3 off, no filter, volume 15
+    .BYTE   0, $0B, $00
+    .BYTE   0, $12, $00
+    .BYTE   0, $17, $00
+    .BYTE   0, $18, $0F
+    .BYTE   0, $03, $08         ; pulse width $800 (square) on all three
+    .BYTE   0, $0A, $08
+    .BYTE   0, $11, $08
+    .BYTE   0, $05, $0A         ; attack 2 ms, decay 1.5 s; sustain 0, release 750 ms
+    .BYTE   0, $06, $09
+    .BYTE   0, $0C, $0A
+    .BYTE   0, $0D, $09
+    .BYTE   0, $13, $0A
+    .BYTE   0, $14, $09
+    .BYTE   0, $00, $4B         ; voice 1 = C5 ($224B)
+    .BYTE   0, $01, $22
+    .BYTE   0, $0E, $25         ; voice 3 = C4 ($1125)
+    .BYTE   0, $0F, $11
+    .BYTE   0, $04, $41         ; strike: pulse + gate
+    .BYTE   0, $12, $41
+    .BYTE  12, $12, $40         ; drop voice 3's gate, to re-strike it
+    .BYTE   1, $07, $34         ; voice 2 = E5 ($2B34)
+    .BYTE   0, $08, $2B
+    .BYTE   0, $0E, $9A         ; voice 3 = E4 ($159A)
+    .BYTE   0, $0F, $15
+    .BYTE   0, $0B, $41         ; strike
+    .BYTE   0, $12, $41
+    .BYTE  30, $04, $40         ; release all three
+    .BYTE   0, $0B, $40
+    .BYTE   0, $12, $40
+    .BYTE  45, $04, $00         ; rung out: tidy the chip
+    .BYTE   0, $0B, $00
+    .BYTE   0, $12, $00
+    .BYTE   0, $17, $00
+    .BYTE   0, $18, $0F
+    .BYTE CHIME_END
+
+; ================================================================
+; BOOT_REPORT - say what is installed
+; ================================================================
+; Printed once per reset, as a sequence: the chime plays out first, then a line
+; a second, then a second's hold and a clear screen, so the DOS signs on to a
+; blank screen as it always did. The kernel's segments come from the linker; the
+; ROMs from their identity blocks (romid.inc), found by mapping each module bank
+; in turn -- an empty bank reads $00 and has no "MFC" marker. Only the window is
+; banked and nothing here touches it, so printing with a bank mapped is safe.
+; Leaves bank 0 mapped, as RESET had it.
+;
+; The pacing needs the jiffy timer, so it first waits a little under two jiffies
+; for one. A machine whose timer is stopped -- the headless test harnesses run the
+; CPU without one -- gets the same report and the same clear with no pauses,
+; rather than hanging on a clock that never moves.
+BOOT_SEG_LEN = 10               ; message, first, last (words), size (dword)
+
+BOOT_SEGS:
+    .WORD MSG_BOOT_CODE, __CODE_RUN__, __CODE_RUN__ + __CODE_SIZE__ - 1
+    .DWORD __CODE_SIZE__
+    .WORD MSG_BOOT_JUMPS, __JUMPS_RUN__, __JUMPS_RUN__ + __JUMPS_SIZE__ - 1
+    .DWORD __JUMPS_SIZE__
+    .WORD MSG_BOOT_VECS, __VECS_RUN__, __VECS_RUN__ + __VECS_SIZE__ - 1
+    .DWORD __VECS_SIZE__
+
+BOOT_REPORT:
+    ; Is the timer running? Poll the jiffy for 40 x 256 passes of 11 cycles,
+    ; ~113,000 cycles against 66,667 a jiffy at 4 MHz.
+    STZ BOOT_TIMED
+    LDA JIFFY_LO
+    LDX #$00
+    LDY #40
+@probe:
+    CMP JIFFY_LO
+    BNE @ticking
+    DEX
+    BNE @probe
+    DEY
+    BNE @probe
+    BRA @report                 ; no tick: report without pauses
+@ticking:
+    INC BOOT_TIMED
+@chime:
+    WAI                         ; the chime first: it ends itself from the IRQ
+    LDA CHIME_ON
+    BNE @chime
+@report:
+    LDA #<MSG_BOOT_HDR
+    LDY #>MSG_BOOT_HDR
+    JSR PRINT_MSG_AY
+    JSR BOOT_PAUSE
+
+    ; "  CODE segment loaded at  $F000-$F7FF (2048 bytes)"
+    STZ BOOT_NUM
+@seg:
+    LDX BOOT_NUM
+    LDA BOOT_SEGS,X
+    LDY BOOT_SEGS+1,X
+    JSR PRINT_MSG_AY
+    LDX BOOT_NUM
+    LDA BOOT_SEGS+3,X           ; first address, high byte first
+    JSR PRINT_HEX_BYTE
+    LDX BOOT_NUM
+    LDA BOOT_SEGS+2,X
+    JSR PRINT_HEX_BYTE
+    LDA #<MSG_BOOT_TO
+    LDY #>MSG_BOOT_TO
+    JSR PRINT_MSG_AY
+    LDX BOOT_NUM
+    LDA BOOT_SEGS+5,X           ; last address
+    JSR PRINT_HEX_BYTE
+    LDX BOOT_NUM
+    LDA BOOT_SEGS+4,X
+    JSR PRINT_HEX_BYTE
+    LDA BOOT_NUM                ; A/X -> this entry's size
+    CLC
+    ADC #<(BOOT_SEGS+6)
+    PHA
+    LDA #>(BOOT_SEGS+6)
+    ADC #$00
+    TAX
+    PLA
+    JSR BOOT_BYTES
+    LDA BOOT_NUM
+    CLC
+    ADC #BOOT_SEG_LEN
+    STA BOOT_NUM
+    CMP #BOOT_SEG_LEN * 3
+    BNE @seg
+
+    ; "  BASIC ROM installed as module bank 1 (16384 bytes)", for every bank with
+    ; an identity block. BOOT_NUM's upper bytes are 0 from the page-2 clear.
+    LDA #$01
+    STA BOOT_NUM
+@bank:
+    LDA BOOT_NUM
+    STA MODULE_BANK
+    LDA ROMID_BANK
+    CMP #'M'
+    BNE @next
+    LDA ROMID_BANK+1
+    CMP #'F'
+    BNE @next
+    LDA ROMID_BANK+2
+    CMP #'C'
+    BNE @next
+    LDA #<MSG_BOOT_INDENT
+    LDY #>MSG_BOOT_INDENT
+    JSR PRINT_MSG_AY
+    LDX #$00
+@name:
+    LDA ROMID_BANK+ROMID_NAME,X
+    CMP #' '                    ; the padding ends the name
+    BEQ @named
+    JSR PRINT_CHAR              ; preserves X
+    INX
+    CPX #$08
+    BNE @name
+@named:
+    LDA #<MSG_BOOT_BANK
+    LDY #>MSG_BOOT_BANK
+    JSR PRINT_MSG_AY
+    LDA #<BOOT_NUM
+    LDX #>BOOT_NUM
+    LDY #$00
+    JSR PRINT_DEC
+    LDA #<(ROMID_BANK+ROMID_SIZE)
+    LDX #>(ROMID_BANK+ROMID_SIZE)
+    JSR BOOT_BYTES
+@next:
+    INC BOOT_NUM
+    BNE @bank                   ; banks 1-255; bank 0 is RAM
+    STZ MODULE_BANK
+
+    ; "  DOS ROM installed at $8800-$AFFF (10240 bytes)"
+    LDA ROMID_DOS
+    CMP #'M'
+    BNE @nodos
+    LDA ROMID_DOS+1
+    CMP #'F'
+    BNE @nodos
+    LDA ROMID_DOS+2
+    CMP #'C'
+    BNE @nodos
+    LDA #<MSG_BOOT_DOS
+    LDY #>MSG_BOOT_DOS
+    JSR PRINT_MSG_AY
+    LDA #<(ROMID_DOS+ROMID_SIZE)
+    LDX #>(ROMID_DOS+ROMID_SIZE)
+    JSR BOOT_BYTES
+    BRA @done
+@nodos:
+    LDA #<MSG_BOOT_NODOS
+    LDY #>MSG_BOOT_NODOS
+    JSR PRINT_MSG_AY
+    JSR BOOT_PAUSE
+@done:
+    STZ CMD_LINE_COUNT          ; the report is not a page of anyone's output
+    JMP CLEAR_SCREEN            ; and gone: the DOS signs on to a blank screen
+
+; One second, if the timer runs (BOOT_TIMED); otherwise nothing. WAI sleeps until
+; the next interrupt rather than spinning on the counter.
+BOOT_PAUSE:
+    LDA BOOT_TIMED
+    BEQ @out
+    LDA JIFFY_LO
+    CLC
+    ADC #60
+    STA BOOT_UNTIL
+@wait:
+    WAI
+    LDA JIFFY_LO
+    CMP BOOT_UNTIL
+    BNE @wait
+@out:
+    RTS
+
+; " (" <the 32-bit value at A/X> " bytes)", a newline, and a second's pause.
+BOOT_BYTES:
+    PHA
+    PHX
+    LDA #<MSG_BOOT_OPEN
+    LDY #>MSG_BOOT_OPEN
+    JSR PRINT_MSG_AY
+    PLX
+    PLA
+    LDY #$00
+    JSR PRINT_DEC
+    LDA #<MSG_BOOT_BYTES
+    LDY #>MSG_BOOT_BYTES
+    JSR PRINT_MSG_AY
+    JMP BOOT_PAUSE
+
+MSG_BOOT_HDR:    .BYTE "MFC 6502 KERNEL 4.3", $0D, 0
+MSG_BOOT_CODE:   .BYTE "  CODE segment loaded at  $", 0
+MSG_BOOT_JUMPS:  .BYTE "  JUMPS segment loaded at $", 0
+MSG_BOOT_VECS:   .BYTE "  VECS segment loaded at  $", 0
+MSG_BOOT_TO:     .BYTE "-$", 0
+MSG_BOOT_INDENT: .BYTE "  ", 0
+MSG_BOOT_BANK:   .BYTE " ROM installed as module bank ", 0
+MSG_BOOT_DOS:    .BYTE "  DOS ROM installed at $8800-$AFFF", 0
+MSG_BOOT_NODOS:  .BYTE "  DOS ROM not installed", $0D, 0
+MSG_BOOT_OPEN:   .BYTE " (", 0
+MSG_BOOT_BYTES:  .BYTE " bytes)", $0D, 0
 
 ; GET_JIFFIES ($FF39) - read the monotonic 60 Hz tick counter.
 ; Returns: A = low byte, X = high byte. Counts up from 0 at RESET and wraps

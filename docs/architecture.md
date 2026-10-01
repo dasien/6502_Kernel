@@ -294,7 +294,11 @@ because the two never run at the same time.
 | `$028E-$02DD` | Monitor | `MON_LAST_CMD_BUF`, an 80-byte last-command buffer that `.` recalls |
 | `$02DE` | Monitor | `MON_LAST_CMD_LEN` |
 | `$02DF` | Monitor | `MON_DUMP_SNAP`, the flag that makes a dump read the `T:`/`Z:` snapshot |
-| `$02E0-$03FF` | free | available system RAM |
+| `$02E0-$02E2` | Kernel | the boot chime's player: `CHIME_ON`, `CHIME_IDX`, `CHIME_WAIT` (see "The boot chime") |
+| `$02E3-$02E6` | Kernel | `BOOT_NUM`, the boot report's 32-bit counter |
+| `$02E7-$02E8` | Kernel | `BOOT_TIMED`, `BOOT_UNTIL`: the boot report's pacing |
+| `$02E9-$02FF` | free | available system RAM |
+| `$0300-$03BD` | DOS | the DOS's workspace (`dos.asm`): mount state, the open file, the config reader |
 
 #### Monitor variables (`$0269-$028D`)
 
@@ -606,6 +610,51 @@ through `K_LAUNCH_BY_NAME`, which writes `MODULE_BANK` and jumps to the module
 entry. A module exits with `JMP $FF12`, which unmaps the bank and returns to the
 DOS prompt.
 
+#### Identity blocks and the boot report
+
+Every ROM ends in a 16-byte identity block: `"MFC"`, a format byte, an 8-character
+name padded with spaces, and the ROM's size as a 32-bit little-endian value. A
+module's is at `$EFF0`, the DOS ROM's at `$AFF0`; the end, because a module's entry
+points start at `$B000` and the DOS jump table at `$AF00`. The layout and the
+`ROM_ID` macro are in `src/kernel/romid.inc`, and each ROM gets its block from a
+three-line file in `src/kernel/romid/` linked into it, so the generated `forth.s`
+needs no hand edit.
+
+`RESET` prints a boot report from them before entering the DOS. It is paced: the
+chime plays out first, then one line a second, then a second's hold and a clear
+screen, so the DOS signs on to a blank screen as it always did:
+
+```
+MFC 6502 KERNEL 4.3
+  CODE segment loaded at  $F000-$F906 (2311 bytes)
+  JUMPS segment loaded at $FF00-$FF47 (72 bytes)
+  VECS segment loaded at  $FFFA-$FFFF (6 bytes)
+  BASIC ROM installed as module bank 1 (16384 bytes)
+  FORTH ROM installed as module bank 3 (16384 bytes)
+  MONITOR ROM installed as module bank 4 (16384 bytes)
+  DOS ROM installed at $8800-$AFFF (10240 bytes)
+```
+
+The segment lines come from the linker (`memory.cfg` defines `CODE`, `JUMPS` and
+`VECS` with `define = yes`); the ROM lines are read off the ROMs, by mapping banks
+1-255 in turn and printing each one whose block has the marker. An empty bank reads
+`$00` and is skipped, so nothing in the kernel lists what should be installed.
+
+The pauses wait on the jiffy timer (with `WAI`), so the report first waits a little
+under two jiffies for one tick. A machine whose timer is stopped -- the headless
+test harnesses run the CPU without one -- prints the same report and clears it with
+no pauses, rather than hanging on a clock that never moves.
+
+#### The boot chime
+
+`RESET` also starts a chime, which the jiffy IRQ plays while the boot carries on:
+`CHIME_TABLE` is a list of `(wait, register, value)` triples -- `wait` jiffies after
+the previous write, store `value` in SID register `register` -- ended by `$FF`. Its
+state is in page 2 (`$02E0-$02E2`), not zero page, so a program cannot leave it a
+stale pointer, and the DOS clears `CHIME_ON` before it runs a program. It honours
+`SOUND_ENABLE`. `DEMOS/CHIMES.PRG` plays candidates in the same format with the same
+player; the kernel's is its fifth.
+
 BASIC is module bank 1, EhBASIC 2.22p5 with project additions, and its cold start
 `LAB_COLD` is at `$B000`. BASIC I/O is routed through the kernel by the page-2
 vectors, with `VEC_IN` and `VEC_OUT` pointing at the keyboard and screen and
@@ -623,7 +672,7 @@ vectors, with `VEC_IN` and `VEC_OUT` pointing at the keyboard and screen and
 
 - `$3A-$5A` is a small free zero-page gap, useful for fast addressing when BASIC
   is not in use.
-- `$02E0-$03FF` is leftover system-variable space.
+- `$02E9-$02FF` is leftover system-variable space; `$0300` up is the DOS's.
 - `$0800-$87FF` is the main user RAM, 32 KB. Below it, `$0400` holds the `T:` and
   `Z:` page snapshot and `$0500-$07FF` holds the assembler's identifier buffers
   and symbol table, and above it `$8800-$AFFF` is the DOS ROM. When BASIC is
