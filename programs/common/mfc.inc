@@ -168,4 +168,13 @@ VREG_RASTER_HI     = $FED2      ; bit 0 = line bit 8, bit 7 = in blanking
 ; the raster interrupt goes pending, and with it enabled the VIC pulls IRQ.
 VREG_RASTER_CTL    = $FED3      ; R: bit 7 pending, bit 0 enabled; W: bit 0 enable, bit 7 ack
 
+; The clock's slow switch. The machine runs at 4 MHz; write CPU_SLOW and it runs at
+; 1 MHz -- timer, display and sound still in real time -- until CPU_FULL is written
+; back. For code that times itself by counting cycles and was written for a 1 MHz
+; 6502. Read it to save the setting and put it back. A reset, and the DOS prompt,
+; return the machine to full speed.
+CPU_SPEED          = $FED4      ; R/W bit 0: 0 = 4 MHz, 1 = 1 MHz
+CPU_FULL           = $00
+CPU_SLOW           = $01
+
 .endif

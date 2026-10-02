@@ -269,7 +269,7 @@ namespace Computer
         Memory memory; ///< 64KB system memory with memory-mapped I/O
         CPU6502 cpu; ///< MOS 65C02 microprocessor
         ResetCircuit reset_circuit; ///< Reset circuit for system initialization
-        TimingCircuit timing_circuit; ///< System timing and synchronization
+        TimingCircuit timing_circuit; ///< the clock's speed latch, CPU_SPEED ($FED4)
     };
 } // namespace Computer
 

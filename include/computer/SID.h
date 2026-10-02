@@ -128,7 +128,13 @@ namespace Computer
         // --- Machine time (emulation thread) ---
         /// The CPU clock, so a cycle count converts to samples. Without it clock()
         /// does nothing.
-        void setClockHz(uint64_t hz) { clock_hz_ = hz; }
+        void setClockHz(uint64_t hz)
+        {
+            // The part of a sample already accumulated is kept as a fraction of one, so
+            // a change of speed (CPU_SPEED) neither drops nor invents a sample.
+            if (clock_hz_ && hz) sample_acc_ = sample_acc_ * hz / clock_hz_;
+            clock_hz_ = hz;
+        }
         /// Where "now" comes from: the CPU's cycle count. A register write catches the
         /// chip up to it first. Without a source, writes simply apply (the tests that
         /// render directly with generateSamples work that way).

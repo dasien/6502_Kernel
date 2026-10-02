@@ -81,7 +81,7 @@ One 256-byte page holds every chip's registers. It is carved out of the kernel R
 window and reserved by the `IORESV` linker segment, so kernel code can never grow
 into it by accident.
 
-The decode runs from `$FE00` to `$FED3`, and each chip claims one span. The ranges in
+The decode runs from `$FE00` to `$FED4`, and each chip claims one span. The ranges in
 the table below are taken from the `is*Address()` predicate in each class rather than
 paraphrased from it. The decode is contiguous and gapless with a single exception.
 The VIC answers two separate ranges, because the soft-font port, the sprite block
@@ -105,12 +105,13 @@ one.
 | `$FECD` | VIC | `VIC` | Frame counter on read; a write presents the finished frame |
 | `$FECE-$FED0` | VIC | `VIC` | Sprite pattern RAM: byte index low and high, then an auto-incrementing data port |
 | `$FED1-$FED3` | VIC | `VIC` | Raster: the line the beam is on (read) or the compare line (write), and the raster interrupt's control |
+| `$FED4` | CLK | `TimingCircuit` | `CPU_SPEED`, the clock's slow switch: bit 0 clear is 4 MHz, set is 1 MHz |
 
 The RTC reaches `$FE60` because the FAT date registers sit above the clock
 registers proper. The authority for every range here is the chip's own
 `is*Address()` predicate.
 
-`$FED4-$FEFF` is unclaimed. That leaves 44 bytes, and it is where the next chip goes.
+`$FED5-$FEFF` is unclaimed. That leaves 43 bytes, and it is where the next chip goes.
 The size of the sprite block was chosen against that figure rather than against a
 theoretical peak. Twenty-five sprites would have fitted but would have left only five
 free bytes, so seventeen were taken instead.

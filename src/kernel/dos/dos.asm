@@ -61,6 +61,10 @@ POWER_REG        = $FE61
 
 ; The kernel's boot-chime switch (kernel_vars.inc). Cleared before a program runs.
 CHIME_ON         = $02E0
+
+; The clock's slow switch (kernel_vars.inc). The prompt puts it back to full speed,
+; so a program that exits -- or is stopped -- while slow cannot leave the shell slow.
+CPU_SPEED        = $FED4
 POWER_ARM        = $5A
 POWER_FIRE       = $A5
 
@@ -332,8 +336,11 @@ DOS_SIGNATURE:
 ;   1.24 HELP lists BANKS, which never had a help line, and CLEAR beside CLS.
 ;        tests/scripts/check_dos_help.cmake now fails the tests if a verb runs
 ;        that no HELP line names
+;   1.25 the prompt puts the clock back to full speed (CPU_SPEED, $FED4), so a
+;        program that slows the machine and exits, or is stopped, while slow
+;        does not leave the shell running at 1 MHz
 DOS_VERSION:
-    .BYTE $01, $18                      ; version 1.24 (major, minor)
+    .BYTE $01, $19                      ; version 1.25 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -648,6 +655,7 @@ _DOS_WARM:
     JSR K_PRINT_NEWLINE                 ; one blank line on return so the prompt
                                         ; clears row 0 (a program just cleared+homed)
 _DOS_PROMPT:
+    STZ CPU_SPEED                       ; full speed (see CPU_SPEED above)
     ; Reclaim the screen's colours. A launched program (TERM following a BBS's
     ; ANSI colours, EDIT, a game) may have left the attribute latch somewhere
     ; else -- and now may also have loaded a palette of its own, which is how a

@@ -217,6 +217,7 @@ VREG_PAL_DATA      = $FECC         ; palette data port (auto-increments)
 ; each boundary as before.
 VREG_FRAME         = $FECD
 VREG_RASTER_CTL    = $FED3         ; raster IRQ: R bit7 pending/bit0 enabled; W bit0 enable, bit7 ack
+CPU_SPEED          = $FED4         ; clock: R/W bit 0, 0 = 4 MHz, 1 = 1 MHz (TimingCircuit)
 RASTER_IRQ_ACK     = $81           ; acknowledge and stay enabled
 TIMER_PENDING      = $80           ; reading TIMER_IRQ_ACK: bit 7 = the timer is pulling IRQ
 

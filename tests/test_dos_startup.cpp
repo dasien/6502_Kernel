@@ -191,6 +191,20 @@ TEST_F(DosStartupTest, RestartRunsTheBootAgain)
     EXPECT_NE(screen().find("OPERATIONAL"), std::string::npos) << screen();
 }
 
+/* The DOS prompt puts the clock back to full speed, so a program that slows the
+   machine (CPU_SPEED, $FED4) and exits -- or is stopped -- cannot leave the shell at
+   1 MHz. Simulated by setting it slow at the prompt and running one command. */
+TEST_F(DosStartupTest, ThePromptPutsTheClockBackToFullSpeed)
+{
+    bootWith("");
+    box_.getMemory()->write(0xFED4, 0x01);
+    ASSERT_EQ(box_.clockHz(), 1000000u);
+    for (char c : std::string("VERSION\r")) box_.getPia()->addKeypress(c);
+    box_.runInstructions(100000);
+    EXPECT_EQ(box_.getMemory()->read(0xFED4), 0x00) << "the prompt left the machine slow";
+    EXPECT_EQ(box_.clockHz(), 4000000u);
+}
+
 /* HELP lists RESTART and SHUTDOWN. SHUTDOWN's help line was written when the verb
    was, and never put in the table, so HELP did not mention it. HELP pages, so the
    screens are collected across the --MORE-- break. */

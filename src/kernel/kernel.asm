@@ -3,8 +3,8 @@
 ; ================================================================
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
-; Date:         2026-10-01
-; Version:      4.3.1
+; Date:         2026-10-02
+; Version:      4.4
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -280,6 +280,10 @@
 ;                   and only a pending TIMER advances the jiffy -- it used to assume
 ;                   every interrupt was one. K_RASTER_IRQ ($FF45) installs a handler
 ;                   (A/X) and enables the interrupt, or with 0 disables it.
+; 2026-10-02  v4.4  CPU_SPEED ($FED4), the clock's slow switch: write 1 and the
+;                   machine runs at 1 MHz, timer and display still in real time, for
+;                   software that times itself in cycles (S.A.M.). RESET clears it --
+;                   a hardware reset does anyway; this covers the software restart.
 ; 2026-10-01  v4.3.1 The boot report's pause is half a second, not one: a line every
 ;                   30 jiffies, and the same before the clear. Chime to sign-on is
 ;                   about 5.5 s, from 9.5.
@@ -388,6 +392,10 @@ RESET:
     ; Map the module window ($B000-$EFFF) to RAM at boot. The slot starts empty
     ; (no module auto-loaded); modules are mapped in later via the bank register.
     STZ MODULE_BANK
+
+    ; Full speed. A hardware reset clears the slow latch itself; this is for the
+    ; software restart (DOS RESTART jumps here through $FFFC), which does not.
+    STZ CPU_SPEED
 
 ; ================================================================
 ; ZERO PAGE INITIALIZATION
@@ -2038,7 +2046,7 @@ BOOT_BYTES:
     JSR PRINT_MSG_AY
     JMP BOOT_PAUSE
 
-MSG_BOOT_HDR:    .BYTE "MFC 6502 KERNEL 4.3.1", $0D, 0
+MSG_BOOT_HDR:    .BYTE "MFC 6502 KERNEL 4.4", $0D, 0
 MSG_BOOT_CODE:   .BYTE "  CODE segment loaded at  $", 0
 MSG_BOOT_JUMPS:  .BYTE "  JUMPS segment loaded at $", 0
 MSG_BOOT_VECS:   .BYTE "  VECS segment loaded at  $", 0

@@ -36,6 +36,7 @@ add_executable(cpu_alu_tests
     test_cpu_alu.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
@@ -65,6 +66,7 @@ add_executable(cpu_interrupt_tests
     test_cpu_interrupts.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
@@ -94,6 +96,7 @@ add_executable(cpu_cycle_tests
     test_cpu_cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
@@ -117,6 +120,7 @@ target_compile_features(cpu_cycle_tests PRIVATE cxx_std_20)
 add_executable(memory_banking_tests
     test_memory_banking.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
@@ -145,6 +149,7 @@ target_compile_features(memory_banking_tests PRIVATE cxx_std_20)
 add_executable(block_device_tests
     test_block_device.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
@@ -466,6 +471,7 @@ add_executable(pia_keystate_tests
     ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
     ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
@@ -747,6 +753,7 @@ if(TARGET kpanic_bin)
 endif()
 
 add_test(NAME kpanic COMMAND kpanic_tests)
+
 
 add_executable(venture_tests
     test_venture.cpp

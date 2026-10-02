@@ -1,36 +1,41 @@
 /**
  * @file TimingCircuit.cpp
- * @brief Timing circuit implementation.
+ * @brief The clock's speed latch.
  */
 
 #include "TimingCircuit.h"
-#include <chrono>
-#include <thread>
 
 namespace Computer
 {
-    TimingCircuit::TimingCircuit() : clock_frequency_(1000000), actual_cycle_time_(0)
+    void TimingCircuit::write(const uint16_t address, const uint8_t value)
     {
-        cycle_time_ns_ = 1000000000 / clock_frequency_;
+        if (!isSpeedAddress(address))
+            return;
+        const bool slow = (value & kSpeedSlow) != 0;
+        if (slow == slow_)
+            return;                 // no change: nothing to re-derive
+        slow_ = slow;
+        apply();
     }
 
-    void TimingCircuit::waitForCycle()
+    uint8_t TimingCircuit::read(const uint16_t address) const
     {
-        const auto start = std::chrono::high_resolution_clock::now();
-        std::this_thread::sleep_for(std::chrono::nanoseconds(cycle_time_ns_));
-        const auto end = std::chrono::high_resolution_clock::now();
-
-        actual_cycle_time_ = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+        if (!isSpeedAddress(address))
+            return 0x00;
+        return slow_ ? kSpeedSlow : kSpeedFull;
     }
 
-    double TimingCircuit::getActualFrequency() const
+    void TimingCircuit::reset()
     {
-        if (actual_cycle_time_ == 0) return 0.0;
-        return 1000000000.0 / static_cast<double>(actual_cycle_time_);
+        if (!slow_)
+            return;
+        slow_ = false;
+        apply();
     }
 
-    uint32_t TimingCircuit::getTargetFrequency() const
+    void TimingCircuit::apply()
     {
-        return clock_frequency_;
+        if (on_change_)
+            on_change_(slow_ ? kSlowHz : full_hz_);
     }
 } // namespace Computer

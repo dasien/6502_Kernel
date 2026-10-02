@@ -1,6 +1,6 @@
 /**
  * @file TimingCircuit.h
- * @brief System Timing Circuit for 6502 Computer
+ * @brief The clock: the machine's speed, and the switch that slows it.
  * @author 6502 Kernel Project
  */
 
@@ -8,66 +8,62 @@
 #define TIMINGCIRCUIT_H
 
 #include <cstdint>
+#include <functional>
 
 namespace Computer
 {
     /**
      * @class TimingCircuit
-     * @brief System timing circuit for CPU cycle timing control
+     * @brief The clock's speed latch, CPU_SPEED at $FED4.
      *
-     * This class manages timing operations for the 6502 computer system,
-     * providing accurate cycle timing for proper CPU emulation. It helps
-     * maintain realistic execution speeds and timing accuracy.
+     * The machine runs at 4 MHz. Write 1 here and it runs at 1 MHz until 0 is
+     * written back; read it to find out which. This is the slow switch Apple II
+     * accelerator cards and the IIgs had, and for the same reason: software that
+     * times itself by counting cycles -- S.A.M.'s speech loops are the case in
+     * point -- was written for a 1 MHz part and plays four times too fast at four.
      *
-     * Features:
-     * - Target frequency management (typically 1 MHz for 6502)
-     * - Cycle-accurate timing delays
-     * - Actual frequency measurement and monitoring
-     * - Precise timing control for emulation accuracy
+     * The latch does not keep time itself. It tells Computer6502, which re-derives
+     * everything from the new rate (setClockHz): the jiffy period, the raster's
+     * frame, the SID's samples, and the host's real-time budget. So at 1 MHz the CPU
+     * really does a quarter of the work per second while the timer still ticks 60
+     * times a second and the display and sound stay in real time.
      *
-     * The timing circuit ensures that the emulated 6502 runs at realistic
-     * speeds, preventing it from running too fast compared to original
-     * hardware while maintaining smooth operation.
-     *
-     * @see CPU6502, Computer6502
+     * A reset clears it, as a reset line clears a latch: a crash or a reset can
+     * never leave the machine slow.
      */
     class TimingCircuit
     {
     public:
-        /**
-         * @brief Construct a new TimingCircuit
-         *
-         * Initializes the timing circuit with default 6502 frequency
-         * and sets up timing parameters for cycle-accurate emulation.
-         */
-        TimingCircuit();
+        static constexpr uint16_t kRegSpeed = 0xFED4;   ///< CPU_SPEED (R/W)
+        static constexpr uint8_t kSpeedFull = 0x00;     ///< 4 MHz
+        static constexpr uint8_t kSpeedSlow = 0x01;     ///< 1 MHz
+        static constexpr uint32_t kSlowHz = 1'000'000;  ///< a classic 6502's clock
 
-        /**
-         * @brief Wait for one CPU cycle to complete
-         *
-         * Delays execution to maintain proper timing for the next
-         * CPU cycle. This ensures the emulated CPU runs at realistic
-         * speeds rather than maximum host CPU speed.
-         */
-        void waitForCycle();
+        [[nodiscard]] static bool isSpeedAddress(const uint16_t address)
+        {
+            return address == kRegSpeed;
+        }
 
-        /**
-         * @brief Get the actual measured frequency of the emulation
-         * @return double Actual frequency in Hz (cycles per second)
-         * @note Used for performance monitoring and timing verification
-         */
-        [[nodiscard]] double getActualFrequency() const;
+        /// Where a change of speed goes: Computer6502::setClockHz.
+        void setOnChange(std::function<void(uint32_t)> on_change) { on_change_ = std::move(on_change); }
+        /// The full-speed clock, the one a write of 0 restores.
+        void setFullHz(const uint32_t hz) { full_hz_ = hz; }
 
-        /**
-         * @brief Get the target frequency for the emulation
-         * @return uint32_t Target frequency in Hz (typically 1,000,000 for 1 MHz)
-         */
-        [[nodiscard]] uint32_t getTargetFrequency() const;
+        /// Bit 0 selects the speed; the other bits are ignored, and read back as 0.
+        void write(uint16_t address, uint8_t value);
+        [[nodiscard]] uint8_t read(uint16_t address) const;
+
+        /// Back to full speed (power-on and reset).
+        void reset();
+
+        [[nodiscard]] bool isSlow() const { return slow_; }
 
     private:
-        uint32_t clock_frequency_;    ///< Target clock frequency in Hz
-        uint64_t cycle_time_ns_;      ///< Target cycle time in nanoseconds
-        uint64_t actual_cycle_time_;  ///< Actual measured cycle time
+        void apply();
+
+        std::function<void(uint32_t)> on_change_;
+        uint32_t full_hz_ = 4'000'000;
+        bool slow_ = false;
     };
 } // namespace Computer
 

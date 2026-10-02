@@ -11,6 +11,7 @@
 #include "SID.h"
 #include "RTC.h"
 #include "PowerSwitch.h"
+#include "TimingCircuit.h"
 
 #include <algorithm>
 
@@ -66,6 +67,11 @@ namespace Computer
         if (power_ && PowerSwitch::isPowerAddress(address))
         {
             return power_->read(address);
+        }
+
+        if (timing_ && TimingCircuit::isSpeedAddress(address))
+        {
+            return timing_->read(address);
         }
 
         if (rtc_ && RTC::isRtcAddress(address))
@@ -142,6 +148,12 @@ namespace Computer
         if (power_ && PowerSwitch::isPowerAddress(address))
         {
             power_->write(address, value);
+            return;
+        }
+
+        if (timing_ && TimingCircuit::isSpeedAddress(address))
+        {
+            timing_->write(address, value);
             return;
         }
 
@@ -236,6 +248,11 @@ namespace Computer
     void Memory::setPowerSwitch(PowerSwitch *power)
     {
         power_ = power;
+    }
+
+    void Memory::setTimingCircuit(TimingCircuit *timing)
+    {
+        timing_ = timing;
     }
 
     void Memory::loadBank(uint8_t bank, const std::vector<uint8_t> &image)

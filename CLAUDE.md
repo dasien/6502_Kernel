@@ -127,7 +127,7 @@ is authoritative — this is the shape of it:
 | `$8800-$AFFF` | DOS ROM |
 | `$B000-$EFFF` | Bank-switched module window, 16 KB |
 | `$F000-$FFFF` | Kernel BIOS ROM |
-| `$FE00-$FED3` | Memory-mapped I/O (inside the kernel window, reserved by the `IORESV` linker segment) |
+| `$FE00-$FED4` | Memory-mapped I/O (inside the kernel window, reserved by the `IORESV` linker segment) |
 | `$FFFA-$FFFF` | NMI / RESET / IRQ vectors |
 
 **The screen is not in the map.** The 80x25 CP437 character plane and its attributes
@@ -363,10 +363,11 @@ Refer to `docs/architecture.md` for complete details, but key locations include:
 - **`$FE23`**: `MODULE_BANK` — the bank-select register (there is no `$00/$01` port)
 - **`$01FF`**: Initial stack pointer location
 - **$B000-$EFFF**: Bank-switched module window, 16 KB (BASIC 1, FORTH 3, MONITOR 4 with the assembler built in; bank 2 free)
-- **`$FE00-$FED3`**: Memory-mapped I/O — PIA (incl. the live held-key port at `$FE0F`),
+- **`$FE00-$FED4`**: Memory-mapped I/O — PIA (incl. the live held-key port at `$FE0F`),
   `MODULE_BANK`, BlockDevice, ACIA, VIC register port, SID, RTC, PowerSwitch, VIC
-  soft-font port, VIC sprite block, the VIC frame counter, the sprite pattern port and the raster. The 80x25 screen and its colours live behind the
-  VIC port, not in the 64K map. **First free byte: `$FED4`** (44 left).
+  soft-font port, VIC sprite block, the VIC frame counter, the sprite pattern port, the
+  raster and the clock's slow switch (`CPU_SPEED`, `$FED4`). The 80x25 screen and its
+  colours live behind the VIC port, not in the 64K map. **First free byte: `$FED5`** (43 left).
   `docs/board.md` has the authoritative per-chip decode table
 - **$F000-$FFFF**: Kernel BIOS ROM (the monitor is module bank 4, not here)
 - **$FFFA-$FFFF**: Interrupt vectors (NMI, RESET, IRQ)

@@ -48,6 +48,45 @@ TEST(Clock, ASecondOfMachineTimeIsSixtyJiffies)
     EXPECT_LE(jiffies, 62);
 }
 
+/* CPU_SPEED ($FED4), the slow switch: written 1, the machine is a 1 MHz machine --
+ * a second of machine time is a million cycles -- and the timer still ticks sixty
+ * times in it, because the jiffy period is re-derived from the new clock. Written 0,
+ * back to 4 MHz. This is what makes cycle-counted code written for a 1 MHz 6502
+ * (S.A.M.'s speech loops) run at the speed it was written for. */
+TEST(Clock, TheSlowSwitchMakesItA1MHzMachineWithTheTimerStillAt60)
+{
+    Computer::Computer6502 box; box.power_on();
+    box.runCycles(box.clockHz() / 4);             // into the DOS, servicing IRQs
+    Computer::Memory *mem = box.getMemory();
+    ASSERT_EQ(mem->read(0xFED4), 0x00) << "the machine did not start at full speed";
+
+    mem->write(0xFED4, 0x01);
+    EXPECT_EQ(box.clockHz(), 1000000u);
+    EXPECT_EQ(mem->read(0xFED4), 0x01);
+
+    const int before = mem->read(0x31) | (mem->read(0x32) << 8);
+    box.runCycles(1000000);                       // one second, at 1 MHz
+    const int jiffies = ((mem->read(0x31) | (mem->read(0x32) << 8)) - before) & 0xFFFF;
+    EXPECT_GE(jiffies, 58) << "at 1 MHz the timer should still tick 60 times a second";
+    EXPECT_LE(jiffies, 62);
+
+    mem->write(0xFED4, 0x00);
+    EXPECT_EQ(box.clockHz(), 4000000u);
+    EXPECT_EQ(mem->read(0xFED4), 0x00);
+}
+
+/* A reset clears the latch, as a reset line would: a program that crashed, or was
+ * reset, while slow cannot leave the machine slow. */
+TEST(Clock, AResetPutsTheClockBackToFullSpeed)
+{
+    Computer::Computer6502 box; box.power_on();
+    box.getMemory()->write(0xFED4, 0x01);
+    ASSERT_EQ(box.clockHz(), 1000000u);
+    box.reset();
+    EXPECT_EQ(box.clockHz(), 4000000u);
+    EXPECT_EQ(box.getMemory()->read(0xFED4), 0x00);
+}
+
 /* The frame boundary is the same event as the jiffy, and the host is told about it.
  *
  * Before this the machine had two 60 Hz clocks that were never phase-locked: the

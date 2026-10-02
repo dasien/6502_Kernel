@@ -47,6 +47,11 @@ namespace Computer
         memory.setRtc(&rtc);
         memory.setPowerSwitch(&power);
 
+        // CPU_SPEED ($FED4): the slow switch re-derives the whole machine's timing.
+        memory.setTimingCircuit(&timing_circuit);
+        timing_circuit.setFullHz(kDefaultClockHz);
+        timing_circuit.setOnChange([this](uint32_t hz) { setClockHz(hz); });
+
         // The VIC's raster runs on machine time: the CPU's cycle count, and a frame's
         // worth of it -- the jiffy interval, since the frame boundary IS the jiffy.
         video_chip.setClock([this] { return cpu.getCycles(); }, clock_hz_ / kJiffyHz);
@@ -380,6 +385,7 @@ namespace Computer
     {
         next_jiffy_ = 0;            // runCycles re-arms it, and restarts the frame, from now
         sid.restartClock();
+        timing_circuit.reset();     // a reset line clears the slow latch: full speed
     }
 
     void Computer6502::reset()

@@ -52,13 +52,13 @@ The rest of this part describes those components and how they connect.
 ```
         ┌────────────┐   ┌──────────────┐   ┌────────────────────────────┐
         │ Reset      │──▶│ Timing       │──▶│ CPU6502 (WDC 65C02)        │
-        │ Circuit    │   │ Circuit ~1MHz│   │ A/X/Y/SP/P, full CMOS ISA  │
+        │ Circuit    │   │ Circuit 4MHz │   │ A/X/Y/SP/P, full CMOS ISA  │
         └────────────┘   └──────────────┘   └─────────────┬──────────────┘
                                                           │ 16-bit bus
         ┌─────────────────────────────────────────────────┴────────────────┐
         │                          Memory (64K)                            │
         │  RAM  •  ROM overlay ($F000-$FFFF)  •  bank window ($B000-$EFFF) │
-        │  •  I/O page routed to peripherals ($FE00-$FED3)                 │
+        │  •  I/O page routed to peripherals ($FE00-$FED4)                 │
         └───┬──────┬───────┬───────┬───────┬───────┬───────────────────────┘
             ▼      ▼       ▼       ▼       ▼       ▼
         ┌──────┐┌─────┐┌──────┐┌─────┐┌─────┐┌───────────┐
@@ -125,8 +125,8 @@ $0200-$03FF  System variables (command buffer, DOS/monitor state)
 $0800-$87FF  User RAM — disk programs load and run at $0800 (2 KB C stack near the top)
 $B000-$EFFF  Bank-switched module window (BASIC 1, FORTH 3, MONITOR 4; 2 free)
 $F000-$FFFF  Kernel BIOS; jump table at $FF00, vectors at $FFFA
-$FE00-$FED3  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font, sprites, palette,
-             frame, sprite patterns, raster (carved out of the ROM window; $FED4-$FEFF free)
+$FE00-$FED4  Memory-mapped I/O — PIA, VIC port, ACIA, SID, RTC, power, VIC font, sprites, palette,
+             frame, sprite patterns, raster, clock speed (carved out of the ROM window; $FED5-$FEFF free)
 ```
 
 See `Part 2 (Memory and zero-page map)` for the full zero-page allocation, the I/O
@@ -141,6 +141,19 @@ sixty jiffies whatever the host happens to be doing. `setClockHz()` changes the 
 The games express their pacing constants in jiffies per tick and so follow the clock
 automatically, but they were tuned at this speed, so a large change would mean
 retuning them.
+
+A program can slow the clock itself. `CPU_SPEED` at `$FED4` is a latch in
+`TimingCircuit`: write 1 and the machine runs at 1 MHz, write 0 and it is back at 4.
+The latch calls `setClockHz()`, so the jiffy period, the raster's frame, the SID's
+sample timing and the host's real-time budget all follow -- the CPU really does a
+quarter of the work per second while the timer still ticks sixty times in it and the
+display and sound stay in real time. It is the slow switch Apple II accelerator cards
+and the IIgs carried, and for the same reason: software that times itself by counting
+cycles was written for a 1 MHz part. S.A.M.'s speech loops are the case in point; they
+switch to 1 MHz only while they render. A reset clears the latch, as a reset line
+would; the kernel's `RESET` clears it too, for the software restart, and the DOS
+prompt clears it, so a program that exits or is stopped while slow cannot leave the
+shell slow.
 
 The classic home 6502 ran near 1 MHz. The Apple II was 1.023, and the PET, VIC-20 and
 C64 were all close to 1.0. The era was not uniform, though. The Atari 800 and the NES
@@ -220,7 +233,7 @@ ASCII rather than PETSCII, a 64K address space whose only banked region is the
 | `$8800-$AFFF` | 10 KB | The DOS ROM, which is always mapped and holds the FAT16 filesystem and the DOS shell |
 | `$B000-$EFFF` | 16 KB | The module window. Bank 0 is RAM and banks 1 to 255 are ROM modules, of which BASIC is bank 1 |
 | `$F000-$FFFF` | 4 KB | The kernel BIOS. The monitor is module bank 4 and is not here |
-| `$FE00-$FED3` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
+| `$FE00-$FED4` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
 
 There is no CIA, and the SID is not a Commodore part. The VIC is an 80 by 25 colour
 text chip whose character and colour planes live inside the chip rather than in the
@@ -360,11 +373,12 @@ itself.
 | `$FED1` | `VREG_RASTER_LO` | Read: raster line, bits 7-0 (0-399 drawn, 400-499 blanking), latching `$FED2`. Write: compare line, bits 7-0 |
 | `$FED2` | `VREG_RASTER_HI` | Read: bit 0 = line bit 8, bit 7 = in blanking. Write: compare line bit 8 |
 | `$FED3` | `VREG_RASTER_CTL` | Raster interrupt. Read: bit 7 pending, bit 0 enabled. Write: bit 0 enable, bit 7 acknowledge |
+| `$FED4` | `CPU_SPEED` | The clock's slow switch (`TimingCircuit`). Bit 0: 0 = 4 MHz, 1 = 1 MHz. Reads back the setting; reset and the DOS prompt clear it. See "CPU clock" |
 
 The soft-font port, the sprite block, the palette, the frame counter and the pattern
 port sit above the RTC rather than beside the rest because the port block ends at
 `$FE37` with the SID immediately after.
-`$FED4-$FEFF` is the remaining free space in the I/O page.
+`$FED5-$FEFF` is the remaining free space in the I/O page.
 
 A sprite occupies one cell of 8 by 16 nominal pixels unless its size bits say
 otherwise, and it may reach 8 by 8 cells. A multi-cell sprite draws consecutive glyph
@@ -625,7 +639,7 @@ chime plays out first, then one line every half second, then a half second's hol
 screen, so the DOS signs on to a blank screen as it always did:
 
 ```
-MFC 6502 KERNEL 4.3.1
+MFC 6502 KERNEL 4.4
   CODE segment loaded at  $F000-$F945 (2374 bytes)
   JUMPS segment loaded at $FF00-$FF47 (72 bytes)
   VECS segment loaded at  $FFFA-$FFFF (6 bytes)

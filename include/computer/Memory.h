@@ -19,7 +19,7 @@ namespace Computer
     class SID;
     class RTC;
     class PowerSwitch;
-    class PowerSwitch;
+    class TimingCircuit;
 
     /**
      * @class Memory
@@ -176,6 +176,12 @@ namespace Computer
         void setPowerSwitch(PowerSwitch *power);
 
         /**
+         * @brief Attach the clock's speed latch.
+         * @param timing TimingCircuit to route CPU_SPEED ($FED4) to
+         */
+        void setTimingCircuit(TimingCircuit *timing);
+
+        /**
          * @brief Install the always-mapped DOS ROM image ($8800-$AFFF)
          * @param image DOS ROM image; truncated/zero-padded to kDosRomSize (10KB)
          * @note Once installed the region is read-only (writes ignored). Passing
@@ -223,6 +229,7 @@ namespace Computer
         SID *sid_ = nullptr;                  ///< SID sound chip ($FE38-$FE54), or null
         RTC *rtc_ = nullptr;                  ///< real-time clock ($FE55-$FE60), or null
         PowerSwitch *power_ = nullptr;        ///< soft power switch ($FE61), or null
+        TimingCircuit *timing_ = nullptr;     ///< the clock's speed latch ($FED4), or null
 
         /// Module ROM images, indexed by bank (1..255). Each entry is either
         /// empty (no module installed) or exactly kModuleWindowSize bytes.
