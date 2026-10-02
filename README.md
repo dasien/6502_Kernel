@@ -154,7 +154,7 @@ See **[docs/disk_image.md](docs/disk_image.md)** for the catalog format, the
 ├── include/               # C++ headers
 ├── programs/              # cc65/asm disk programs: edit, term, irc, gopher, venture,
 │                         #   kpanic, frontier, micromax, scottfree, vault, sprdemo,
-│                         #   raster, sound, chimes
+│                         #   raster, sound, chimes, say
 │                         #   common/ holds mfc.inc and the shared glue library
 │                         #   (catalog.txt lists every one and where it lands on disk)
 ├── examples/              # Runnable 6502 assembly examples (+ README.md)
@@ -220,6 +220,16 @@ or studied:
   **no reSID or other GPL code is used**. With thanks to the SID/C64 community
   whose datasheets and reverse-engineering notes made a faithful model possible.
   See `docs/sound_design.md`.
+- **S.A.M., the Software Automatic Mouth** by **Mark Barton**, published by
+  **Don't Ask Software** in 1982 -- the speech synthesizer behind `SAY.PRG`. The
+  6502 source is **DLehenbauer**'s documented disassembly of the C64 version
+  (<https://github.com/DLehenbauer/c64-sam>), which credits **Groepaz**'s
+  disassembly and **Sebastian Macke**'s C port with **Vidar Hokstad**'s and **Aidan
+  Dodds**'s refactorings; we port it to MFC's SID and its 1 MHz slow switch. The
+  reciter test fixtures come from **Christian Schiffler**'s JavaScript port
+  (<https://github.com/discordier/sam>). S.A.M. is long out of print and treated
+  as abandonware, as those projects treat it. The original source and a build of
+  it are kept under `vendor/c64-sam/`.
 - **The Sunless Vault** (`VAULT.PRG`) — an original text roguelike written from
   scratch for MFC (no ported code). Its integer, turn-based, data-driven engine
   follows the design of the author's own **Dungeon of Yacor**, and its play draws

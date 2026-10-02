@@ -754,6 +754,38 @@ endif()
 
 add_test(NAME kpanic COMMAND kpanic_tests)
 
+# SAY (programs/say): S.A.M. on MFC. RECITER against the reference phonemes, and
+# the voice's length and pitch on machine time, which is what proves the 1 MHz
+# switch is doing its job.
+add_executable(say_tests
+    test_say.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Computer6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/CPU6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/SID.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/RTC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PowerSwitch.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/BlockDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ACIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/PIA.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/ResetCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/TimingCircuit.cpp
+    ${CMAKE_SOURCE_DIR}/src/computer/MapFileParser.cpp
+)
+target_link_libraries(say_tests gtest_main gtest)
+target_include_directories(say_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/computer
+)
+target_compile_definitions(say_tests PRIVATE MFC_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data"
+    MFC_VENDOR="${CMAKE_SOURCE_DIR}/vendor")
+target_compile_features(say_tests PRIVATE cxx_std_20)
+if(TARGET say_bin)
+    add_dependencies(say_tests say_bin)
+endif()
+add_test(NAME say COMMAND say_tests)
 
 add_executable(venture_tests
     test_venture.cpp

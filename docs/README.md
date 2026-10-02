@@ -15,6 +15,7 @@ For those looking for a deeper understanding of the design of the system, refere
 | [TERM.md](TERM.md) | The serial/telnet terminal + XMODEM |
 | [IRC.md](IRC.md) | The IRC client |
 | [GOPHER.md](GOPHER.md) | The Gopher document browser |
+| [SAY.md](SAY.md) | S.A.M., the speech synthesizer: English or phonemes, and the voice settings |
 
 Games are not documented here. A game's manual ships on the disk beside it, as plain
 ASCII that the machine itself can `TYPE`. A manual is no use on a web page when you are

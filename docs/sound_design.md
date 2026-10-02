@@ -104,6 +104,20 @@ The kernel uses voice 1 for system sound (`kernel.asm`):
   both the BEL beep and the sound ABI honour. It is the hook a future settings
   facility would use to turn sound off.
 
+## Sampled sound: how SAY talks
+
+The chip has no sample channel, and SAY (S.A.M.) does not need one. It sets voice 1
+to a pulse wave of the widest duty with its frequency at 0, which holds the voice's
+output steadily high, gates it on with full sustain, and then writes the master volume
+(`$FE50`, low nibble) thousands of times a second: each write is a 4-bit sample. That
+is the C64 technique, and it works here because our master volume scales the voices'
+output (it is not applied to silence) and because every register write is caught up to
+the cycle it happens on ("Architecture", above), so the samples land where the CPU
+put them. The sample rate is set by S.A.M.'s own instruction loops, written for a 1 MHz
+6502, which is why it switches the machine to 1 MHz while it speaks (`CPU_SPEED`,
+`$FED4`; `architecture.md`, "CPU clock"). `tests/test_say.cpp` checks the result
+against an independent rendering: the same phonemes come out the same length and pitch.
+
 ## Trying it
 
 From the monitor (`MON`):

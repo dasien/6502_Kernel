@@ -313,6 +313,16 @@ if(CA65_FOUND AND LD65_FOUND AND AR65_FOUND)
             MESSAGE  "KERNEL PANIC blob built ($0800)"
         )
 
+        # SAY, S.A.M. With labels: the reciter test calls SAM's own entry points
+        # and stops at its say_main, reading the phonemes RECITER left there.
+        mfc_add_test_blob(say
+            DIR      ${CMAKE_SOURCE_DIR}/programs/say
+            CONFIG   say.cfg
+            SOURCES  say.c sam.s sam_glue.s
+            LABELS
+            MESSAGE  "SAY (S.A.M.) blob built ($0800)"
+        )
+
         # GOPHER, the Gopher document browser.
         mfc_add_test_blob(gopher
             DIR      ${CMAKE_SOURCE_DIR}/programs/gopher

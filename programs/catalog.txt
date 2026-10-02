@@ -142,6 +142,13 @@ config  = sound.cfg
 program = SOUND.PRG -> DEMOS/SOUND.PRG
 desc    = the SID: a three-voice tune, waveforms, envelopes and the filter
 
+[say]
+dir     = programs/say
+sources = say.c sam.s sam_glue.s
+config  = say.cfg
+program = SAY.PRG -> SAY.PRG
+desc    = S.A.M., the Software Automatic Mouth (Don't Ask Software, 1982)
+
 [chimes]
 dir     = programs/chimes
 sources = chimes.c
