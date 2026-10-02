@@ -32,9 +32,9 @@ Recover the Orb. Climb out. Give the world back its warmth.
 
 GETTING IN
 
-The game lives in the SVAULT drawer. At the DOS ] prompt:
+The game lives in the GAMES drawer. At the DOS ] prompt:
 
-  OPEN SVAULT
+  OPEN GAMES
   VAULT
 
 Roll your hero (R to reroll the four stats, Enter to accept), type a name, and

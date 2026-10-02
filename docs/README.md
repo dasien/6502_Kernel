@@ -25,7 +25,7 @@ sitting at the machine wondering what a key does.
 | VENTURE | `programs/venture/VENTURE.TXT` | `GAMES/VENTURE.TXT` |
 | KERNEL PANIC | `programs/kpanic/KPANIC.TXT` | `GAMES/KPANIC.TXT` |
 | FRONTIER FORTUNE | `programs/frontier/FRONTIER.TXT` | `GAMES/FRONTIER.TXT` |
-| The Sunless Vault | `programs/vault/VAULT.TXT` | `SVAULT/VAULT.TXT` |
+| The Sunless Vault | `programs/vault/VAULT.TXT` | `GAMES/VAULT.TXT` |
 
 ## Architecture & reference
 

@@ -83,8 +83,8 @@ desc    = IRC chat client
 dir     = programs/vault
 sources = vault.c map.c draw.c player.c monster.c combat.c item.c spell.c data.c
 config  = vault.cfg
-program = VAULT.PRG -> SVAULT/VAULT.PRG
-doc     = VAULT.TXT -> SVAULT/VAULT.TXT
+program = VAULT.PRG -> GAMES/VAULT.PRG
+doc     = VAULT.TXT -> GAMES/VAULT.TXT
 desc    = The Sunless Vault, a roguelike
 
 [chess]
@@ -150,10 +150,11 @@ program = CHIMES.PRG -> DEMOS/CHIMES.PRG
 desc    = candidates for the boot chime, as lists of timed SID writes
 
 # ---- Scott Adams adventures ------------------------------------------------
-# Twelve games, one engine. Each entry builds programs/scottfree/scott.c against a
-# different database: `generate` runs the dat2c host tool over the .dat to produce
-# the C tables, which compile alongside the engine. That is why one directory backs
-# twelve entries, and why each needs its own object directory in the build tree.
+# Twelve games, one engine, in the TXTGAMES drawer. Each entry builds
+# programs/scottfree/scott.c against a different database: `generate` runs the
+# dat2c host tool over the .dat to produce the C tables, which compile alongside
+# the engine. That is why one directory backs twelve entries, and why each needs
+# its own object directory in the build tree.
 #
 # The .dat databases are shareware and are committed under programs/scottfree/dat/.
 
@@ -163,7 +164,7 @@ sources  = scott.c glue.s
 generate = dat/adv01.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = ADVLAND.PRG -> GAMES/ADVLAND.PRG
+program  = ADVLAND.PRG -> TXTGAMES/ADVLAND.PRG
 desc     = Adventureland (Scott Adams)
 
 [pirate]
@@ -172,7 +173,7 @@ sources  = scott.c glue.s
 generate = dat/adv02.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = PIRATE.PRG -> GAMES/PIRATE.PRG
+program  = PIRATE.PRG -> TXTGAMES/PIRATE.PRG
 desc     = Pirate Adventure (Scott Adams)
 
 [secret]
@@ -181,7 +182,7 @@ sources  = scott.c glue.s
 generate = dat/adv03.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = SECRET.PRG -> GAMES/SECRET.PRG
+program  = SECRET.PRG -> TXTGAMES/SECRET.PRG
 desc     = Secret Mission (Scott Adams)
 
 [voodoo]
@@ -190,7 +191,7 @@ sources  = scott.c glue.s
 generate = dat/adv04.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = VOODOO.PRG -> GAMES/VOODOO.PRG
+program  = VOODOO.PRG -> TXTGAMES/VOODOO.PRG
 desc     = Voodoo Castle (Scott Adams)
 
 [count]
@@ -199,7 +200,7 @@ sources  = scott.c glue.s
 generate = dat/adv05.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = COUNT.PRG -> GAMES/COUNT.PRG
+program  = COUNT.PRG -> TXTGAMES/COUNT.PRG
 desc     = The Count (Scott Adams)
 
 [odyssey]
@@ -208,7 +209,7 @@ sources  = scott.c glue.s
 generate = dat/adv06.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = ODYSSEY.PRG -> GAMES/ODYSSEY.PRG
+program  = ODYSSEY.PRG -> TXTGAMES/ODYSSEY.PRG
 desc     = Strange Odyssey (Scott Adams)
 
 [funhouse]
@@ -217,7 +218,7 @@ sources  = scott.c glue.s
 generate = dat/adv07.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = FUNHOUSE.PRG -> GAMES/FUNHOUSE.PRG
+program  = FUNHOUSE.PRG -> TXTGAMES/FUNHOUSE.PRG
 desc     = Mystery Fun House (Scott Adams)
 
 [pyramid]
@@ -226,7 +227,7 @@ sources  = scott.c glue.s
 generate = dat/adv08.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = PYRAMID.PRG -> GAMES/PYRAMID.PRG
+program  = PYRAMID.PRG -> TXTGAMES/PYRAMID.PRG
 desc     = Pyramid of Doom (Scott Adams)
 
 [ghosttwn]
@@ -235,7 +236,7 @@ sources  = scott.c glue.s
 generate = dat/adv09.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = GHOSTTWN.PRG -> GAMES/GHOSTTWN.PRG
+program  = GHOSTTWN.PRG -> TXTGAMES/GHOSTTWN.PRG
 desc     = Ghost Town (Scott Adams)
 
 [savage1]
@@ -244,7 +245,7 @@ sources  = scott.c glue.s
 generate = dat/adv10.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = SAVAGE1.PRG -> GAMES/SAVAGE1.PRG
+program  = SAVAGE1.PRG -> TXTGAMES/SAVAGE1.PRG
 desc     = Savage Island part I (Scott Adams)
 
 [savage2]
@@ -253,7 +254,7 @@ sources  = scott.c glue.s
 generate = dat/adv11.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = SAVAGE2.PRG -> GAMES/SAVAGE2.PRG
+program  = SAVAGE2.PRG -> TXTGAMES/SAVAGE2.PRG
 desc     = Savage Island part II (Scott Adams)
 
 [voyage]
@@ -262,5 +263,5 @@ sources  = scott.c glue.s
 generate = dat/adv12.dat -> game_data.c
 config   = scott.cfg
 include  = .
-program  = VOYAGE.PRG -> GAMES/VOYAGE.PRG
+program  = VOYAGE.PRG -> TXTGAMES/VOYAGE.PRG
 desc     = The Golden Voyage (Scott Adams)

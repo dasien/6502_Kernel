@@ -116,7 +116,7 @@ continue or ESC to stop.
 
 ```
 TYPE README.TXT
-MORE SVAULT/VAULT.TXT
+MORE GAMES/VAULT.TXT
 ```
 
 ### Copying, moving, renaming, deleting
@@ -161,7 +161,7 @@ and your Mac two ways:
 ## Drawers (subdirectories)
 
 Drawers are one level of subdirectories, a way to group files such as `GAMES/`,
-`SYSTEM/` and `SVAULT/`. They can't nest, but they grow as needed across multiple
+`TXTGAMES/` and `SYSTEM/`. They can't nest, but they grow as needed across multiple
 disk clusters, so there is no small file limit inside a drawer.
 
 ```
@@ -182,7 +182,7 @@ DRAWER/FILE       a file inside a named root drawer
 For example, to play the vault game and read its backstory:
 
 ```
-OPEN SVAULT
+OPEN GAMES
 VAULT
 TYPE VAULT.TXT
 ```
@@ -190,12 +190,12 @@ TYPE VAULT.TXT
 Or reach the same files from the root without opening the drawer:
 
 ```
-TYPE SVAULT/VAULT.TXT
+TYPE GAMES/VAULT.TXT
 COPY GAMES/CHESS.PRG,/CHESS.PRG
 ```
 
 `CATALOG` is the exception. Its argument is an 8.3 wildcard pattern rather than a
-path, and it always lists the current directory, so `CATALOG SVAULT` at the root
+path, and it always lists the current directory, so `CATALOG GAMES` at the root
 prints the drawer's own entry rather than its contents. Use `OPEN` first.
 
 ## Boot config (`SYSTEM/STARTUP.CFG`)
