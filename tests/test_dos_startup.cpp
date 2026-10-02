@@ -112,31 +112,32 @@ TEST_F(DosStartupTest, ADiskWithNoConfigBootsExactlyAsBefore)
    ROM lines are read off the ROMs, so this also proves each block is in place.
 
    Paced, on emulated time (runCycles ticks the timer): the chime plays out first,
-   ~1.5 s, then a line a second, then a second's hold and a clear -- so the header
-   is up at ~1.5 s, the DOS line at ~8.5 s, and the screen is clear at ~9.5 s.
+   ~1.5 s, then a line every half second, then a half second's hold and a clear --
+   so the header is up at ~1.5 s, the DOS line at ~5 s, and the screen is clear at
+   ~5.5 s.
    Sampled every quarter second, and judged at instants clear of those edges. */
 TEST_F(DosStartupTest, TheBootReportIsPacedAndNamesTheSegmentsAndTheRoms)
 {
     bootWith("");                       // the disk; the boot itself is re-run below
     box_.power_on();
     constexpr uint64_t kQuarter = 1'000'000;            // 4 MHz
-    std::string seen, at1, at2_75, at9, at11;
-    for (int q = 1; q <= 44; q++) {                     // 11 s
+    std::string seen, at1, at2, at5_25, at8;
+    for (int q = 1; q <= 32; q++) {                     // 8 s
         box_.runCycles(kQuarter);
         const std::string s = screen();
         seen += s;
         if (q == 4)  at1 = s;
-        if (q == 11) at2_75 = s;
-        if (q == 36) at9 = s;
-        if (q == 44) at11 = s;
+        if (q == 8)  at2 = s;
+        if (q == 21) at5_25 = s;
+        if (q == 32) at8 = s;
     }
 
     EXPECT_EQ(at1.find("MFC 6502 KERNEL"), std::string::npos)
         << "the report did not wait for the chime\n" << at1;
-    EXPECT_NE(at2_75.find("MFC 6502 KERNEL"), std::string::npos) << at2_75;
-    EXPECT_EQ(at2_75.find("DOS ROM installed"), std::string::npos)
-        << "the lines were not paced\n" << at2_75;
-    EXPECT_NE(at9.find("DOS ROM installed"), std::string::npos) << at9;
+    EXPECT_NE(at2.find("MFC 6502 KERNEL"), std::string::npos) << at2;
+    EXPECT_EQ(at2.find("DOS ROM installed"), std::string::npos)
+        << "the lines were not paced\n" << at2;
+    EXPECT_NE(at5_25.find("DOS ROM installed"), std::string::npos) << at5_25;
 
     EXPECT_NE(seen.find("CODE segment loaded at  $F000-$F"), std::string::npos);
     EXPECT_NE(seen.find("JUMPS segment loaded at $FF00-$FF47 (72 bytes)"), std::string::npos);
@@ -148,8 +149,8 @@ TEST_F(DosStartupTest, TheBootReportIsPacedAndNamesTheSegmentsAndTheRoms)
     EXPECT_EQ(seen.find("bank 2"), std::string::npos) << "an empty bank was reported";
 
     // Then a clear screen, and the sign-on as it always was.
-    EXPECT_EQ(at11.find("ROM installed"), std::string::npos) << "the report was not cleared\n" << at11;
-    EXPECT_NE(at11.find("OPERATIONAL"), std::string::npos) << at11;
+    EXPECT_EQ(at8.find("ROM installed"), std::string::npos) << "the report was not cleared\n" << at8;
+    EXPECT_NE(at8.find("OPERATIONAL"), std::string::npos) << at8;
 }
 
 /* Without a timer -- the CPU run on its own, as most harnesses here do -- the

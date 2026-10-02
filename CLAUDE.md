@@ -339,7 +339,7 @@ The kernel code follows these patterns:
 6. Initialize the devices and install the interrupt vectors
 7. Start the boot chime, enable the jiffy IRQ (which plays it) and `CLI`
 8. Print the boot report, paced when the timer runs: the chime plays out, then the
-   kernel's segments and every ROM's identity block a line a second, then a clear
+   kernel's segments and every ROM's identity block a line every half second, then a clear
 9. Enter **DOS**, which runs `SYSTEM/STARTUP.CFG` and then signs on
 
 There is no VIC-II, SID-CIA or keyboard-CIA init step: the PIA supplies the keyboard,

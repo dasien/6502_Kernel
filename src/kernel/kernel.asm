@@ -4,7 +4,7 @@
 ; Filename:     kernel.asm
 ; Author:       Brian Gentry
 ; Date:         2026-10-01
-; Version:      4.3
+; Version:      4.3.1
 ; Assembler:    ca65
 ;
 ; Description:  Machine language monitor for MFC 6502 system
@@ -280,6 +280,9 @@
 ;                   and only a pending TIMER advances the jiffy -- it used to assume
 ;                   every interrupt was one. K_RASTER_IRQ ($FF45) installs a handler
 ;                   (A/X) and enables the interrupt, or with 0 disables it.
+; 2026-10-01  v4.3.1 The boot report's pause is half a second, not one: a line every
+;                   30 jiffies, and the same before the clear. Chime to sign-on is
+;                   about 5.5 s, from 9.5.
 ; 2026-10-01  v4.3  A boot report and a boot chime. RESET prints what is installed
 ;                   before the DOS takes over: the kernel's own CODE, JUMPS and VECS
 ;                   segments, from the linker's __<SEG>_RUN__/__SIZE__ symbols, then
@@ -288,8 +291,9 @@
 ;                   so no table here can go stale. And it starts the chime, a list of
 ;                   timed SID writes (CHIME_TABLE) the jiffy IRQ steps through while the
 ;                   boot carries on; the DOS stops it before running a program. The
-;                   report is paced -- the chime, then a line a second, then a clear
-;                   screen and the DOS's sign-on as before -- when the timer runs. Also
+;                   report is paced -- the chime, then a line every half second, then
+;                   a clear screen and the DOS's sign-on as before -- when the timer
+;                   runs. Also
 ;                   fixes the page-2 clear: LDX #$E9 / BPL exits at once (bit 7 is
 ;                   already set), so it had only ever cleared $02E9.
 ; 2026-07-31  v4.0  The monitor left the kernel. kernel.asm is now the BIOS and
@@ -1845,8 +1849,8 @@ CHIME_TABLE:
 ; BOOT_REPORT - say what is installed
 ; ================================================================
 ; Printed once per reset, as a sequence: the chime plays out first, then a line
-; a second, then a second's hold and a clear screen, so the DOS signs on to a
-; blank screen as it always did. The kernel's segments come from the linker; the
+; every half second, then a half second's hold and a clear screen, so the DOS
+; signs on to a blank screen as it always did. The kernel's segments come from the linker; the
 ; ROMs from their identity blocks (romid.inc), found by mapping each module bank
 ; in turn -- an empty bank reads $00 and has no "MFC" marker. Only the window is
 ; banked and nothing here touches it, so printing with a bank mapped is safe.
@@ -2001,14 +2005,14 @@ BOOT_REPORT:
     STZ CMD_LINE_COUNT          ; the report is not a page of anyone's output
     JMP CLEAR_SCREEN            ; and gone: the DOS signs on to a blank screen
 
-; One second, if the timer runs (BOOT_TIMED); otherwise nothing. WAI sleeps until
+; Half a second, if the timer runs (BOOT_TIMED); otherwise nothing. WAI sleeps until
 ; the next interrupt rather than spinning on the counter.
 BOOT_PAUSE:
     LDA BOOT_TIMED
     BEQ @out
     LDA JIFFY_LO
     CLC
-    ADC #60
+    ADC #30                     ; jiffies
     STA BOOT_UNTIL
 @wait:
     WAI
@@ -2034,7 +2038,7 @@ BOOT_BYTES:
     JSR PRINT_MSG_AY
     JMP BOOT_PAUSE
 
-MSG_BOOT_HDR:    .BYTE "MFC 6502 KERNEL 4.3", $0D, 0
+MSG_BOOT_HDR:    .BYTE "MFC 6502 KERNEL 4.3.1", $0D, 0
 MSG_BOOT_CODE:   .BYTE "  CODE segment loaded at  $", 0
 MSG_BOOT_JUMPS:  .BYTE "  JUMPS segment loaded at $", 0
 MSG_BOOT_VECS:   .BYTE "  VECS segment loaded at  $", 0

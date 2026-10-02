@@ -621,12 +621,12 @@ three-line file in `src/kernel/romid/` linked into it, so the generated `forth.s
 needs no hand edit.
 
 `RESET` prints a boot report from them before entering the DOS. It is paced: the
-chime plays out first, then one line a second, then a second's hold and a clear
+chime plays out first, then one line every half second, then a half second's hold and a clear
 screen, so the DOS signs on to a blank screen as it always did:
 
 ```
-MFC 6502 KERNEL 4.3
-  CODE segment loaded at  $F000-$F906 (2311 bytes)
+MFC 6502 KERNEL 4.3.1
+  CODE segment loaded at  $F000-$F945 (2374 bytes)
   JUMPS segment loaded at $FF00-$FF47 (72 bytes)
   VECS segment loaded at  $FFFA-$FFFF (6 bytes)
   BASIC ROM installed as module bank 1 (16384 bytes)

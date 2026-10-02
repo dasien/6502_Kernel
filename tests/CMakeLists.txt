@@ -977,6 +977,13 @@ add_test(NAME spr2c_art
     -DWORK=${CMAKE_BINARY_DIR}/spr2c_test
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_spr2c.cmake)
 
+# Drift guard: every command in the DOS's verb table is named by some HELP line.
+# SHUTDOWN and BANKS both ran for months without being listed.
+add_test(NAME dos_help_lists_every_verb
+    COMMAND ${CMAKE_COMMAND}
+    -DDOS_ASM=${CMAKE_SOURCE_DIR}/src/kernel/dos/dos.asm
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_dos_help.cmake)
+
 add_test(NAME io_addresses_unique
     COMMAND ${CMAKE_COMMAND}
     "-DASM_FILES=${CMAKE_SOURCE_DIR}/src/kernel/kernel_vars.inc|${CMAKE_SOURCE_DIR}/programs/common/mfc.inc|${CMAKE_SOURCE_DIR}/src/kernel/dos/dos.asm"

@@ -329,8 +329,11 @@ DOS_SIGNATURE:
 ;        program launched while the chime still played; RESTART starts the
 ;        machine again through the reset vector; and HELP lists SHUTDOWN, whose
 ;        help line had been written but never put in the table
+;   1.24 HELP lists BANKS, which never had a help line, and CLEAR beside CLS.
+;        tests/scripts/check_dos_help.cmake now fails the tests if a verb runs
+;        that no HELP line names
 DOS_VERSION:
-    .BYTE $01, $17                      ; version 1.23 (major, minor)
+    .BYTE $01, $18                      ; version 1.24 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -2554,7 +2557,8 @@ MSG_DOS_HELP_HDR: .BYTE "MFC/OS COMMANDS", $0D, $0A, 0
 DOS_HELP_TABLE:
     .WORD DH_CAT, DH_TYPE, DH_MORE, DH_LOAD, DH_SAVE, DH_COPY, DH_MOVE
     .WORD DH_REN, DH_ERASE, DH_IMPORT, DH_EXPORT, DH_NEWD, DH_OPEN, DH_CLOSE
-    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_THEME, DH_VER, DH_DATE, DH_RESTART
+    .WORD DH_DROPD, DH_FREE, DH_MEMMAP, DH_BANKS, DH_THEME, DH_VER, DH_DATE
+    .WORD DH_RESTART
     .WORD DH_SHUTDOWN, DH_CLS, DH_MON, DH_HELP
 DOS_HELP_COUNT = (* - DOS_HELP_TABLE) / 2
 
@@ -2577,10 +2581,11 @@ DH_CLOSE:  .BYTE "CLOSE", $09, "leave the drawer", 0
 DH_DROPD:  .BYTE "DROPDRAWER name", $09, "remove an empty drawer", 0
 DH_FREE:   .BYTE "DISKFREE", $09, "show free space", 0
 DH_MEMMAP: .BYTE "MEMMAP", $09, "show the memory map", 0
+DH_BANKS:  .BYTE "BANKS", $09, "list the ROM programs", 0
 DH_THEME:  .BYTE "THEME [name]", $09, "set the display colours", 0
 DH_VER:    .BYTE "VERSION", $09, "show the OS version", 0
 DH_DATE:   .BYTE "DATE", $09, "show the date and time", 0
-DH_CLS:    .BYTE "CLS", $09, "clear the screen", 0
+DH_CLS:    .BYTE "CLS, CLEAR", $09, "clear the screen", 0
 DH_MON:    .BYTE "MON", $09, "enter the monitor", 0
 DH_HELP:   .BYTE "HELP", $09, "this list", 0
 MSG_DOS_BADCMD:  .BYTE "COMMAND NOT FOUND", $0D, $0A, 0
