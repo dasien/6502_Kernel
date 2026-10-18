@@ -577,4 +577,178 @@ TEST_F(SayPromptTest, EscapeMidLineClearsItAndStaysAtThePrompt)
     EXPECT_TRUE(madeSound()) << screen();
 }
 
+/* ---- the / settings ------------------------------------------------------- */
+
+class SaySettingsTest : public SayPromptTest {
+protected:
+    /* A fresh machine, SAY at its prompt. */
+    void fresh()
+    {
+        SetUp();
+        start();
+        run(0.3);
+    }
+
+    uint8_t var(const char *name) { return mem->read(sym(name)); }
+
+    /* SPEED, PITCH, THROAT, MOUTH as SAY keeps them. */
+    std::string vars()
+    {
+        return std::to_string(var("_sam_speed")) + " " + std::to_string(var("_sam_pitch")) + " " +
+               std::to_string(var("_sam_throat")) + " " + std::to_string(var("_sam_mouth"));
+    }
+
+    static std::string shown(int speed, int pitch, int throat, int mouth)
+    {
+        return "SPEED " + std::to_string(speed) + "  PITCH " + std::to_string(pitch) +
+               "  THROAT " + std::to_string(throat) + "  MOUTH " + std::to_string(mouth);
+    }
+
+    bool has(const std::string &what) { return screen().find(what) != std::string::npos; }
+
+    /* How long "AA4AA4AA4AA4" lasts, typed at the prompt after `setup`. */
+    double spokenLength(const std::string &setup)
+    {
+        fresh();
+        if (!setup.empty()) type(setup, 0.3);
+        samples.clear();
+        type("]AA4AA4AA4AA4\n", 5.0);
+        size_t first = 0, last = 0;
+        return sounding(samples, first, last);
+    }
+};
+
+TEST_F(SaySettingsTest, ShowReportsSAMsOwnSettingsAtAFreshPrompt)
+{
+    fresh();
+    type("/SHOW\n");
+    EXPECT_TRUE(has(shown(72, 64, 128, 128))) << screen();
+    EXPECT_TRUE(atPrompt()) << screen();
+}
+
+TEST_F(SaySettingsTest, EachSettingTakesANumberAndPrintsItBack)
+{
+    fresh();
+    type("/SPEED 100\n");
+    EXPECT_TRUE(has(shown(100, 64, 128, 128))) << screen();
+    EXPECT_EQ(vars(), "100 64 128 128");
+    type("/PITCH 33\n");
+    EXPECT_TRUE(has(shown(100, 33, 128, 128))) << screen();
+    EXPECT_EQ(vars(), "100 33 128 128");
+    type("/THROAT 200\n");
+    EXPECT_TRUE(has(shown(100, 33, 200, 128))) << screen();
+    EXPECT_EQ(vars(), "100 33 200 128");
+    type("/MOUTH 255\n");
+    EXPECT_TRUE(has(shown(100, 33, 200, 255))) << screen();
+    EXPECT_EQ(vars(), "100 33 200 255");
+    type("/SPEED 1\n");
+    EXPECT_TRUE(has(shown(1, 33, 200, 255))) << screen();
+    EXPECT_EQ(vars(), "1 33 200 255");
+    EXPECT_TRUE(atPrompt()) << screen();
+}
+
+TEST_F(SaySettingsTest, ANumberOutOfRangeOrMissingIsRefusedAndNothingChanges)
+{
+    const char *bad[] = {"/SPEED 0\n", "/SPEED 256\n", "/PITCH\n", "/MOUTH X\n"};
+    for (const char *line : bad) {
+        fresh();
+        type(line);
+        EXPECT_EQ(occurrences("A number from 1 to 255."), 1) << line << screen();
+        EXPECT_EQ(vars(), "72 64 128 128") << line;
+        EXPECT_TRUE(atPrompt()) << line << screen();
+        type("/SHOW\n");
+        EXPECT_TRUE(has(shown(72, 64, 128, 128))) << line << screen();
+    }
+}
+
+TEST_F(SaySettingsTest, EachVoiceSetsItsFourNumbers)
+{
+    struct V { const char *name; int speed, pitch, throat, mouth; };
+    const V voices[] = {
+        {"SAM", 72, 64, 128, 128},  {"ELF", 72, 64, 110, 160}, {"ROBOT", 92, 60, 190, 190},
+        {"STUFFY", 82, 72, 110, 105}, {"LADY", 82, 32, 145, 145}, {"ET", 100, 64, 150, 200},
+    };
+    fresh();
+    for (const V &v : voices) {
+        type(std::string("/VOICE ") + v.name + "\n");
+        EXPECT_TRUE(has(shown(v.speed, v.pitch, v.throat, v.mouth))) << v.name << "\n" << screen();
+        EXPECT_EQ(vars(), std::to_string(v.speed) + " " + std::to_string(v.pitch) + " " +
+                              std::to_string(v.throat) + " " + std::to_string(v.mouth)) << v.name;
+        EXPECT_TRUE(atPrompt()) << v.name << screen();
+    }
+}
+
+TEST_F(SaySettingsTest, AnUnknownVoiceListsTheSix)
+{
+    fresh();
+    type("/VOICE NOBODY\n");
+    EXPECT_TRUE(has("Voices: SAM ELF ROBOT STUFFY LADY ET")) << screen();
+    EXPECT_EQ(vars(), "72 64 128 128");
+    EXPECT_TRUE(atPrompt()) << screen();
+}
+
+TEST_F(SaySettingsTest, HelpAndQuestionMarkListTheSettings)
+{
+    for (const char *line : {"/HELP\n", "/?\n"}) {
+        fresh();
+        type(line);
+        for (const char *what : {"/SPEED", "/PITCH", "/THROAT", "/MOUTH", "/VOICE", "/SHOW",
+                                 "/HELP", "/QUIT"})
+            EXPECT_TRUE(has(what)) << line << what << "\n" << screen();
+        // The current text, not the line ama took out.
+        EXPECT_FALSE(has("says the last line again")) << screen();
+        EXPECT_TRUE(atPrompt()) << line << screen();
+    }
+}
+
+TEST_F(SaySettingsTest, AnUnknownSettingIsRefusedAndThePromptReturns)
+{
+    fresh();
+    type("/FOO\n");
+    EXPECT_EQ(occurrences("Not a setting. /HELP lists them."), 1) << screen();
+    EXPECT_TRUE(atPrompt()) << screen();
+    EXPECT_NE(cpu->reg.PC, sym("_QUITDOS"));
+}
+
+TEST_F(SaySettingsTest, QuitAndQLeave)
+{
+    for (const char *line : {"/QUIT\n", "/Q\n"}) {
+        fresh();
+        for (char ch : std::string(line)) pia->addKeypress(ch == '\n' ? '\r' : ch);
+        EXPECT_TRUE(leaves()) << line << screen();
+    }
+}
+
+TEST_F(SaySettingsTest, LowerCaseSettingsApply)
+{
+    fresh();
+    type("/speed 100\n");
+    EXPECT_TRUE(has(shown(100, 64, 128, 128))) << screen();
+    EXPECT_EQ(vars(), "100 64 128 128");
+    type("/voice elf\n");
+    EXPECT_TRUE(has(shown(72, 64, 110, 160))) << screen();
+    type("/show\n");
+    EXPECT_EQ(occurrences(shown(72, 64, 110, 160)), 2) << screen();
+}
+
+TEST_F(SaySettingsTest, SettingsLastAcrossSpokenLines)
+{
+    fresh();
+    type("/SPEED 150\n");
+    type("HELLO\n", 3.0);
+    EXPECT_TRUE(madeSound()) << screen();
+    type("/SHOW\n");
+    EXPECT_EQ(occurrences(shown(150, 64, 128, 128)), 2) << screen();
+    EXPECT_EQ(vars(), "150 64 128 128");
+}
+
+TEST_F(SaySettingsTest, SpeedMakesTheVoiceTakeLonger)
+{
+    const double normal = spokenLength("");
+    const double slow = spokenLength("/SPEED 144\n");
+    std::printf("speed 72: %.3f s, speed 144: %.3f s\n", normal, slow);
+    ASSERT_GT(normal, 0.0) << "no sound at the default speed";
+    EXPECT_GT(slow, normal * 1.5) << "/SPEED 144 did not lengthen the speech";
+}
+
 } // namespace
