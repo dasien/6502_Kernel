@@ -20,11 +20,10 @@ prompt:
 ```
 SAY
 > I AM THE SOFTWARE AUTOMATIC MOUTH.
-> .                          (says the last line again)
 >                            (an empty line, or ESC, leaves)
 ```
 
-A line can be up to 120 characters. Punctuation matters: a full stop lets the voice
+A line can be up to 79 characters. Punctuation matters: a full stop lets the voice
 fall and pause, and a question mark makes it rise.
 
 ## Phonemes
