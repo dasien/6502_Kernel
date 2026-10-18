@@ -1,0 +1,16 @@
+{
+  "abacus_version": 1,
+  "default_branch": "main",
+  "gate": "cmake --preset dev && cmake --build --preset dev && ctest --preset dev --output-on-failure",
+  "fast_check": "cmake --preset dev && cmake --build --preset dev",
+  "fix_rounds": {
+    "lite": 1,
+    "full": 2
+  },
+  "escalation_list": [],
+  "doctrine_docs": [
+    "CLAUDE.md"
+  ],
+  "context_ceiling_pct": 60,
+  "project": "6502 kernel"
+}
