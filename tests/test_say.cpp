@@ -32,6 +32,8 @@
 #include "computer/CPU6502.h"
 #include "computer/Computer6502.h"
 #include "computer/Memory.h"
+#include "computer/PIA.h"
+#include "computer/VIC.h"
 #include "computer/SID.h"
 
 namespace {
@@ -330,6 +332,249 @@ TEST_F(SaySoundTest, ItPutsTheClockAndInterruptsBack)
     EXPECT_EQ(mem->read(0xFED4), 0x00) << "SAY left the machine at 1 MHz";
     EXPECT_EQ(c.clockHz(), 4000000u);
     EXPECT_FALSE(cpu->getFlag(Computer::CPU6502::kInterrupt)) << "SAY left interrupts off";
+}
+
+/* The > prompt, driven the way a person drives it: SAY started with an empty
+   command tail, keys typed through the PIA, the screen read back from the VIC's
+   character plane. Reusable -- the "/" settings tests build on it: start(), type(),
+   run(), screen(), lastLine() and atPrompt() are the whole interface. */
+class SayPromptTest : public SaySoundTest {
+protected:
+    static constexpr uint16_t kSoundEnable = 0x0029;
+
+    void SetUp() override
+    {
+        SayTest::SetUp();
+        pia = c.getPia();
+        vic = c.getVideoChip();
+        samples.clear();
+    }
+
+    /* Launch as the DOS would with no command tail. `sound` is SOUND_ENABLE. */
+    void start(bool sound = true)
+    {
+        mem->write(kArgBuf, 0);
+        mem->write(kChimeOn, 0);
+        mem->write(kSoundEnable, sound ? 1 : 0);
+        cpu->reg.SP = 0xFF;
+        cpu->reg.PC = 0x0800;
+        cpu->setFlag(Computer::CPU6502::kInterrupt, false);
+        int16_t chunk[4096];
+        while (c.getSid()->drainSamples(chunk, 4096) > 0) {}
+    }
+
+    /* `seconds` of machine time, ten milliseconds a slice; the SID's output is
+       appended to `samples`. */
+    void run(double seconds)
+    {
+        int16_t chunk[4096];
+        for (int t = 0; t < static_cast<int>(seconds * 100); t++) {
+            c.runCycles(c.clockHz() / 100);
+            int n;
+            while ((n = c.getSid()->drainSamples(chunk, 4096)) > 0)
+                samples.insert(samples.end(), chunk, chunk + n);
+        }
+    }
+
+    /* Type text (a '\n' is Return), then give the machine time to act on it. */
+    void type(const std::string &text, double seconds = 0.2)
+    {
+        for (char ch : text) pia->addKeypress(ch == '\n' ? '\r' : ch);
+        run(seconds);
+    }
+
+    /* Step by instruction until SAY reaches QUITDOS; true if it did. */
+    bool leaves()
+    {
+        const uint16_t quit = sym("_QUITDOS");
+        for (int i = 0; i < 20'000'000 && cpu->reg.PC != quit; i++) c.runInstructions(1);
+        return cpu->reg.PC == quit;
+    }
+
+    std::string row(int y)
+    {
+        std::string out;
+        for (int x = 0; x < 80; x++)
+            out.push_back(static_cast<char>(vic->getCharacterAt(static_cast<uint16_t>(x),
+                                                               static_cast<uint16_t>(y))));
+        return out;
+    }
+
+    static std::string rtrim(std::string s)
+    {
+        while (!s.empty() && s.back() == ' ') s.pop_back();
+        return s;
+    }
+
+    std::string screen()
+    {
+        std::string out;
+        for (int y = 0; y < 25; y++) out += rtrim(row(y)) + "\n";
+        return out;
+    }
+
+    /* The last row with anything on it ("" if the screen is blank). */
+    std::string lastLine()
+    {
+        for (int y = 24; y >= 0; y--)
+            if (!rtrim(row(y)).empty()) return rtrim(row(y));
+        return "";
+    }
+
+    /* A fresh, empty prompt is the last thing on the screen. */
+    bool atPrompt() { return lastLine() == ">"; }
+
+    int occurrences(const std::string &what)
+    {
+        int n = 0;
+        const std::string s = screen();
+        for (size_t at = s.find(what); at != std::string::npos; at = s.find(what, at + 1)) n++;
+        return n;
+    }
+
+    bool madeSound()
+    {
+        size_t first, last;
+        return sounding(samples, first, last) > 0.05;
+    }
+
+    Computer::PIA *pia = nullptr;
+    Computer::VIC *vic = nullptr;
+    std::vector<int16_t> samples;
+};
+
+TEST_F(SayPromptTest, ItSignsOnAndAsksForALine)
+{
+    start();
+    run(0.3);
+    const std::string s = screen();
+    const size_t on = s.find("SAY -- S.A.M., the Software Automatic Mouth");
+    ASSERT_NE(on, std::string::npos) << s;
+    EXPECT_NE(s.find("\n>", on), std::string::npos) << "no prompt after the sign-on:\n" << s;
+    EXPECT_TRUE(atPrompt()) << s;
+    EXPECT_FALSE(madeSound());
+}
+
+TEST_F(SayPromptTest, ATypedEnglishLineIsSpokenAndAFreshPromptFollows)
+{
+    start();
+    run(0.3);
+    type("HELLO\n", 2.0);
+    EXPECT_TRUE(madeSound()) << "SAM made no sound\n" << screen();
+    EXPECT_EQ(occurrences("> HELLO"), 1) << screen();
+    EXPECT_TRUE(atPrompt()) << screen();
+    EXPECT_EQ(screen().find("SAM could not"), std::string::npos) << screen();
+}
+
+TEST_F(SayPromptTest, LowerCaseIsSpokenAsCapitalsAre)
+{
+    // What reaches SAM is compared, caught at the call into it: the same bytes
+    // whatever the case typed, so it is spoken the same.
+    const uint16_t say_text = sym("_sam_say_text"), input = sym("_sam_input");
+    auto whatSAMGets = [&](const std::string &typed) {
+        SetUp();                                    // a fresh machine for each line
+        start();
+        run(0.3);
+        type(typed, 0.0);
+        for (int i = 0; i < 5'000'000 && cpu->reg.PC != say_text; i++) c.runInstructions(1);
+        EXPECT_EQ(cpu->reg.PC, say_text) << "the line never reached SAM";
+        std::string got;
+        for (int i = 0; i < 256; i++) {
+            const uint8_t b = mem->read(static_cast<uint16_t>(input + i));
+            if (b == kSamEol) break;
+            got.push_back(static_cast<char>(b));
+        }
+        return got;
+    };
+    EXPECT_EQ(whatSAMGets("HELLO\n"), "HELLO");
+    EXPECT_EQ(whatSAMGets("hello\n"), "HELLO");
+    EXPECT_EQ(whatSAMGets("HeLLo\n"), "HELLO");
+
+    // And it makes sound, with no complaint.
+    SetUp();
+    start();
+    run(0.3);
+    type("hello\n", 2.0);
+    EXPECT_TRUE(madeSound()) << screen();
+    EXPECT_TRUE(atPrompt()) << screen();
+    EXPECT_EQ(screen().find("SAM could not"), std::string::npos) << screen();
+}
+
+TEST_F(SayPromptTest, APhonemeLineIsSpokenWithNoError)
+{
+    start();
+    run(0.3);
+    type("]/HEH4LOW\n", 2.0);
+    EXPECT_TRUE(madeSound()) << screen();
+    EXPECT_EQ(screen().find("SAM does not know"), std::string::npos) << screen();
+    EXPECT_EQ(screen().find("SAM could not"), std::string::npos) << screen();
+    EXPECT_TRUE(atPrompt()) << screen();
+}
+
+TEST_F(SayPromptTest, PhonemesSAMCannotReadAreEchoedWithACaretWhereItStopped)
+{
+    start();
+    run(0.3);
+    type("]XQ\n", 2.0);
+    const std::string s = screen();
+    const std::string head = "SAM does not know this:\n";
+    const size_t at = s.find(head);
+    ASSERT_NE(at, std::string::npos) << s;
+    // The phonemes as typed (without the ]), then the caret line under them.
+    const size_t echo = at + head.size();
+    const size_t eol = s.find('\n', echo);
+    ASSERT_NE(eol, std::string::npos);
+    EXPECT_EQ(s.substr(echo, eol - echo), " XQ") << s;
+    const size_t caretRow = eol + 1;
+    const size_t caret = s.find('^', caretRow);
+    ASSERT_NE(caret, std::string::npos) << s;
+    ASSERT_LT(caret, s.find('\n', caretRow)) << "the ^ is not on the line under the phonemes";
+    // Both lines are indented one column. "X" is a phoneme, "XQ" is not: SAM
+    // stops at the Q, index 1, so the caret sits under it.
+    EXPECT_EQ(caret - caretRow, 1u + 1u) << s;
+    EXPECT_TRUE(atPrompt()) << s;
+}
+
+TEST_F(SayPromptTest, MutedSystemSoundIsSaidSoAndThePromptReturns)
+{
+    start(false);
+    run(0.3);
+    type("HELLO\n", 0.5);
+    EXPECT_NE(screen().find("System sound is muted."), std::string::npos) << screen();
+    EXPECT_FALSE(madeSound());
+    EXPECT_TRUE(atPrompt()) << screen();
+}
+
+TEST_F(SayPromptTest, ReturnOnAnEmptyLineLeaves)
+{
+    start();
+    run(0.3);                                   // sign-on, waiting at the prompt
+    pia->addKeypress('\r');
+    EXPECT_TRUE(leaves()) << screen();
+}
+
+TEST_F(SayPromptTest, EscapeOnAnEmptyLineLeaves)
+{
+    start();
+    run(0.3);
+    pia->addKeypress(0x1B);
+    EXPECT_TRUE(leaves()) << screen();
+}
+
+TEST_F(SayPromptTest, EscapeMidLineClearsItAndStaysAtThePrompt)
+{
+    start();
+    run(0.3);
+    type("HELLO", 0.2);
+    EXPECT_EQ(occurrences("> HELLO"), 1) << screen();
+    type("\x1b", 0.2);
+    EXPECT_TRUE(atPrompt()) << "the line was not cleared:\n" << screen();
+    EXPECT_EQ(screen().find("HELLO"), std::string::npos) << screen();
+    EXPECT_FALSE(madeSound());
+    EXPECT_NE(cpu->reg.PC, sym("_QUITDOS"));
+    // Still alive and reading: the next line is taken.
+    type("]/HEH4LOW\n", 2.0);
+    EXPECT_TRUE(madeSound()) << screen();
 }
 
 } // namespace
