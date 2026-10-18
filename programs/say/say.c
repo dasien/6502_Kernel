@@ -12,8 +12,8 @@
  *   SAY                    a prompt: each line you type is spoken
  *
  * At the prompt, a line beginning with / is a setting rather than speech
- * (/HELP lists them), "." on its own says the last line again, and ESC on an
- * empty line -- or an empty line -- leaves.
+ * (/HELP lists them), and ESC on an empty line -- or an empty line --
+ * leaves.
  *
  * How it sounds: SAM holds SID voice 1 high and writes the master volume
  * thousands of times a second, a 4-bit sample each time. Its loops are its clock,
@@ -132,7 +132,7 @@ static void help(void)
             "  /THROAT n  /MOUTH n   the voice's shape   (128 128)\n"
             "  /VOICE name   ");
     for (i = 0; i < NVOICES; i++) { say_str(voices[i].name); OUTCH(' '); }
-    say_str("\n  /SHOW   /HELP   /QUIT   . says the last line again\n");
+    say_str("\n  /SHOW   /HELP   /QUIT\n");
 }
 
 /* A word of the line, matched in capitals: does `line` start with `word`, at a
