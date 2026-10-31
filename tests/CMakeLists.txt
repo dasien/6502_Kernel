@@ -1016,6 +1016,21 @@ add_test(NAME spr2c_art
     -DWORK=${CMAKE_BINARY_DIR}/spr2c_test
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_spr2c.cmake)
 
+# png2art is a hand-run developer tool; only these tests run it.
+add_test(NAME png2art_sprite
+    COMMAND ${CMAKE_COMMAND}
+    -DPNG2ART=$<TARGET_FILE:png2art>
+    -DSPR2C=$<TARGET_FILE:spr2c>
+    -DDATA=${CMAKE_SOURCE_DIR}/tests/data/png2art
+    -DVIC_CPP=${CMAKE_SOURCE_DIR}/src/computer/VIC.cpp
+    -DWORK=${CMAKE_BINARY_DIR}/png2art_test
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_png2art.cmake)
+add_test(NAME png2art_errors
+    COMMAND ${CMAKE_COMMAND}
+    -DPNG2ART=$<TARGET_FILE:png2art>
+    -DDATA=${CMAKE_SOURCE_DIR}/tests/data/png2art
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_png2art_errors.cmake)
+
 # Drift guard: every command in the DOS's verb table is named by some HELP line.
 # SHUTDOWN and BANKS both ran for months without being listed.
 add_test(NAME dos_help_lists_every_verb

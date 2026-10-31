@@ -103,6 +103,18 @@ target_include_directories(dat2c PRIVATE ${CMAKE_SOURCE_DIR}/programs/scottfree)
 # ----------------------------------------------------------------
 add_executable(spr2c tools/spr2c/spr2c.c)
 
+# ----------------------------------------------------------------
+# png2art - developer tool, run by hand: a PNG or GIF to a paste-ready @sprite block.
+# Nothing in the build runs it (no generate= rule, no custom command); only its test.
+#   ./bin/png2art -s 16x16 -n art_craft craft.png > craft.art
+# ----------------------------------------------------------------
+add_executable(png2art tools/png2art/png2art.c)
+target_include_directories(png2art SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/vendor/stb)
+find_library(PNG2ART_M m)
+if(PNG2ART_M)
+    target_link_libraries(png2art PRIVATE ${PNG2ART_M})
+endif()
+
 # Assemble the default disk.img the GUI loads (${CMAKE_BINARY_DIR}/disk.img).
 # Explicit target -- NOT part of `ninja`/ALL -- so routine builds never rewrite the
 # disk. The programs are ordinary targets, so `ninja disk` rebuilds whichever of
