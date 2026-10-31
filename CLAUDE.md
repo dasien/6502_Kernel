@@ -373,6 +373,7 @@ Refer to `docs/architecture.md` for complete details, but key locations include:
 - **$FFFA-$FFFF**: Interrupt vectors (NMI, RESET, IRQ)
 
 <!-- abacus:begin (managed by abacus-adopt; edit the canonical copy in abacus-standards) -->
+
 ## Abacus
 
 This repository participates in Abacus, Bitwarden's orchestrated multi-agent development system.

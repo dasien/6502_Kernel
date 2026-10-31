@@ -7,7 +7,8 @@ reason on stderr (the text the agent sees) and a line in the refusal log.
 Guards:
   repo-fence        writes stay inside this repository; never into another repo
                     under any workspace root or registered in the fleet,
-                    ~/.claude, ~/.abacus, or this repo's own control files
+                    ~/.claude, ~/.abacus, or this repo's own control files;
+                    the marked gate call in a hook is never removed or changed
   role-policy       (roles) writes only to the paths in .claude/role-policy.json
   role-commands     (roles) every shell command must match the allowlist in
                     .claude/role-policy.json "commands" (fail closed)
@@ -16,22 +17,28 @@ Guards:
                     planner (ABACUS_ROLE=planner) files and shapes drafts, and
                     labels or approves a bead only when an operator ruling names it
   destructive-git   force-push, history rewrites, hard resets, hook bypass...
-  stage-writes      Dynamic Workflow stages may not push, commit, close beads
+  stage-writes      Dynamic Workflow stages may not push, commit, close beads, or change GitHub (gh)
                     or start claude; only the finishing script does that
   database-url      tests run only against databases whose name ends in _test
-  operator-only     releases, tags, deploys and publishes are the operator's
+  operator-only     releases, tags, deploys and publishes are the operator's, and so is
+                    `bd ship --force` (shipping before the bead is closed)
   secrets           no environment dumps, no printing secret variables, no reading
                     credential files, no credential-retrieval commands (bw, bws,
                     security, gh auth token, ...); `ps` is refused while secrets
-                    are loaded. Pairs with redact.py (PostToolUse).
+                    are loaded. A bw inside the workspace (e.g. a repository's own
+                    build), run alone as a literal path, may run any subcommand.
+                    Pairs with redact.py.
   human-only        no forged operator rulings (quoted words must come from a
                     genuine operator turn or the logbook), no browser or GUI
-                    control as the signed-in operator, no decision-record
+                    control as the signed-in operator, no MCP writes to shared
+                    systems (issues, comments, pages), no decision-record
                     writes/deletes without a one-time `abacus-authorize` grant
 """
+import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -74,9 +81,19 @@ GIT_PATH_SUBS = {"rm", "mv", "checkout", "restore", "apply", "clean", "add", "up
 # value-taking short flags per subcommand: stop expanding a cluster there (`-mfix` is -m "fix")
 GIT_VALUED = {"commit": "mFCct", "push": "o", "checkout": "bB", "switch": "cC", "branch": "", "clean": "e",
               "reset": "", "tag": "mFu", "stash": "m"}
-BD_VALUED = {"--actor", "--db", "-C", "--directory", "--dolt-auto-commit", "--profile"}
+BD_VALUED = {"--actor", "--db", "--database", "-C", "--directory", "--dolt-auto-commit", "--mem-profile", "--profile"}
 BD_READ = {"show", "view", "list", "ready", "blocked", "where", "stats", "statuses", "types", "prime",
            "recall", "memories", "search", "count", "info", "version", "help", "status", "children", "export"}
+# The marked call adoption puts in each hook git runs. These must match GATE_BEGIN, GATE_END and GATE_HOOKS in
+# lib/abacus_standards/common.py.
+GATE_BEGIN, GATE_END = "# abacus:gate begin", "# abacus:gate end"
+GATE_HOOKS = ("pre-commit", "pre-push")
+_GATE = rf"(?:{re.escape(GATE_BEGIN)}|{re.escape(GATE_END)})"
+GATE_MARK = re.compile(rb"(?<=\n)[ \t]*" + _GATE.encode())
+GATE_LINE = re.compile(rf"^[ \t]*{_GATE}", re.M)
+GATE_BLOCK = re.compile(rf"^[ \t]*{re.escape(GATE_BEGIN)}[^\n]*\n.*?^[ \t]*{re.escape(GATE_END)}[^\n]*(?:\n|\Z)",
+                        re.M | re.S)
+GATE_REMOVERS = {"rm", "rmdir", "mv", "shred", "unlink"}  # these take a hook with the directory that holds it
 
 
 # ---------------------------------------------------------------- helpers
@@ -249,6 +266,117 @@ def _targets(data, segs):
     return targets, None
 
 
+def gate_marked(path):
+    """True when the file has a gate marker line. It reads the whole file, so padding a hook can't push one out of
+    sight; a missing or unreadable file has none."""
+    try:
+        with open(path, "rb") as f:
+            tail = b"\n"
+            while True:
+                chunk = f.read(1 << 20)
+                if not chunk:
+                    return False
+                if GATE_MARK.search(tail + chunk):
+                    return True
+                tail = chunk[-128:]
+    except OSError:
+        return False
+
+
+def gate_marked_at(path):
+    """The marked file a write to path would touch: path itself, or a file directly in it when it is a directory."""
+    if os.path.isfile(path):
+        return path if gate_marked(path) else None
+    if os.path.isdir(path):
+        try:
+            with os.scandir(path) as entries:
+                return next((e.path for e in entries if e.is_file() and gate_marked(e.path)), None)
+        except OSError:
+            return None
+    return None
+
+
+def gate_hooks(d):
+    """The hook files git runs for the repository holding directory d: <hooks dir>/<hook>, and the tracked
+    .husky/<hook> that Husky's wrappers in .husky/_ call."""
+    p = subprocess.run(["git", "-C", d, "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+                       capture_output=True, text=True)
+    dirs = [os.path.join(sh.toplevel(d), ".husky")]
+    if p.returncode == 0 and p.stdout.strip():
+        hooks = os.path.realpath(p.stdout.strip())
+        dirs += [hooks, os.path.dirname(hooks)] if os.path.basename(hooks) == "_" else [hooks]
+    return [os.path.join(x, h) for x in dirs for h in GATE_HOOKS]
+
+
+def gate_edit_result(text, tool, ti):
+    """The file's text after this file-tool call, or None when that can't be worked out exactly."""
+    if tool == "Write":
+        return ti.get("content") if isinstance(ti.get("content"), str) else None
+    if tool == "MultiEdit":
+        edits = ti.get("edits")
+    elif tool == "Edit":
+        edits = [ti]
+    else:
+        edits = None
+    if not isinstance(edits, list) or not edits:
+        return None
+    for e in edits:
+        old, new = (e.get("old_string"), e.get("new_string")) if isinstance(e, dict) else (None, None)
+        if not isinstance(old, str) or not isinstance(new, str) or not old or old not in text:
+            return None
+        if e.get("replace_all"):
+            text = text.replace(old, new)
+        elif text.count(old) == 1:
+            text = text.replace(old, new, 1)
+        else:
+            return None  # the tool itself refuses an ambiguous match
+    return text
+
+
+GATE_WHY = ("carries the Abacus gate call (`# abacus:gate begin` ... `# abacus:gate end`). Removing or changing it "
+            "lets commits and pushes skip the gates, so agents never do; the operator makes such changes (re-running "
+            "abacus-adopt restores the call).")
+
+
+def gate_call_change(data, segs):
+    """Refuse a write that could remove or alter the gate call in a hook. A file-tool edit is replayed and allowed
+    when every block survives byte-identical; a shell write can't be replayed, so any one onto a marked file is
+    refused."""
+    tool = data["tool_name"]
+    if tool in FILE_TOOLS:
+        ti = data.get("tool_input") or {}
+        for t in file_targets(data):
+            if not gate_marked(t):
+                continue  # includes a Write that creates the file
+            with open(t, encoding="utf-8", errors="surrogateescape", newline="") as f:
+                before = f.read()
+            after = gate_edit_result(before, tool, ti)
+            if after is None:
+                return f"{t} {GATE_WHY} The guard can't tell what this edit leaves behind, so it refuses (fail closed)."
+            if sorted(GATE_BLOCK.findall(before)) != sorted(GATE_BLOCK.findall(after)) or \
+                    len(GATE_LINE.findall(before)) != len(GATE_LINE.findall(after)):
+                return f"{t} {GATE_WHY} Edit other lines of the hook and leave the block exactly as it is."
+        return None
+    for s in segs:
+        removed = write_targets(s) if s.cmd in GATE_REMOVERS else []
+        if s.cmd == "git":
+            override, sub, args, _ = git_parts(s.argv)
+            if sub in ("rm", "mv"):
+                base = sh._expand(override, s.cwd, s.env) if override else s.cwd
+                removed = [sh._expand(a, base, s.env) for a in args if not a.startswith("-") and a != "--"]
+        for t in write_targets(s):
+            hit = gate_marked_at(t)
+            if hit:
+                return (f"{hit} {GATE_WHY} A shell write to it can't be checked; change other lines of the hook with "
+                        f"the Edit tool.")
+        for t in removed:
+            if os.path.isdir(t):
+                hit = next((h for h in gate_hooks(t) if sh.inside(h, t) and gate_marked(h)), None)
+                if hit:
+                    return f"{t} holds {hit}, which {GATE_WHY}"
+    return None
+
+
 # ---------------------------------------------------------------- guards
 
 def repo_fence(data, segs):
@@ -287,7 +415,7 @@ def repo_fence(data, segs):
         if any(sh.inside(rt, f) for f in fenced):
             return (f"{t} is outside this repository ({repo}). Never write into another repository: file a "
                     f"bead on its board or add a note tagged [from {os.path.basename(repo)}] instead.")
-    return None
+    return gate_call_change(data, segs)
 
 
 def role_policy(data, segs):
@@ -405,6 +533,8 @@ def foreign_bd(data, segs):
 
 
 PLANNER_TAG = "[from planner]"
+BD_TIMEOUT = 10      # seconds; a bd that hangs raises, and run() turns any raise into a refusal
+MAX_BEADS = 50       # the planner names the beads, so it must not be able to name enough to outrun the hook
 BD_VALUE_FLAGS = {"--title", "--description", "-d", "--body-file", "--acceptance", "--design", "--design-file",
                   "--append-notes", "--notes", "--external-ref", "--priority", "-p", "--status", "-s", "--assignee",
                   "-a", "--labels", "-l", "--add-label", "--remove-label", "--reason", "--type", "-t", "--db",
@@ -427,14 +557,16 @@ def bd_positionals(argv):
     return out
 
 
-def bead_labels(board, bead):
-    p = subprocess.run(["bd", "show", bead, "--json"], cwd=board, capture_output=True, text=True)
+def draft_beads(board, beads):
+    """The beads among these that carry the draft label, from one `bd show`. bd leaves out ids it doesn't know."""
+    p = subprocess.run(["bd", "show", *beads, "--json"], cwd=board, capture_output=True, text=True,
+                       timeout=BD_TIMEOUT)
     try:
         data = json.loads(p.stdout or "null")
     except ValueError:
-        return None
-    data = data[0] if isinstance(data, list) and data else data
-    return data.get("labels") or [] if isinstance(data, dict) else None
+        return set()
+    data = data if isinstance(data, list) else [data]
+    return {d.get("id") for d in data if isinstance(d, dict) and "draft" in (d.get("labels") or [])}
 
 
 def operator_ruled_on(bead):
@@ -470,8 +602,7 @@ def planner_bd(argv, words, board):
         return None
 
     def is_draft(bead):
-        labels = bead_labels(board, bead)
-        return labels is not None and "draft" in labels
+        return bead in draft_beads(board, [bead])
 
     if verb == "update" and len(words) > 1:
         flags, skip = set(), False
@@ -493,12 +624,19 @@ def planner_bd(argv, words, board):
     if verb == "dep" and len(words) > 2 and words[1] == "add":
         return None if is_draft(words[2]) else f"{words[2]} is not a draft; only drafts get new dependencies here"
     if verb == "close" and len(words) > 1:
-        bad = [b for b in bd_positionals(argv)[1:] if not is_draft(b)]
+        beads = bd_positionals(argv)[1:]
+        if len(beads) > MAX_BEADS:
+            return f"name at most {MAX_BEADS} beads per call"
+        drafts = draft_beads(board, beads) if beads else set()
+        bad = [b for b in beads if b not in drafts]
         return f"only drafts can be dropped by the planner ({', '.join(bad)} are not)" if bad else None
     if verb == "label" and len(words) > 3 and words[1] in ("add", "remove"):
         beads, label = words[2:-1], words[-1]
+        if len(beads) > MAX_BEADS:
+            return f"name at most {MAX_BEADS} beads per call"
+        drafts = draft_beads(board, beads)
         for b in beads:
-            if not is_draft(b):
+            if b not in drafts:
                 return f"{b} is not a draft; its labels belong to its board's owner"
             if (label.startswith("pipeline:") or (label == "draft" and words[1] == "remove")) \
                     and not operator_ruled_on(b):
@@ -584,6 +722,36 @@ def stage_writes(data, segs):
                 return "Dynamic Workflow stages may not close beads; only abacus-finalize closes"
         if s.cmd == "claude":
             return "Dynamic Workflow stages may not start claude sessions"
+        if s.cmd == "gh":
+            why = _gh_changes_github(s.argv)
+            if why:
+                return (f"Dynamic Workflow stages may not `{why}`; only abacus-finalize opens pull requests "
+                        f"(a company skill supplies content through a profile slot, never the action)")
+    return None
+
+
+GH_CHANGES = {"pr": {"create", "merge", "close", "edit", "comment", "review", "ready", "reopen", "lock", "unlock"},
+              "issue": {"create", "edit", "close", "comment", "reopen", "delete", "transfer", "lock", "unlock",
+                        "pin", "unpin"},
+              "release": {"create", "edit", "delete", "upload", "delete-asset"},
+              "repo": {"create", "delete", "edit", "fork", "rename", "archive", "unarchive", "sync"},
+              "label": {"create", "edit", "delete", "clone"}, "secret": {"set", "delete"},
+              "variable": {"set", "delete"}, "workflow": {"run", "enable", "disable"}}
+
+
+def _gh_changes_github(argv):
+    """`gh <group> <verb>` that writes to GitHub, or `gh api` with a writing method or fields; else None."""
+    words = [w for w in argv[1:] if not w.startswith("-")]
+    if len(words) >= 2 and words[1] in GH_CHANGES.get(words[0], ()):
+        return f"gh {words[0]} {words[1]}"
+    if words[:1] == ["api"]:
+        flags = argv[1:]
+        method = next((flags[i + 1] for i, w in enumerate(flags[:-1]) if w in ("-X", "--method")), None)
+        method = method or next((w.split("=", 1)[1] for w in flags if w.startswith("--method=")), None)
+        if (method or "").upper() in ("POST", "PUT", "PATCH", "DELETE") or \
+                (not method and any(w in ("-f", "-F", "--field", "--raw-field", "--input") or
+                                    w.startswith(("--field=", "--raw-field=")) for w in flags)):
+            return "gh api (a writing request)"
     return None
 
 
@@ -623,6 +791,11 @@ def operator_only(data, segs):
         if s.cmd in ("npm", "cargo", "dotnet", "twine", "yarn", "pnpm") and \
                 any(a in ("publish", "upload", "push") for a in s.argv[1:3]):
             return "publishing packages is reserved for the operator"
+        is_ship = s.cmd == "bd" and bd_words(s.argv)[:1] == ["ship"]  # global flags may come before ship
+        force_requested = any(a in ("--force", "-f") or a.startswith("--force=") for a in s.argv[1:])
+        if is_ship and force_requested:
+            return ("`bd ship --force` marks a capability delivered before its bead is closed; that call is the "
+                    "operator's. Ship it once the bead is closed and verified.")
     return None
 
 
@@ -639,9 +812,57 @@ BW_SAFE = {"status", "sync", "lock", "logout", "config", "--version", "-v", "--h
 GIT_SECRET_OK = {"check-ignore", "ls-files", "status", "rm"}
 
 
-def _secret_retrieval(s, words):
+def _repository_bw(s, sole):
+    """A bw the repository built (target/debug/bw, a worktree's build) runs any subcommand: it's the repository's own
+    product, built from code the session already runs through cargo or its tests. Anything else is the installed
+    Bitwarden CLI, which reaches the operator's real vault, and stays guarded. Judged by which binary, never by
+    subcommand, so a command the work is adding is covered too.
+
+    An allow-list, because the guard reads command text and can't follow the shell: the exemption applies only when
+    the whole Bash command is this one simple command (sole: nothing before it can cd or swap the file), given as a
+    literal path (no $, backtick or ~ for the shell to rewrite), to a file that already exists inside the workspace
+    and isn't a copy of the installed bw. node_modules (a dependency, not the product) never counts."""
+    first = s.argv[0] if s.argv else ""
+    if not sole or "/" not in first or any(c in first for c in "$`~"):
+        return False
+    path = os.path.realpath(os.path.join(s.cwd, first))
+    if not os.path.isfile(path) or "node_modules" in path.split(os.sep) or _installed_bw_copy(path):
+        return False
+    roots = sh.workspace_roots() + sh.fleet_repos()
+    project = os.environ.get("CLAUDE_PROJECT_DIR")
+    if project:
+        roots += [os.path.realpath(project), _git_main_checkout(project)]
+    return any(sh.inside(path, r) for r in roots if r)
+
+
+def _installed_bw_copy(path):
+    """Whether path holds the same bytes as the bw on PATH (the installed CLI, copied into the repository)."""
+    installed = shutil.which("bw")
+    if not installed:
+        return False
+    installed = os.path.realpath(installed)
+    try:
+        if installed == path or os.path.getsize(installed) != os.path.getsize(path):
+            return installed == path
+        digest = lambda f: hashlib.sha256(open(f, "rb").read()).hexdigest()
+        return digest(installed) == digest(path)
+    except OSError:
+        return True  # can't tell: treat it as the installed one
+
+
+def _git_main_checkout(path):
+    """The main checkout of the git repository at path, or None when git can't confirm one (never a guess)."""
+    p = subprocess.run(["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                       capture_output=True, text=True)
+    if p.returncode != 0 or not p.stdout.strip():
+        return None
+    common = os.path.realpath(p.stdout.strip())
+    return os.path.dirname(common) if os.path.basename(common) == ".git" else common
+
+
+def _secret_retrieval(s, words, sole=False):
     cmd, argv = s.cmd, s.argv
-    if cmd == "bw":
+    if cmd == "bw" and not _repository_bw(s, sole):
         if words and words[0] not in BW_SAFE or not words and any(a not in BW_SAFE for a in argv[1:]):
             return ("Bitwarden CLI vault access (bw get/list/unlock/export/serve...) is a human-only act: agents never "
                     "read vault items. Ask the operator in this session if a value is genuinely needed.")
@@ -704,6 +925,8 @@ def secrets(data, segs):
                         f"template such as .env.example, or ask the operator.")
         return None
     loaded = sec.loaded_secrets(extra=extra)
+    raw = str((data.get("tool_input") or {}).get("command") or "")
+    sole = len(segs) == 1 and not any(c in raw for c in "$`~\n")  # one simple command the shell won't rewrite
     for s in segs:
         words, argv, cmd = s.words, s.argv, s.cmd
         if words and os.path.basename(words[0]) == "env" and not argv:
@@ -750,7 +973,7 @@ def secrets(data, segs):
                 if sec.is_secret_path(sh._expand(c, s.cwd, s.env), s.cwd):
                     return (f"`{cmd}` on {c} would read a credential file; agents never read credential stores. "
                             f"Use a template such as .env.example, or ask the operator.")
-        why = _secret_retrieval(s, [w for w in argv[1:] if not w.startswith("-")])
+        why = _secret_retrieval(s, [w for w in argv[1:] if not w.startswith("-")], sole)
         if why:
             return why
     return None
@@ -759,6 +982,22 @@ def secrets(data, segs):
 # ---------------------------------------------------------------- human-only
 
 BROWSER_MCP = re.compile(r"^mcp__.*(chrome|browser|playwright|puppeteer|computer|selenium|webdriver)", re.I)
+# An MCP tool that changes a shared system (a Jira issue, a comment, a link, a page) acts as the signed-in operator.
+# Reading through MCP is fine; the first verb in the tool's own name decides, wherever it sits (`create_issue`,
+# `slack_send_message`, `issue_create`, `API-post-page`), so `get_merge_request` stays a read. Names split into words
+# at _, -, . and camelCase humps, so `settings` or `addressBook` don't read as `set` or `add`.
+SHARED_WRITE_VERBS = {"create", "update", "delete", "add", "link", "unlink", "transition", "edit", "post", "assign",
+                      "move", "remove", "set", "close", "reopen", "comment", "merge", "publish", "archive", "upload",
+                      "send", "submit", "approve", "patch", "put", "push", "write"}
+READ_VERBS = {"get", "list", "search", "read", "fetch", "find", "query", "describe", "view", "show", "lookup"}
+
+
+def shared_write_mcp(name):
+    for word in re.findall(r"[A-Za-z]+", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)):
+        word = word.lower()
+        if word in READ_VERBS or word in SHARED_WRITE_VERBS:
+            return word in SHARED_WRITE_VERBS
+    return False
 BROWSER_APPS = re.compile(r"chrome|chromium|safari|firefox|arc|edge|brave|opera|vivaldi|orion|bitwarden", re.I)
 REAL_PROFILE = re.compile(r"Library/Application Support/(Google/Chrome|Chromium|BraveSoftware|Microsoft Edge|Arc)|"
                           r"Library/Application Support/Firefox|Library/Safari|\.config/(google-chrome|chromium)|"
@@ -900,6 +1139,9 @@ def human_only(data, segs):
             return None
         return ("operating a browser or the desktop acts as the signed-in operator, a human-only act. The operator can "
                 "grant one act with `abacus-authorize browser` in their own terminal.")
+    if tool.startswith("mcp__") and "__" in tool[5:] and shared_write_mcp(tool.rsplit("__", 1)[1]):
+        return (f"{tool.rsplit('__', 1)[1]} changes a shared system (a tracker, a page, a repository) as the signed-in "
+                f"operator, a human-only act. Read through MCP; say what should change and the operator makes it.")
     if tool in MESSAGE_TOOLS:
         msg = (data.get("tool_input") or {}).get("message") or ""
         bad = _unattested(RULED.findall(msg if isinstance(msg, str) else json.dumps(msg)), data)

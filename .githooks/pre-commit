@@ -1,6 +1,10 @@
 #!/bin/sh
 # Abacus commit gate: the repository's fast check. Canonical copy lives in abacus-standards.
 root=$(git rev-parse --show-toplevel) || exit 1
+# Gates find what lives only in the main checkout (a virtualenv, node_modules) through ABACUS_MAIN, never through git.
+common=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1
+case $common in */.git) ABACUS_MAIN=${common%/.git} ;; *) ABACUS_MAIN=$common ;; esac
+export ABACUS_MAIN
 cmd=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("fast_check","make check"))' "$root/.abacus/config.json") || {
   echo "abacus pre-commit: cannot read .abacus/config.json" >&2; exit 1; }
 # The gate runs the repository's own tests, and git's hook environment would point any git they run at this repository.
