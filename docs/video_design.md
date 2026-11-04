@@ -220,7 +220,7 @@ hand and never by the build) turns a PNG or GIF into a paste-ready `@sprite` blo
 
 ```
 png2art -s 16x16 -n art_craft craft.png > craft.art
-png2art -s 16x16 -n art_craft -t 128 -p mypal.txt craft.png >> craft.art
+png2art -s 16x16 -n art_craft_b -t 128 -p mypal.txt craft.png >> craft.art
 ```
 
 It trims the transparent margin, scales the rest to `-s WxH` by area-averaging
@@ -230,6 +230,7 @@ pixel to the nearest palette slot `1`-`F`. Slot 0 is never used for a colour. Th
 default palette is the 16 colours `VIC::seedPalette()` sets; `-p FILE` gives another,
 as lines of `RRGGBB` hex: 15 lines for slots 1-F, or 16 with slot 0 first (ignored).
 Blank lines and `#` lines are skipped. `--dump-palette` prints the palette in use.
+Each name must be new to the file, so a block appended with `>>` needs its own `-n`.
 The result is a starting point to tidy by hand, then `spr2c` reads it as above.
 
 **`@glyph NAME 8xH`** is a soft-font character, 1 bit a pixel, for the font port.

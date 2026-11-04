@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -60,18 +61,29 @@ static void load_palette(const char *path)
     FILE *f = fopen(path, "r");
     char line[256];
     unsigned vals[16][3];
-    int n = 0, i;
+    int n = 0, i, lineno = 0;
     if (!f) die("cannot open palette", path);
     while (fgets(line, sizeof line, f)) {
         char *p = line;
         char *end;
-        unsigned v;
+        unsigned v = 0;
+        size_t len = strlen(line);
+        lineno++;
+        if (len == sizeof line - 1 && line[len - 1] != '\n' && !feof(f)) {
+            fprintf(stderr, "png2art: palette %s: line %d is too long\n", path, lineno);
+            exit(1);
+        }
         while (*p == ' ' || *p == '\t') p++;
         if (*p == '#' || *p == '\n' || *p == '\r' || *p == 0) continue;
-        v = (unsigned)strtoul(p, &end, 16);
-        if (end - p != 6) die("palette line is not RRGGBB", path);
+        /* exactly six hex digits: strtoul would also take 0x, + and - */
+        for (end = p; end - p < 6 && isxdigit((unsigned char)*end); end++)
+            v = v * 16 + (unsigned)(isdigit((unsigned char)*end) ? *end - '0'
+                                    : (tolower((unsigned char)*end) - 'a' + 10));
         while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
-        if (*end) die("palette line is not RRGGBB", path);
+        if (end - p < 6 || *end || isxdigit((unsigned char)p[6])) {
+            fprintf(stderr, "png2art: palette %s: line %d is not RRGGBB\n", path, lineno);
+            exit(1);
+        }
         if (n == 16) die("palette has more than 16 lines", path);
         vals[n][0] = v >> 16; vals[n][1] = (v >> 8) & 255; vals[n][2] = v & 255;
         n++;
@@ -85,6 +97,35 @@ static void load_palette(const char *path)
         pal[slot][1] = (unsigned char)vals[i][1];
         pal[slot][2] = (unsigned char)vals[i][2];
     }
+}
+
+/* the whole of s as a decimal integer in lo..hi, else -1 */
+static long parse_num(const char *s, const char **end, long lo, long hi)
+{
+    char *e;
+    long v;
+    if (!isdigit((unsigned char)*s)) return -1;
+    errno = 0;
+    v = strtol(s, &e, 10);
+    *end = e;
+    if (errno || v < lo || v > hi) return -1;
+    return v;
+}
+
+static const char *const c_keywords[] = {
+    "auto", "break", "case", "char", "const", "continue", "default", "do", "double",
+    "else", "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long",
+    "register", "restrict", "return", "short", "signed", "sizeof", "static", "struct",
+    "switch", "typedef", "union", "unsigned", "void", "volatile", "while", "_Bool",
+    "_Complex", "_Imaginary", "_Alignas", "_Alignof", "_Atomic", "_Generic",
+    "_Noreturn", "_Static_assert", "_Thread_local", NULL
+};
+
+static void finish_output(FILE *out, const char *outname)
+{
+    int bad = fflush(out) != 0 || ferror(out);
+    if (outname) bad |= fclose(out) != 0;
+    if (bad) die("cannot write", outname ? outname : "standard output");
 }
 
 int main(int argc, char **argv)
@@ -101,17 +142,20 @@ int main(int argc, char **argv)
         const char *a = argv[i];
         if (!strcmp(a, "--dump-palette")) dump = 1;
         else if (!strcmp(a, "-s") && i + 1 < argc) {
-            char *e;
-            W = (int)strtol(argv[++i], &e, 10);
-            if (*e != 'x' && *e != 'X') die("size must be WxH", argv[i]);
-            H = (int)strtol(e + 1, &e, 10);
-            if (*e) die("size must be WxH", argv[i]);
+            const char *e;
+            long w, h;
+            w = parse_num(argv[++i], &e, 0, 100000);
+            if (w < 0 || (*e != 'x' && *e != 'X')) die("size must be WxH", argv[i]);
+            h = parse_num(e + 1, &e, 0, 100000);
+            if (h < 0 || *e) die("size must be WxH", argv[i]);
+            W = (int)w; H = (int)h;
         }
         else if (!strcmp(a, "-n") && i + 1 < argc) name = argv[++i];
         else if (!strcmp(a, "-t") && i + 1 < argc) {
-            char *e;
-            thresh = (int)strtol(argv[++i], &e, 10);
-            if (*e || thresh < 0 || thresh > 255) die("threshold must be 0..255", argv[i]);
+            const char *e;
+            long t = parse_num(argv[++i], &e, 0, 255);
+            if (t < 0 || *e) die("threshold must be 0..255", argv[i]);
+            thresh = (int)t;
         }
         else if (!strcmp(a, "-p") && i + 1 < argc) palfile = argv[++i];
         else if (!strcmp(a, "-o") && i + 1 < argc) outname = argv[++i];
@@ -123,6 +167,7 @@ int main(int argc, char **argv)
     if (palfile) load_palette(palfile);
     if (dump) {
         for (i = 0; i < 16; i++) printf("%02X%02X%02X\n", pal[i][0], pal[i][1], pal[i][2]);
+        finish_output(stdout, NULL);
         return 0;
     }
     if (!image || !W) { usage(); return 1; }
@@ -131,6 +176,9 @@ int main(int argc, char **argv)
     if (!isalpha((unsigned char)name[0]) && name[0] != '_') die("name is not a C identifier", name);
     for (i = 0; name[i]; i++)
         if (!isalnum((unsigned char)name[i]) && name[i] != '_') die("name is not a C identifier", name);
+    if (strlen(name) > 63) die("name is longer than 63 characters (spr2c's limit)", NULL);
+    for (i = 0; c_keywords[i]; i++)
+        if (!strcmp(name, c_keywords[i])) die("name is a C keyword", name);
 
     img = stbi_load(image, &iw, &ih, &comp, 4);
     if (!img) die(stbi_failure_reason() ? stbi_failure_reason() : "cannot read image", image);
@@ -168,7 +216,9 @@ int main(int argc, char **argv)
                     sa += w; sr += w * p[0]; sg += w * p[1]; sb += w * p[2];
                 }
             }
-            if (sa <= 0 || sa / area < thresh) { fputc('.', out); continue; }
+            /* the box weights are fractions, so sa can sum an ulp under thresh * area
+               when the average is exactly the threshold: allow for it */
+            if (sa <= 0 || sa < thresh * area * (1 - 1e-9)) { fputc('.', out); continue; }
             sr /= sa; sg /= sa; sb /= sa;           /* un-premultiply */
             for (k = 1; k < 16; k++) {
                 double r = sr - pal[k][0], g = sg - pal[k][1], b = sb - pal[k][2];
@@ -179,7 +229,7 @@ int main(int argc, char **argv)
         }
         fputc('\n', out);
     }
-    if (outname) fclose(out);
     stbi_image_free(img);
+    finish_output(out, outname);
     return 0;
 }

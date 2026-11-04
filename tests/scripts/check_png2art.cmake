@@ -62,6 +62,47 @@ expect_same("threshold 90" "${c}" "${DATA}/icon_t90.art")
 run_tool(d -s 4x4 -n icon -p "${DATA}/pal.txt" "${DATA}/icon.png")
 expect_same("palette" "${d}" "${DATA}/icon_pal.art")
 
+# --- GIF input, -o, a 16-line palette, --dump-palette with -p --------------------
+run_tool(g -s 4x4 -n icon "${DATA}/icon.gif")
+if(NOT g_rc EQUAL 0)
+    set(_fail "${_fail}icon.gif failed: ${g_err}\n")
+endif()
+expect_same("gif" "${g}" "${DATA}/icon_gif.art")
+
+file(REMOVE "${WORK}/o_opt.art")
+run_tool(o -s 4x4 -n icon -o "${WORK}/o_opt.art" "${DATA}/icon.png")
+if(NOT o_rc EQUAL 0 OR NOT o STREQUAL "")
+    set(_fail "${_fail}-o: exit ${o_rc}, stdout '${o}', stderr '${o_err}'\n")
+endif()
+if(EXISTS "${WORK}/o_opt.art")
+    file(READ "${WORK}/o_opt.art" _o_file)
+    expect_same("-o file" "${_o_file}" "${DATA}/icon.art")
+else()
+    set(_fail "${_fail}-o wrote no file\n")
+endif()
+
+run_tool(q -s 4x4 -n icon -p "${DATA}/pal16.txt" "${DATA}/icon.png")
+expect_same("16-line palette" "${q}" "${DATA}/icon_pal16.art")
+
+run_tool(dp --dump-palette -p "${DATA}/pal16.txt")
+expect_same("dump with 16-line -p" "${dp}" "${DATA}/pal16_dump.txt")
+run_tool(dq -p "${DATA}/pal.txt" --dump-palette)
+expect_same("dump with 15-line -p" "${dq}" "${DATA}/pal_dump.txt")
+
+# --- a fully opaque region is never '.', at any threshold -------------------------
+# Box edges fall on fractional pixels (64/6, 48/10); -t 255 sums to one ulp low.
+foreach(_case "opaque64.png;6x4;opaque64_6x4.art" "opaque48.png;10x4;opaque48_10x4.art")
+    list(GET _case 0 _img)
+    list(GET _case 1 _size)
+    list(GET _case 2 _exp)
+    run_tool(t255 -s ${_size} -n o -t 255 "${DATA}/${_img}")
+    expect_same("opaque ${_img} -t 255" "${t255}" "${DATA}/${_exp}")
+    foreach(_t 0 1 100 110 128 254 255)
+        run_tool(tt -s ${_size} -n o -t ${_t} "${DATA}/${_img}")
+        expect_same("opaque ${_img} -t ${_t}" "${tt}" "${DATA}/${_exp}")
+    endforeach()
+endforeach()
+
 # --- no opaque pixel is slot 0 ---------------------------------------------------
 foreach(_text "${a}" "${c}" "${d}")
     string(REPLACE "\n" ";" _lines "${_text}")
