@@ -237,6 +237,14 @@ the spare row goes below. `-r DEGREES` rotates the full-size source clockwise be
 is trimmed and scaled, which gives far cleaner frames than rotating pixel art; one run
 makes one angle (`png2art -s 16x16 -r 45 -n art_craft_r45 craft.png`). Right angles are
 exact, and other angles blend in premultiplied alpha so edges pick up no dark fringe.
+Two more options change colour. `-m MAP` recolours the finished picture slot for slot:
+`MAP` is `FROM=TO` pairs, comma separated, slots `1`-`F` (`-m 4=1,C=9` turns blue
+turrets red). It works on png2art's own output; it does not read an existing `.art`
+block. `-B RAMP` is brightness-band mode for single-tone art such as rocks, where
+nearest-colour snapping comes out one flat grey: it blurs the picture to wash out the
+texture, then bins the brightness into a hand-picked ramp of slots, darkest first
+(`-B 8,7,F`); only those slots are used. With both, the map is applied after banding.
+Either option refuses slot 0 or any character that is not `1`-`F`.
 Each name must be new to the file, so a block appended with `>>` needs its own `-n`.
 The result is a starting point to tidy by hand, then `spr2c` reads it as above.
 

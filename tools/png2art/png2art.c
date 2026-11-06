@@ -50,6 +50,13 @@ static void usage(void)
 "                row below)\n"
 "  -r DEGREES    rotate the full-size source clockwise by DEGREES (-360..360)\n"
 "                before trimming and scaling\n"
+"  -m MAP        recolour the finished picture slot for slot: MAP is FROM=TO pairs,\n"
+"                comma separated, slots 1-F (e.g. 4=1,C=9). Applied to png2art's own\n"
+"                output only; it does not read an existing .art block\n"
+"  -B RAMP       brightness-band mode for single-tone art: blur the picture, then bin\n"
+"                its brightness into RAMP, slots 1-F darkest first (e.g. 8,7,F or\n"
+"                87F), instead of snapping to the nearest palette colour. Only the\n"
+"                slots in RAMP are used. With -m, the map is applied after banding\n"
 "  -o FILE       write to FILE instead of standard output\n"
 "  --dump-palette  print the palette in use as 16 RRGGBB lines and exit\n"
 "The source is rotated first (-r), then the transparent margin is trimmed. Slot 0 is never used for a colour.\n",
@@ -60,6 +67,45 @@ static void die(const char *a, const char *b)
 {
     fprintf(stderr, "png2art: %s%s%s\n", a, b ? ": " : "", b ? b : "");
     exit(1);
+}
+
+/* a slot character 1-9 A-F (either case) as 1..15, else -1; '0' is refused too */
+static int slot_of(int c)
+{
+    if (c >= '1' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+/* RAMP: slot characters, optionally comma separated, darkest first */
+static int parse_ramp(const char *s, int *ramp)
+{
+    const char *m = "ramp must be 1 to 15 slots, each 1-F (slot 0 cannot be drawn)";
+    int n = 0;
+    for (; *s; s++) {
+        if (*s == ',' && n) continue;
+        if (n == 15 || slot_of((unsigned char)*s) < 0) die(m, s);
+        ramp[n++] = slot_of((unsigned char)*s);
+    }
+    if (!n) die(m, NULL);
+    return n;
+}
+
+/* MAP: FROM=TO pairs, comma separated, into map[slot] */
+static void parse_map(const char *s, int *map)
+{
+    const char *m = "map must be FROM=TO pairs of slots 1-F, e.g. 4=1,C=9 (slot 0 cannot be drawn)";
+    for (;;) {
+        int f = slot_of((unsigned char)s[0]), t;
+        if (f < 0 || s[1] != '=') die(m, s);
+        t = slot_of((unsigned char)s[2]);
+        if (t < 0) die(m, s);
+        map[f] = t;
+        s += 3;
+        if (!*s) return;
+        if (*s++ != ',') die(m, s - 1);
+    }
 }
 
 static void load_palette(const char *path)
@@ -195,6 +241,9 @@ static void finish_output(FILE *out, const char *outname)
 
 int main(int argc, char **argv)
 {
+    int ramp[16], nramp = 0, map[16], mapset = 0, ci;
+    unsigned char *grid;
+    float *lum, *blur;
     const char *name = "sprite", *image = NULL, *palfile = NULL, *outname = NULL;
     int have_box = 0, W = 0, H = 0, BW = 0, BH = 0, ox, oy, rotate = 0, thresh = 110, dump = 0, i;
     unsigned char *img;
@@ -233,6 +282,12 @@ int main(int argc, char **argv)
             if (*e || !(deg >= -360 && deg <= 360)) die("rotation must be degrees, -360..360", t);
             rotate = 1;
         }
+        else if (!strcmp(a, "-m") && i + 1 < argc) {
+            for (ci = 0; ci < 16; ci++) map[ci] = ci;
+            mapset = 1;
+            parse_map(argv[++i], map);
+        }
+        else if (!strcmp(a, "-B") && i + 1 < argc) nramp = parse_ramp(argv[++i], ramp);
         else if (!strcmp(a, "-n") && i + 1 < argc) name = argv[++i];
         else if (!strcmp(a, "-t") && i + 1 < argc) {
             const char *e;
@@ -291,9 +346,10 @@ int main(int argc, char **argv)
     bw = x1 - x0 + 1; bh = y1 - y0 + 1;
     sx = (double)bw / BW; sy = (double)bh / BH;
 
-    out = outname ? fopen(outname, "w") : stdout;
-    if (!out) die("cannot write", outname);
-    fprintf(out, "@sprite %s %dx%d\n", name, W, H);
+    grid = malloc((size_t)W * H);
+    lum = malloc((size_t)W * H * sizeof *lum);
+    blur = malloc((size_t)W * H * sizeof *blur);
+    if (!grid || !lum || !blur) die("out of memory", NULL);
     for (dy = 0; dy < H; dy++) {
         for (dx = 0; dx < W; dx++) {
             int bx = dx - ox, by = dy - oy;
@@ -302,7 +358,9 @@ int main(int argc, char **argv)
             double sa = 0, sr = 0, sg = 0, sb = 0, area = (xb - xa) * (yb - ya);
             double bd = 1e30;
             int j, k, best = 1;
-            if (bx < 0 || by < 0 || bx >= BW || by >= BH) { fputc('.', out); continue; }
+            lum[dy * W + dx] = -1;
+            grid[dy * W + dx] = '.';
+            if (bx < 0 || by < 0 || bx >= BW || by >= BH) continue;
             for (j = (int)ya; j < bh && j < yb; j++) {
                 double wy = (j + 1 < yb ? j + 1 : yb) - (j > ya ? j : ya);
                 for (k = (int)xa; k < bw && k < xb; k++) {
@@ -314,17 +372,57 @@ int main(int argc, char **argv)
             }
             /* the box weights are fractions, so sa can sum an ulp under thresh * area
                when the average is exactly the threshold: allow for it */
-            if (sa <= 0 || sa < thresh * area * (1 - 1e-9)) { fputc('.', out); continue; }
+            if (sa <= 0 || sa < thresh * area * (1 - 1e-9)) continue;
             sr /= sa; sg /= sa; sb /= sa;           /* un-premultiply */
             for (k = 1; k < 16; k++) {
                 double r = sr - pal[k][0], g = sg - pal[k][1], b = sb - pal[k][2];
                 double d = r * r + g * g + b * b;
                 if (d < bd) { bd = d; best = k; }
             }
-            fputc("0123456789ABCDEF"[best], out);
+            grid[dy * W + dx] = (unsigned char)"0123456789ABCDEF"[best];
+            lum[dy * W + dx] = (float)(0.299 * sr + 0.587 * sg + 0.114 * sb);
+        }
+    }
+    if (nramp) {
+        /* blur: each opaque cell takes the mean of the opaque cells in its 3x3
+           neighbourhood, which washes out texture finer than a pixel or two. Then
+           stretch the blurred range over the ramp so a narrow tone still spans it. */
+        float lo = 1e30f, hi = -1e30f;
+        for (dy = 0; dy < H; dy++)
+            for (dx = 0; dx < W; dx++) {
+                float t = 0;
+                int n = 0, j, k;
+                blur[dy * W + dx] = -1;
+                if (lum[dy * W + dx] < 0) continue;
+                for (j = dy - 1; j <= dy + 1; j++)
+                    for (k = dx - 1; k <= dx + 1; k++)
+                        if (j >= 0 && k >= 0 && j < H && k < W && lum[j * W + k] >= 0) {
+                            t += lum[j * W + k]; n++;
+                        }
+                blur[dy * W + dx] = t / n;
+                if (blur[dy * W + dx] < lo) lo = blur[dy * W + dx];
+                if (blur[dy * W + dx] > hi) hi = blur[dy * W + dx];
+            }
+        for (i = 0; i < W * H; i++) {
+            int b;
+            if (blur[i] < 0) continue;
+            b = hi > lo ? (int)((blur[i] - lo) / (hi - lo) * nramp) : nramp / 2;
+            if (b >= nramp) b = nramp - 1;
+            grid[i] = (unsigned char)"0123456789ABCDEF"[ramp[b]];
+        }
+    }
+    out = outname ? fopen(outname, "w") : stdout;
+    if (!out) die("cannot write", outname);
+    fprintf(out, "@sprite %s %dx%d\n", name, W, H);
+    for (dy = 0; dy < H; dy++) {
+        for (dx = 0; dx < W; dx++) {
+            int c = grid[dy * W + dx];
+            if (mapset && c != '.') c = "0123456789ABCDEF"[map[slot_of(c)]];
+            fputc(c, out);
         }
         fputc('\n', out);
     }
+    free(grid); free(lum); free(blur);
     stbi_image_free(img);
     finish_output(out, outname);
     return 0;

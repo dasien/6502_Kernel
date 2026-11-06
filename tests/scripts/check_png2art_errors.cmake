@@ -63,6 +63,13 @@ endforeach()
 foreach(_r "" abc 45x 361 -361 nan)
     expect_refused("rotation '${_r}'" -s 4x4 -r "${_r}" "${_icon}")
 endforeach()
+# recolour maps and ramps: slot 0 and non-hex characters are refused
+foreach(_m "0=1" "1=0" "G=1" "1=G" "4-1" "4=" "=1" "41" "4=1," "4=1,,C=9" "4=12" " 4=1")
+    expect_refused("map '${_m}'" -s 4x4 -m "${_m}" "${_icon}")
+endforeach()
+foreach(_r 0 "8,0,F" 807 G "8,G" "," "8 7" 1234567890ABCDEF)
+    expect_refused("ramp '${_r}'" -s 4x4 -B "${_r}" "${_icon}")
+endforeach()
 # the palette message names the line
 execute_process(COMMAND "${PNG2ART}" -s 4x4 -p "${DATA}/pal_0x.txt" "${_icon}"
     ERROR_VARIABLE _perr RESULT_VARIABLE _prc)
