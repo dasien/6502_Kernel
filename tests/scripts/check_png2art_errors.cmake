@@ -3,8 +3,8 @@
 # an image at all; bad options, names and palettes; an output that cannot be written.
 
 cmake_minimum_required(VERSION 3.20)
-if(NOT PNG2ART OR NOT DATA)
-    message(FATAL_ERROR "PNG2ART and DATA must be specified")
+if(NOT PNG2ART OR NOT DATA OR NOT WORK)
+    message(FATAL_ERROR "PNG2ART, DATA and WORK must be specified")
 endif()
 
 set(_fail "")
@@ -41,7 +41,8 @@ function(expect_refused label)
 endfunction()
 set(_icon "${DATA}/icon.png")
 expect_refused("name of 64 characters" -s 4x4 -n ${_long_name} "${_icon}")
-foreach(_kw int while return static _Bool)
+foreach(_kw int while return static _Bool bool true false nullptr constexpr typeof static_assert
+        alignas thread_local asm fastcall cdecl __x _Zed __)
     expect_refused("keyword name ${_kw}" -s 4x4 -n ${_kw} "${_icon}")
 endforeach()
 foreach(_sz 4294967298x4 4x4294967298 99999999999999999999x4 -4x4 +4x4 " 4x4" 4x 4xx4 4x4x)
@@ -50,8 +51,14 @@ endforeach()
 foreach(_t 256 -1 +5 4294967295 4294967551 "" 1x 99999999999999999999)
     expect_refused("threshold '${_t}'" -s 4x4 -t "${_t}" "${_icon}")
 endforeach()
+# each fixture is 15 lines with one bad line, line 5, so only a per-line check catches it
 foreach(_p pal_0x pal_plus pal_minus pal_seven pal_short pal_longline)
     expect_refused("palette ${_p}" -s 4x4 -p "${DATA}/${_p}.txt" "${_icon}")
+    execute_process(COMMAND "${PNG2ART}" -s 4x4 -p "${DATA}/${_p}.txt" "${_icon}"
+        ERROR_VARIABLE _perr)
+    if(NOT _perr MATCHES "line 5 ")
+        set(_fail "${_fail}palette ${_p}: error does not name line 5: ${_perr}\n")
+    endif()
 endforeach()
 # a box larger than the slot, a malformed box, a malformed rotation
 expect_refused("box wider than the slot" -s 4x4 -b 6x2 "${_icon}")
@@ -70,12 +77,6 @@ endforeach()
 foreach(_r 0 "8,0,F" 807 G "8,G" "," "8 7" 1234567890ABCDEF)
     expect_refused("ramp '${_r}'" -s 4x4 -B "${_r}" "${_icon}")
 endforeach()
-# the palette message names the line
-execute_process(COMMAND "${PNG2ART}" -s 4x4 -p "${DATA}/pal_0x.txt" "${_icon}"
-    ERROR_VARIABLE _perr RESULT_VARIABLE _prc)
-if(NOT _perr MATCHES "line 1")
-    set(_fail "${_fail}palette error does not name the line: ${_perr}\n")
-endif()
 # a 63-character name is the longest allowed
 execute_process(COMMAND "${PNG2ART}" -s 4x4 -n ${_name63} "${_icon}"
     RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
@@ -83,12 +84,31 @@ if(NOT _rc EQUAL 0)
     set(_fail "${_fail}63-character name refused: ${_err}\n")
 endif()
 
-# Output that cannot be written: -o into a directory that does not exist. (A write
-# that fails after fopen, such as fclose on a full disk, cannot be forced portably.)
+# Output that cannot be written: -o into a directory that does not exist. (The write
+# that fails after fopen is check_png2art_full.cmake.)
 expect_refused("-o into a missing directory" -s 4x4 -o "${DATA}/no_such_dir/out.art" "${_icon}")
 if(EXISTS "${DATA}/no_such_dir")
     set(_fail "${_fail}-o created a directory\n")
 endif()
+
+# A failed -o leaves the existing target untouched and no stray file: the target is a
+# regular file with known content, and the temporary <target>.tmp cannot be created
+# because a directory of that name is in the way.
+set(_wdir "${WORK}")
+file(REMOVE_RECURSE "${_wdir}")
+file(MAKE_DIRECTORY "${_wdir}/target.art.tmp")
+file(WRITE "${_wdir}/target.art" "KEEP ME\n")
+expect_refused("-o with the temporary file blocked" -s 4x4 -o "${_wdir}/target.art" "${_icon}")
+file(READ "${_wdir}/target.art" _kept)
+if(NOT _kept STREQUAL "KEEP ME\n")
+    set(_fail "${_fail}failed -o altered the existing target: ${_kept}\n")
+endif()
+file(GLOB _left "${_wdir}/*")
+list(SORT _left)
+if(NOT _left STREQUAL "${_wdir}/target.art;${_wdir}/target.art.tmp")
+    set(_fail "${_fail}failed -o left files behind: ${_left}\n")
+endif()
+file(REMOVE_RECURSE "${_wdir}")
 
 if(_fail)
     message(FATAL_ERROR "${_fail}")
