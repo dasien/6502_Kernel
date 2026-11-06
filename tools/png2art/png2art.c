@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
+#include <sys/stat.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -229,13 +230,20 @@ static const char *const c_keywords[] = {
     "register", "restrict", "return", "short", "signed", "sizeof", "static", "struct",
     "switch", "typedef", "union", "unsigned", "void", "volatile", "while", "_Bool",
     "_Complex", "_Imaginary", "_Alignas", "_Alignof", "_Atomic", "_Generic",
-    "_Noreturn", "_Static_assert", "_Thread_local", NULL
+    "_Noreturn", "_Static_assert", "_Thread_local",
+    /* C23 */ "bool", "true", "false", "nullptr", "constexpr", "typeof", "typeof_unqual",
+    "static_assert", "alignas", "alignof", "thread_local",
+    /* cc65 extensions */ "asm", "__asm__", "fastcall", "cdecl", NULL
 };
 
-static void finish_output(FILE *out, const char *outname)
+/* Written to tmp (if any) and renamed over outname only when every write succeeded,
+   so a failed -o leaves no partial file at the target. */
+static void finish_output(FILE *out, const char *outname, const char *tmp)
 {
     int bad = fflush(out) != 0 || ferror(out);
     if (outname) bad |= fclose(out) != 0;
+    if (!bad && tmp && rename(tmp, outname) != 0) bad = 1;
+    if (bad && tmp) remove(tmp);
     if (bad) die("cannot write", outname ? outname : "standard output");
 }
 
@@ -244,6 +252,7 @@ int main(int argc, char **argv)
     int ramp[16], nramp = 0, map[16], mapset = 0, ci;
     unsigned char *grid;
     float *lum, *blur;
+    char *tmp = NULL;
     const char *name = "sprite", *image = NULL, *palfile = NULL, *outname = NULL;
     int have_box = 0, W = 0, H = 0, BW = 0, BH = 0, ox, oy, rotate = 0, thresh = 110, dump = 0, i;
     unsigned char *img;
@@ -305,7 +314,7 @@ int main(int argc, char **argv)
     if (palfile) load_palette(palfile);
     if (dump) {
         for (i = 0; i < 16; i++) printf("%02X%02X%02X\n", pal[i][0], pal[i][1], pal[i][2]);
-        finish_output(stdout, NULL);
+        finish_output(stdout, NULL, NULL);
         return 0;
     }
     if (!image || !W) { usage(); return 1; }
@@ -319,6 +328,8 @@ int main(int argc, char **argv)
     if (!isalpha((unsigned char)name[0]) && name[0] != '_') die("name is not a C identifier", name);
     for (i = 0; name[i]; i++)
         if (!isalnum((unsigned char)name[i]) && name[i] != '_') die("name is not a C identifier", name);
+    if (name[0] == '_' && (name[1] == '_' || isupper((unsigned char)name[1])))
+        die("name is a reserved identifier", name);
     if (strlen(name) > 63) die("name is longer than 63 characters (spr2c's limit)", NULL);
     for (i = 0; c_keywords[i]; i++)
         if (!strcmp(name, c_keywords[i])) die("name is a C keyword", name);
@@ -411,7 +422,17 @@ int main(int argc, char **argv)
             grid[i] = (unsigned char)"0123456789ABCDEF"[ramp[b]];
         }
     }
-    out = outname ? fopen(outname, "w") : stdout;
+    if (outname) {
+        struct stat st;
+        /* an existing device or pipe (/dev/null) is written in place, not replaced */
+        int inplace = stat(outname, &st) == 0 && (st.st_mode & S_IFMT) != S_IFREG;
+        if (!inplace) {
+            tmp = malloc(strlen(outname) + 5);
+            if (!tmp) die("out of memory", NULL);
+            strcpy(tmp, outname); strcat(tmp, ".tmp");
+        }
+        out = fopen(tmp ? tmp : outname, "w");
+    } else out = stdout;
     if (!out) die("cannot write", outname);
     fprintf(out, "@sprite %s %dx%d\n", name, W, H);
     for (dy = 0; dy < H; dy++) {
@@ -424,6 +445,6 @@ int main(int argc, char **argv)
     }
     free(grid); free(lum); free(blur);
     stbi_image_free(img);
-    finish_output(out, outname);
+    finish_output(out, outname, tmp);
     return 0;
 }

@@ -1029,7 +1029,17 @@ add_test(NAME png2art_errors
     COMMAND ${CMAKE_COMMAND}
     -DPNG2ART=$<TARGET_FILE:png2art>
     -DDATA=${CMAKE_SOURCE_DIR}/tests/data/png2art
+    -DWORK=${CMAKE_BINARY_DIR}/png2art_errors_work
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_png2art_errors.cmake)
+
+# A write that fails after fopen (fflush/ferror/fclose) needs /dev/full; the script exits
+# 77 where there is none, so ctest reports SKIPPED rather than PASSED.
+add_test(NAME png2art_write_error
+    COMMAND ${CMAKE_COMMAND}
+    -DPNG2ART=$<TARGET_FILE:png2art>
+    -DDATA=${CMAKE_SOURCE_DIR}/tests/data/png2art
+    -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_png2art_full.cmake)
+set_tests_properties(png2art_write_error PROPERTIES SKIP_RETURN_CODE 77)
 
 # Drift guard: every command in the DOS's verb table is named by some HELP line.
 # SHUTDOWN and BANKS both ran for months without being listed.
