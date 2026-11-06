@@ -230,6 +230,13 @@ pixel to the nearest palette slot `1`-`F`. Slot 0 is never used for a colour. Th
 default palette is the 16 colours `VIC::seedPalette()` sets; `-p FILE` gives another,
 as lines of `RRGGBB` hex: 15 lines for slots 1-F, or 16 with slot 0 first (ignored).
 Blank lines and `#` lines are skipped. `--dump-palette` prints the palette in use.
+Two options shape the picture. `-b WxH` fits it in a smaller box centred in the `-s`
+slot, everything outside the box `.`, for shots and anything that should stay small in
+its 16x16; the box is no larger than the slot, its width is even, and with an odd height
+the spare row goes below. `-r DEGREES` rotates the full-size source clockwise before it
+is trimmed and scaled, which gives far cleaner frames than rotating pixel art; one run
+makes one angle (`png2art -s 16x16 -r 45 -n art_craft_r45 craft.png`). Right angles are
+exact, and other angles blend in premultiplied alpha so edges pick up no dark fringe.
 Each name must be new to the file, so a block appended with `>>` needs its own `-n`.
 The result is a starting point to tidy by hand, then `spr2c` reads it as above.
 

@@ -39,7 +39,7 @@ run_tool(u)
 if(u_rc EQUAL 0)
     set(_fail "${_fail}no arguments exited 0\n")
 endif()
-foreach(_opt "-s" "-n" "-t" "-p" "-o" "--dump-palette")
+foreach(_opt "-s" "-n" "-b" "-r" "-t" "-p" "-o" "--dump-palette")
     string(FIND "${u_err}" "  ${_opt} " _pos)
     if(_pos EQUAL -1)
         set(_fail "${_fail}usage does not name ${_opt}\n")
@@ -88,6 +88,32 @@ run_tool(dp --dump-palette -p "${DATA}/pal16.txt")
 expect_same("dump with 16-line -p" "${dp}" "${DATA}/pal16_dump.txt")
 run_tool(dq -p "${DATA}/pal.txt" --dump-palette)
 expect_same("dump with 15-line -p" "${dq}" "${DATA}/pal_dump.txt")
+
+# --- -b: a smaller box centred in the slot; -r: rotate the source first ------------
+# icon.png in a 2x2 box in 4x4 is the 2x2 picture inside a ring of '.'. quad.png is
+# four colour quadrants; rotated 90 degrees it is exact (blue, red / yellow, green
+# from the top left), and at 45 it is a diamond. Each result must also pass spr2c.
+foreach(_case "icon.png;icon;4x4;-b|2x2;icon_box2.art" "icon.png;icon;4x4;-r|90;icon_r90.art"
+              "quad.png;quad;8x8;-r|90;quad_r90.art" "quad.png;quad;8x8;-r|45;quad_r45.art"
+              "quad.png;quad;8x8;-r|45|-b|4x4;quad_r45_box4.art")
+    list(GET _case 0 _img)
+    list(GET _case 1 _nm)
+    list(GET _case 2 _size)
+    list(GET _case 3 _opts)
+    list(GET _case 4 _exp)
+    string(REPLACE "|" ";" _opts "${_opts}")
+    run_tool(sh -s ${_size} -n ${_nm} ${_opts} "${DATA}/${_img}")
+    if(NOT sh_rc EQUAL 0)
+        set(_fail "${_fail}${_exp}: png2art failed: ${sh_err}\n")
+    endif()
+    expect_same("${_img} ${_opts}" "${sh}" "${DATA}/${_exp}")
+    file(WRITE "${WORK}/${_exp}" "${sh}")
+    execute_process(COMMAND "${SPR2C}" "${WORK}/${_exp}" "${WORK}/${_exp}.c"
+        RESULT_VARIABLE _src ERROR_VARIABLE _serr)
+    if(NOT _src EQUAL 0)
+        set(_fail "${_fail}spr2c rejected ${_exp}: ${_serr}\n")
+    endif()
+endforeach()
 
 # --- a fully opaque region is never '.', at any threshold -------------------------
 # Box edges fall on fractional pixels (64/6, 48/10); -t 255 sums to one ulp low.

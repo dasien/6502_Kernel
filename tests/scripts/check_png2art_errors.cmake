@@ -53,6 +53,16 @@ endforeach()
 foreach(_p pal_0x pal_plus pal_minus pal_seven pal_short pal_longline)
     expect_refused("palette ${_p}" -s 4x4 -p "${DATA}/${_p}.txt" "${_icon}")
 endforeach()
+# a box larger than the slot, a malformed box, a malformed rotation
+expect_refused("box wider than the slot" -s 4x4 -b 6x2 "${_icon}")
+expect_refused("box taller than the slot" -s 4x4 -b 2x6 "${_icon}")
+expect_refused("box with an odd width" -s 4x4 -b 3x2 "${_icon}")
+foreach(_b 0x0 2x0 x2 2x 2xx2 -2x2)
+    expect_refused("box '${_b}'" -s 4x4 -b "${_b}" "${_icon}")
+endforeach()
+foreach(_r "" abc 45x 361 -361 nan)
+    expect_refused("rotation '${_r}'" -s 4x4 -r "${_r}" "${_icon}")
+endforeach()
 # the palette message names the line
 execute_process(COMMAND "${PNG2ART}" -s 4x4 -p "${DATA}/pal_0x.txt" "${_icon}"
     ERROR_VARIABLE _perr RESULT_VARIABLE _prc)
