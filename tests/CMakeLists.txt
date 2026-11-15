@@ -1038,8 +1038,9 @@ add_test(NAME png2art_write_error
     COMMAND ${CMAKE_COMMAND}
     -DPNG2ART=$<TARGET_FILE:png2art>
     -DDATA=${CMAKE_SOURCE_DIR}/tests/data/png2art
+    -DWORK=${CMAKE_BINARY_DIR}/png2art_full_work
     -P ${CMAKE_SOURCE_DIR}/tests/scripts/check_png2art_full.cmake)
-set_tests_properties(png2art_write_error PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(png2art_write_error PROPERTIES SKIP_REGULAR_EXPRESSION "PNG2ART_SKIP")
 
 # Drift guard: every command in the DOS's verb table is named by some HELP line.
 # SHUTDOWN and BANKS both ran for months without being listed.
