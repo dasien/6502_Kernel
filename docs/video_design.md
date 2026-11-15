@@ -252,6 +252,12 @@ The result is a starting point to tidy by hand, then `spr2c` reads it as above.
 Each row is 8 characters: `#` is ink, drawn in the cell's foreground colour, and `.`
 is ground, drawn in its background colour. `H` is 1 to 32; a font glyph is 16.
 
+`png2art -g` writes this block from an image: `png2art -g -n font_a -s 8x16 a.png`
+(`-s` defaults to `8x16`; the width must be 8 and `H` 1 to 32). It trims and scales as
+for a sprite, then thresholds to 1 bit: a pixel whose brightness is at or above `-t`
+(0 to 255, default 128) is `#`, a darker one is `.`, and so is a transparent one (alpha
+under 110). `-b` and `-r` work as above; `-p`, `-m` and `-B` are refused.
+
 **`NAME`** becomes `const unsigned char NAME[n]`, so it has to be a C identifier and
 unique in the file. The program declares the names it uses as `extern`, as it would
 for a hand-written array.

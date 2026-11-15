@@ -77,6 +77,20 @@ endforeach()
 foreach(_r 0 "8,0,F" 807 G "8,G" "," "8 7" 1234567890ABCDEF)
     expect_refused("ramp '${_r}'" -s 4x4 -B "${_r}" "${_icon}")
 endforeach()
+# glyph mode: width must be 8, height 1..32, no palette work
+foreach(_g 4x8 6x8 10x8 16x8 8x0 8x33 8x128)
+    expect_refused("glyph size ${_g}" -g -s ${_g} "${DATA}/glyph.png")
+endforeach()
+expect_refused("glyph with -m" -g -m 4=1 "${DATA}/glyph.png")
+expect_refused("glyph with -B" -g -B 8,F "${DATA}/glyph.png")
+expect_refused("glyph with -p" -g -p "${DATA}/pal.txt" "${DATA}/glyph.png")
+foreach(_g 8x1 8x32)
+    execute_process(COMMAND "${PNG2ART}" -g -s ${_g} "${DATA}/glyph.png"
+        RESULT_VARIABLE _rc OUTPUT_QUIET ERROR_QUIET)
+    if(NOT _rc EQUAL 0)
+        set(_fail "${_fail}glyph size ${_g} refused\n")
+    endif()
+endforeach()
 # a 63-character name is the longest allowed
 execute_process(COMMAND "${PNG2ART}" -s 4x4 -n ${_name63} "${_icon}"
     RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)

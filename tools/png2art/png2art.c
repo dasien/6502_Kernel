@@ -1,5 +1,6 @@
 /*
- *  png2art -- host developer tool: a PNG or GIF to a paste-ready @sprite block.
+ *  png2art -- host developer tool: a PNG or GIF to a paste-ready @sprite block, or
+ *  with -g an @glyph block thresholded to 1 bit.
  *
  *  Run by hand while drawing, so a sprite can start from a picture. It is NOT part
  *  of any build: nothing in programs/catalog.txt or CMake runs it. The block it
@@ -42,7 +43,8 @@ static void usage(void)
 "  Turn a PNG or GIF into an @sprite block for an .art file (spr2c reads it).\n"
 "  -s WxH        size in pixels (required): W even 2..128, H 1..128\n"
 "  -n NAME       sprite name, a C identifier (default: sprite)\n"
-"  -t THRESHOLD  alpha 0..255 below which a pixel is transparent '.' (default 110)\n"
+"  -t THRESHOLD  alpha 0..255 below which a pixel is transparent '.' (default 110;\n"
+"                with -g, a brightness, default 128)\n"
 "  -p FILE       palette file: lines of RRGGBB hex, 15 lines (slots 1-F) or 16\n"
 "                (slot 0 first, ignored); blank and # lines skipped. Default is the\n"
 "                16 colours VIC::seedPalette() sets\n"
@@ -58,6 +60,11 @@ static void usage(void)
 "                its brightness into RAMP, slots 1-F darkest first (e.g. 8,7,F or\n"
 "                87F), instead of snapping to the nearest palette colour. Only the\n"
 "                slots in RAMP are used. With -m, the map is applied after banding\n"
+"  -g            glyph mode: write an @glyph block (8 wide, 1 bit a pixel, '#' ink and\n"
+"                '.' ground) for the soft font. -s is then 8xH, H 1..32 (default 8x16).\n"
+"                -t is a brightness 0..255 (default 128): a pixel at or above it is ink,\n"
+"                darker or transparent (alpha under 110) is ground. -b and -r work;\n"
+"                -p, -m and -B do not\n"
 "  -o FILE       write to FILE instead of standard output\n"
 "  --dump-palette  print the palette in use as 16 RRGGBB lines and exit\n"
 "The source is rotated first (-r), then the transparent margin is trimmed. Slot 0 is never used for a colour.\n",
@@ -249,7 +256,7 @@ static void finish_output(FILE *out, const char *outname, const char *tmp)
 
 int main(int argc, char **argv)
 {
-    int ramp[16], nramp = 0, map[16], mapset = 0, ci;
+    int ramp[16], nramp = 0, map[16], mapset = 0, ci, glyph = 0, tset = 0, athresh;
     unsigned char *grid;
     float *lum, *blur;
     char *tmp = NULL;
@@ -291,6 +298,7 @@ int main(int argc, char **argv)
             if (*e || !(deg >= -360 && deg <= 360)) die("rotation must be degrees, -360..360", t);
             rotate = 1;
         }
+        else if (!strcmp(a, "-g")) glyph = 1;
         else if (!strcmp(a, "-m") && i + 1 < argc) {
             for (ci = 0; ci < 16; ci++) map[ci] = ci;
             mapset = 1;
@@ -302,7 +310,7 @@ int main(int argc, char **argv)
             const char *e;
             long t = parse_num(argv[++i], &e, 0, 255);
             if (t < 0 || *e) die("threshold must be 0..255", argv[i]);
-            thresh = (int)t;
+            thresh = (int)t; tset = 1;
         }
         else if (!strcmp(a, "-p") && i + 1 < argc) palfile = argv[++i];
         else if (!strcmp(a, "-o") && i + 1 < argc) outname = argv[++i];
@@ -317,7 +325,15 @@ int main(int argc, char **argv)
         finish_output(stdout, NULL, NULL);
         return 0;
     }
+    if (glyph && !W && image) { W = 8; H = 16; }
     if (!image || !W) { usage(); return 1; }
+    if (glyph) {
+        if (W != 8) die("a glyph is 8 pixels wide", NULL);
+        if (H < 1 || H > 32) die("glyph height must be 1..32", NULL);
+        if (palfile || mapset || nramp) die("-p, -m and -B do not apply to a glyph (-g)", NULL);
+        if (!tset) thresh = 128;
+        athresh = 110;
+    } else athresh = thresh;
     if (W < 2 || W > 128 || (W & 1)) die("width must be even, 2..128", NULL);
     if (H < 1 || H > 128) die("height must be 1..128", NULL);
     if (have_box) {
@@ -383,8 +399,12 @@ int main(int argc, char **argv)
             }
             /* the box weights are fractions, so sa can sum an ulp under thresh * area
                when the average is exactly the threshold: allow for it */
-            if (sa <= 0 || sa < thresh * area * (1 - 1e-9)) continue;
+            if (sa <= 0 || sa < athresh * area * (1 - 1e-9)) continue;
             sr /= sa; sg /= sa; sb /= sa;           /* un-premultiply */
+            if (glyph) {
+                if (0.299 * sr + 0.587 * sg + 0.114 * sb >= thresh) grid[dy * W + dx] = '#';
+                continue;
+            }
             for (k = 1; k < 16; k++) {
                 double r = sr - pal[k][0], g = sg - pal[k][1], b = sb - pal[k][2];
                 double d = r * r + g * g + b * b;
@@ -434,7 +454,7 @@ int main(int argc, char **argv)
         out = fopen(tmp ? tmp : outname, "w");
     } else out = stdout;
     if (!out) die("cannot write", outname);
-    fprintf(out, "@sprite %s %dx%d\n", name, W, H);
+    fprintf(out, "@%s %s %dx%d\n", glyph ? "glyph" : "sprite", name, W, H);
     for (dy = 0; dy < H; dy++) {
         for (dx = 0; dx < W; dx++) {
             int c = grid[dy * W + dx];

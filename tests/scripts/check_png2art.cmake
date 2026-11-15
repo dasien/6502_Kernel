@@ -8,7 +8,8 @@
 #     beside it would give grey), 100 is '.', and -t 90 keeps it;
 #   - a palette given with -p snaps to that palette's slots (icon_pal.art);
 #   - no opaque pixel is slot 0: every row is only '.' and 1-F;
-#   - the built-in palette is the one VIC::seedPalette() sets (read from VIC.cpp).
+#   - the built-in palette is the one VIC::seedPalette() sets (read from VIC.cpp);
+#   - -g writes @glyph blocks (glyph.png, below) and spr2c accepts them.
 # Errors on a missing, truncated or non-image file are in check_png2art_errors.cmake.
 
 cmake_minimum_required(VERSION 3.20)
@@ -166,6 +167,40 @@ foreach(_pair "quad_map;${m1}" "rock_band;${bd}")
         set(_fail "${_fail}spr2c rejected ${_nm}: ${_serr}\n")
     endif()
 endforeach()
+
+# --- -g: an @glyph block thresholded to 1 bit ---------------------------------------
+# glyph.png is 16x16: an opaque grey ramp (x*16) over rows 0-7, a transparent band over
+# 8-11, then white (left half) and black (right half). At 8x8 each column averages two
+# ramp steps (8, 40, ... 232): brightness 128 makes columns 4-7 ink, -t 64 columns 2-7;
+# the transparent rows are ground, and in the last rows only white is ink.
+foreach(_case "g8;-s|8x8;glyph_8x8.art" "gdef;-t|128;glyph_8x16.art" "g8;-s|8x8|-t|64;glyph_t64.art")
+    list(GET _case 0 _nm)
+    list(GET _case 1 _opts)
+    list(GET _case 2 _exp)
+    string(REPLACE "|" ";" _opts "${_opts}")
+    run_tool(gl -g -n ${_nm} ${_opts} "${DATA}/glyph.png")
+    if(NOT gl_rc EQUAL 0)
+        set(_fail "${_fail}${_exp}: png2art -g failed: ${gl_err}\n")
+    endif()
+    expect_same("-g ${_opts}" "${gl}" "${DATA}/${_exp}")
+    string(REPLACE "\n" ";" _gl_lines "${gl}")
+    list(POP_FRONT _gl_lines _gl_head)
+    foreach(_l IN LISTS _gl_lines)
+        if(NOT _l STREQUAL "" AND NOT _l MATCHES "^[#.][#.][#.][#.][#.][#.][#.][#.]$")
+            set(_fail "${_fail}${_exp}: row '${_l}' is not 8 of # and .\n")
+        endif()
+    endforeach()
+    file(WRITE "${WORK}/${_exp}" "${gl}")
+    execute_process(COMMAND "${SPR2C}" "${WORK}/${_exp}" "${WORK}/${_exp}.c"
+        RESULT_VARIABLE _src ERROR_VARIABLE _serr)
+    if(NOT _src EQUAL 0)
+        set(_fail "${_fail}spr2c rejected ${_exp}: ${_serr}\n")
+    endif()
+endforeach()
+string(FIND "${u_err}" "  -g " _pos)
+if(_pos EQUAL -1)
+    set(_fail "${_fail}usage does not name -g\n")
+endif()
 
 # --- a fully opaque region is never '.', at any threshold -------------------------
 # Box edges fall on fractional pixels (64/6, 48/10); -t 255 sums to one ulp low.
