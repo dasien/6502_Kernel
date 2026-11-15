@@ -1,7 +1,7 @@
 # MFC Architecture & Reference
 
 This document is the consolidated internals reference for MFC. It covers the system
-overview, the full memory map, the kernel API at the `$FF00` jump table, and the
+overview, the full memory map, the kernel API jump table, and the
 bank-switched module design.
 
 ### Table of Contents
@@ -26,7 +26,7 @@ bank-switched module design.
   - [Interrupt Vectors (`$FFFA-$FFFF`)](#interrupt-vectors-fffa-ffff)
   - [Free RAM for User Programs](#free-ram-for-user-programs)
   - [Key Constants (from `kernel.asm`)](#key-constants-from-kernelasm)
-- [Part 3 — Kernel API ($FF00 jump table)](#part-3--kernel-api-ff00-jump-table)
+- [Part 3 — Kernel API](#part-3--kernel-api-ff00-jump-table)
   - [Overview](#overview-1)
   - [Calling convention](#calling-convention)
   - [Jump table (summary)](#jump-table-summary)
@@ -41,8 +41,7 @@ bank-switched module design.
 
 MFC is a software-defined computer built around a virtual WDC 65C02 CPU. The C++ and
 Qt host emulates that CPU along with a set of memory-mapped peripherals. On top of it
-run a 6502 kernel ROM, which holds the BIOS and MFC-DOS, and a set of bank-switched
-ROM modules for BASIC, FORTH, and the monitor with its built-in assembler. The display
+runs a 6502 kernel ROM, which holds the BIOS and DOS.  The display
 is 80 by 25 CP437 text in 16 colours.
 
 The rest of this part describes those components and how they connect.
@@ -150,36 +149,9 @@ quarter of the work per second while the timer still ticks sixty times in it and
 display and sound stay in real time. It is the slow switch Apple II accelerator cards
 and the IIgs carried, and for the same reason: software that times itself by counting
 cycles was written for a 1 MHz part. S.A.M.'s speech loops are the case in point; they
-switch to 1 MHz only while they render. A reset clears the latch, as a reset line
-would; the kernel's `RESET` clears it too, for the software restart, and the DOS
-prompt clears it, so a program that exits or is stopped while slow cannot leave the
-shell slow.
-
-The classic home 6502 ran near 1 MHz. The Apple II was 1.023, and the PET, VIC-20 and
-C64 were all close to 1.0. The era was not uniform, though. The Atari 800 and the NES
-clocked theirs at 1.79, and the BBC Micro at 2. The MFC is a WDC 65C02, a part that
-was sold at 1, 2, 4, 8 and 14 MHz, and it drives an 80 by 25 soft-font display with
-sprites and a FAT16 disc. A 4 MHz clock suits that machine.
-
-It is also close to the effective speed the games were written against, so the
-clock is a decision rather than a side effect of a loop bound.
-
-VENTURE is the most demanding thing on the disc, and two tests pin its cost. They are
-`ATickStaysWithinItsBudget` and `AFrameOfDrawingStaysWithinItsBudget`.
-
-| | cycles | per second |
-|---|---|---|
-| simulation tick | 24,000 | × 10 = 240,000 |
-| frame of sprite drawing | 7,700 | × 60 = 464,000 |
-| | | about 704,000, or 0.7 MHz |
-
-Productive work therefore accounts for about 18% of the 4 MHz clock. The remainder is
-absorbed by the game loop's busy-wait, which is what a game loop is for. The floor is
-not 0.7 MHz, though. The loop tests for a due tick only once per pass, and a pass can
-contain a whole frame, so a machine with little slack starts servicing ticks late and
-the accumulator then discards the backlog. Measured at a true 1 MHz, VENTURE managed a
-third of its intended pace. The realistic floor is around 2 MHz, and 4 MHz is
-comfortable.
+switch to 1 MHz only while they render. A reset clears the latch, and the kernel's `RESET` 
+clears it too, and the DOS prompt clears it, so a program that exits or is stopped 
+while slow cannot leave the shell slow.
 
 ### Data flow
 
@@ -215,10 +187,9 @@ including a FAT16 disk, a working terminal and modem, sound, and development too
 ## Part 2 — Memory & zero-page map
 
 
-This is a software-based 6502 computer rather than a Commodore 64 emulator. It uses
-ASCII rather than PETSCII, a 64K address space whose only banked region is the
-`$B000-$EFFF` module window, and a small set of memory-mapped devices. The map below reflects the actual kernel source in
-`kernel.asm`, the BASIC source in `basic.asm`, and the linker configurations in
+This is a software-based 6502 computer with a 64K address space whose only banked region is the
+`$B000-$EFFF` module window, and a small set of memory-mapped devices. The map below includes regions defined
+by the kernel (`kernel.asm`), the BASIC source (`basic.asm`), and the linker configurations in
 `memory.cfg` and `basic_memory.cfg`.
 
 ### Overall Address Space
@@ -228,15 +199,14 @@ ASCII rather than PETSCII, a 64K address space whose only banked region is the
 | `$0000-$00FF` | 256 B | Zero page, shared between EhBASIC and the monitor. The split is described below |
 | `$0100-$01FF` | 256 B | Stack, growing down from `$01FF` |
 | `$0200-$03FF` | 512 B | System variables. BASIC's page-2 variables live here alongside the monitor's variables and buffers |
-| `$0400-$07FF` | 1 KB | Formerly the 40 by 25 screen. The screen now lives behind the VIC register port, described below. This range is not free. `$0400` holds the `T:` and `Z:` page snapshot, and `$0500-$07FF` holds the assembler's identifier buffers and symbol table. A program that uses neither may treat it as scratch |
+| `$0400-$07FF` | 1 KB | `$0400` holds the `T:` and `Z:` page snapshot, and `$0500-$07FF` holds the assembler's identifier buffers and symbol table. A program that uses neither may treat it as scratch |
 | `$0800-$87FF` | 32 KB | Free RAM for user programs. BASIC keeps its program, variables and strings here when it runs, and the assembler reserves `$7800-$87FF` for source, with its symbol table down at `$0520-$07FF` while it builds |
 | `$8800-$AFFF` | 10 KB | The DOS ROM, which is always mapped and holds the FAT16 filesystem and the DOS shell |
 | `$B000-$EFFF` | 16 KB | The module window. Bank 0 is RAM and banks 1 to 255 are ROM modules, of which BASIC is bank 1 |
-| `$F000-$FFFF` | 4 KB | The kernel BIOS. The monitor is module bank 4 and is not here |
+| `$F000-$FFFF` | 4 KB | The kernel BIOS. |
 | `$FE00-$FED4` | | PIA I/O, the `MODULE_BANK` register at `$FE23`, and the block-device registers at `$FE24-$FE28`. All of it sits within the kernel region |
 
-There is no CIA, and the SID is not a Commodore part. The VIC is an 80 by 25 colour
-text chip whose character and colour planes live inside the chip rather than in the
+The VIC is an 80 by 25 colour text chip whose character and colour planes live inside the chip rather than in the
 64K map, and they are reached through a VDC-style register port at `$FE2D-$FE37` that
 the I/O section below describes. The keyboard and file I/O are exposed through a small
 PIA-style register block at `$FE00`.
@@ -249,9 +219,6 @@ always-mapped read-only region holding the resident filesystem, and it can never
 banked out. `dos_internals.md` describes what lives in it.
 
 ### Zero Page
-
-The monitor's zero-page variables were relocated to `$14-$39` to avoid the
-EhBASIC interpreter, which uses page zero heavily. The split:
 
 | Range | Owner | Notes |
 |-------|-------|-------|
@@ -302,7 +269,7 @@ because the two never run at the same time.
 |-------|-------|---------|
 | `$0200-$020C` | EhBASIC | I/O vectors (`ccflag`, `VEC_IN`/`VEC_OUT`/`VEC_LD`/`VEC_SV`) |
 | `$0221-$0268` | EhBASIC | input line buffer (`Ibuff`) |
-| `$0200-$024F` | Monitor | `MON_CMDBUF`, an 80-byte command input buffer. It overlaps BASIC, and the two are mutually exclusive |
+| `$0200-$024F` | Monitor | `MON_CMDBUF`, an 80-byte command input buffer. |
 | `$0269-$028D` | Monitor | Monitor variables, relocated above BASIC's `$0268`. They are listed below |
 | `$028E-$02DD` | Monitor | `MON_LAST_CMD_BUF`, an 80-byte last-command buffer that `.` recalls |
 | `$02DE` | Monitor | `MON_LAST_CMD_LEN` |
