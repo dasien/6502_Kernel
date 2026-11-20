@@ -124,13 +124,62 @@ if(NOT _left STREQUAL "${_wdir}/target.art;${_wdir}/target.art.tmp")
 endif()
 file(REMOVE_RECURSE "${_wdir}")
 
-# A failure after the temporary is opened (here the rename, onto a directory) removes
-# the temporary and leaves the target as it was. Portable stand-in for a failed write.
+# -o naming a directory is refused at once: no <dir>.tmp is created, written or deleted,
+# so a user's own <dir>.tmp is left byte for byte as it was.
 file(MAKE_DIRECTORY "${_wdir}/dir.art")
+file(WRITE "${_wdir}/dir.art.tmp" "MINE\n")
 expect_refused("-o naming a directory" -s 4x4 -o "${_wdir}/dir.art" "${_icon}")
+file(READ "${_wdir}/dir.art.tmp" _mine)
+if(NOT _mine STREQUAL "MINE\n")
+    set(_fail "${_fail}-o naming a directory touched dir.art.tmp: ${_mine}\n")
+endif()
 file(GLOB _left "${_wdir}/*")
-if(NOT _left STREQUAL "${_wdir}/dir.art")
-    set(_fail "${_fail}-o naming a directory left files behind: ${_left}\n")
+list(SORT _left)
+if(NOT _left STREQUAL "${_wdir}/dir.art;${_wdir}/dir.art.tmp")
+    set(_fail "${_fail}-o naming a directory changed the directory: ${_left}\n")
+endif()
+file(REMOVE_RECURSE "${_wdir}")
+
+# A write that fails after <target>.tmp is open removes the tmp file and leaves the
+# target as it was. Portable (macOS and Linux, no /dev/full): a file-size limit of 0
+# makes the flush fail with EFBIG; SIGXFSZ is ignored so the process survives to clean up.
+find_program(_SH sh)
+if(_SH)
+    file(MAKE_DIRECTORY "${_wdir}")
+    file(WRITE "${_wdir}/target.art" "KEEP ME\n")
+    execute_process(COMMAND "${_SH}" -c "trap '' XFSZ; ulimit -f 0; exec \"$0\" \"$@\""
+        "${PNG2ART}" -s 4x4 -o "${_wdir}/target.art" "${_icon}"
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    string(STRIP "${_err}" _errs)
+    if(_rc EQUAL 0 OR NOT _rc MATCHES "^[0-9]+$")
+        set(_fail "${_fail}size-limited write: exit '${_rc}', want a plain non-zero exit\n")
+    endif()
+    if(NOT _out STREQUAL "" OR _errs STREQUAL "" OR _errs MATCHES "\n")
+        set(_fail "${_fail}size-limited write: want one stderr line, no stdout: out '${_out}' err '${_err}'\n")
+    endif()
+    file(READ "${_wdir}/target.art" _kept)
+    if(NOT _kept STREQUAL "KEEP ME\n")
+        set(_fail "${_fail}size-limited write altered the target: ${_kept}\n")
+    endif()
+    file(GLOB _left "${_wdir}/*")
+    if(NOT _left STREQUAL "${_wdir}/target.art")
+        set(_fail "${_fail}size-limited write left files behind: ${_left}\n")
+    endif()
+    file(REMOVE_RECURSE "${_wdir}")
+endif()
+
+# A <target>.tmp that is a symlink must not have its target's mode changed by the
+# kept-mode step: the pointed-at file stays 0600 though the existing target is 0644.
+file(MAKE_DIRECTORY "${_wdir}")
+file(WRITE "${_wdir}/real.dat" "X\n")
+file(CHMOD "${_wdir}/real.dat" PERMISSIONS OWNER_READ OWNER_WRITE)
+file(WRITE "${_wdir}/target.art" "OLD\n")
+file(CHMOD "${_wdir}/target.art" PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+file(CREATE_LINK "${_wdir}/real.dat" "${_wdir}/target.art.tmp" SYMBOLIC)
+execute_process(COMMAND "${PNG2ART}" -s 4x4 -o "${_wdir}/target.art" "${_icon}" RESULT_VARIABLE _rc ERROR_VARIABLE _err)
+execute_process(COMMAND ls -l "${_wdir}/real.dat" OUTPUT_VARIABLE _lsl)
+if(NOT _lsl MATCHES "^-rw-------[@+.]? ")
+    set(_fail "${_fail}a symlinked <target>.tmp had its target's mode changed: ${_lsl}\n")
 endif()
 file(REMOVE_RECURSE "${_wdir}")
 

@@ -447,10 +447,11 @@ int main(int argc, char **argv)
     if (outname) {
         struct stat st;
         int have = stat(outname, &st) == 0;
-        /* an existing device or pipe (/dev/null) is written in place, not replaced; a
-           directory cannot be written at all, so it falls through to the rename, which
-           refuses it and removes the temporary file */
+        /* an existing device or pipe (/dev/null) is written in place, not replaced */
         int inplace = have && (st.st_mode & S_IFMT) != S_IFREG && (st.st_mode & S_IFMT) != S_IFDIR;
+        /* a directory can never be written: refuse before any <dir>.tmp is touched */
+        if (have && (st.st_mode & S_IFMT) == S_IFDIR)
+            die("output is a directory", outname);
         if (have && (st.st_mode & S_IFMT) == S_IFREG && !(st.st_mode & 0222))
             die("output file is read-only", outname);
         if (!inplace) {
@@ -465,8 +466,19 @@ int main(int argc, char **argv)
             strcpy(tmp, outname); strcat(tmp, ".tmp");
         }
         out = fopen(tmp ? tmp : outname, "w");
-        if (out && tmp && have && (st.st_mode & S_IFMT) == S_IFREG)
+        if (out && tmp && have && (st.st_mode & S_IFMT) == S_IFREG) {
+#ifdef _WIN32
             chmod(tmp, st.st_mode & 07777);     /* keep the existing file's mode */
+#else
+            /* on the open stream, never by path, and only when tmp is the plain file we
+               just created: fopen follows a pre-existing symlink at tmp, and fchmod on
+               that descriptor would change the mode of whatever it points at */
+            struct stat fs, ls;
+            if (fstat(fileno(out), &fs) == 0 && lstat(tmp, &ls) == 0 &&
+                (ls.st_mode & S_IFMT) == S_IFREG && ls.st_dev == fs.st_dev && ls.st_ino == fs.st_ino)
+                fchmod(fileno(out), st.st_mode & 07777);
+#endif
+        }
     } else out = stdout;
     if (!out) die("cannot write", outname);
     fprintf(out, "@%s %s %dx%d\n", glyph ? "glyph" : "sprite", name, W, H);
