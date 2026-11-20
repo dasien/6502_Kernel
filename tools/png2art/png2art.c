@@ -344,7 +344,9 @@ int main(int argc, char **argv)
     if (!isalpha((unsigned char)name[0]) && name[0] != '_') die("name is not a C identifier", name);
     for (i = 0; name[i]; i++)
         if (!isalnum((unsigned char)name[i]) && name[i] != '_') die("name is not a C identifier", name);
-    if (name[0] == '_' && (name[1] == '_' || isupper((unsigned char)name[1])))
+    /* C reserves a leading underscore at file scope: a lone _, __, _Upper and _lower */
+    if (name[0] == '_' && (!name[1] || name[1] == '_' || isupper((unsigned char)name[1]) ||
+                           islower((unsigned char)name[1])))
         die("name is a reserved identifier", name);
     if (strlen(name) > 63) die("name is longer than 63 characters (spr2c's limit)", NULL);
     for (i = 0; c_keywords[i]; i++)
@@ -444,14 +446,39 @@ int main(int argc, char **argv)
     }
     if (outname) {
         struct stat st;
+        int have = stat(outname, &st) == 0;
         /* an existing device or pipe (/dev/null) is written in place, not replaced */
-        int inplace = stat(outname, &st) == 0 && (st.st_mode & S_IFMT) != S_IFREG;
+        int inplace = have && (st.st_mode & S_IFMT) != S_IFREG && (st.st_mode & S_IFMT) != S_IFDIR;
+        /* a directory can never be written: refuse before any <dir>.tmp is touched */
+        if (have && (st.st_mode & S_IFMT) == S_IFDIR)
+            die("output is a directory", outname);
+        if (have && (st.st_mode & S_IFMT) == S_IFREG && !(st.st_mode & 0222))
+            die("output file is read-only", outname);
         if (!inplace) {
+            char *real = NULL;
+#ifndef _WIN32
+            /* -o naming a symlink writes through to what it points at, link intact */
+            if (have) real = realpath(outname, NULL);
+#endif
+            if (real) outname = real;
             tmp = malloc(strlen(outname) + 5);
             if (!tmp) die("out of memory", NULL);
             strcpy(tmp, outname); strcat(tmp, ".tmp");
         }
         out = fopen(tmp ? tmp : outname, "w");
+        if (out && tmp && have && (st.st_mode & S_IFMT) == S_IFREG) {
+#ifdef _WIN32
+            chmod(tmp, st.st_mode & 07777);     /* keep the existing file's mode */
+#else
+            /* on the open stream, never by path, and only when tmp is the plain file we
+               just created: fopen follows a pre-existing symlink at tmp, and fchmod on
+               that descriptor would change the mode of whatever it points at */
+            struct stat fs, ls;
+            if (fstat(fileno(out), &fs) == 0 && lstat(tmp, &ls) == 0 &&
+                (ls.st_mode & S_IFMT) == S_IFREG && ls.st_dev == fs.st_dev && ls.st_ino == fs.st_ino)
+                fchmod(fileno(out), st.st_mode & 07777);
+#endif
+        }
     } else out = stdout;
     if (!out) die("cannot write", outname);
     fprintf(out, "@%s %s %dx%d\n", glyph ? "glyph" : "sprite", name, W, H);
