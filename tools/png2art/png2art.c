@@ -19,6 +19,9 @@
 #include <errno.h>
 #include <math.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -259,7 +262,7 @@ int main(int argc, char **argv)
     int ramp[16], nramp = 0, map[16], mapset = 0, ci, glyph = 0, tset = 0, athresh;
     unsigned char *grid;
     float *lum, *blur;
-    char *tmp = NULL;
+    char *tmp = NULL, *real = NULL;
     const char *name = "sprite", *image = NULL, *palfile = NULL, *outname = NULL;
     int have_box = 0, W = 0, H = 0, BW = 0, BH = 0, ox, oy, rotate = 0, thresh = 110, dump = 0, i;
     unsigned char *img;
@@ -344,9 +347,9 @@ int main(int argc, char **argv)
     if (!isalpha((unsigned char)name[0]) && name[0] != '_') die("name is not a C identifier", name);
     for (i = 0; name[i]; i++)
         if (!isalnum((unsigned char)name[i]) && name[i] != '_') die("name is not a C identifier", name);
-    /* C reserves a leading underscore at file scope: a lone _, __, _Upper and _lower */
-    if (name[0] == '_' && (!name[1] || name[1] == '_' || isupper((unsigned char)name[1]) ||
-                           islower((unsigned char)name[1])))
+    /* every leading underscore is refused: C reserves most of them at file scope, and
+       the rest (_1, _9x) are not worth a rule of their own */
+    if (name[0] == '_')
         die("name is a reserved identifier", name);
     if (strlen(name) > 63) die("name is longer than 63 characters (spr2c's limit)", NULL);
     for (i = 0; c_keywords[i]; i++)
@@ -447,6 +450,15 @@ int main(int argc, char **argv)
     if (outname) {
         struct stat st;
         int have = stat(outname, &st) == 0;
+#ifndef _WIN32
+        /* a link whose target is missing fails stat but not lstat: refuse it rather than
+           let the rename replace the link with a plain file */
+        if (!have) {
+            struct stat ls0;
+            if (lstat(outname, &ls0) == 0 && (ls0.st_mode & S_IFMT) == S_IFLNK)
+                die("output is a dangling symlink", outname);
+        }
+#endif
         /* an existing device or pipe (/dev/null) is written in place, not replaced */
         int inplace = have && (st.st_mode & S_IFMT) != S_IFREG && (st.st_mode & S_IFMT) != S_IFDIR;
         /* a directory can never be written: refuse before any <dir>.tmp is touched */
@@ -454,8 +466,12 @@ int main(int argc, char **argv)
             die("output is a directory", outname);
         if (have && (st.st_mode & S_IFMT) == S_IFREG && !(st.st_mode & 0222))
             die("output file is read-only", outname);
+#ifndef _WIN32
+        /* read-only means this caller cannot write it, whoever owns it */
+        if (have && (st.st_mode & S_IFMT) == S_IFREG && access(outname, W_OK) != 0)
+            die("output file is read-only", outname);
+#endif
         if (!inplace) {
-            char *real = NULL;
 #ifndef _WIN32
             /* -o naming a symlink writes through to what it points at, link intact */
             if (have) real = realpath(outname, NULL);
@@ -468,7 +484,7 @@ int main(int argc, char **argv)
         out = fopen(tmp ? tmp : outname, "w");
         if (out && tmp && have && (st.st_mode & S_IFMT) == S_IFREG) {
 #ifdef _WIN32
-            chmod(tmp, st.st_mode & 07777);     /* keep the existing file's mode */
+            chmod(tmp, st.st_mode & 0777);      /* keep the existing file's mode */
 #else
             /* on the open stream, never by path, and only when tmp is the plain file we
                just created: fopen follows a pre-existing symlink at tmp, and fchmod on
@@ -476,7 +492,7 @@ int main(int argc, char **argv)
             struct stat fs, ls;
             if (fstat(fileno(out), &fs) == 0 && lstat(tmp, &ls) == 0 &&
                 (ls.st_mode & S_IFMT) == S_IFREG && ls.st_dev == fs.st_dev && ls.st_ino == fs.st_ino)
-                fchmod(fileno(out), st.st_mode & 07777);
+                fchmod(fileno(out), st.st_mode & 0777);   /* never setuid/setgid/sticky */
 #endif
         }
     } else out = stdout;
@@ -493,5 +509,6 @@ int main(int argc, char **argv)
     free(grid); free(lum); free(blur);
     stbi_image_free(img);
     finish_output(out, outname, tmp);
+    free(real);
     return 0;
 }

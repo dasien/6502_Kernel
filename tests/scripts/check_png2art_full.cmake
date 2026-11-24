@@ -1,5 +1,5 @@
 # png2art -o /dev/full: the fflush/ferror/fclose failure path must exit non-zero with
-# one stderr line. Where /dev/full does not exist it prints PNG2ART_SKIP and exits 0,
+# one stderr line. Where /dev/full does not exist it prints the skip token and exits 0,
 # which ctest reports as skipped (SKIP_REGULAR_EXPRESSION; works on every CMake 3.20+,
 # unlike cmake_language(EXIT 77), which needs 3.29).
 
@@ -8,7 +8,7 @@ if(NOT PNG2ART OR NOT DATA OR NOT WORK)
     message(FATAL_ERROR "PNG2ART, DATA and WORK must be specified")
 endif()
 if(NOT EXISTS /dev/full)
-    message(STATUS "PNG2ART_SKIP no /dev/full: the write-error path cannot be forced")
+    message(STATUS "ctest-skip-token:png2art_write_error:no-dev-full no /dev/full: the write-error path cannot be forced")
     return()
 endif()
 execute_process(COMMAND "${PNG2ART}" -s 4x4 -o /dev/full "${DATA}/icon.png"
