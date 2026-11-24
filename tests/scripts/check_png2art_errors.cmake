@@ -42,7 +42,7 @@ endfunction()
 set(_icon "${DATA}/icon.png")
 expect_refused("name of 64 characters" -s 4x4 -n ${_long_name} "${_icon}")
 foreach(_kw int while return static _Bool bool true false nullptr constexpr typeof static_assert
-        alignas thread_local asm fastcall cdecl __x _Zed __ _ _x _a1)
+        alignas thread_local asm fastcall cdecl __x _Zed __ _ _x _a1 _1 _9x _9 _0abc)
     expect_refused("keyword name ${_kw}" -s 4x4 -n ${_kw} "${_icon}")
 endforeach()
 foreach(_sz 4294967298x4 4x4294967298 99999999999999999999x4 -4x4 +4x4 " 4x4" 4x 4xx4 4x4x)
@@ -205,6 +205,44 @@ expect_refused("-o naming a read-only file" -s 4x4 -o "${_wdir}/ro.art" "${_icon
 file(READ "${_wdir}/ro.art" _ro)
 if(NOT _ro STREQUAL "RO\n")
     set(_fail "${_fail}-o replaced a read-only file: ${_ro}\n")
+endif()
+file(REMOVE_RECURSE "${_wdir}")
+
+# -o naming a dangling symlink is refused and the link is left as it was.
+file(MAKE_DIRECTORY "${_wdir}")
+file(CREATE_LINK missing.art "${_wdir}/dangling.art" SYMBOLIC)
+expect_refused("-o naming a dangling symlink" -s 4x4 -o "${_wdir}/dangling.art" "${_icon}")
+if(NOT IS_SYMLINK "${_wdir}/dangling.art" OR EXISTS "${_wdir}/missing.art")
+    set(_fail "${_fail}-o replaced or wrote through a dangling symlink\n")
+endif()
+
+# -o naming a file the caller owns but cannot write although a group bit allows it: mode
+# 0464 has a write bit set, so only access() sees it is unwritable. Root can write
+# anything, so that variant is Skipped there (the 0444 case above still runs).
+execute_process(COMMAND id -u OUTPUT_VARIABLE _uid OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(_uid STREQUAL "0")
+    message(STATUS "SKIPPED variant: group-writable-only file, running as root")
+else()
+    file(WRITE "${_wdir}/grp.art" "GRP\n")
+    file(CHMOD "${_wdir}/grp.art" PERMISSIONS OWNER_READ GROUP_READ GROUP_WRITE WORLD_READ)
+    expect_refused("-o naming a group-writable-only file" -s 4x4 -o "${_wdir}/grp.art" "${_icon}")
+    file(READ "${_wdir}/grp.art" _grp)
+    if(NOT _grp STREQUAL "GRP\n")
+        set(_fail "${_fail}-o replaced a group-writable-only file: ${_grp}\n")
+    endif()
+endif()
+# A file owned by another user needs root to construct: Skipped here, covered by the
+# same access() call as the group-writable-only case.
+
+# The written file never carries setuid/setgid, even when the target had them.
+if(NOT WIN32)
+    file(WRITE "${_wdir}/suid.art" "OLD\n")
+    execute_process(COMMAND chmod 6755 "${_wdir}/suid.art")
+    execute_process(COMMAND "${PNG2ART}" -s 4x4 -o "${_wdir}/suid.art" "${_icon}" RESULT_VARIABLE _rc)
+    execute_process(COMMAND ls -l "${_wdir}/suid.art" OUTPUT_VARIABLE _lsl)
+    if(NOT _rc EQUAL 0 OR _lsl MATCHES "^-..[sS]" OR _lsl MATCHES "^-.....[sS]")
+        set(_fail "${_fail}-o kept setuid/setgid on the written file (rc ${_rc}): ${_lsl}\n")
+    endif()
 endif()
 file(REMOVE_RECURSE "${_wdir}")
 
