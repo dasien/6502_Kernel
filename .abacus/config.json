@@ -12,5 +12,6 @@
     "CLAUDE.md"
   ],
   "context_ceiling_pct": 60,
-  "project": "6502 kernel"
+  "project": "6502 kernel",
+  "landing": "draft-pr"
 }
