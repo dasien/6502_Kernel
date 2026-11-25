@@ -2,37 +2,6 @@
   "agents_directory": ".claude/agents",
   "enhancements_directory": "enhancements",
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|SendMessage|mcp__.*|computer",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/abacus/guards.py\" repo-fence foreign-bd destructive-git stage-writes database-url operator-only secrets human-only"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/abacus/redact.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "SendMessage",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${ABACUS_HOME:-$HOME/.abacus}/bin/abacus-logbook\" msg hook sent 2>/dev/null || true"
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "matcher": "",
@@ -43,30 +12,13 @@
           }
         ]
       }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${ABACUS_HOME:-$HOME/.abacus}/bin/abacus-logbook\" msg hook receive 2>/dev/null || true"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${ABACUS_HOME:-$HOME/.abacus}/bin/abacus-logbook\" msg hook stop 2>/dev/null || true"
-          }
-        ]
-      }
     ]
   },
-  "enabledMcpjsonServers": ["abacus-memory"],
   "permissions": {
-    "deny": ["Edit(.claude/**)", "Edit(.abacus/**)", "Edit(.githooks/**)"]
+    "deny": [
+      "Edit(.claude/**)",
+      "Edit(.abacus/**)",
+      "Edit(.githooks/**)"
+    ]
   }
 }
