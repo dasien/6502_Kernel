@@ -300,7 +300,8 @@ static int term_columns(void)
 
 static void preview(FILE *f, const int *src, const int *res, int W, int H)
 {
-    const int gap = 4;
+    /* "source" is 6 wide: a narrow picture widens the gap so the header keeps a space */
+    const int gap = W + 4 < 7 ? 7 - W : 4;
     int y, side = 2 * W + gap <= term_columns();
     if (side) fprintf(f, "%-*s%s\n", W + gap, "source", "result");
     else fputs("source\n", f);
