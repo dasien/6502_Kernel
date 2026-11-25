@@ -246,6 +246,13 @@ texture, then bins the brightness into a hand-picked ramp of slots, darkest firs
 (`-B 8,7,F`); only those slots are used. With both, the map is applied after banding.
 Either option refuses slot 0 or any character that is not `1`-`F`.
 Each name must be new to the file, so a block appended with `>>` needs its own `-n`.
+`--preview` shows how well the conversion held up. It draws two pictures on standard
+error in 24-bit colour: the source scaled to `WxH` in its true colours, before snapping,
+next to the result in palette colours, with transparent pixels as a grey checker. The
+pictures sit side by side when the terminal is wide enough, and one above the other
+when it isn't. The block still goes to standard output or `-o`, so
+`png2art --preview ... > craft.art` writes the file and shows the picture. Each pixel
+is half a character cell, so the pictures come out square.
 The result is a starting point to tidy by hand, then `spr2c` reads it as above.
 
 **`@glyph NAME 8xH`** is a soft-font character, 1 bit a pixel, for the font port.

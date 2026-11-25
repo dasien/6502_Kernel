@@ -20,6 +20,7 @@
 #include <math.h>
 #include <sys/stat.h>
 #ifndef _WIN32
+#include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
@@ -69,6 +70,9 @@ static void usage(void)
 "                darker or transparent (alpha under 110) is ground. -b and -r work;\n"
 "                -p, -m and -B do not\n"
 "  -o FILE       write to FILE instead of standard output\n"
+"  --preview     also draw the source (scaled to WxH, true colour) beside the result\n"
+"                (palette colours) on standard error, in 24-bit colour, to judge the\n"
+"                conversion; the block still goes to standard output or -o\n"
 "  --dump-palette  print the palette in use as 16 RRGGBB lines and exit\n"
 "The source is rotated first (-r), then the transparent margin is trimmed. Slot 0 is never used for a colour.\n",
         stderr);
@@ -257,8 +261,64 @@ static void finish_output(FILE *out, const char *outname, const char *tmp)
     if (bad) die("cannot write", outname ? outname : "standard output");
 }
 
+/* --preview: one picture's pixels as 24-bit colour, -1 in [0] for transparent. Each
+   terminal cell is an upper half block, top pixel as ink and bottom as paper, so a
+   pixel is about square. Transparent pixels are a grey checker. */
+static void cell_rgb(const int *px, int x, int y, int *r, int *g, int *b)
+{
+    if (px[0] < 0) {
+        int v = ((x / 2 + y / 2) & 1) ? 72 : 48;
+        *r = *g = *b = v;
+    } else { *r = px[0]; *g = px[1]; *b = px[2]; }
+}
+
+static void preview_row(FILE *f, const int *pic, int W, int H, int y)
+{
+    int x, r, g, b;
+    for (x = 0; x < W; x++) {
+        cell_rgb(pic + (y * W + x) * 3, x, y, &r, &g, &b);
+        fprintf(f, "\x1b[38;2;%d;%d;%dm", r, g, b);
+        if (y + 1 < H) cell_rgb(pic + ((y + 1) * W + x) * 3, x, y + 1, &r, &g, &b);
+        else r = g = b = -1;
+        if (r < 0) fputs("\x1b[49m", f);            /* odd height: the last half row is blank */
+        else fprintf(f, "\x1b[48;2;%d;%d;%dm", r, g, b);
+        fputs("\xe2\x96\x80", f);                    /* U+2580 upper half block */
+    }
+    fputs("\x1b[0m", f);
+}
+
+static int term_columns(void)
+{
+    const char *c = getenv("COLUMNS");
+#ifndef _WIN32
+    struct winsize ws;
+    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) return ws.ws_col;
+#endif
+    if (c && atoi(c) > 0) return atoi(c);
+    return 80;
+}
+
+static void preview(FILE *f, const int *src, const int *res, int W, int H)
+{
+    const int gap = 4;
+    int y, side = 2 * W + gap <= term_columns();
+    if (side) fprintf(f, "%-*s%s\n", W + gap, "source", "result");
+    else fputs("source\n", f);
+    for (y = 0; y < H; y += 2) {
+        preview_row(f, src, W, H, y);
+        if (side) { fprintf(f, "%*s", gap, ""); preview_row(f, res, W, H, y); }
+        fputc('\n', f);
+    }
+    if (!side) {
+        fputs("result\n", f);
+        for (y = 0; y < H; y += 2) { preview_row(f, res, W, H, y); fputc('\n', f); }
+    }
+    fflush(f);
+}
+
 int main(int argc, char **argv)
 {
+    int show = 0, *src, *res;
     int ramp[16], nramp = 0, map[16], mapset = 0, ci, glyph = 0, tset = 0, athresh;
     unsigned char *grid;
     float *lum, *blur;
@@ -274,6 +334,7 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--dump-palette")) dump = 1;
+        else if (!strcmp(a, "--preview")) show = 1;
         else if (!strcmp(a, "-s") && i + 1 < argc) {
             const char *e;
             long w, h;
@@ -381,7 +442,9 @@ int main(int argc, char **argv)
     grid = malloc((size_t)W * H);
     lum = malloc((size_t)W * H * sizeof *lum);
     blur = malloc((size_t)W * H * sizeof *blur);
-    if (!grid || !lum || !blur) die("out of memory", NULL);
+    src = malloc((size_t)W * H * 3 * sizeof *src);
+    res = malloc((size_t)W * H * 3 * sizeof *res);
+    if (!grid || !lum || !blur || !src || !res) die("out of memory", NULL);
     for (dy = 0; dy < H; dy++) {
         for (dx = 0; dx < W; dx++) {
             int bx = dx - ox, by = dy - oy;
@@ -392,6 +455,7 @@ int main(int argc, char **argv)
             int j, k, best = 1;
             lum[dy * W + dx] = -1;
             grid[dy * W + dx] = '.';
+            src[(dy * W + dx) * 3] = -1;
             if (bx < 0 || by < 0 || bx >= BW || by >= BH) continue;
             for (j = (int)ya; j < bh && j < yb; j++) {
                 double wy = (j + 1 < yb ? j + 1 : yb) - (j > ya ? j : ya);
@@ -406,6 +470,9 @@ int main(int argc, char **argv)
                when the average is exactly the threshold: allow for it */
             if (sa <= 0 || sa < athresh * area * (1 - 1e-9)) continue;
             sr /= sa; sg /= sa; sb /= sa;           /* un-premultiply */
+            src[(dy * W + dx) * 3] = (int)(sr + 0.5);
+            src[(dy * W + dx) * 3 + 1] = (int)(sg + 0.5);
+            src[(dy * W + dx) * 3 + 2] = (int)(sb + 0.5);
             if (glyph) {
                 if (0.299 * sr + 0.587 * sg + 0.114 * sb >= thresh) grid[dy * W + dx] = '#';
                 continue;
@@ -501,14 +568,19 @@ int main(int argc, char **argv)
     for (dy = 0; dy < H; dy++) {
         for (dx = 0; dx < W; dx++) {
             int c = grid[dy * W + dx];
+            int *p = res + (dy * W + dx) * 3;
             if (mapset && c != '.') c = "0123456789ABCDEF"[map[slot_of(c)]];
             fputc(c, out);
+            if (c == '.') p[0] = -1;
+            else if (glyph) p[0] = p[1] = p[2] = 255;      /* ink as white */
+            else { ci = slot_of(c); p[0] = pal[ci][0]; p[1] = pal[ci][1]; p[2] = pal[ci][2]; }
         }
         fputc('\n', out);
     }
-    free(grid); free(lum); free(blur);
-    stbi_image_free(img);
     finish_output(out, outname, tmp);
+    if (show) preview(stderr, src, res, W, H);
+    free(grid); free(lum); free(blur); free(src); free(res);
+    stbi_image_free(img);
     free(real);
     return 0;
 }
