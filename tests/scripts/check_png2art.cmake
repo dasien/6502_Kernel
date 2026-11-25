@@ -9,7 +9,8 @@
 #   - a palette given with -p snaps to that palette's slots (icon_pal.art);
 #   - no opaque pixel is slot 0: every row is only '.' and 1-F;
 #   - the built-in palette is the one VIC::seedPalette() sets (read from VIC.cpp);
-#   - -g writes @glyph blocks (glyph.png, below) and spr2c accepts them.
+#   - -g writes @glyph blocks (glyph.png, below) and spr2c accepts them;
+#   - --preview leaves the block unchanged and draws both pictures on stderr.
 # Errors on a missing, truncated or non-image file are in check_png2art_errors.cmake.
 
 cmake_minimum_required(VERSION 3.20)
@@ -40,7 +41,7 @@ run_tool(u)
 if(u_rc EQUAL 0)
     set(_fail "${_fail}no arguments exited 0\n")
 endif()
-foreach(_opt "-s" "-n" "-b" "-r" "-m" "-B" "-t" "-p" "-o" "--dump-palette")
+foreach(_opt "-s" "-n" "-b" "-r" "-m" "-B" "-t" "-p" "-o" "--preview" "--dump-palette")
     string(FIND "${u_err}" "  ${_opt} " _pos)
     if(_pos EQUAL -1)
         set(_fail "${_fail}usage does not name ${_opt}\n")
@@ -261,6 +262,54 @@ if(NOT _ntriples EQUAL 16)
     set(_fail "${_fail}found ${_ntriples} colours in VIC.cpp, not 16\n")
 elseif(NOT p STREQUAL _want)
     set(_fail "${_fail}built-in palette differs from VIC::seedPalette()\n--- got\n${p}--- want\n${_want}")
+endif()
+
+# --- --preview: the block is unchanged, the picture goes to stderr -----------------
+# icon.png's top-left pixel becomes slot 8, which is (85,85,85). Under ctest stderr is
+# a pipe, not a terminal, so the width comes from COLUMNS: set it wide for side by side.
+set(ENV{COLUMNS} 200)
+run_tool(v -s 4x4 -n icon --preview "${DATA}/icon.png")
+if(NOT v_rc EQUAL 0)
+    set(_fail "${_fail}--preview failed: ${v_err}\n")
+endif()
+expect_same("--preview stdout" "${v}" "${DATA}/icon.art")
+string(ASCII 27 _esc)
+foreach(_want "source" "result" "${_esc}[38;2;85;85;85m" "${_esc}[0m")
+    string(FIND "${v_err}" "${_want}" _pos)
+    if(_pos EQUAL -1)
+        set(_fail "${_fail}--preview stderr lacks '${_want}'\n--- got\n${v_err}\n")
+    endif()
+endforeach()
+# 4x4 is two half-block rows, plus the header line
+string(REGEX MATCHALL "\n" _nl "${v_err}")
+list(LENGTH _nl _nlines)
+if(NOT _nlines EQUAL 3)
+    set(_fail "${_fail}--preview side by side wrote ${_nlines} lines, not 3\n")
+endif()
+# too narrow for side by side: stacked, a header above each picture
+set(ENV{COLUMNS} 6)
+run_tool(vs -s 4x4 -n icon --preview "${DATA}/icon.png")
+string(REGEX MATCHALL "\n" _nl "${vs_err}")
+list(LENGTH _nl _nlines)
+if(NOT _nlines EQUAL 6)
+    set(_fail "${_fail}--preview stacked wrote ${_nlines} lines, not 6\n")
+endif()
+# a 2-wide picture: the header still has a space between the labels
+set(ENV{COLUMNS} 200)
+run_tool(vn -s 2x2 -n icon --preview "${DATA}/icon.png")
+string(FIND "${vn_err}" "source result" _pos)
+if(_pos EQUAL -1)
+    set(_fail "${_fail}--preview at 2x2: header labels run together\n--- got\n${vn_err}\n")
+endif()
+unset(ENV{COLUMNS})
+run_tool(vg -g -n gdef --preview "${DATA}/glyph.png")
+if(NOT vg_rc EQUAL 0)
+    set(_fail "${_fail}-g --preview failed: ${vg_err}\n")
+endif()
+expect_same("-g --preview stdout" "${vg}" "${DATA}/glyph_8x16.art")
+string(FIND "${vg_err}" "${_esc}[38;2;255;255;255m" _pos)
+if(_pos EQUAL -1)
+    set(_fail "${_fail}-g --preview draws no white ink\n")
 endif()
 
 if(_fail)
