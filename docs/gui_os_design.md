@@ -1,14 +1,14 @@
 # An optional graphical OS for MFC: design
 
-Research spike, written from [briefs/gui-os-research.md](briefs/gui-os-research.md). This is
-**part 1 of 2**. It decides how the GUI is launched and left, which display model it
-draws on, and how it gets a pointer. Questions 3 to 7 of the brief (what to take from GEOS,
-the kernel ABI, filesystem integration, the application model and phasing) are part 2 and
-are listed at the end. Nothing here is implemented, and no prototype was built.
+Research spike, written from [briefs/gui-os-research.md](briefs/gui-os-research.md). Part 1
+decides how the GUI is launched and left, which display model it draws on, and how it gets a
+pointer (questions 1 and 2). Part 2 follows it and covers questions 3 to 7: what to take from
+GEOS, the kernel ABI, filesystem integration, the application model and phasing. Nothing here
+is implemented, and no prototype was built.
 
 The reference is [mist64/geos](https://github.com/mist64/geos), the reconstructed source of
 GEOS 2.0. Nothing from it is adapted yet, so there is no credit or `vendor/geos/` change in
-this part.
+this spike; part 2 records the plan for later.
 
 Conventions. Any figure that is not measured is marked **estimate** and shows its
 arithmetic. Any address, register or entry point that does not exist today is marked
@@ -23,6 +23,10 @@ arithmetic. Any address, register or entry point that does not exist today is ma
 | Placement | Code in module bank 2. State and the stub in the `$0400-$07FF` scratch page. Overflow and resources on disk | All-RAM `.PRG`; state in bank 0 (not visible while bank 2 is mapped) |
 | Display | Glyph-tiled framebuffer: 640x400, 1 bit a pixel, two colours per 8x16 cell, built from nine font sets switched by raster band | Character-cell GUI; new VIC bitmap mode (kept as a drop-in upgrade) |
 | Pointer | A chipset mouse device (7 registers, **proposed** `$FED5-$FEDB`), drawn as sprite 16 | Keyboard-only pointer on `$FE0F` (kept as a fallback source) |
+| GEOS (part 2) | Adopt its table-driven menus and dialogs, graphics string, process table and flag-and-vector events; five parts adapted, the rest rewritten; drop its bitmap addressing, desk accessories and clock | Copying GEOS's C64 layout; its deskTop (no source in mist64/geos) |
+| Kernel ABI (part 2) | Six new entries and an NMI change, 512 B of 1,209 B free | An event queue in the kernel; pixel primitives in the kernel |
+| Filesystem (part 2) | Two-pass directory read; the desktop loads programs itself; a plain `.PRG` may overwrite `$0400-$07FF`, so the desktop rebuilds on return | Keeping desktop state alive across a launch |
+| Applications (part 2) | A `.PRG` with a 96-byte GUI header, linked against `libmfcgui` | A header alone; a library alone; a ROM module |
 
 ## "Optional": launch and exit
 
@@ -135,8 +139,9 @@ that uses neither the monitor's `T:`/`Z:` snapshot nor the assembler. The GUI us
 That is 1 KB, minus the stub, which can sit at the top of it (**proposed** load address
 `$07E0`, so the stub survives a program loaded at `$0800`; the GUI's own state then has
 `$0400-$07DF`, 992 bytes). It holds the pointer, the event queue, menu and window records
-and dirty-rectangle list. A zero-page budget of about 32 bytes fits the free gap at
-`$3A-$5A` that `architecture.md` lists; part 2 pins that down.
+and dirty-rectangle list. A zero-page budget of about 32 bytes was assumed to fit the gap at
+`$3A-$5A` that `architecture.md` lists. **Part 2 corrects this**: the DOS uses `$3A-$3F`, so
+the free gap is `$45-$5A`, 22 bytes (see "Part 2 conventions and sources").
 
 Two consequences. A **STOP** key press maps the monitor over the window, and `Q` returns to
 the DOS prompt, not the desktop: the GUI is dropped, and that is acceptable for a debugger
@@ -428,20 +433,585 @@ the console build and under the headless harness. As the *primary* design the ke
 is rejected for the reasons above: no absolute position, two buttons that collide with typing,
 10 s to cross the screen from rest.
 
-## Parts of the brief still to write (part 2)
+## Part 2 conventions and sources
 
-Questions 3 to 7 are not answered here. They need the decisions above and are the second
-bead.
+Part 2 answers questions 3 to 7. It builds on the part 1 decisions (stub plus bank 2, state in
+`$0400-$07FF`, glyph-tiled framebuffer, mouse device with sprite 16) and does not reopen them.
 
-- **3. Architecture from GEOS**: what to adopt, adapt or drop; every adapted part names its
-  mist64/geos file.
-- **4. Kernel ABI**: existing `$FF00` routines used, each proposed new entry with inputs,
-  outputs and ROM cost. This part proposes three things that part 2 must cost: a pointer-state
-  entry, a rectangle and glyph-region blit pair, and the NMI line that disables the raster
-  interrupt.
-- **5. Filesystem integration**: the desktop over FAT16, launching a `.PRG` and returning, and
-  the `$0400-$07FF` state rebuild described above.
-- **6. Application model**: what a GUI application is, and a minimal "hello window".
-- **7. Phasing**: ordered, demonstrable slices. The first should be the measurement: time a
-  full region redraw through `VREG_FONT_DATA` and the nine-band split on the emulated machine, and
-  compare it with the estimates in the Question 1 table.
+**GEOS source read.** The reference was cloned from `github.com/mist64/geos` (default branch) and
+the files named below were read; the table in question 3 says how much of each. A part whose source is
+not in that repository is marked **unverified** and has no file name. Claims about what a routine does
+rest on its header comment and the code read. No GEOS code was built or run.
+
+**Sizes.** Module sizes are **estimates**; nothing was assembled. A figure taken from GEOS is a source
+line count of the named files (`wc -l`), which only indicates relative weight. Kernel ROM costs in
+question 4 are instruction-by-instruction byte counts, with the arithmetic shown.
+
+**Findings against the reference documents.** Four facts from `src/` and the linker maps differ from
+`architecture.md` or from part 1, and they shape the design. Addresses in this list come from the
+source or a build, so `architecture.md` now carries the DOS jump table and the corrected zero-page rows
+(`$3A-$3F`, `$40-$44`, `$45-$5A`). The two build-derived figures, `$F946` and `$AA11`, are labelled
+(map): they change with every build, appear in no reference document, and are not proposals.
+
+1. *Kernel free space.* `architecture.md` ("ROM Layout") says `CODE` is `$F000-$F61C` with about
+   2.0 KB free. The linker map of a build of this tree (`cmake-build-debug/kernel/kernel.map`, (map))
+   says `CODE` is `$F000-$F946`, `$0947` = 2,375 bytes. The document is stale; question 4 uses the map.
+2. *Zero page.* `architecture.md` lists `$3A-$5A` as free and part 1 budgeted about 32 bytes there. It
+   is not all free. `dos.asm` (src) uses `$3A-$3F` (`BLK_BUF_PTR`, `DOS_PTR`, `DOS_PTR2`) on every file
+   call. `kernel.asm` (src) uses `$40-$44` (`LBN_NAME_PTR`, `LBN_MOD_PTR`, `LBN_IDX`) during a launch by
+   name. `$5A` in `dos.asm` is the *value* `POWER_ARM`, not an address. The free gap is **`$45-$5A`, 22
+   bytes**, with `$40-$44` usable as temporaries that a shell launch clobbers.
+3. *Launch return.* `_DOS_RUN_FILE` (src) resets the stack (`LDX #$FF / TXS`), pushes `DOS_WARM-1` as
+   the program's return address and jumps to the load address. A plain `RTS` from a program lands at the
+   `]` prompt, never back in whatever loaded it. The cc65 glue's `QUITDOS` also ends in `JMP DOS_WARM`.
+   Question 5 designs the return around this.
+4. *The `$0400-$07FF` page.* Whether a plain `.PRG` may overwrite it is settled in question 5: yes.
+
+## Question 3: Architecture from GEOS
+
+### Files read in mist64/geos
+
+All paths are under `kernal/` in the repository.
+
+| File | Read |
+|---|---|
+| `mainloop/mainloop1.s`, `mainloop2.s`, `mainloop3.s` | whole |
+| `irq/irq.s` | first 120 lines (the IRQ entry and the register save) |
+| `mouse/mouse1.s`, `mouse3.s`, `mouse4.s` | whole |
+| `mouse/mouse2.s` | up to `CheckClickPos`, and the start of `DoMouseFault` |
+| `menu/menu1.s` | first 160 lines (`DoMenu` and its table format) |
+| `menu/menu3.s` | lines 35 to 60 (`Menu_3`, `Menu_4`) |
+| `dlgbox/dlgbox1a.s` | whole (`DoDlgBox`) |
+| `graph/rect.s` | `Rectangle`, and the header comments of the other four |
+| `graph/pattern.s`, `graph/graphicsstring.s` | whole |
+| `graph/scanline.s` | head (`GetScanLine`) |
+| `graph/line.s` | head and `HorizontalLine` |
+| `graph/point.s` | head and the set-up of `DrawLine` (not the plotting loops) |
+| `fonts/fonts2.s`, `fonts/fonts3.s` | head only |
+| `bswfont/bswfont.s` | head (the font data) |
+| `process/process1.s`, `process2.s`, `process3c.s` | whole |
+| `icon/icon1.s` | head (`DoIcons`) |
+| `load/deskacc.s` | head (`LdDeskAcc`) |
+| `header/header.s`, `time/time1.s` | head |
+| `inc/const.inc`, `inc/geossym.inc`, `README.md` ("Memory Layout") | the parts quoted |
+
+Not read, and not relied on: `dlgbox1b` to `dlgbox1k` (the dialog command routines and the file
+picker), `menu2.s`, `fonts4*.s`, the sprite code and the disk drivers. Anything below that depends on
+them is marked **unverified**.
+
+### Verdict by part
+
+"Adapted" means the 6502 is carried over with edits, and the original file is named. "Rewrite" means new
+code that follows an idea or a data layout. A data layout GEOS defines is an interface convention, not
+code, so adopting a layout is a rewrite.
+
+| Part | Verdict | Adapted or rewrite | Original in mist64/geos |
+|---|---|---|---|
+| Main loop | **Adopt** the shape | Rewrite | `mainloop/mainloop1.s` (`_MainLoop`) |
+| Event dispatch | **Adopt** the vector model | Rewrite | `mouse/mouse4.s` (`_DoCheckButtons`) |
+| Hit test | **Adopt** | **Adapted**, y widened to 9 bits | `mouse/mouse1.s` (`_IsMseInRegion`) |
+| Pointer clamp and fault | **Adapt** | Rewrite | `mouse/mouse2.s` (`CheckMsePos`) |
+| Menus | **Adopt** the table format | Rewrite | `menu/menu1.s` (`_DoMenu`) |
+| Dialog boxes | **Adopt** the table format | Rewrite | `dlgbox/dlgbox1a.s` (`_DoDlgBox`) |
+| Graphics string | **Adopt** | **Adapted** | `graph/graphicsstring.s` (`_GraphicsString`) |
+| Patterns | **Adopt** | **Adapted** | `graph/pattern.s` (`_SetPattern`) |
+| Rectangles | **Adapt** | Rewrite | `graph/rect.s` (`_Rectangle`) |
+| Lines | **Adapt** | Rewrite | `graph/line.s`, `graph/point.s` |
+| Scanline addressing | **Drop** | none | `graph/scanline.s` (replaced by the tile mapper) |
+| Proportional fonts | **Adapt** the data format | Rewrite | `fonts/fonts2.s`, `bswfont/bswfont.s` |
+| Processes and timers | **Adopt** | **Adapted** | `process/process1.s`, `process/process2.s` |
+| Sleep and delays | **Adopt** | **Adapted** | `process/process3c.s` |
+| Icon strips | **Adapt** | Rewrite | `icon/icon1.s` (`_DoIcons`) |
+| Desktop and file manager | **Drop** the GEOS one | Rewrite | none in mist64/geos: **unverified** |
+| Desk accessories | **Drop** | none | `load/deskacc.s` |
+| Clock | **Drop** | none | `time/time1.s` (reads the C64's CIA) |
+| Memory layout | **Adapt** | Rewrite | `README.md`, `inc/const.inc`, `inc/geossym.inc` |
+
+Five parts are adapted code, from six files: `mouse1.s`, `graphicsstring.s`, `pattern.s`,
+`process1.s`, `process2.s` and `process3c.s`. The rest are rewrites. That fits the brief's expectation:
+most of GEOS assumes the VIC-II bitmap and C64 addresses.
+
+### Main loop and event dispatch
+
+**What GEOS does.** `_MainLoop` (`mainloop1.s`) runs `_DoCheckButtons`, `_ExecuteProcesses`,
+`_DoCheckDelays`, `_DoUpdateTime`, then calls the application's `appMain` vector and starts again.
+`_DoCheckButtons` (`mouse4.s`) tests bits of a `pressFlag` byte and calls one vector per set bit:
+`inputVector`, `mouseVector`, `keyVector`, and `mouseFaultVec` when `faultData` is non-zero. The IRQ does
+the time-critical half: `_InterruptMain` (`mainloop3.s`) calls `ProcessMouse`, `__ProcessTimers`,
+`__ProcessDelays`, `ProcessCursor` and `__GetRandom` on every interrupt, and `irq.s` saves the 32 bytes
+of `r0-r15` around it.
+
+**MFC decision.** Adopt both halves as a flag-and-vector model with no queue.
+
+- *IRQ half, from the raster handler.* The kernel IRQ is not extensible: it offers `RASTER_VEC` and
+  nothing else (`K_RASTER_IRQ`). The last band's raster handler (part 1 installs one per band) runs the
+  per-frame work 60 times a second, as GEOS ran its IRQ work: poll the pointer (`K_PTR_POLL`, question
+  4), set the `pressFlag` bits and tick the timer table. The kernel saves A, X and Y around the handler
+  but no register file, so the handler keeps its scratch inside the 22-byte zero-page budget below and
+  saves those few bytes itself.
+- *Main-loop half.* One pass checks the flags, runs due processes, calls `appMain`, then waits for the
+  frame with `K_WAIT_FRAME` (`$FF42`). GEOS has no equivalent; it stops the loop spinning.
+- *No event queue.* GEOS has none for the pointer, and the keyboard queue is the kernel's, behind
+  `K_GET_KEYSTROKE`. Part 1 listed an event queue among the state; it is not needed, so that state
+  shrinks and **no queue entry is proposed for the kernel ABI**.
+- A lone `ESC` is never treated as "cancel" (part 1, keyboard source).
+
+*Rewrite.* The vectors are the idea, and the code is 40 to 60 lines. `mouse4.s` is 73 lines, much of it
+sprite handling that does not apply. The module's event layer is about 250 bytes (**estimate**).
+
+### Menus and dialog boxes as data tables
+
+**What GEOS does.** `_DoMenu` (`menu1.s`, header comment) takes `r0` pointing to a table. A menu is
+`top, bottom` (bytes), `left, right` (words) and a count ORed with a type, then one `text pointer, type,
+target` triple per item, where the target is a sub-menu table or the action routine. The types include
+`MENU_ACTION` (`$00`) and `DYN_SUB_MENU` (`$40`) (`const.inc`). `_DoDlgBox` (`dlgbox1a.s`) takes `r0`
+pointing to a dialog description: a form byte, top, bottom, left and right (`OFF_DB_*` in `const.inc`),
+then command bytes ending in `NULL` (for example `DB_USR_ROUT` = 19). Each command byte indexes
+`DlgBoxProcL/H`, a table of routines, which the loop calls with the saved `r5-r10`. `DoDlgBox` then
+enters `MainLoop`, and the buttons are icons (`DoIcons`).
+
+**MFC decision.** Adopt the idea completely. It is the cheapest way to describe a user interface: a menu
+bar or a dialog is a byte table in the module ROM or in the application, and the code is a short
+interpreter. Positions are in framebuffer pixels (640x400), so left and right stay words and top and
+bottom grow to words, because 400 exceeds a byte (GEOS's 200 lines did not).
+
+*Rewrite.* The layout is adopted as a convention. The code is not reusable: `DoMenu` and `DoDlgBox`
+pass state in `r0-r15` and call the bitmap rectangle routines. The dialog command routines
+(`dlgbox1b` to `1k`, including the file picker) were **not read**, so the MFC command set (title, text,
+OK, Cancel, text field, list, user routine) is defined from the `DoDlgBox` loop and `const.inc` only,
+and its size is **unverified** against GEOS.
+
+*Size.* Menus about 1.2 KB and dialogs about 1.4 KB (**estimates**). The GEOS sources are 753 lines in
+`menu1`-`menu3` and about 1,900 in `dlgbox*`, the latter including a file picker that MFC does not copy.
+
+### Graphics primitives
+
+Three layers.
+
+1. **Tile mapper (new, no GEOS source).** One routine turns (x, y) in the 640x400 plane into (font set,
+   glyph, row, bit); a second reads or writes a byte there through `VREG_FONT_LO/HI` and
+   `VREG_FONT_DATA`. It replaces `GetScanLine` (`scanline.s`), which maps a scanline number to the
+   address of its first byte in the foreground and background screens. **Drop** `scanline.s`. About 400
+   bytes with the band table (**estimate**).
+2. **Fills and lines.** `HorizontalLine` (`line.s`) writes a pattern byte across a row of the C64's
+   8-byte cards (it steps the address by 8) and masks the partial first and last byte. `_Rectangle`
+   (`rect.s`) calls it once per scanline, taking the pattern byte from `curPattern` indexed by `y and 7`.
+   MFC keeps both ideas, an 8-row pattern indexed by `y and 7` and masks at the two ends, and rewrites the
+   middle, because writes go to a port with an auto-incrementing index and the stride between
+   horizontally adjacent bytes is 16, so each byte needs a re-seek (part 1 gives the redraw times).
+   `DrawLine` (`point.s`) is Bresenham-style: absolute dx and dy, a compare to choose the major axis and
+   error terms in `r8` and `r10` in the part read. MFC rewrites the plotting step against the tile mapper
+   and keeps the integer algorithm. About 1.8 KB for the tile mapper, fills, rectangles, lines and
+   frames together (**estimate**).
+3. **Graphics string.** Adapt `_GraphicsString` (`graphicsstring.s`): a byte stream of commands
+   (`MOVEPENTO`, `LINETO`, `RECTANGLETO`, `NEWPATTERN`, `ESC_PUTSTRING`, `FRAME_RECTO`, `PEN_X_DELTA`,
+   `PEN_Y_DELTA`, `PEN_XY_DELTA`; the numbers are in `const.inc`) dispatched through a lo/hi byte table
+   until a zero byte. It is the compact way to ship a window frame or an icon as data. **Adapted**: the
+   dispatch loop is hardware-neutral; the edits are the 9-bit y operand and the calls it makes.
+
+**Patterns.** `_SetPattern` (`pattern.s`) is a multiply-by-8 index into a pattern table. **Adapted**;
+the table contents are new art. An 8x8 pattern repeats across 8x16 cells the same way it repeats down
+scanlines in GEOS.
+
+**Back screen and `RecoverRectangle`.** GEOS keeps a second 8,000-byte bitmap (`BACK_SCR_BASE`,
+`const.inc`) and `RecoverRectangle` copies from it, which is how a menu or dialog is erased. MFC has no
+bitmap in the 64K map and no 8 KB spare. The replacement is **spare font sets**: part 1's display uses
+nine of the 16 sets, so seven are free. To open a dialog, copy the affected bands' glyphs into spare sets
+(a band is 240 glyphs = 3,840 bytes; 3,840 x 14 = 53,760 cycles = 13.4 ms, **estimate**), draw into the
+copy and switch that band's set (one byte in the raster table). To close it, switch the band back. That
+costs **no user RAM** and one frame to show or hide, and limits open overlays to seven bands (a menu plus
+a dialog needs two or three). Nothing tests this yet; it is what slice 3 measures. *Rewrite.*
+
+### Proportional fonts
+
+GEOS fonts are strips. `curIndexTable` holds, per character, an offset in bits into one wide bitmap
+(`cardDataPntr`), `curSetWidth` is the strip's width in bytes and `baselineOffset` locates the baseline
+(`geossym.inc`). The data in `bswfont/bswfont.s` (header comment: "System font BSW/9") begins with a header
+and then a table of increasing 16-bit offsets (`$0005`, `$0007`, `$000b`, ...), consistent with that
+layout. The drawing code shifts a source column into place with chains of `lsr` (`fonts3.s`, labels `c7`
+to `c0` and the wider `e7` to `e0`); only its head was read.
+
+**Decision.** Adapt the data format and rewrite the drawing. The strip suits a 1-bit plane with a byte
+stride. In MFC the rows are 16-byte glyphs in tile order, so the inner loop (take the character's columns,
+shift to the pen's bit offset, merge with the byte already there) is the same arithmetic with a different
+destination, and it is where part 1's 960-cycles-a-character figure comes from. Fonts live on disk and
+load into user RAM at start (a strip is a few hundred bytes), as part 1 said. The BSW font data itself is
+not used by default; a new font is. It is a candidate for conversion if the licence plan below is
+followed. About 1.5 KB of module code (**estimate**).
+
+### Processes and timers
+
+GEOS has a table of up to 20 processes (`_InitProcesses` header comment). `_InitProcesses`
+(`process1.s`) takes a table of `routine, interval` word pairs and marks every entry frozen.
+`_ProcessTimers` (`process2.s`), called each interrupt, decrements every unfrozen counter and sets
+`SET_RUNABLE` when one reaches zero. `_ExecuteProcesses`, from the main loop, calls each runnable routine
+through `r0`. Sleep and delays (`process3c.s`) pop the caller's return address into a delay table so that
+execution resumes after an interval.
+
+**Adopt, adapted.** It is plain table code with no hardware in it. The edits: remove the screen-saver
+block at the end of `_ProcessTimers` (it uses `saverTimer` and a fixed address), replace `r0` with a
+zero-page word from the 22-byte budget, and use the jiffy counter (`K_GET_JIFFIES`, `$FF39`, 60 Hz) as the
+time base. `_InitProcesses`'s header comment already gives intervals in 60ths of a second. `_ProcessTimers`
+runs from the raster handler and `_ExecuteProcesses` from the main loop. About 300 bytes (**estimate**;
+the two files are 185 lines).
+
+### Desktop and file manager
+
+GEOS's desktop, *deskTop*, is a separate application (`README.md` calls it the default shell, "a file
+manager and application launcher"); its source is **not in mist64/geos**. Nothing of it was read, so how
+it lays out icons, tracks selection and handles drag is **unverified** and nothing is taken from it.
+**Drop** it as a source. The MFC desktop is a new design (question 5). It borrows only the shape: a
+window of icons with names under them, a menu bar, double-click to open, and one level of folders, which
+matches MFC drawers.
+
+`load/deskacc.s` (`LdDeskAcc`) swaps the running application out so a desk accessory can run. MFC has no
+RAM expansion or swap area, so **drop** desk accessories. `time/time1.s` reads the C64's CIA clock;
+**drop**, the RTC and jiffy counter replace it.
+
+### Memory layout against `architecture.md`
+
+| GEOS (`README.md`, `const.inc`) | MFC (`architecture.md`) |
+|---|---|
+| `$0400-$5FFF` application RAM (`APP_RAM`) | `$0800-$87FF`, 32 KB, all of it the application's |
+| `$6000` second bitmap, 8,000 bytes (`BACK_SCR_BASE`) | none: the spare font sets are the back store (above) |
+| `$7900` print buffer (`PRINTBASE`) | out of scope (no printing) |
+| `$8000-$84FF` OS variables and disk buffers (`OS_VARS`, `OS_VARS_LGH` = `$0500`) | state in `$0400-$07DF` (992 B); the DOS keeps its own state in page 3 and up |
+| `$9000-$FFFF` kernel, bitmap at `$A000` | toolkit in module bank 2 (16 KB ROM); kernel BIOS at `$F000-$FFFF` |
+| zero page: `r0-r15` plus about `$22-$3F` and `a0-a9` (`geossym.inc`) | 22 bytes, `$45-$5A` |
+
+**Zero page, with the correction above.** 22 bytes, **proposed** allocation: source, destination and
+pattern pointers (6), pen x and y (4), width, height and loop counters (4), a font pointer (2), the
+process dispatch word (2), the raster handler's scratch (2), two spare. Cold data goes in the state page
+and is addressed absolute (4 cycles instead of 3, one byte more per instruction). GEOS's `r0-r15`, 32
+bytes of general registers, is dropped: it is what makes the GEOS calling convention easy, and it does not
+fit.
+
+**State page budget** (`$0400-$07DF`, 992 bytes, **estimate**): pointer and flags 24, menu stack and
+records 64, window records 8 x 16 = 128, band-to-set table 16, directory page of 24 entries x 16 bytes =
+384, dirty rectangles 32, process table 20 x 4 = 80, leaving 264 spare. It fits.
+
+## Question 4: Kernel ABI
+
+### Existing `$FF00` routines the GUI uses
+
+| Entry | Address | Used for |
+|---|---|---|
+| `K_GET_KEYSTROKE` | `$FF09` | keyboard events and text fields (non-blocking, case preserved) |
+| `K_SET_ATTR` | `$FF2D` | the colour latch that `VREG_CHAR` writes apply |
+| `K_SOUND_TONE`, `K_SOUND_OFF` | `$FF33`, `$FF36` | click and error tones, honouring `SOUND_ENABLE` |
+| `K_GET_JIFFIES` | `$FF39` | the timer base and the double-click interval |
+| `K_WAIT_FRAME` | `$FF42` | the main loop's pacing |
+| `K_RASTER_IRQ` | `$FF45` | the band handler; quit calls it with 0 |
+
+The DOS ABI at `$AF00` (the `DOSJUMP` table in `dos.asm`, listed in `architecture.md` ("DOS jump table"), `cc65_to_prg.md` and
+`programs/common/mfc.inc`) supplies `FS_OPEN`, `FS_GETB`, `FS_PUTB`, `FS_CLOSE`, `FS_DIR_FIRST`,
+`FS_DIR_NEXT`, `FS_DELETE`, `FS_RENAME` and `DOS_WARM`. Question 5 uses them.
+
+Existing and **not** used: `K_PRINT_CHAR`, `K_PRINT_MESSAGE`, `K_PRINT_NEWLINE`, `K_READ_LINE` (the cell
+plane holds glyph indices of the pixel plane, so text output would corrupt it). `K_PRINT_DEC` (`$FF27`)
+is unusable for the same reason: it builds the digits on the stack and emits them through `PRINT_CHAR`.
+`K_DEC_STR` below fills that gap. `K_CLEAR_SCREEN` is not called; the exit clear is a `VREG_CMD` write
+(part 1).
+
+### Kernel ROM free space
+
+**1,209 bytes, found from the linker map.** `cmake-build-debug/kernel/kernel.map` (a `dev` preset build
+of this tree) reports `CODE` at `$F000-$F946`, size `$0947` = 2,375 bytes. `src/kernel/memory.cfg` puts
+`IORESV` at `$FE00`, so `CODE` may grow to `$FDFF`: `$FE00 - $F947 = $04B9` = **1,209 bytes**. The jump
+table is separate: `JUMPS` is `$FF00-$FF47` (72 bytes, 24 entries) and `VECS` starts at `$FFFA`, so
+`$FF48-$FFF9` is 178 bytes, **59 more 3-byte slots**. The roughly 2.0 KB in `architecture.md` is stale
+(finding 1).
+
+### Proposed new entries (one related set, moving together)
+
+Six entries and an NMI change, all **proposed**, at the next free slots. A rectangle is four bytes in a
+parameter block, not registers, because a rectangle has four coordinates and the 6502 has three
+registers.
+
+| Entry | Addr | In | Out | ROM cost | Fits (of 1,209) | Why the kernel, not the module |
+|---|---|---|---|---|---|---|
+| `K_PTR_POLL` | `$FF48` | none | pointer state updated, sprite 16 moved | 190 B | yes | any program wants "the pointer"; one model for mouse and keyboard; it owns the capture bit, which STOP must release |
+| `K_PTR_SHOW` | `$FF4B` | A = 0 hide, else show | sprite 16 on or off; capture bit set or clear | 40 B | yes | same set |
+| `K_CELL_FILL` | `$FF4E` | A = glyph, X = attribute; rectangle in the block | cell and colour planes filled | 100 B | yes | `programs/common/glue/vic_write.s` already carries user-side cell write loops; one ROM copy serves all |
+| `K_CELL_BLIT` | `$FF51` | source in `JUMP_VECTOR` (`$18-$19`); X = 0 glyphs, 1 colours; rectangle in the block | a w x h block copied into the plane | 95 B | yes | same |
+| `K_FONT_PUT` | `$FF54` | A/X = font byte index; source in `JUMP_VECTOR`; Y = glyph count | glyphs copied into soft-font RAM | 50 B | yes | the glue has `vfseek/vfwrite` (`font.s`); this is the loop form every soft-font program needs |
+| `K_DEC_STR` | `$FF57` | A/X = pointer to a 32-bit value; destination in `MON_MSG_PTR` (`$16-$17`) | NUL-terminated decimal digits; Y = length | 25 B | yes | `K_PRINT_DEC` cannot serve a pixel display; this shares its divide |
+| NMI additions | none | none | none | 12 B | yes | the NMI path is kernel code, and the GUI's bank is about to be unmapped |
+
+State goes in `$02E9-$02FF` (`architecture.md`: "leftover system-variable space", 23 bytes). **Proposed**:
+`PTR_X` (2), `PTR_Y` (2), `PTR_BTN` (1), `PTR_RAMP` (1), `PTR_FLAGS` (1) = 7 bytes at `$02E9-$02EF`; the
+rectangle block `CELL_X`, `CELL_Y`, `CELL_W`, `CELL_H` = 4 bytes at `$02F0-$02F3`; `GUI_RETURN` (question
+5) = 1 byte at `$02F4`. That is 12 of 23, 11 left.
+
+**ROM cost arithmetic** (**estimate**: instruction byte counts; nothing was assembled).
+
+- `K_PTR_POLL`: capture test (`LDA abs` 3, `AND #` 2, `BEQ` 2) = 7. Mouse path: five (`LDA abs` + `STA abs`)
+  = 5 x 6 = 30, plus a branch 2 = 32. Keyboard path: ramp 18, two axes x (16-bit step 22 + clamp 14) = 72,
+  button map 12, misc 8 = 110. Sprite write: two plain stores 12, two read-modify-writes 20, `RTS` 1 = 33.
+  Total 7 + 32 + 110 + 33 + 8 for prologue and epilogue = **190**.
+- `K_PTR_SHOW`: six record stores of about 5 bytes plus the capture store of 5 = **40**.
+- `K_CELL_FILL`: cell index `y x 80` (80 = 64 + 16, as `COMPUTE_CELL` does) 28; per row: set the address
+  twice 24, two width loops 16, step 80 cells 12, row counter 6, prologue 14 = **100**.
+- `K_CELL_BLIT`: the same walk with one `(ptr),Y` pass and `STA VREG_CHAR,X` (`VREG_CHAR` is `$FE2F` and
+  `VREG_COLOR` `$FE30`, adjacent, so X selects the plane for free): 28 + 12 + 10 + 12 + 12 + 6 + 15 = **95**.
+- `K_FONT_PUT`: set the index 12, 16-byte inner loop 12, advance the pointer 12, glyph counter 6, set-up 8 =
+  **50**.
+- `K_DEC_STR`: refactors the digit-generation half of `PRINT_DEC` into a routine the print path also calls.
+  The new half (pop digits into `(ptr),Y`, terminate) is 22, plus a 3-byte jump = **25**, with no net
+  duplication.
+- NMI: `LDA #0 / TAX / JSR RASTER_IRQ` 6 (disables the raster interrupt, as part 1 required), `STZ
+  MOUSE_CTL` 3 (releases capture so the host cursor returns), `STZ GUI_RETURN` 3 = **12**.
+
+**Total 512 bytes of 1,209 free (42%), leaving 697.** The six jump slots take 18 of 178 bytes. **It fits**,
+with the whole set promoted together. The set depends on the mouse device of part 1 (proposed
+`$FED5-$FEDB`): `K_PTR_POLL`'s mouse path is five loads from it. Without that device the 32-byte mouse
+path drops out and the keyboard path alone works.
+
+### Primitives that stay private to the module
+
+| Primitive | Why private |
+|---|---|
+| Tile mapper and band table | exists only because of the glyph-tiled model; no other program draws a 640x400 plane |
+| Pixel fills, lines, pattern fills, frames | built on the tile mapper; 1.8 KB, which the kernel does not have room for |
+| Proportional text renderer | 1.5 KB, same reason |
+| Menus, dialogs, window records, process table | policy rather than mechanism, and large; the DOS and monitor have no use for them |
+| Event flags and vectors | a few bytes of the module's state; the kernel keyboard buffer is the queue |
+| Directory view and icon cache | desktop policy |
+
+The test: a primitive is promoted only if a program that does not link the GUI could use it, it is small,
+and its state fits the 23 free bytes. The pointer, cell and font routines pass. The rest fail at least one.
+
+### DOS-side changes (outside the kernel ABI)
+
+Two additions to the DOS ROM, both **proposed**; neither touches the kernel ROM.
+
+- The `DOS_WARM` hook (question 5): about 20 bytes. `dos.map` (map) gives `CODE` `$8800-$AA11`
+  (`$2212`) and `DOSJUMP` sits at `$AF00`, so `$AF00 - $AA12 = $04EE` = **1,262 bytes** free.
+- `FS_CHDIR` appended to the DOS ABI at `$AF24` (the table ends at `$AF23`): about 30 bytes
+  (`_DOS_DO_OPEN` less its shell argument parsing). Also **proposed**: export `DOS_CWD_NAME` and the
+  `DOS_ENTRY` field offsets through `mfc.inc`.
+
+Both together are under 4% of the DOS free space.
+
+## Question 5: Filesystem integration
+
+### How the desktop reads a directory
+
+`FS_DIR_FIRST` and `FS_DIR_NEXT` each return carry clear with the next entry in `DOS_ENTRY` (32 bytes,
+name in the first 11), or carry set at the end. They share **one cursor** with `FS_OPEN`: `_FS_OPEN` calls
+`_FS_DIR_FIRST_TGT` itself, and `programs/common/glue/dir.s` documents the consequence. So the desktop
+works in two passes and never interleaves them.
+
+1. **Enumerate.** `FS_DIR_FIRST`, then `FS_DIR_NEXT` until carry set, copying from `DOS_ENTRY` into a
+   16-byte record (11 name, 1 attribute, 3 size, 1 spare). A page holds 24 records, 384 bytes of the state
+   page. A larger directory re-enumerates and skips the first 24 x k entries.
+2. **Decorate.** For each `.PRG` record, `FS_OPEN` it, read the first 96 bytes with `FS_GETB` (the GUI
+   header, question 6) straight into the icon's glyph slots through `VREG_FONT_DATA`, then `FS_CLOSE`. No
+   icon is held in RAM.
+
+Drawers (the DOS's one level of subdirectories, attribute `$10`) show as folder icons and do not nest.
+Entering one calls `FS_CHDIR` (proposed); going back calls it with an empty name. On entry the desktop
+reads the current drawer's name (`DOS_CWD_NAME`, 9 bytes in `dos.asm`, **proposed** to export) and on quit
+restores it with `FS_CHDIR`. That is what "DOS state intact" requires of a program that moves the current
+directory.
+
+### Icons
+
+- A **GUI header** (question 6) carries a 2 x 2 cell icon: 4 glyphs x 16 bytes = 64 bytes of pixels and 4
+  attribute bytes, 16x32 pixels.
+- A plain `.PRG` gets a "program" default. A `.TXT` gets "text" and a `.BAS` "basic". Defaults are small
+  glyph sets in the module ROM.
+- A drawer gets the folder.
+
+### Launching a `.PRG` and returning
+
+The desktop does **not** call the shell. It loads the program itself, because the shell's loader
+(`_DOS_RUN_FILE`) is not in the ABI and rebuilds the stack. The loader is about 40 bytes of module
+(**estimate**: `FS_OPEN`, two `FS_GETB` for the load address, a store loop).
+
+1. Tear the GUI down as quit does (part 1: `K_RASTER_IRQ` with 0, font reset, clear), so the program
+   starts on a text screen with no handler left pointing into bank 2.
+2. Set `GUI_RETURN` (**proposed**, `$02F4`) to 1.
+3. `FS_OPEN` the name, read the 2-byte header, stream the body to the load address. Refuse a body that
+   would pass `$87FF`, because stores above it land in the DOS ROM and are silently discarded.
+4. `JSR` the load address. Bank 2 stays mapped, because a plain program does not touch `MODULE_BANK`.
+5. **Return, two cases.** A program that ends in `RTS` returns to the instruction after the `JSR`, in
+   bank 2, and the desktop re-initialises from cold (consequence 3 below). A program that ends in
+   `JMP DOS_WARM`, which is every program using the glue's `QUITDOS` and so most of `programs/`, lands in
+   the DOS. The **proposed** `DOS_WARM` hook, about 20 bytes: if `GUI_RETURN` is non-zero, clear it and run
+   `DESK` by name through `_DOS_RUN_FILE`. The desktop starts from cold. The user sees the program quit
+   and the desktop reappear.
+6. STOP clears `GUI_RETURN` (the NMI line, question 4), so a break into the monitor and `Q` returns to a
+   plain `]` prompt rather than starting another desktop.
+
+**Without the hook** the desktop still works. An `RTS` program returns to it, and a `QUITDOS` program
+returns to `]`, from which the user types `DESK`. The hook makes the return seamless; it is recommended
+and is a separate small DOS change, not part of the first slices.
+
+### The `$0400-$07FF` page: a plain `.PRG` may overwrite it
+
+**Settled: yes, it may, and the desktop is designed to survive it.** The evidence:
+
+- Nothing prevents it. `_DOS_RUN_FILE` stores the body at whatever address the header gives
+  (`STA (DOS_PTR),Y`), with no range check, and RAM has no write protection. The catalog's `.cfg` files
+  start at `$0800`, but that is a convention.
+- `architecture.md` calls the page scratch for any program that uses neither the monitor snapshot nor the
+  assembler. A program that uses it is within its rights.
+
+Consequences:
+
+1. The desktop assumes the page is **destroyed** by any launch and keeps nothing there that must outlive it.
+2. State that must survive is outside the page. The only such state is the current drawer, which the DOS
+   already holds (`DOS_CWD_CLUS`, `DOS_CWD_NAME`), and `GUI_RETURN` in the kernel variables.
+3. After any return the desktop rebuilds from the DOS and the disk: re-enumerate, reload the icons,
+   redraw. The cost is unmeasured. A rough bound: 24 icons x 96 header bytes at an assumed 40 cycles a byte
+   is 92,160 cycles = 23 ms, plus the directory walks and `FS_OPEN`'s own scan per file, whose cost is not
+   known. Slice 5 times it. Selection and window position are lost; that is accepted.
+4. The `DESK` stub is loaded from disk each time (it is a program), so a program that overwrote the
+   stub's address does not break re-entry.
+5. A **GUI-aware** application (question 6) declares in its header that it leaves `$0400-$07DF` alone. For
+   those the desktop could keep its state and resume without a rebuild. That is an optimisation for later,
+   not part of the first slices.
+
+### Writing and managing files
+
+The file menu (rename, delete, new drawer, copy) uses the existing calls. `FS_DELETE` and `FS_RENAME`
+(`A/X` = old name, `DOS_PTR2` = new) are in the DOS ABI. COPY has no ABI entry (it is a shell command that
+reads the source into user RAM and writes it out), so the desktop does the same with `FS_OPEN`, `FS_GETB`
+and `FS_PUTB` in a loop, within the 32 KB limit, and reports `FILE TOO BIG` as the shell does. New drawer
+has no ABI entry either and is a follow-up for the same DOS ABI family as `FS_CHDIR`. Nothing it writes is
+a format the DOS cannot read back, so a disk edited on the desktop mounts on the host like any other.
+
+## Question 6: Application model
+
+### What a GUI application is
+
+**A `.PRG` with a GUI header, linked against a thin cc65 library.**
+
+- *The header* is data in the file. The desktop reads it, without running the program, to draw the icon
+  and decide how to launch it.
+- *The library*, `libmfcgui`, is the application-side call layer: a C wrapper for each toolkit entry,
+  built on the pattern of `libmfcglue` (`docs/cc65_to_prg.md`).
+
+Rejected: **a header alone**, because every application would hand-write the call sequence into bank 2;
+**a library alone**, because the desktop could not show an icon or tell a GUI program from a text one
+without running it; **a ROM module** (like BASIC), because ROM banks are fixed at build time and the point
+of a `.PRG` is that it loads from disk.
+
+### The file layout
+
+Offsets are into the `.PRG` file as stored (the first two bytes are the load address that `mkprg` adds).
+
+```
+offset  size  meaning
+0       2     load address ($0800, as for every program; added by mkprg)
+2       3     JMP to the real entry
+5       3     "GUI" magic
+8       1     format version (1)
+9       1     flags: bit 0 leaves $0400-$07DF alone; bit 1 needs the pointer device;
+                     bit 2 standalone (maps bank 2 itself when launched from ]); rest zero
+10      1     icon width in cells (2)
+11      1     icon height in cells (2)
+12      4     icon attributes, one per cell
+16      64    icon glyphs, 16 bytes each, row-major
+80      16    display name, NUL padded
+96      ...   code
+```
+
+The header is 96 bytes; the desktop reads those 96 bytes with `FS_GETB`. This follows the idea of the GEOS
+file header, an icon and a type carried in the file (`O_GHIC_WIDTH`, `O_GHIC_HEIGHT`, `O_GHIC_PIC`,
+`O_GHGEOS_TYPE` in `const.inc`). It is a **rewrite** with a smaller layout, since GEOS's header is a
+separate record and MFC's FAT16 has no such record. A file with no `"GUI"` at offset 5 is a plain program.
+
+### Entering and leaving the toolkit
+
+The toolkit's entry table is at the start of bank 2, `$B000` (part 1 already puts the GUI's entry there;
+the table of 3-byte `JMP`s is **proposed**). The library's `gui_open` maps bank 2 if the desktop is not
+running, checks the module's identity block (`"MFC"` plus the name, at the end of the window per
+`architecture.md`) and calls the init entry. A **standalone** application (flag bit 2) can therefore be
+started from `]` without the desktop, which is how it is developed. The library restores the previous bank
+when it closes (`MODULE_BANK` reads back what was written, per `Memory.cpp`); under the desktop it does
+not remap, since the desktop did.
+
+### A minimal "hello window"
+
+A dialog described as a data table, the shape of GEOS's `DoDlgBox` description. The `gui_*` and `GUI_*`
+names are **proposed** and not final.
+
+```c
+/* hello.c: a window with a line of text and an OK button. cc65, linked with libmfcgui. */
+#include "mfcgui.h"
+
+static void on_ok(void) { gui_quit(); }          /* leave the event loop */
+
+static const GuiDialog hello = {
+    GUI_CENTRE,                  /* position */
+    200, 96,                     /* width, height in pixels */
+    {
+        GUI_TITLE ("Hello"),
+        GUI_TEXT  (16, 40, "Hello, window"),
+        GUI_BUTTON(72, 64, GUI_OK, on_ok),
+        GUI_END
+    }
+};
+
+void main(void) {
+    if (gui_open() != 0) return;   /* no GUI ROM */
+    gui_dialog(&hello);            /* draws it, saves what is under it, runs the loop */
+    gui_close();                   /* restore the screen, restore the bank if we mapped it */
+}
+```
+
+and the header it ships under (`hello_hdr.s`, linked first; `mkprg` adds the load address):
+
+```
+        jmp     start
+        .byte   "GUI", 1, %00000100      ; magic, version, flags: standalone
+        .byte   2, 2                     ; icon: 2 x 2 cells
+        .byte   $0F, $0F, $0F, $0F       ; attributes
+        .res    64                       ; icon glyphs (art)
+        .byte   "HELLO", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+start:  ; the cc65 startup follows
+```
+
+The build is a normal catalog entry (`programs/catalog.txt`: `sources`, `config`, `program`), with the
+standard `$0800` start and the C stack at `$8700`. Slice 6 builds this program.
+
+## Question 7: Phasing
+
+Every slice is demonstrable alone. Sizes are **estimates**: lines of new C++ or assembly, and bytes of
+ROM. Slice 0 is the measurement part 1 asked for, and its code does not merge.
+
+| # | Slice | Demonstrable result | Size |
+|---|---|---|---|
+| 0 | **Measurement** | A throwaway program times (a) a full 4 KB region redraw through `VREG_FONT_DATA`, (b) the nine-band split's per-frame cost, (c) a 240-glyph band copy into a spare set. The numbers replace the part 1 estimates | about 150 lines, not merged; 1 day |
+| 1 | **Pointer** | `DESK` runs. The screen becomes a grey desktop pattern in the nine-band framebuffer and a **pointer follows the host mouse**. The keyboard fallback works in the console build | `Mouse` device about 190 lines of C++ plus `tests/test_mouse.cpp` about 120; kernel `K_PTR_POLL`, `K_PTR_SHOW` 230 B; module about 1.8 KB (tile mapper, band handler, fills) |
+| 2 | **Menu bar** | A menu bar with proportional text. Clicking a title drops a menu, clicking an item calls its routine, and `Quit` returns to `]` | module about 3 KB (text 1.5 KB, menus 1.2 KB, hit testing and flags); kernel `K_CELL_FILL`, `K_CELL_BLIT`, `K_FONT_PUT` 245 B |
+| 3 | **Dialog box** | An OK/Cancel dialog from a data table, drawn over the desktop and removed with the screen intact (the spare-font-set overlay, measured against slice 0) | module about 1.4 KB |
+| 4 | **Desktop lists a directory** | A window shows the disk's files and drawers as icons with names. Opening a drawer shows its files, and quitting restores the previous drawer | module about 2.5 KB; `FS_CHDIR` (DOS) about 30 B; `K_DEC_STR` 25 B |
+| 5 | **Launch and return** | Double-click a `.PRG`: the screen goes to text, the program runs, and quitting brings the desktop back | loader about 40 B plus teardown; `GUI_RETURN` and the NMI additions (kernel 12 B); the DOS hook about 20 B |
+| 6 | **Application model** | `HELLO.PRG` with the GUI header shows its icon on the desktop and opens its dialog, from the desktop and standalone | `libmfcgui` about 400 lines of C and assembly; the entry table |
+| 7 | **Processes** | The desktop shows a clock and a blinking caret from the timer table | about 300 B (adapted from `process1.s`, `process2.s`) |
+
+Slices 0 to 2 are the minimum that shows a GUI. The kernel set is **one set**: the brief says a promoted
+related set moves together, so the implementation beads land it as a whole with slice 1 and the entries
+are ready for the slices after. Each kernel change bumps the kernel version and the DOS change bumps
+`DOS_VERSION`, per the repository's convention.
+
+If slice 0 shows that the raster bands or the strided font addressing make a redraw too slow, the fallback
+is the character-cell model (option B in question 1). The data tables in questions 3 and 6 survive that
+change.
+
+## Licensing plan for the implementation beads
+
+Nothing from mist64/geos is adapted in this spike, so there is **no README or `vendor/` change here**.
+The plan an implementation bead carries, from the brief:
+
+- Credit Berkeley Softworks and the reverse-engineers (Maciej Witkowiak, Michael Steil) in the README
+  "Acknowledgments", and note that the 8-bit GEOS freeware release (2003 for Apple II, 2004 for C64/128)
+  is the basis for the reuse. No formal open-source licence was ever published.
+- Keep the original source of each adapted routine under `vendor/geos/`, with its README notice. Only the
+  adapted parts need it, which are the six files `mouse/mouse1.s`, `graph/graphicsstring.s`,
+  `graph/pattern.s`, `process/process1.s`, `process/process2.s` and `process/process3c.s`.
+- FreeGEOS (PC/GEOS, Apache 2.0) is x86 and a design reference only; no code is taken from it.
+- Parts marked "rewrite" copy no GEOS code. They follow its ideas and data layouts and need only the credit.

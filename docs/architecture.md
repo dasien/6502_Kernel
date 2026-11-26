@@ -224,7 +224,9 @@ banked out. `dos_internals.md` describes what lives in it.
 |-------|-------|-------|
 | `$00-$13` | EhBASIC | warm-start vector, USR vector, FAC temporaries, etc. |
 | `$14-$39` | Monitor | see table below (free when BASIC is not the active workspace) |
-| `$3A-$5A` | free | unused gap |
+| `$3A-$3F` | DOS | `BLK_BUF_PTR`, `DOS_PTR`, `DOS_PTR2`, used on every file call |
+| `$40-$44` | kernel | `LBN_NAME_PTR`, `LBN_MOD_PTR`, `LBN_IDX`, used during a launch by name |
+| `$45-$5A` | free | unused gap (22 bytes) |
 | `$5B-$FF` | EhBASIC | descriptor stack, program/var/array/string pointers, FACs, PRNG, decimal workspace |
 
 #### Monitor zero-page variables (`$14-$39`)
@@ -601,6 +603,30 @@ points start at `$B000` and the DOS jump table at `$AF00`. The layout and the
 three-line file in `src/kernel/romid/` linked into it, so the generated `forth.s`
 needs no hand edit.
 
+#### DOS jump table (`$AF00`)
+
+The `DOSJUMP` segment of `src/kernel/dos/dos.asm` is a table of `JMP` entries, three bytes
+each. Programs reach the file system through it; `programs/common/mfc.inc` names them.
+
+| Address | Entry | Use |
+|---|---|---|
+| `$AF00` | `DOS_COLD` | shell cold entry |
+| `$AF03` | `FS_OPEN` | open a file by name |
+| `$AF06` | `FS_GETB` | read a byte |
+| `$AF09` | `FS_PUTB` | write a byte |
+| `$AF0C` | `FS_CLOSE` | close |
+| `$AF0F` | `FS_DIR_FIRST` | start a directory walk; entry lands in `DOS_ENTRY` |
+| `$AF12` | `FS_DIR_NEXT` | next directory entry, carry set at the end |
+| `$AF15` | `BLK_READ_SECTOR` | raw sector read |
+| `$AF18` | `BLK_WRITE_SECTOR` | raw sector write |
+| `$AF1B` | `FS_DELETE` | delete a file |
+| `$AF1E` | `DOS_WARM` | re-enter the shell without the banner |
+| `$AF21` | `FS_RENAME` | A/X = old name, `DOS_PTR2` = new |
+
+`DOS_ENTRY` (the 32-byte current directory entry, name in the first 11 bytes) and
+`DOS_CWD_NAME` (9 bytes, the current drawer's name) are DOS variables in `dos.asm`, not
+jump-table entries.
+
 `RESET` prints a boot report from them before entering the DOS. It is paced: the
 chime plays out first, then one line every half second, then a half second's hold and a clear
 screen, so the DOS signs on to a blank screen as it always did:
@@ -651,7 +677,7 @@ vectors, with `VEC_IN` and `VEC_OUT` pointing at the keyboard and screen and
 
 ### Free RAM for User Programs
 
-- `$3A-$5A` is a small free zero-page gap, useful for fast addressing when BASIC
+- `$45-$5A` is a small free zero-page gap, useful for fast addressing when BASIC
   is not in use.
 - `$02E9-$02FF` is leftover system-variable space; `$0300` up is the DOS's.
 - `$0800-$87FF` is the main user RAM, 32 KB. Below it, `$0400` holds the `T:` and
