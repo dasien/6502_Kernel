@@ -133,6 +133,7 @@ public:
         testHostFileNamedByTheGuest();
         testRunDiskProgram();
         testRunOverride();
+        testDosWarmUnmapsBank();
         testRunNotFound();
         testAsmModuleRetired();
 
@@ -646,6 +647,18 @@ public:
         computer.getMemory()->write(0x0950, 0x00);
         sendCommand("&MON", 300000);  // force the disk version
         verifyMemEquals(0x0950, 0x37, "& override ran the disk program over the module");
+    }
+
+    // A program that maps a module bank and exits through JMP DOS_WARM ($AF1E), as
+    // a desktop-launched program does, must leave MODULE_BANK at 0 at the prompt.
+    void testDosWarmUnmapsBank() {
+        // header $0960: LDA #$02 / STA $FE23 / JMP $AF1E
+        std::vector<uint8_t> prg = {0x60, 0x09, 0xA9, 0x02, 0x8D, 0x23, 0xFE, 0x4C, 0x1E, 0xAF};
+        mountDisk({{"BANKWARM.PRG", prg}});
+        sendCommand("BANKWARM.PRG", 300000);
+        verifyMemEquals(0xFE23, 0x00, "DOS_WARM unmaps MODULE_BANK");
+        sendHelp();
+        verifyResponse("RENAME", "Prompt responsive after DOS_WARM unmap");
     }
 
     // A name that is neither a command, a module, nor a file reports not found.

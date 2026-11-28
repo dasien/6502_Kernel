@@ -65,6 +65,7 @@ CHIME_ON         = $02E0
 ; The clock's slow switch (kernel_vars.inc). The prompt puts it back to full speed,
 ; so a program that exits -- or is stopped -- while slow cannot leave the shell slow.
 CPU_SPEED        = $FED4
+MODULE_BANK      = $FE23                ; module-window bank select (DOS_WARM unmaps it)
 POWER_ARM        = $5A
 POWER_FIRE       = $A5
 
@@ -340,8 +341,11 @@ DOS_SIGNATURE:
 ;   1.25 the prompt puts the clock back to full speed (CPU_SPEED, $FED4), so a
 ;        program that slows the machine and exits, or is stopped, while slow
 ;        does not leave the shell running at 1 MHz
+;   1.26 DOS_WARM unmaps the module window (MODULE_BANK = 0), so a program
+;        that exits through it while a bank (the desktop's) is mapped does
+;        not leave GUI ROM in $B000-$EFFF for the next program
 DOS_VERSION:
-    .BYTE $01, $19                      ; version 1.25 (major, minor)
+    .BYTE $01, $1A                      ; version 1.26 (major, minor)
 
 ; ================================================================
 ; DOS SHELL (CCP) - the MFC/OS front door
@@ -653,6 +657,9 @@ _BOX_VERFREE:
 _DOS_WARM:
     LDX #$FF
     TXS
+    STZ MODULE_BANK                     ; window back to scratch RAM: a program may
+                                        ; exit here with a bank mapped (DOS runs
+                                        ; from $8800-$AFFF, outside the window)
     JSR K_PRINT_NEWLINE                 ; one blank line on return so the prompt
                                         ; clears row 0 (a program just cleared+homed)
 _DOS_PROMPT:

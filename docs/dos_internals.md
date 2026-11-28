@@ -214,6 +214,11 @@ to the DOS by a plain `RTS`, because the DOS runs it as a subroutine with a
 `DOS_WARM` return pushed, so a normal `RTS` lands back at the `]` prompt. A
 program that takes over the machine just needs a reset.
 
+`DOS_WARM` begins by writing `MODULE_BANK` (`$FE23`) = 0, so every route to the
+`]` prompt, including a program that exits with a bank mapped (the desktop's
+bank 2), leaves `$B000-$EFFF` as scratch RAM. The DOS runs from `$8800-$AFFF`,
+outside the window, so the store is safe. Added in DOS 1.26.
+
 The difference between a ROM and a program is therefore an implementation detail.
 A ROM is fast, always present and not editable, while a file lives on disk and can
 be assembled and saved. `MODULE_DIR` remains the registry the DOS consults through
