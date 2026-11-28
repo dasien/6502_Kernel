@@ -19,8 +19,9 @@ STACK_TOP          = $FF           ; Top of stack page
 ; ZERO PAGE VARIABLES
 ; ================================================================
 ; EhBASIC owns $00-$13 and $5B-$FF, so nothing here may go in either. The one
-; usable gap is $14-$5A: the monitor and kernel take $14-$39, and $3A-$5A is
-; free. Keep new slots inside that gap.
+; usable gap is $14-$5A: the monitor and kernel take $14-$39, the DOS owns
+; $3A-$3F (dos.asm: BLK_BUF_PTR, DOS_PTR, DOS_PTR2), and the kernel LBN_* module
+; lookup owns $40-$44 (kernel.asm). Only $45-$5A is free. Keep new slots there.
 MON_CURRADDR_LO    = $14           ; Current address low byte
 MON_CURRADDR_HI    = $15           ; Current address high byte
 MON_MSG_PTR_LO     = $16           ; Message pointer low byte
