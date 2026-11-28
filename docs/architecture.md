@@ -606,22 +606,25 @@ needs no hand edit.
 #### DOS jump table (`$AF00`)
 
 The `DOSJUMP` segment of `src/kernel/dos/dos.asm` is a table of `JMP` entries, three bytes
-each. Programs reach the file system through it; `programs/common/mfc.inc` names them.
+each. Programs reach the file system through it; `programs/common/mfc.inc` names them. Every
+entry that can fail reports it in carry (clear = success), and the `FS_*` entries leave X
+undefined (`mfc.inc`, the comment above the table). Only one file is open at a time, and
+`FS_OPEN` and the directory walk share one cursor.
 
-| Address | Entry | Use |
-|---|---|---|
-| `$AF00` | `DOS_COLD` | shell cold entry |
-| `$AF03` | `FS_OPEN` | open a file by name |
-| `$AF06` | `FS_GETB` | read a byte |
-| `$AF09` | `FS_PUTB` | write a byte |
-| `$AF0C` | `FS_CLOSE` | close |
-| `$AF0F` | `FS_DIR_FIRST` | start a directory walk; entry lands in `DOS_ENTRY` |
-| `$AF12` | `FS_DIR_NEXT` | next directory entry, carry set at the end |
-| `$AF15` | `BLK_READ_SECTOR` | raw sector read |
-| `$AF18` | `BLK_WRITE_SECTOR` | raw sector write |
-| `$AF1B` | `FS_DELETE` | delete a file |
-| `$AF1E` | `DOS_WARM` | re-enter the shell without the banner |
-| `$AF21` | `FS_RENAME` | A/X = old name, `DOS_PTR2` = new |
+| Address | Entry | In | Out |
+|---|---|---|---|
+| `$AF00` | `DOS_COLD` | none | shell cold entry; does not return |
+| `$AF03` | `FS_OPEN` | A/X = name pointer (NUL-terminated); Y = mode, 0 read, 1 write | C clear = open, C set = not mounted or not found |
+| `$AF06` | `FS_GETB` | none | C clear and A = the next byte, or C set at end of file |
+| `$AF09` | `FS_PUTB` | A = byte to append | C set = error |
+| `$AF0C` | `FS_CLOSE` | none | C set if the flush or the finalize failed |
+| `$AF0F` | `FS_DIR_FIRST` | none | C clear and `DOS_ENTRY` filled with the first entry, or C set = none |
+| `$AF12` | `FS_DIR_NEXT` | none | C clear and `DOS_ENTRY` filled, or C set at the end |
+| `$AF15` | `BLK_READ_SECTOR` | A/X = LBA low/high; `BLK_BUF_PTR` (`$3A-$3B`) = 512-byte buffer | C set = device error, A = `BLK_STATUS` |
+| `$AF18` | `BLK_WRITE_SECTOR` | as `BLK_READ_SECTOR` | as `BLK_READ_SECTOR` |
+| `$AF1B` | `FS_DELETE` | A/X = name pointer | C set = not mounted or not found |
+| `$AF1E` | `DOS_WARM` | none | re-enter the shell without the banner; does not return |
+| `$AF21` | `FS_RENAME` | A/X = old name, `DOS_PTR2` (`$3E-$3F`) = new name | C set = old name not found or not mounted |
 
 `DOS_ENTRY` (the 32-byte current directory entry, name in the first 11 bytes) and
 `DOS_CWD_NAME` (9 bytes, the current drawer's name) are DOS variables in `dos.asm`, not

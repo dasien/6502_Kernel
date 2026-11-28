@@ -19,12 +19,12 @@ arithmetic. Any address, register or entry point that does not exist today is ma
 
 | Question | Decision | Rejected |
 |---|---|---|
-| Launch | A DOS command `DESK`, a ~20-byte stub program on disk that maps bank 2 and calls the GUI as a subroutine. `DESK` as the last line of `SYSTEM/STARTUP.CFG` starts it at boot | A `MODULE_DIR` entry left by `K_RETURN_MODULE`; a GUI that lives entirely in user RAM |
-| Placement | Code in module bank 2. State and the stub in the `$0400-$07FF` scratch page. Overflow and resources on disk | All-RAM `.PRG`; state in bank 0 (not visible while bank 2 is mapped) |
-| Display | Glyph-tiled framebuffer: 640x400, 1 bit a pixel, two colours per 8x16 cell, built from nine font sets switched by raster band | Character-cell GUI; new VIC bitmap mode (kept as a drop-in upgrade) |
+| Launch | A DOS command `DESK`, a 21-byte stub program on disk that restores the pager, maps bank 2 and jumps to the GUI. The GUI quits through `K_RETURN_MODULE`, which lands at the `]` prompt. `DESK` as the last line of `SYSTEM/STARTUP.CFG` starts it at boot, ending the config there | A `MODULE_DIR` record (a kernel ROM change for no gain); a GUI that lives entirely in user RAM |
+| Placement | Code in module bank 2. State in the `$0400-$07FF` scratch page. Overflow and resources on disk | All-RAM `.PRG`; state in bank 0 (not visible while bank 2 is mapped) |
+| Display | Glyph-tiled framebuffer: 640x400, 1 bit a pixel, two colours per 8x16 cell, built from nine font sets switched by raster band. Every colour boundary lies on the 8x16 cell grid | Character-cell GUI; new VIC bitmap mode (kept as a drop-in upgrade) |
 | Pointer | A chipset mouse device (7 registers, **proposed** `$FED5-$FEDB`), drawn as sprite 16 | Keyboard-only pointer on `$FE0F` (kept as a fallback source) |
 | GEOS (part 2) | Adopt its table-driven menus and dialogs, graphics string, process table and flag-and-vector events; five parts adapted, the rest rewritten; drop its bitmap addressing, desk accessories and clock | Copying GEOS's C64 layout; its deskTop (no source in mist64/geos) |
-| Kernel ABI (part 2) | Six new entries and an NMI change, 512 B of 1,209 B free | An event queue in the kernel; pixel primitives in the kernel |
+| Kernel ABI (part 2) | Six new entries, an NMI change and a RESET line, 544 B of 1,209 B free | An event queue in the kernel; pixel primitives in the kernel |
 | Filesystem (part 2) | Two-pass directory read; the desktop loads programs itself; a plain `.PRG` may overwrite `$0400-$07FF`, so the desktop rebuilds on return | Keeping desktop state alive across a launch |
 | Applications (part 2) | A `.PRG` with a 96-byte GUI header, linked against `libmfcgui` | A header alone; a library alone; a ROM module |
 
@@ -44,17 +44,30 @@ the `]` prompt starts the GUI. Quitting from the desktop's menu returns to the `
 
 ### How it is built: a stub and a module
 
-`DESK` is a disk file, `DESK.PRG`, of about 20 bytes, loaded by the DOS like any program
-(2-byte load-address header, entry at the start; see `dos_internals.md`, "Program file
-format"). It does three things:
+`DESK` is a disk file, `DESK.PRG`, of 21 bytes, loaded by the DOS like any program (2-byte
+load-address header, entry at the start; see `dos_internals.md`, "Program file format").
+
+What the loader does decides the rest. `_DOS_RUN_FILE` (`dos.asm`) loads the body, resets the
+stack (`LDX #$FF / TXS`), pushes `DOS_WARM-1` and jumps to the load address. Its header says it
+"does NOT return on success": a program's `RTS` lands on `DOS_WARM`, at the `]` prompt, never
+back in whatever called the loader. The stub is written for that:
 
 ```
+        LDA #1
+        STA PAGE_ENABLE     ; $1E: pager on, as RESET leaves it (a boot launch left it off)
         LDA #2
         STA MODULE_BANK     ; map bank 2 into $B000-$EFFF
-        JSR $B000           ; the GUI's entry; it returns with RTS
-        STZ MODULE_BANK     ; bank 0 again, as the DOS expects
-        RTS                 ; back to the DOS, as any launched program does
+        LDA $B000
+        BNE @go             ; an unpopulated bank reads $00, as BANK_LAUNCH checks
+        STZ MODULE_BANK     ; no GUI ROM: bank 0 again, and
+        RTS                 ;   RTS lands on DOS_WARM, the ] prompt
+@go:    JMP $B000           ; the GUI's entry; it never comes back here
 ```
+
+That is 2 + 2 + 2 + 3 + 3 + 2 + 3 + 1 + 3 = 21 bytes. The stub is entered once and is never
+returned to, so where it loads does not matter; it loads at `$0800` like every program, and a
+program the desktop later loads over it breaks nothing. `PAGE_ENABLE` and `MODULE_BANK` have no
+`mfc.inc` equates; the stub source names them itself (`kernel_vars.inc`).
 
 The GUI proper is a 16 KB ROM module installed as bank 2. It is built and installed the way
 the monitor is (`monitor.rom` into bank 4): a new `gui.rom`, and one more `installBank` line
@@ -62,18 +75,21 @@ in the host (**proposed**; the host change is `src/computer/Computer6502.cpp`, d
 implementation work). Bank 2 is free in `architecture.md`, and it is the one that was the
 assembler before the assembler folded into the monitor.
 
-Why a stub rather than registering the module in `MODULE_DIR` like BASIC, FORTH and the
-monitor:
+The GUI leaves through **`K_RETURN_MODULE` (`$FF12`)**, the exit BASIC and FORTH use. It is in
+the kernel ROM, so the GUI can `JMP` to it from bank 2: `RETURN_FROM_MODULE` (`kernel.asm`)
+unmaps the bank (`STZ MODULE_BANK`, safe because it is running from `$F000-$FFFF`), resets the
+stack, calls `CLEAR_SCREEN` and jumps to `DOS_WARM`. A disk program and a module therefore exit
+the same way, with a clean stack, through `DOS_WARM`.
 
-- **A module returns through `K_RETURN_MODULE` (`$FF12`), which does not return to its
-  caller.** It unmaps the bank, resets the stack and re-enters the shell at the warm entry.
-  A disk program returns by `RTS`, to wherever the DOS called it from. That difference
-  matters for `SYSTEM/STARTUP.CFG` (below).
-- The DOS resolves a name as built-in command, then `MODULE_DIR` module, then disk file. A
-  stub on disk needs no `MODULE_DIR` record, so the kernel ROM, which has little free
-  space, gains nothing.
-- The stub is the only part that must be on disk. The code that is large, and
-  that must not be lost to a reload, is in ROM.
+Why a stub on disk rather than a record in `MODULE_DIR` like BASIC, FORTH and the monitor. The
+exit is the same either way, so the reasons are cost and ownership:
+
+- A `MODULE_DIR` record is 5 bytes of kernel ROM plus the name string (`"DESK", 0`, 5 more),
+  and a kernel version bump, for a launch the stub already gives. The stub costs no kernel ROM.
+- The DOS resolves a name as built-in command, then `MODULE_DIR` module, then disk file, so the
+  stub is found without any table change.
+- The stub is the only part that must be on disk, and it is replaceable like any program. The
+  code that is large is in ROM.
 
 `DESK` therefore appears in `CATALOG` and can be copied or replaced like any program. `&DESK`
 is not needed. `BANKS` lists only `MODULE_DIR`, so it will not show bank 2. The boot report
@@ -83,23 +99,35 @@ prints, and no boot step changes.
 
 ### Quitting and "DOS state intact"
 
-The GUI is entered with `JSR` from the stub, which the DOS entered with `JSR`. Quitting runs,
-in order:
+Quitting runs, in order:
 
 1. `K_RASTER_IRQ` (`$FF45`) with 0, so no raster handler is left calling into a bank that is
-   about to go.
-2. `kCmdFontReset` (`$0A`) then `kCmdClear` (`$01`) through `VREG_CMD`. The first reloads
-   CP437 into every font set, because the display model below overwrites nine of them; the
-   second selects the ROM font, drops the sprites and resets the scroll region and fine scroll.
-3. `RTS` to the stub, which unmaps bank 2 and `RTS`es to the DOS.
+   about to go, and no band switch can land in the middle of the steps that follow.
+2. `kCmdFontReset` (`$0A`) through `VREG_CMD`. It reloads CP437 into every font set, because
+   the display model below overwrites nine of them and a later program that selects a soft
+   font set must not find pixels in it. It takes no parameter.
+3. `STZ GUI_RETURN` (**proposed**, `$02F4`, question 5; 3 bytes of module). `K_RETURN_MODULE`
+   ends in `DOS_WARM`, which is exactly where the proposed return hook tests that flag. A flag left
+   set by an earlier launch would make Quit relaunch `DESK`, and the user could not reach `]`
+   without STOP. Clearing it here makes Quit always land at `]`.
+4. `JMP K_RETURN_MODULE`. Its clear is `CLEAR_SCREEN`, the routine behind `K_CLEAR_SCREEN`
+   (`$FF0C`, `kernel.asm`): it loads the default attribute (`$02`) into `VREG_ATTR` and a space
+   into `VREG_CMD_PARAM`, issues the clear, and homes `CURSOR_X` and `CURSOR_Y`. The clear also
+   selects the ROM font and set 0, turns every sprite off, resets the scroll region, row sizes
+   and fine scroll, and turns the raster interrupt off (`VIC::cmdClear`). A raw `kCmdClear`
+   written by the GUI would not do: it fills with whatever `VREG_CMD_PARAM` and the attribute
+   latch hold, which are the band handler's last font-set number and whatever colour the GUI
+   last drew in, and it leaves the kernel cursor where it was.
+
+`DOS_WARM` then prints one newline and the prompt on the cleared screen, and puts the theme and
+the default attribute back, as it does after any program.
 
 DOS state is intact because the GUI never writes where the DOS keeps it. The DOS's variables
 are in page 3 and up (`$0300` onward) and in the DOS ROM's own workspace; the current drawer
 (`OPEN`) is one of them. The GUI's state is in `$0400-$07FF` (below), its code is in
-bank 2, and it prints nothing through `K_PRINT_CHAR`, so the pager and cursor are untouched. The
-stack depth returns to what it was because the GUI is a subroutine. After the clear the
-prompt is redrawn at the top of a blank screen, which is what `K_RETURN_MODULE` and `CLS` do
-today.
+bank 2, and it prints nothing through `K_PRINT_CHAR`, so the pager and cursor are untouched.
+The stack does not need to balance: `_DOS_RUN_FILE` reset it on the way in and
+`K_RETURN_MODULE` resets it on the way out.
 
 ### Starting it at boot
 
@@ -111,19 +139,28 @@ OPEN GAMES
 DESK
 ```
 
-`_DOS_STARTUP` runs each line through the shell's own interpreter, so `DESK` launches the stub
-like a typed command. The stub's `RTS` is the reason the design uses one. The config runner
-turns paging off for the whole file and restores it after the last line. A `MODULE_DIR`
-module would leave through `K_RETURN_MODULE`, which re-enters the shell directly: the
-remaining lines would never run, the pager would stay off, and the sign-on box would be
-skipped. A disk program returns to the runner's loop, which is how it already treats
-`OPEN` or a game. Quitting the GUI after a boot launch therefore finishes the config,
-prints the sign-on and shows the `]` prompt, exactly as a boot without the GUI would.
+`_DOS_STARTUP` runs each line through the shell's own interpreter (`_DOS_DISPATCH`), so `DESK`
+launches the stub like a typed command. That launch does not come back to the runner, because
+no launch does: `_DOS_RUN_FILE` and `K_LAUNCH_BY_NAME` both leave the call chain behind, a
+`MODULE_DIR` module and a disk program alike. What follows, from `dos.asm` as it stands:
 
-Put `DESK` last because a line after it does not run until the user quits. The existing
-escape hatch covers a broken desktop: ESC pressed during boot skips the file, and the STOP
-key (NMI) breaks into the monitor. DOS itself never starts the GUI; with no `DESK` line, nothing
-changes.
+- **Lines after `DESK` never run**, not even after the user quits. `DESK` must be the last line.
+- **The runner's restore is skipped.** `_DOS_STARTUP` saves `PAGE_ENABLE` in `DOS_CFG_PAGE`,
+  turns paging off for the file, and restores it only at its `@done`, which a launch never
+  reaches. The stub sets `PAGE_ENABLE` to 1 itself. That is the value RESET gives it, and no
+  verb changes it today; if a pager setting is ever added, the stub must read that setting
+  instead.
+- **The sign-on is skipped.** `_DOS_COLD` calls `_DOS_SPLASH` after `_DOS_STARTUP` returns,
+  which it now does not. Quitting the GUI after a boot launch lands at the `]` prompt on a
+  cleared screen, in the drawer the config opened, with no sign-on box. The box is not in the
+  ABI, so the GUI cannot print it; that is accepted.
+
+After a typed `DESK` nothing is skipped: quitting lands at `]` as quitting any program does.
+No DOS routine changes for either path.
+
+The existing escape hatch covers a broken desktop: ESC pressed during boot skips the file, and
+the STOP key (NMI) breaks into the monitor. DOS itself never starts the GUI; with no `DESK`
+line, nothing changes.
 
 ### Placement: bank 2 confirmed, with a caveat about state
 
@@ -136,18 +173,19 @@ constants only. Writable state goes in user RAM, which is always visible.
 
 The state goes in **`$0400-$07FF`**. `architecture.md` calls it scratch for any program
 that uses neither the monitor's `T:`/`Z:` snapshot nor the assembler. The GUI uses neither.
-That is 1 KB, minus the stub, which can sit at the top of it (**proposed** load address
-`$07E0`, so the stub survives a program loaded at `$0800`; the GUI's own state then has
-`$0400-$07DF`, 992 bytes). It holds the pointer, the event queue, menu and window records
-and dirty-rectangle list. A zero-page budget of about 32 bytes was assumed to fit the gap at
+That is 1 KB, all of it the GUI's: the stub is never returned to, so it needs no room
+there. It holds the pointer, the event queue, menu and window records and the dirty-rectangle list. A zero-page budget of about 32 bytes was assumed to fit the gap at
 `$3A-$5A` that `architecture.md` lists. **Part 2 corrects this**: the DOS uses `$3A-$3F`, so
 the free gap is `$45-$5A`, 22 bytes (see "Part 2 conventions and sources").
 
 Two consequences. A **STOP** key press maps the monitor over the window, and `Q` returns to
 the DOS prompt, not the desktop: the GUI is dropped, and that is acceptable for a debugger
-break. The NMI handler should also disable the raster interrupt (**proposed**, a few bytes in
-the kernel), because the display model installs a raster handler, and that handler is in
-the window the NMI path unmaps. And a plain `.PRG` that the desktop launches loads at `$0800`
+break. The monitor's break entry does not clear the screen, so without a change it would print
+into the GUI's cell plane, drawn from a pixel font set, with sprite 16 and the raster bands
+still live. The NMI handler therefore gains (**proposed**, a few bytes in the kernel; question
+4) a call that disables the raster interrupt, because that handler is in the window the NMI
+path unmaps, and a `JSR CLEAR_SCREEN`, which puts back the ROM font, set 0, the default
+colours and a homed cursor and turns the sprites off. And a plain `.PRG` that the desktop launches loads at `$0800`
 and may use `$0400-$07FF` as scratch, so the desktop rebuilds its state from the DOS and the
 disk when such a program returns. Only GUI-aware applications (question 6) promise to leave
 that page alone.
@@ -166,8 +204,8 @@ page-sized change, not a redesign.
 | Option | Result |
 |---|---|
 | **`.PRG` in user RAM** | Rejected as the home of the code. A 10 to 14 KB resident GUI leaves 18 to 22 KB of the 32 KB at `$0800-$87FF` for applications (**estimate**: 32 KB less the code), and every application loads at `$0800`, so the GUI would have to sit high and crowd the C stack at the top of user RAM. Launching an application would overwrite or evict it. It also needs the disk and a full load to start. It is simpler to build, which is its only advantage. |
-| **Module only, via `MODULE_DIR`** | Rejected. Works for typed `DESK`, but exits through `K_RETURN_MODULE`, which breaks `STARTUP.CFG` (above) and needs a kernel ROM record. |
-| **Mix: ROM code, RAM state, disk resources** (recommended) | The code costs no user RAM, the stub makes launch and exit ordinary DOS behaviour, and the only kernel change is the optional NMI line. |
+| **Module only, via `MODULE_DIR`** | Rejected, narrowly. It launches and exits exactly as the stub does (both end at `DOS_WARM`, and both end a `STARTUP.CFG` run where they stand), so it is not wrong; it spends about 10 bytes of kernel ROM and a kernel release on a launch the 21-byte stub gives for nothing. |
+| **Mix: ROM code, RAM state, disk resources** (recommended) | The code costs no user RAM, the stub makes launch an ordinary DOS program launch, and the only kernel changes are the NMI and RESET lines of question 4. |
 
 ## Question 1: Display model
 
@@ -226,17 +264,18 @@ chip RAM, with colour from the existing attribute plane per cell. A 4-bit varian
 | Colours | 2 per 8x16 cell (3-bit fg + bright, 3-bit bg) | 2 per cell | 2 per cell at 1 bpp; 16 per pixel at 4 bpp |
 | Memory in the 64K map | 0 | 0 | 0 |
 | Memory in the chip | 9 x 4,096 = 36,864 B of the 65,536 B font RAM; 7 sets stay free | 4,000 B (cell plane and colour plane, already there) | 32,000 B of new chip RAM |
-| Full-screen redraw | 32,000 B x 14 = 448,000 cycles = 112 ms = 6.7 frames (copy); 32,000 x 4 = 128,000 = 32 ms = 1.9 frames (solid fill) | 2,000 cells x 14 = 28,000 cycles = 7.0 ms = 0.42 frame; 14 ms = 0.84 frame if every cell also takes its own attribute | Same bytes, same time as A: 112 ms copy, 32 ms fill. Less with a chip-side fill or blit, which is extra cost |
-| One 4 KB region (a 128x256 window) | 4,096 x 14 = 57,344 cycles = 14.3 ms = 0.86 frame | 40x12 cells = 480 x 14 = 6,720 cycles = 1.7 ms | Same as A |
+| Full-screen redraw | 32,000 B x 14 = 448,000 cycles = 112 ms = 6.7 frames (copy); 32,000 x 4 = 128,000 = 32 ms = 1.9 frames (solid fill) | 2,000 cells x 14 = 28,000 cycles = 7.0 ms = 0.42 frame; 2,000 x 23 = 46,000 cycles = 11.5 ms = 0.69 frame if every cell also takes its own attribute | Same bytes, same time as A: 112 ms copy, 32 ms fill. Less with a chip-side fill or blit, which is extra cost |
+| One 4 KB region (a 128x256 window) | 4,096 x 14 = 57,344 cycles = 14.3 ms = 0.86 frame | 16x16 cells = 256 x 14 = 3,584 cycles = 0.9 ms | Same as A |
 | Text, byte-aligned (monospace) | 16 bytes a glyph x 14 = 224 cycles = 56 us; an 80-char line is 4.5 ms | 14 cycles a character; an 80-char line is 1,120 cycles = 0.28 ms | As A |
-| Text, proportional | About 60 cycles a pixel row (shift, mask, read-modify-write across two bytes) x 16 rows = 960 cycles = 0.24 ms a character; a 40-char line is 9.6 ms | Not possible | As A |
+| Text, proportional | About 100 cycles a pixel row (two read-modify-writes at about 38 cycles, below, plus about 24 to shift and mask) x 16 rows = 1,600 cycles = 0.4 ms a character; a 40-char line is 16 ms, about one frame | Not possible | As A |
 | Icons, lines, patterns | Yes, pixel-exact | Only as 2x2 glyph tiles or sprites | Yes, pixel-exact |
 | Chip work (C++) | None | None | New registers, renderer, tests (below) |
 | Pointer sprite | Composited above the planes, no save-under | Same | Same, if the renderer keeps sprites on top |
 
-The 56 us figure is 224 / 4,000,000. The 14 ms figure for B with attributes is two passes of
-2,000 cells (28,000 cycles each, because `VREG_CHAR` takes the colour from the latch and the
-per-cell colour needs a second stream through `VREG_COLOR` with the address set again).
+The 56 us figure is 224 / 4,000,000. The 11.5 ms figure for B with attributes is one pass:
+`VREG_CHAR` takes the colour from the latch, so each cell writes `VREG_ATTR` and then
+`VREG_CHAR` (`LDA (zp),Y` 5 + `STA` 4 + `LDA (zp),Y` 5 + `STA` 4 + `INY` 2 + `BNE` 3 = 23
+cycles a cell). No second stream through `VREG_COLOR` is needed.
 Because all of these are loop-shape arithmetic, they are lower bounds: a real drawing routine
 adds address setup, clipping and the branches around the loop. A typical dialog (320x160
 pixels, 6,400 bytes) is 6,400 x 14 = 89,600 cycles = 22 ms = 1.3 frames, and a menu
@@ -247,10 +286,13 @@ pixels, 6,400 bytes) is 6,400 x 14 = 89,600 cycles = 22 ms = 1.3 frames, and a m
 **A costs no chip work and pays in CPU and in discipline.** The nine-band split uses
 machinery that exists and has tests (`tests/test_vic_raster.cpp`, and the font set switching
 in `tests/test_vic_softfont.cpp`), driven by `K_RASTER_IRQ` (`$FF45`). A band change is one
-IRQ per band. Each costs about 100 cycles: 7 to enter, about 30 in the kernel's check and
-register save, 6 for the `JSR`, 20 in the handler to set the next compare line and the next set, 6 for `RTS`, about
-30 to restore and `RTI`. Nine of them are 900 cycles a frame, which is 1.4% of 66,667
-(**estimate**). The rules the raster section imposes become GUI rules. The GUI never
+IRQ per band. Each costs about 91 cycles, counted from `IRQ_HANDLER` and `RASTER_DISPATCH` in
+`kernel.asm`: 7 to enter; 21 in the kernel's check and register save (`PHA`, `LDA`/`BPL` on
+`VREG_RASTER_CTL`, the acknowledge, `PHX`, `PHY`); 6 for the `JSR RASTER_DISPATCH`; 6 for its
+`JMP (RASTER_VEC)`; 20 in the handler to set the next compare line and the next set; 6 for
+`RTS`; 25 to restore, test the timer and `RTI` (`PLY`, `PLX`, `LDA`/`BPL` on `TIMER_IRQ_ACK`,
+`PLA`, `RTI`). Nine of them are 819 cycles a frame, which is 1.2% of 66,667 (**estimate**).
+The rules the raster section imposes become GUI rules. The GUI never
 writes `$FECD` to present, because a presenting program is drawn from its live settings and
 its bands are ignored; the cost is that a frame is shown at the next boundary, at most one
 frame (16.7 ms) after it is finished. The hardware cursor is hidden through
@@ -259,10 +301,42 @@ and that mapping lives in one routine so the rest of the GUI sees a 640x400 plan
 The mapping is also what makes C a cheap upgrade later. Setting up the cell plane (glyph
 codes and colours for 2,000 cells) is done once at start: 2,000 x 14 = 28,000 cycles = 7 ms.
 
+*Raster jitter and the timing margin.* A split takes effect on the line where the
+`kCmdFontSet` write lands (`VIC::recordSplit`), not on the compare line. A line is 66,667 / 500
+= 133 cycles. From the start of the compare line the write lands after: up to 7 cycles to finish
+the current instruction, 7 to enter, 21 of check and save, 12 for `JSR` and `JMP (RASTER_VEC)`,
+and 12 in the handler (`LDA #` / `STA VREG_CMD_PARAM` / `LDA #` / `STA VREG_CMD`), about 59
+cycles. That leaves a margin of about 74 cycles inside the first line of the band
+(**estimate**). Two things eat it:
+
+- **The jiffy IRQ.** It shares the IRQ line. If the compare arrives while the timer half of
+  `IRQ_HANDLER` is running (about 65 cycles with no beep or chime playing, more with one), the
+  raster waits for its `RTI` and the switch can land a line late.
+- **Any `SEI` section**, in the kernel or the GUI, delays it by its own length.
+
+A late switch draws the top pixel line (or lines) of the band's first cell row from the
+previous band's set: one line of wrong pixels across the screen for one frame. The GUI rules are
+that the band handler sets the font first and the next compare line after, that GUI code holds
+`SEI` for no more than about 20 cycles at a time, and that nothing else in the GUI runs from the
+IRQ. Slice 0 measures how often a switch is late. If the glitch is visible it counts against A
+the way a slow redraw does: C needs no raster bands, so it removes the problem outright.
+
+*The shared command parameter.* `kCmdFontSet` takes its set from `VREG_CMD_PARAM` (`$FE36`),
+which every parameterised command shares and which cannot be read back. A raster IRQ that lands
+between main-line code's `STA VREG_CMD_PARAM` and its `STA VREG_CMD` overwrites the parameter,
+and the main-line command runs with the band's set number. The convention: while the bands run,
+main-line code issues a parameterised command only inside `PHP` / `SEI` ... `PLP` (4 bytes and 9
+cycles a command, well inside the 20-cycle limit above), and the band handler touches no other
+shared VIC state (not the font index, the cell index or the attribute latch).
+
 Drawing is read-modify-write through the port, since there is no 32,000-byte copy of the
-screen in RAM to compose in (user RAM is 32 KB in total). A compositing buffer is a region
-buffer the size of the window being drawn, in tile order, in user RAM. That is the real
-memory cost of A and of C, and it is the same for both.
+screen in RAM to compose in (user RAM is 32 KB in total). The font port has one
+auto-incrementing index (`VREG_FONT_LO/HI`), and reading `VREG_FONT_DATA` advances it as
+writing does, so changing a byte in place costs a seek, a read, the merge, a second seek and
+the write: about 38 cycles a byte (**estimate**: 14 + 4 + 6 + 14 + 4, a seek being two `LDA zp`
+/ `STA abs` pairs). A compositing buffer is a region buffer the size of the window being drawn,
+in tile order, in user RAM. That is the real memory cost of A and of C, and it is the same for
+both.
 
 **B costs nothing and gives up the point of the exercise.** It is the cheapest and fastest
 option, and it is what the MFC shell already is. But it has no proportional fonts, no icons
@@ -295,8 +369,8 @@ if A fails its first measurement.
   memory-layout validator.
 
 What C buys over A is **linear addressing** (a horizontal line is contiguous bytes, not a
-stride of 16), no raster IRQ, and 7 font sets that the bitmap leaves untouched, where A holds
-nine sets. Redraw speed is the same unless the blitter is built. Those gains do not
+stride of 16), no raster IRQ and so no raster jitter, and all 16 font sets left free, since
+the bitmap uses none of them, where A holds nine and leaves 7. Redraw speed is the same unless the blitter is built. Those gains do not
 justify a chip change before anything has been drawn.
 
 ### Recommendation
@@ -312,6 +386,31 @@ Rejected: **B** because it is a text UI and cannot show proportional type or ico
 the goal; it remains the fallback. **C** because it spends the last scarce resource, I/O page
 bytes and a renderer, to get the picture A already produces, and it can be added later behind
 the same mapping routine if the measurement asks for it.
+
+### The cell-grid rule
+
+Colour belongs to the 8x16 cell, not the pixel, so **every colour boundary lies on the cell
+grid**. A rectangle that has colours of its own (a window, its title bar, a menu, a menu item's
+highlight, a dialog, a button, a list row, an icon) starts at an x that is a multiple of 8 and a
+y that is a multiple of 16, and its width is a multiple of 8 and its height a multiple of 16.
+Off the grid, the edge cells hold two areas' pixels with one cell's two colours, so the
+desktop's colours bleed into the window's edge, or the reverse.
+
+What follows from it:
+
+- Menu items and list rows are **16 pixels tall**, one cell row, so a highlight (the cell's
+  colours swapped) covers exactly one item.
+- A title bar is one cell row. A button is a whole number of cells, 8x1 (64x16) by default.
+- The toolkit enforces the rule rather than trusting callers: `GUI_CENTRE` centres on whole
+  cells, and a rectangle given in pixels is rounded outward to the grid before it is drawn.
+- Pixels inside the cells are free. Text, lines, frames and icon art drawn in the colours of
+  the rectangle they sit in may be at any pixel position; only a change of colour must wait
+  for a cell boundary.
+- The pointer (sprite 16) and dragged outlines are sprites, composited over the plane, so the
+  rule does not apply to them.
+
+Option C keeps the rule at 1 bit a pixel (its colour is still per cell). The 4-bit variant
+would lift it.
 
 ## Question 2: Pointer and input
 
@@ -464,14 +563,15 @@ source or a build, so `architecture.md` now carries the DOS jump table and the c
 3. *Launch return.* `_DOS_RUN_FILE` (src) resets the stack (`LDX #$FF / TXS`), pushes `DOS_WARM-1` as
    the program's return address and jumps to the load address. A plain `RTS` from a program lands at the
    `]` prompt, never back in whatever loaded it. The cc65 glue's `QUITDOS` also ends in `JMP DOS_WARM`.
-   Question 5 designs the return around this.
+   Part 1's launch, quit and boot sections follow from this (they were corrected after review), and
+   question 5 designs the desktop's own launch and return around it.
 4. *The `$0400-$07FF` page.* Whether a plain `.PRG` may overwrite it is settled in question 5: yes.
 
 ## Question 3: Architecture from GEOS
 
 ### Files read in mist64/geos
 
-All paths are under `kernal/` in the repository.
+Paths are under `kernal/` in the repository, except `inc/` and `README.md`, which are at its top level.
 
 | File | Read |
 |---|---|
@@ -614,12 +714,16 @@ the table contents are new art. An 8x8 pattern repeats across 8x16 cells the sam
 scanlines in GEOS.
 
 **Back screen and `RecoverRectangle`.** GEOS keeps a second 8,000-byte bitmap (`BACK_SCR_BASE`,
-`const.inc`) and `RecoverRectangle` copies from it, which is how a menu or dialog is erased. MFC has no
+`inc/geossym.inc`) and `RecoverRectangle` copies from it, which is how a menu or dialog is erased. MFC has no
 bitmap in the 64K map and no 8 KB spare. The replacement is **spare font sets**: part 1's display uses
 nine of the 16 sets, so seven are free. To open a dialog, copy the affected bands' glyphs into spare sets
-(a band is 240 glyphs = 3,840 bytes; 3,840 x 14 = 53,760 cycles = 13.4 ms, **estimate**), draw into the
-copy and switch that band's set (one byte in the raster table). To close it, switch the band back. That
-costs **no user RAM** and one frame to show or hide, and limits open overlays to seven bands (a menu plus
+and draw into the copy. There is no copy command and the font port has one auto-incrementing index,
+which reads advance as writes do, so a copy bounces through RAM: seek the source, read a chunk into a
+128-byte buffer in the state page (`LDA VREG_FONT_DATA` 4 + `STA abs,Y` 5 + `INY` 2 + `BNE` 3 = 14
+cycles a byte), seek the destination, write it back (`LDA abs,Y` 4 + `STA` 4 + `INY` 2 + `BNE` 3 = 13),
+and repeat. A band is 240 glyphs = 3,840 bytes: 3,840 x 27 = 103,680 cycles, plus 30 chunks x 2 seeks
+x 14 = 840, about 104,520 cycles = 26 ms = 1.6 frames (**estimate**). Then switch that band's set (one byte in the raster table). To close it, switch the band back. That
+costs **no user RAM** beyond the 128-byte buffer, about two frames to show and one to hide, and limits open overlays to seven bands (a menu plus
 a dialog needs two or three). Nothing tests this yet; it is what slice 3 measures. *Rewrite.*
 
 ### Proportional fonts
@@ -634,7 +738,7 @@ to `c0` and the wider `e7` to `e0`); only its head was read.
 **Decision.** Adapt the data format and rewrite the drawing. The strip suits a 1-bit plane with a byte
 stride. In MFC the rows are 16-byte glyphs in tile order, so the inner loop (take the character's columns,
 shift to the pen's bit offset, merge with the byte already there) is the same arithmetic with a different
-destination, and it is where part 1's 960-cycles-a-character figure comes from. Fonts live on disk and
+destination, and it is where part 1's 1,600-cycles-a-character figure comes from. Fonts live on disk and
 load into user RAM at start (a strip is a few hundred bytes), as part 1 said. The BSW font data itself is
 not used by default; a new font is. It is a candidate for conversion if the licence plan below is
 followed. About 1.5 KB of module code (**estimate**).
@@ -648,8 +752,9 @@ GEOS has a table of up to 20 processes (`_InitProcesses` header comment). `_Init
 through `r0`. Sleep and delays (`process3c.s`) pop the caller's return address into a delay table so that
 execution resumes after an interval.
 
-**Adopt, adapted.** It is plain table code with no hardware in it. The edits: remove the screen-saver
-block at the end of `_ProcessTimers` (it uses `saverTimer` and a fixed address), replace `r0` with a
+**Adopt, adapted.** It is plain table code with no hardware in it. The edits: leave out the screen-saver
+block at the end of `_ProcessTimers`, which `process2.s` wraps in `.ifdef wheels_screensaver`
+(line 64), so it belongs to the Wheels build and not to GEOS 2.0; replace `r0` with a
 zero-page word from the 22-byte budget, and use the jiffy counter (`K_GET_JIFFIES`, `$FF39`, 60 Hz) as the
 time base. `_InitProcesses`'s header comment already gives intervals in 60ths of a second. `_ProcessTimers`
 runs from the raster handler and `_ExecuteProcesses` from the main loop. About 300 bytes (**estimate**;
@@ -670,12 +775,12 @@ RAM expansion or swap area, so **drop** desk accessories. `time/time1.s` reads t
 
 ### Memory layout against `architecture.md`
 
-| GEOS (`README.md`, `const.inc`) | MFC (`architecture.md`) |
+| GEOS (`README.md`; the addresses from `inc/geossym.inc`, lines 121-124, and `OS_VARS_LGH` from `inc/const.inc`) | MFC (`architecture.md`) |
 |---|---|
 | `$0400-$5FFF` application RAM (`APP_RAM`) | `$0800-$87FF`, 32 KB, all of it the application's |
 | `$6000` second bitmap, 8,000 bytes (`BACK_SCR_BASE`) | none: the spare font sets are the back store (above) |
 | `$7900` print buffer (`PRINTBASE`) | out of scope (no printing) |
-| `$8000-$84FF` OS variables and disk buffers (`OS_VARS`, `OS_VARS_LGH` = `$0500`) | state in `$0400-$07DF` (992 B); the DOS keeps its own state in page 3 and up |
+| `$8000-$84FF` OS variables and disk buffers (`OS_VARS`, `OS_VARS_LGH` = `$0500`) | state in `$0400-$07FF` (1,024 B); the DOS keeps its own state in page 3 and up |
 | `$9000-$FFFF` kernel, bitmap at `$A000` | toolkit in module bank 2 (16 KB ROM); kernel BIOS at `$F000-$FFFF` |
 | zero page: `r0-r15` plus about `$22-$3F` and `a0-a9` (`geossym.inc`) | 22 bytes, `$45-$5A` |
 
@@ -686,9 +791,11 @@ and is addressed absolute (4 cycles instead of 3, one byte more per instruction)
 bytes of general registers, is dropped: it is what makes the GEOS calling convention easy, and it does not
 fit.
 
-**State page budget** (`$0400-$07DF`, 992 bytes, **estimate**): pointer and flags 24, menu stack and
+**State page budget** (`$0400-$07FF`, 1,024 bytes, **estimate**): pointer and flags 24, menu stack and
 records 64, window records 8 x 16 = 128, band-to-set table 16, directory page of 24 entries x 16 bytes =
-384, dirty rectangles 32, process table 20 x 4 = 80, leaving 264 spare. It fits.
+384, dirty rectangles 32, process table 20 x 7 = 140 (a routine word, a reload interval word, a counter
+word and a flag byte per process, the four fields GEOS keeps for each), the font-set copy
+buffer 128, leaving 108 spare. It fits.
 
 ## Question 4: Kernel ABI
 
@@ -710,8 +817,9 @@ The DOS ABI at `$AF00` (the `DOSJUMP` table in `dos.asm`, listed in `architectur
 Existing and **not** used: `K_PRINT_CHAR`, `K_PRINT_MESSAGE`, `K_PRINT_NEWLINE`, `K_READ_LINE` (the cell
 plane holds glyph indices of the pixel plane, so text output would corrupt it). `K_PRINT_DEC` (`$FF27`)
 is unusable for the same reason: it builds the digits on the stack and emits them through `PRINT_CHAR`.
-`K_DEC_STR` below fills that gap. `K_CLEAR_SCREEN` is not called; the exit clear is a `VREG_CMD` write
-(part 1).
+`K_DEC_STR` below fills that gap. `K_CLEAR_SCREEN` (`$FF0C`) is not called while the GUI runs; its routine,
+`CLEAR_SCREEN`, is what puts the text screen back on the way out, called by `K_RETURN_MODULE` on quit and
+by the NMI addition on STOP (part 1).
 
 ### Kernel ROM free space
 
@@ -724,7 +832,7 @@ table is separate: `JUMPS` is `$FF00-$FF47` (72 bytes, 24 entries) and `VECS` st
 
 ### Proposed new entries (one related set, moving together)
 
-Six entries and an NMI change, all **proposed**, at the next free slots. A rectangle is four bytes in a
+Six entries, an NMI change and one RESET line, all **proposed**, at the next free slots. A rectangle is four bytes in a
 parameter block, not registers, because a rectangle has four coordinates and the 6502 has three
 registers.
 
@@ -732,11 +840,12 @@ registers.
 |---|---|---|---|---|---|---|
 | `K_PTR_POLL` | `$FF48` | none | pointer state updated, sprite 16 moved | 190 B | yes | any program wants "the pointer"; one model for mouse and keyboard; it owns the capture bit, which STOP must release |
 | `K_PTR_SHOW` | `$FF4B` | A = 0 hide, else show | sprite 16 on or off; capture bit set or clear | 40 B | yes | same set |
-| `K_CELL_FILL` | `$FF4E` | A = glyph, X = attribute; rectangle in the block | cell and colour planes filled | 100 B | yes | `programs/common/glue/vic_write.s` already carries user-side cell write loops; one ROM copy serves all |
+| `K_CELL_FILL` | `$FF4E` | A = glyph, X = attribute; rectangle in the block | cell and colour planes filled | 100 B | yes | `programs/common/glue/vic_write.s` exports only single-cell writes (`_vaddr`, `_vputc`, `_vattr`, `_vputcolor`), so every program that fills a rectangle writes its own loop around them; one ROM loop serves all |
 | `K_CELL_BLIT` | `$FF51` | source in `JUMP_VECTOR` (`$18-$19`); X = 0 glyphs, 1 colours; rectangle in the block | a w x h block copied into the plane | 95 B | yes | same |
 | `K_FONT_PUT` | `$FF54` | A/X = font byte index; source in `JUMP_VECTOR`; Y = glyph count | glyphs copied into soft-font RAM | 50 B | yes | the glue has `vfseek/vfwrite` (`font.s`); this is the loop form every soft-font program needs |
-| `K_DEC_STR` | `$FF57` | A/X = pointer to a 32-bit value; destination in `MON_MSG_PTR` (`$16-$17`) | NUL-terminated decimal digits; Y = length | 25 B | yes | `K_PRINT_DEC` cannot serve a pixel display; this shares its divide |
-| NMI additions | none | none | none | 12 B | yes | the NMI path is kernel code, and the GUI's bank is about to be unmapped |
+| `K_DEC_STR` | `$FF57` | A/X = pointer to a 32-bit value; destination in `MON_MSG_PTR` (`$16-$17`) | NUL-terminated decimal digits; Y = length | 51 B | yes | `K_PRINT_DEC` cannot serve a pixel display; this shares its divide (`DIV10_32`) and workspace |
+| NMI additions | none | none | none | 15 B | yes | the NMI path is kernel code, and the GUI's bank is about to be unmapped |
+| RESET addition | none | none | none | 3 B | yes | `GUI_RETURN` is outside the range RESET clears |
 
 State goes in `$02E9-$02FF` (`architecture.md`: "leftover system-variable space", 23 bytes). **Proposed**:
 `PTR_X` (2), `PTR_Y` (2), `PTR_BTN` (1), `PTR_RAMP` (1), `PTR_FLAGS` (1) = 7 bytes at `$02E9-$02EF`; the
@@ -756,13 +865,27 @@ rectangle block `CELL_X`, `CELL_Y`, `CELL_W`, `CELL_H` = 4 bytes at `$02F0-$02F3
   `VREG_COLOR` `$FE30`, adjacent, so X selects the plane for free): 28 + 12 + 10 + 12 + 12 + 6 + 15 = **95**.
 - `K_FONT_PUT`: set the index 12, 16-byte inner loop 12, advance the pointer 12, glyph counter 6, set-up 8 =
   **50**.
-- `K_DEC_STR`: refactors the digit-generation half of `PRINT_DEC` into a routine the print path also calls.
-  The new half (pop digits into `(ptr),Y`, terminate) is 22, plus a 3-byte jump = **25**, with no net
-  duplication.
-- NMI: `LDA #0 / TAX / JSR RASTER_IRQ` 6 (disables the raster interrupt, as part 1 required), `STZ
-  MOUSE_CTL` 3 (releases capture so the host cursor returns), `STZ GUI_RETURN` 3 = **12**.
+- `K_DEC_STR`: cannot share `PRINT_DEC`'s digit loop. `PRINT_DEC` pushes the digits on the hardware stack
+  (`PHA` in its `@gen` loop) and pops them to print, so a subroutine that generated them would return with
+  them under its own return address; sharing would mean rewriting both around a buffer. A standalone
+  routine that shares only `DIV10_32` and the `$35-$39` workspace: point at and copy the value (`STA`/`STX
+  JUMP_VECTOR` 4, `LDY #0` 2, a 4-byte copy loop 10) 16, `STZ DEC32_CNT` 2, the generate loop (`JSR
+  DIV10_32`, `ORA #'0'`, `PHA`, `INC`, the four-byte zero test, `BNE`) 18, the pop loop into
+  `(MON_MSG_PTR),Y` 10, the terminator 4, `RTS` 1 = **51**.
+- NMI: `LDA #0 / TAX / JSR RASTER_IRQ` 6 (disables the raster interrupt, as part 1 required), `JSR
+  CLEAR_SCREEN` 3 (ROM font, set 0, sprites off, default colours and a homed cursor, so the monitor is
+  readable; it runs after the raster is off, so no band handler can race its `VREG_CMD_PARAM` write), `STZ
+  MOUSE_CTL` 3 (releases capture so the host cursor returns), `STZ GUI_RETURN` 3 = **15**. The clear
+  happens on every STOP, not only under the GUI, so a break from any program now lands the monitor on a
+  blank screen; testing the capture bit first (`LDA MOUSE_CTL` / `BEQ`, 5 B) would keep today's behaviour
+  for other programs, if that is wanted.
+- RESET: `STZ GUI_RETURN` 3 = **3**. RESET clears only `$0200-$02E9` (the `CLEAR_MON_VAR_LOOP` in
+  `kernel.asm`, `LDX #$EA`), so without it a flag left set before a reset would make the `DOS_WARM` hook
+  (question 5) relaunch `DESK` after the next program quits. (Raising the loop's count from `$EA` to `$F5`
+  would clear `$02E9-$02F4` for no bytes; either works, and the budget counts the explicit store.)
 
-**Total 512 bytes of 1,209 free (42%), leaving 697.** The six jump slots take 18 of 178 bytes. **It fits**,
+**Total 544 bytes of 1,209 free (45%), leaving 665.** The arithmetic: 190 + 40 + 100 + 95 + 50 + 51 + 15 +
+3 = 544. The six jump slots take 18 of 178 bytes. **It fits**,
 with the whole set promoted together. The set depends on the mouse device of part 1 (proposed
 `$FED5-$FEDB`): `K_PTR_POLL`'s mouse path is five loads from it. Without that device the 32-byte mouse
 path drops out and the keyboard path alone works.
@@ -826,17 +949,22 @@ directory.
 ### Launching a `.PRG` and returning
 
 The desktop does **not** call the shell. It loads the program itself, because the shell's loader
-(`_DOS_RUN_FILE`) is not in the ABI and rebuilds the stack. The loader is about 40 bytes of module
+(`_DOS_RUN_FILE`) is not in the ABI and never returns: it resets the stack and pushes `DOS_WARM` as the
+program's return address (part 1). The desktop's own loader is about 40 bytes of module
 (**estimate**: `FS_OPEN`, two `FS_GETB` for the load address, a store loop).
 
-1. Tear the GUI down as quit does (part 1: `K_RASTER_IRQ` with 0, font reset, clear), so the program
-   starts on a text screen with no handler left pointing into bank 2.
+1. Tear the GUI down as quit does (part 1: `K_RASTER_IRQ` with 0, then `kCmdFontReset`), but clear with
+   `JSR K_CLEAR_SCREEN` (`$FF0C`) rather than leaving through `K_RETURN_MODULE`, because the desktop
+   must stay mapped and keep its stack. The program starts on a text screen in the default colours with
+   the cursor home and no handler left pointing into bank 2.
 2. Set `GUI_RETURN` (**proposed**, `$02F4`) to 1.
 3. `FS_OPEN` the name, read the 2-byte header, stream the body to the load address. Refuse a body that
    would pass `$87FF`, because stores above it land in the DOS ROM and are silently discarded.
 4. `JSR` the load address. Bank 2 stays mapped, because a plain program does not touch `MODULE_BANK`.
 5. **Return, two cases.** A program that ends in `RTS` returns to the instruction after the `JSR`, in
-   bank 2, and the desktop re-initialises from cold (consequence 3 below). A program that ends in
+   bank 2, and the desktop clears `GUI_RETURN` (`STZ`, 3 bytes) and re-initialises from cold
+   (consequence 3 below). Every cold start of the desktop clears the flag, so it is set only while a
+   launched program runs. A program that ends in
    `JMP DOS_WARM`, which is every program using the glue's `QUITDOS` and so most of `programs/`, lands in
    the DOS. The **proposed** `DOS_WARM` hook, about 20 bytes: if `GUI_RETURN` is non-zero, clear it and run
    `DESK` by name through `_DOS_RUN_FILE`. The desktop starts from cold. The user sees the program quit
@@ -867,16 +995,18 @@ Consequences:
    redraw. The cost is unmeasured. A rough bound: 24 icons x 96 header bytes at an assumed 40 cycles a byte
    is 92,160 cycles = 23 ms, plus the directory walks and `FS_OPEN`'s own scan per file, whose cost is not
    known. Slice 5 times it. Selection and window position are lost; that is accepted.
-4. The `DESK` stub is loaded from disk each time (it is a program), so a program that overwrote the
-   stub's address does not break re-entry.
-5. A **GUI-aware** application (question 6) declares in its header that it leaves `$0400-$07DF` alone. For
+4. The `DESK` stub is entered once and never returned to (part 1), and every re-entry loads it from disk
+   again, so a program that overwrites `$0800` breaks nothing.
+5. A **GUI-aware** application (question 6) declares in its header that it leaves `$0400-$07FF` alone. For
    those the desktop could keep its state and resume without a rebuild. That is an optimisation for later,
    not part of the first slices.
 
 ### Writing and managing files
 
 The file menu (rename, delete, new drawer, copy) uses the existing calls. `FS_DELETE` and `FS_RENAME`
-(`A/X` = old name, `DOS_PTR2` = new) are in the DOS ABI. COPY has no ABI entry (it is a shell command that
+(`A/X` = old name, `DOS_PTR2` = new) are in the DOS ABI. `mfc.inc` names `FS_RENAME` but does not export
+`DOS_PTR2` (`$3E-$3F`, `dos.asm`), so the desktop's source defines it, or `mfc.inc` gains it
+(**proposed**). COPY has no ABI entry (it is a shell command that
 reads the source into user RAM and writes it out), so the desktop does the same with `FS_OPEN`, `FS_GETB`
 and `FS_PUTB` in a loop, within the 32 KB limit, and reports `FILE TOO BIG` as the shell does. New drawer
 has no ABI entry either and is a follow-up for the same DOS ABI family as `FS_CHDIR`. Nothing it writes is
@@ -908,7 +1038,7 @@ offset  size  meaning
 2       3     JMP to the real entry
 5       3     "GUI" magic
 8       1     format version (1)
-9       1     flags: bit 0 leaves $0400-$07DF alone; bit 1 needs the pointer device;
+9       1     flags: bit 0 leaves $0400-$07FF alone; bit 1 needs the pointer device;
                      bit 2 standalone (maps bank 2 itself when launched from ]); rest zero
 10      1     icon width in cells (2)
 11      1     icon height in cells (2)
@@ -931,7 +1061,9 @@ running, checks the module's identity block (`"MFC"` plus the name, at the end o
 `architecture.md`) and calls the init entry. A **standalone** application (flag bit 2) can therefore be
 started from `]` without the desktop, which is how it is developed. The library restores the previous bank
 when it closes (`MODULE_BANK` reads back what was written, per `Memory.cpp`); under the desktop it does
-not remap, since the desktop did.
+not remap, since the desktop did. `mfc.inc` defines no `MODULE_BANK` (`$FE23`), so `libmfcgui` carries
+that equate itself (**proposed**: or `mfc.inc` gains it, with the drift check in
+`tests/scripts/check_io_equates.cmake` covering it).
 
 ### A minimal "hello window"
 
@@ -945,12 +1077,12 @@ names are **proposed** and not final.
 static void on_ok(void) { gui_quit(); }          /* leave the event loop */
 
 static const GuiDialog hello = {
-    GUI_CENTRE,                  /* position */
-    200, 96,                     /* width, height in pixels */
+    GUI_CENTRE,                  /* position: (216, 144), cell 27, row 9 */
+    208, 112,                    /* width, height in pixels: 26 cells x 7 rows */
     {
-        GUI_TITLE ("Hello"),
-        GUI_TEXT  (16, 40, "Hello, window"),
-        GUI_BUTTON(72, 64, GUI_OK, on_ok),
+        GUI_TITLE ("Hello"),                 /* row 0 of the window */
+        GUI_TEXT  (16, 32, "Hello, window"), /* row 2; text needs no grid */
+        GUI_BUTTON(72, 64, GUI_OK, on_ok),   /* 64x16 at cell 9, row 4: centred */
         GUI_END
     }
 };
@@ -965,17 +1097,29 @@ void main(void) {
 and the header it ships under (`hello_hdr.s`, linked first; `mkprg` adds the load address):
 
 ```
-        jmp     start
+        .segment "GUIHDR"                ; first in the image (hello.cfg, below)
+        .import __STARTUP_RUN__          ; crt0's entry: STARTUP is define = yes
+        jmp     __STARTUP_RUN__
         .byte   "GUI", 1, %00000100      ; magic, version, flags: standalone
         .byte   2, 2                     ; icon: 2 x 2 cells
         .byte   $0F, $0F, $0F, $0F       ; attributes
         .res    64                       ; icon glyphs (art)
         .byte   "HELLO", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-start:  ; the cc65 startup follows
+        ; the STARTUP segment (cc65's crt0) follows
 ```
 
-The build is a normal catalog entry (`programs/catalog.txt`: `sources`, `config`, `program`), with the
-standard `$0800` start and the C stack at `$8700`. Slice 6 builds this program.
+The window lies on the cell grid (question 1): it centres at x = (640 - 208) / 2 = 216 = 27 x 8
+and y = (400 - 112) / 2 = 144 = 9 x 16, and the button at (72, 64) inside it is cell 9, row 4,
+centred because (208 - 64) / 2 = 72.
+
+The build is a catalog entry (`programs/catalog.txt`: `sources`, `config`, `program`), with the
+standard `$0800` start and the C stack at `$8700`, but it **needs its own `.cfg`**. The header has
+to be the first bytes of the image, and the standard configs (`programs/edit/edit.cfg` and the
+rest, based on cc65's `none.cfg`) start `MAIN` with the `STARTUP` segment, where crt0 puts its
+entry. `hello.cfg` adds a `GUIHDR` segment ahead of it (`GUIHDR: load = MAIN, type = ro;` as the
+first line of `SEGMENTS`) and marks `STARTUP` `define = yes`, so the header's `JMP` can name
+`__STARTUP_RUN__`, crt0's entry. Every GUI application shares that `.cfg`, so `libmfcgui` ships it. Slice 6 builds
+this program.
 
 ## Question 7: Phasing
 
@@ -984,12 +1128,12 @@ ROM. Slice 0 is the measurement part 1 asked for, and its code does not merge.
 
 | # | Slice | Demonstrable result | Size |
 |---|---|---|---|
-| 0 | **Measurement** | A throwaway program times (a) a full 4 KB region redraw through `VREG_FONT_DATA`, (b) the nine-band split's per-frame cost, (c) a 240-glyph band copy into a spare set. The numbers replace the part 1 estimates | about 150 lines, not merged; 1 day |
+| 0 | **Measurement** | A throwaway program times (a) a full 4 KB region redraw through `VREG_FONT_DATA`, (b) the nine-band split's per-frame cost, (c) a 240-glyph band copy into a spare set through a RAM buffer, (d) how often a band switch lands a line late. The numbers replace the part 1 estimates | about 150 lines, not merged; 1 day |
 | 1 | **Pointer** | `DESK` runs. The screen becomes a grey desktop pattern in the nine-band framebuffer and a **pointer follows the host mouse**. The keyboard fallback works in the console build | `Mouse` device about 190 lines of C++ plus `tests/test_mouse.cpp` about 120; kernel `K_PTR_POLL`, `K_PTR_SHOW` 230 B; module about 1.8 KB (tile mapper, band handler, fills) |
 | 2 | **Menu bar** | A menu bar with proportional text. Clicking a title drops a menu, clicking an item calls its routine, and `Quit` returns to `]` | module about 3 KB (text 1.5 KB, menus 1.2 KB, hit testing and flags); kernel `K_CELL_FILL`, `K_CELL_BLIT`, `K_FONT_PUT` 245 B |
 | 3 | **Dialog box** | An OK/Cancel dialog from a data table, drawn over the desktop and removed with the screen intact (the spare-font-set overlay, measured against slice 0) | module about 1.4 KB |
-| 4 | **Desktop lists a directory** | A window shows the disk's files and drawers as icons with names. Opening a drawer shows its files, and quitting restores the previous drawer | module about 2.5 KB; `FS_CHDIR` (DOS) about 30 B; `K_DEC_STR` 25 B |
-| 5 | **Launch and return** | Double-click a `.PRG`: the screen goes to text, the program runs, and quitting brings the desktop back | loader about 40 B plus teardown; `GUI_RETURN` and the NMI additions (kernel 12 B); the DOS hook about 20 B |
+| 4 | **Desktop lists a directory** | A window shows the disk's files and drawers as icons with names. Opening a drawer shows its files, and quitting restores the previous drawer | module about 2.5 KB; `FS_CHDIR` (DOS) about 30 B; `K_DEC_STR` 51 B |
+| 5 | **Launch and return** | Double-click a `.PRG`: the screen goes to text, the program runs, and quitting brings the desktop back | loader about 40 B plus teardown, and the 3 B `STZ GUI_RETURN` on quit and on cold start; `GUI_RETURN`, the NMI additions and the RESET line (kernel 18 B); the DOS hook about 20 B |
 | 6 | **Application model** | `HELLO.PRG` with the GUI header shows its icon on the desktop and opens its dialog, from the desktop and standalone | `libmfcgui` about 400 lines of C and assembly; the entry table |
 | 7 | **Processes** | The desktop shows a clock and a blinking caret from the timer table | about 300 B (adapted from `process1.s`, `process2.s`) |
 
