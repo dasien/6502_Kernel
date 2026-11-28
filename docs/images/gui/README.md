@@ -18,8 +18,10 @@ every pixel in it:
   transparent, so the pointer has no black.
 
 Text uses a proportional font cut from the machine's CP437 VGA font
-(`vendor/cp437font/VGA8.F16`). It stands in for the new font the design calls for. The
-program names come from `programs/catalog.txt`. The clock, the free space and the item count
+(`vendor/cp437font/VGA8.F16`). It stands in for the new font the design calls for. Most
+program names come from `programs/catalog.txt`. HELLO is the example program from question 6.
+SST.BAS and README.TXT are sample files. CHESS, KPANIC and VENTURE are drawn at the disk root,
+though the catalog installs them under `GAMES/`. The clock, the free space and the item count
 are made up.
 
 ## What the GUI would look like
@@ -43,5 +45,5 @@ They do not show the current design.
 | `5b-cells-unaligned-clash.png` | 6, cell grid | A window placed off the grid at (220, 152). The desktop pattern bleeds into the window's edge cells and the frame changes colour partway along |
 | `6-raster-jitter.png`, `6b-raster-jitter-labels.png`, `6c-raster-jitter-titlebar.png` | 7, raster jitter | Font-set switches landing 0-6 lines late. A late line takes its glyphs from the previous band's set, which holds the picture 48 pixels higher. That cuts off the tops of labels and drops menu-bar fragments into a title bar. The lateness values are illustrative, not measured |
 | `7-stop-monitor.png` | 3, STOP | Breaking into the monitor with the GUI's font still live. The cells show the font's unused codes, the monitor's prompt comes out as GUI pixels, and the pointer sprite stays on screen |
-| `8-quit-raw-clear.png` | 2, quit | Quitting with a raw `kCmdClear`. Every cell holds glyph 8, the raster handler's last font-set number, and `]` lands at the old cursor row. The attribute colours are an assumption |
+| `8-quit-raw-clear.png` | 2, quit | Quitting with a raw `kCmdClear`. Every cell holds glyph 8, the raster handler's last font-set number, and `]` lands one row below the old cursor, because `DOS_WARM` prints a newline first. The attribute colours are an assumption |
 | `9-highlight-straddle.png`, `9b-highlight-straddle-zoom.png` | 6, cell grid | Menu items 4 pixels off the cell rows. Highlighting **Open** colours whole cells, so **Info** looks selected too |
