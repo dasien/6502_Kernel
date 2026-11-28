@@ -15,6 +15,10 @@ arithmetic. Any address, register or entry point that does not exist today is ma
 **proposed**. Everything unmarked is in [architecture.md](architecture.md),
 [board.md](board.md) or [video_design.md](video_design.md).
 
+Mockups. [images/gui/](images/gui/README.md) holds static pictures of the GUI drawn under this
+design's display rules: the desktop, a menu, a dialog and the question 6 hello window. It also
+shows the failure modes the PR #8 review found. They are illustrations; no GUI code exists.
+
 ## Summary of decisions
 
 | Question | Decision | Rejected |
@@ -117,7 +121,8 @@ Quitting runs, in order:
    and fine scroll, and turns the raster interrupt off (`VIC::cmdClear`). A raw `kCmdClear`
    written by the GUI would not do: it fills with whatever `VREG_CMD_PARAM` and the attribute
    latch hold, which are the band handler's last font-set number and whatever colour the GUI
-   last drew in, and it leaves the kernel cursor where it was.
+   last drew in, and it leaves the kernel cursor where it was
+([what that looks like](images/gui/8-quit-raw-clear.png)).
 
 `DOS_WARM` then prints one newline and the prompt on the cleared screen, and puts the theme and
 the default attribute back, as it does after any program.
@@ -182,7 +187,7 @@ Two consequences. A **STOP** key press maps the monitor over the window, and `Q`
 the DOS prompt, not the desktop: the GUI is dropped, and that is acceptable for a debugger
 break. The monitor's break entry does not clear the screen, so without a change it would print
 into the GUI's cell plane, drawn from a pixel font set, with sprite 16 and the raster bands
-still live. The NMI handler therefore gains (**proposed**, a few bytes in the kernel; question
+still live ([what that looks like](images/gui/7-stop-monitor.png)). The NMI handler therefore gains (**proposed**, a few bytes in the kernel; question
 4) a call that disables the raster interrupt, because that handler is in the window the NMI
 path unmaps, and a `JSR CLEAR_SCREEN`, which puts back the ROM font, set 0, the default
 colours and a homed cursor and turns the sprites off. And a plain `.PRG` that the desktop launches loads at `$0800`
@@ -315,7 +320,8 @@ cycles. That leaves a margin of about 74 cycles inside the first line of the ban
 - **Any `SEI` section**, in the kernel or the GUI, delays it by its own length.
 
 A late switch draws the top pixel line (or lines) of the band's first cell row from the
-previous band's set: one line of wrong pixels across the screen for one frame. The GUI rules are
+previous band's set: one line of wrong pixels across the screen for one frame
+([what that looks like](images/gui/6-raster-jitter.png), with several bands late at once). The GUI rules are
 that the band handler sets the font first and the next compare line after, that GUI code holds
 `SEI` for no more than about 20 cycles at a time, and that nothing else in the GUI runs from the
 IRQ. Slice 0 measures how often a switch is late. If the glitch is visible it counts against A
@@ -387,6 +393,10 @@ the goal; it remains the fallback. **C** because it spends the last scarce resou
 bytes and a renderer, to get the picture A already produces, and it can be added later behind
 the same mapping routine if the measurement asks for it.
 
+![The desktop on the glyph-tiled framebuffer: 640x400, 1 bit a pixel, two colours per 8x16 cell](images/gui/1-desktop.png)
+
+More mockups, and how they were drawn, are in [images/gui/](images/gui/README.md).
+
 ### The cell-grid rule
 
 Colour belongs to the 8x16 cell, not the pixel, so **every colour boundary lies on the cell
@@ -411,6 +421,10 @@ What follows from it:
 
 Option C keeps the rule at 1 bit a pixel (its colour is still per cell). The 4-bit variant
 would lift it.
+
+What breaking the rule looks like: [a window off the grid](images/gui/5b-cells-unaligned-clash.png)
+(against [the same window on it](images/gui/5a-cells-aligned.png)), and
+[a menu highlight across two items](images/gui/9b-highlight-straddle-zoom.png).
 
 ## Question 2: Pointer and input
 
@@ -1107,6 +1121,8 @@ and the header it ships under (`hello_hdr.s`, linked first; `mkprg` adds the loa
         .byte   "HELLO", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         ; the STARTUP segment (cc65's crt0) follows
 ```
+
+![The hello window at GUI_CENTRE, (216, 144)](images/gui/4-hello-window.png)
 
 The window lies on the cell grid (question 1): it centres at x = (640 - 208) / 2 = 216 = 27 x 8
 and y = (400 - 112) / 2 = 144 = 9 x 16, and the button at (72, 64) inside it is cell 9, row 4,
