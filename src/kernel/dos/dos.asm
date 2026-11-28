@@ -124,8 +124,9 @@ FIO_EOF          = $04                  ; status (read): no more bytes
 FIO_ERROR        = $FF                  ; status: error / cancelled
 
 ; ----------------------------------------------------------------
-; DOS zero page (the free $3A-$5A gap; clear of monitor $14-$39,
-; BASIC $00-$13/$5B-$FF, and dev-tools $C0-$DF)
+; DOS zero page ($3A-$3F, in the $3A-$5A gap; clear of monitor $14-$39,
+; kernel LBN_* $40-$44, BASIC $00-$13/$5B-$FF, and dev-tools $C0-$DF;
+; $45-$5A is the part still free)
 ; ----------------------------------------------------------------
 BLK_BUF_PTR      = $3A                  ; $3A-$3B: caller's 512-byte sector buffer
 DOS_PTR          = $3C                  ; $3C-$3D: filename pointer (FS_OPEN)
