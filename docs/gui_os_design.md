@@ -922,7 +922,7 @@ and its state fits the 23 free bytes. The pointer, cell and font routines pass. 
 
 Two additions to the DOS ROM, both **proposed**; neither touches the kernel ROM.
 
-- The `DOS_WARM` hook (question 5): about 20 bytes. `dos.map` (map) gives `CODE` `$8800-$AA11`
+- The `DOS_WARM` hook (question 5): about 20 bytes, plus the 3-byte `STZ MODULE_BANK` that DOS 1.26 already carries on `DOS_WARM` entry. `dos.map` (map) gives `CODE` `$8800-$AA11`
   (`$2212`) and `DOSJUMP` sits at `$AF00`, so `$AF00 - $AA12 = $04EE` = **1,262 bytes** free.
 - `FS_CHDIR` appended to the DOS ABI at `$AF24` (the table ends at `$AF23`): about 30 bytes
   (`_DOS_DO_OPEN` less its shell argument parsing). Also **proposed**: export `DOS_CWD_NAME` and the
@@ -974,20 +974,23 @@ program's return address (part 1). The desktop's own loader is about 40 bytes of
 2. Set `GUI_RETURN` (**proposed**, `$02F4`) to 1.
 3. `FS_OPEN` the name, read the 2-byte header, stream the body to the load address. Refuse a body that
    would pass `$87FF`, because stores above it land in the DOS ROM and are silently discarded.
-4. `JSR` the load address. Bank 2 stays mapped, because a plain program does not touch `MODULE_BANK`.
+4. `JSR` the load address. Bank 2 stays mapped while the program runs, because a plain program does not touch `MODULE_BANK`.
 5. **Return, two cases.** A program that ends in `RTS` returns to the instruction after the `JSR`, in
    bank 2, and the desktop clears `GUI_RETURN` (`STZ`, 3 bytes) and re-initialises from cold
    (consequence 3 below). Every cold start of the desktop clears the flag, so it is set only while a
    launched program runs. A program that ends in
    `JMP DOS_WARM`, which is every program using the glue's `QUITDOS` and so most of `programs/`, lands in
-   the DOS. The **proposed** `DOS_WARM` hook, about 20 bytes: if `GUI_RETURN` is non-zero, clear it and run
-   `DESK` by name through `_DOS_RUN_FILE`. The desktop starts from cold. The user sees the program quit
+   the DOS. `DOS_WARM` itself first writes `MODULE_BANK = 0` (`STZ`, 3 bytes, DOS 1.26), so bank 2 is
+   unmapped on entry, on both the hook and the no-hook path. The **proposed** `DOS_WARM` hook, about 20
+   bytes, comes after it: if `GUI_RETURN` is non-zero, clear it and run
+   `DESK` by name through `_DOS_RUN_FILE`; the DESK stub maps bank 2 itself. The desktop starts from cold. The user sees the program quit
    and the desktop reappear.
 6. STOP clears `GUI_RETURN` (the NMI line, question 4), so a break into the monitor and `Q` returns to a
-   plain `]` prompt rather than starting another desktop.
+   plain `]` prompt rather than starting another desktop. That prompt also has the window back at RAM,
+   because `DOS_WARM` unmapped bank 2.
 
 **Without the hook** the desktop still works. An `RTS` program returns to it, and a `QUITDOS` program
-returns to `]`, from which the user types `DESK`. The hook makes the return seamless; it is recommended
+returns to `]` with `MODULE_BANK` already 0 (the `DOS_WARM` store), so the next program finds scratch RAM in `$B000-$EFFF`; the user types `DESK`. The hook makes the return seamless; it is recommended
 and is a separate small DOS change, not part of the first slices.
 
 ### The `$0400-$07FF` page: a plain `.PRG` may overwrite it
@@ -1149,7 +1152,7 @@ ROM. Slice 0 is the measurement part 1 asked for, and its code does not merge.
 | 2 | **Menu bar** | A menu bar with proportional text. Clicking a title drops a menu, clicking an item calls its routine, and `Quit` returns to `]` | module about 3 KB (text 1.5 KB, menus 1.2 KB, hit testing and flags); kernel `K_CELL_FILL`, `K_CELL_BLIT`, `K_FONT_PUT` 245 B |
 | 3 | **Dialog box** | An OK/Cancel dialog from a data table, drawn over the desktop and removed with the screen intact (the spare-font-set overlay, measured against slice 0) | module about 1.4 KB |
 | 4 | **Desktop lists a directory** | A window shows the disk's files and drawers as icons with names. Opening a drawer shows its files, and quitting restores the previous drawer | module about 2.5 KB; `FS_CHDIR` (DOS) about 30 B; `K_DEC_STR` 51 B |
-| 5 | **Launch and return** | Double-click a `.PRG`: the screen goes to text, the program runs, and quitting brings the desktop back | loader about 40 B plus teardown, and the 3 B `STZ GUI_RETURN` on quit and on cold start; `GUI_RETURN`, the NMI additions and the RESET line (kernel 18 B); the DOS hook about 20 B |
+| 5 | **Launch and return** | Double-click a `.PRG`: the screen goes to text, the program runs, and quitting brings the desktop back | loader about 40 B plus teardown, and the 3 B `STZ GUI_RETURN` on quit and on cold start; `GUI_RETURN`, the NMI additions and the RESET line (kernel 18 B); the DOS hook about 20 B (after the `STZ MODULE_BANK` that `DOS_WARM` now does on entry, DOS 1.26, so both paths return with the window unmapped) |
 | 6 | **Application model** | `HELLO.PRG` with the GUI header shows its icon on the desktop and opens its dialog, from the desktop and standalone | `libmfcgui` about 400 lines of C and assembly; the entry table |
 | 7 | **Processes** | The desktop shows a clock and a blinking caret from the timer table | about 300 B (adapted from `process1.s`, `process2.s`) |
 
